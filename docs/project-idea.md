@@ -106,6 +106,7 @@ The core question every competitor hand-waves: *do agent panels predict real hum
    - *Order-invariance:* same pair, A/B order swapped → same verdict (position-bias regression).
    - *Test–retest stability:* same test re-run with different seeds → how stable is P(B>A)?
    - *Targeting manipulation check (the cheap first gate):* assign a segment a **known** preference, feed it a pair whose winner that preference predicts, and confirm the verdict moves in the predicted direction. Crucially, run it **target vs. control vs. opposite-segment** — the evidence is that the target segment's preference *diverges from the control group* in the predicted direction, not merely that it picked the "expected" variant (which could just mean that variant is objectively better). This reuses the "control group in every panel" design and directly tests that persona targeting actually steers votes. Run it *before* the Upworthy benchmark: if it fails, something is fundamentally broken and there is no point spending budget on the full study. Passing it is necessary, not sufficient — it proves the machine is coherent, not that it predicts reality.
+3. **Published-study replication — external validity beyond Upworthy (incl. designs/images).** Find a peer-reviewed study that manipulated a creative element (headline, CTA, ad, thumbnail/design) and measured CTR/preference on a *described* population; reconstruct that population as a panel, run the workflow, and check whether we reproduce the study's *result* — especially any population-specific effect (seed the study's group → does our panel show the same group-specific effect?). This is the one self-sufficient track that reaches the *visual* domain Upworthy can't, and the most direct test of the targeting claim. Cautions: (1) **memorization/circularity** — the LLM may *recall* a famous result rather than *simulate* it; prefer lesser-known studies and probe whether the model can simply recite the finding; (2) **publication bias + small/WEIRD samples** — reconstruct the actual sample, not an idealized one; (3) **reconstruction fidelity** — papers rarely give full demographics, so it's approximate; (4) expect to reproduce the *direction* more reliably than the magnitude; (5) it's a hand-curated benchmark of ~10–30 studies coded as (population, variant A, variant B, result), not a large dataset.
 
 Research questions worth reporting even with negative results: does persona diversity beat panel size? Does targeting improve accuracy over random panels? Where does accuracy plateau?
 
@@ -113,7 +114,7 @@ Research questions worth reporting even with negative results: does persona dive
 - **Human-panel parity** — the same pairs to real people via Prolific (~$100–300) or classmates; measure agent–human agreement.
 - **Creator partnerships** — mid-size YouTubers (Discords/subreddits) sharing YouTube Test & Compare results in exchange for free access.
 
-**Honest gap — images are the weak spot for self-sufficiency.** Text has Upworthy; thumbnails have no equally-clean public CTR dataset, so image validation genuinely falls back on Tier 2 (human panels) — another reason images come second, and why the self-sufficient story is strongest for text.
+**Honest gap — images are the weak spot for self-sufficiency.** Text has Upworthy; thumbnails have no equally-clean public CTR dataset. The **published-study replication** track (Tier 1 #3) is the main *self-sufficient* path into the visual domain — but it's a small hand-curated benchmark, not a 32k-test archive — so image validation still leans partly on Tier 2 (human panels). Another reason images come second, and why the self-sufficient story is strongest for text.
 
 ### Sample-size methodology (two different answers)
 
@@ -218,3 +219,22 @@ The course requires a domain-specialised *chatbot* with advanced RAG + tool call
 - **Sprint:** end-to-end demo — two headlines in, verdict + reasons out in <2 min; ≥ chance-beating accuracy on a 100-pair Upworthy smoke test.
 - **Capstone:** validation study with defensible methodology (power-justified sample, declared MDE); documented findings on panel size, diversity, and targeting effects; working image support with human-parity measurement.
 - **Portfolio:** a project that demonstrates agent orchestration, retrieval, structured outputs, evaluation methodology, security engineering, and cost engineering — the full AI-engineering skill set.
+
+## Glossary — persona & personality terms
+
+*v1 personas are built from three field groups: **demographics + interests + Big Five** (full rationale + evidence in [`docs/research/persona-attributes-grounding.md`](research/persona-attributes-grounding.md)). Plain-language definitions of the terms used there and here:*
+
+- **Big Five (a.k.a. OCEAN / Five-Factor Model):** the most scientifically validated model of human personality. Five broad traits, each measured on a spectrum:
+  - **O**penness — curious, imaginative, novelty-seeking ↔ conventional, practical
+  - **C**onscientiousness — organized, disciplined, reliable ↔ spontaneous, careless
+  - **E**xtraversion — outgoing, energetic ↔ reserved, solitary
+  - **A**greeableness — warm, cooperative, trusting ↔ critical, competitive
+  - **N**euroticism — anxious, emotionally reactive ↔ calm, resilient
+  
+  Each persona gets five scores, sampled from real population data (age-conditioned) so the pool's personality mix is realistic.
+- **BFI-2 (Big Five Inventory-2):** a widely-used, validated questionnaire (Soto & John 2017) for measuring the Big Five. The research found that *how* you express a trait to an LLM matters: **BFI-2-Expanded** (describe the trait level in full sentences) makes the model enact the personality best; **BFI-2-Likert** (numeric agreement scores) works worst. So we render Big Five as expanded sentences, never as numbers.
+- **Need for Cognition (NFC):** how much a person enjoys effortful thinking — high-NFC people prefer detailed, information-dense content. *(Not in v1; earns its place via the manipulation check.)*
+- **Maximizing vs. Satisficing:** a decision style — *maximizers* compare everything to find the best; *satisficers* pick the first "good enough." *(Not in v1.)*
+- **CSII (Consumer Susceptibility to Interpersonal Influence):** a validated scale for how easily someone is swayed by others / social proof. *(Not in v1.)*
+- **Sensation-seeking:** craving novel, intense stimulation; drives preference for *visually* complex designs — relevant to the image/thumbnail era, not v1 headlines.
+- **ACS PUMS (American Community Survey — Public Use Microdata Sample):** free US Census *individual-level* records; we sample from them so the pool's demographics match the real population.

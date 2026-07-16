@@ -11,7 +11,7 @@ status: open
 
 Create the runnable skeleton everything else sits on:
 
-- repo layout (backend / frontend),
+- **monorepo layout — `/frontend` + `/backend`** at the repo root (decided 2026-07-16),
 - **FastAPI + LangGraph** backend,
 - **Next.js + Tailwind** frontend,
 - **Postgres + pgvector** via Docker for local dev,
