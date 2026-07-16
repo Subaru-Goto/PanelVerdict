@@ -1,2 +1,5 @@
 .env
 .DS_Store
+
+# Large binaries — keep source papers as URL citations, not committed blobs
+*.pdf

@@ -17,5 +17,6 @@ The minimum defensible slice for the security requirement:
 - plain-text output rendering,
 - size/format limits,
 - ONE screening layer (OpenRouter Guardrails in *flag* mode, or Mistral Moderation).
+- **shared with ticket 006:** LLM-written persona content (interests + prose) is run through this same screening **before persisting** to the pool (pool-poisoning defense — a malicious target description must not inject instructions into gap-filled personas).
 
 Document the "least privilege by design" argument: panel agents have no tools, no memory, no shared state → worst-case successful injection = one biased vote, absorbed by position randomization + anomaly detection.
