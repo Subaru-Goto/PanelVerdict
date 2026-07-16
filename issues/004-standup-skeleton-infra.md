@@ -3,7 +3,7 @@ title: "Stand up project skeleton + local infra"
 labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
-assignee: null
+assignee: subaru
 status: open
 ---
 

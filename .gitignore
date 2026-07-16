@@ -3,3 +3,11 @@
 
 # Large binaries — keep source papers as URL citations, not committed blobs
 *.pdf
+
+# Python
+.venv/
+__pycache__/
+
+# Node / Next.js
+node_modules/
+.next/
