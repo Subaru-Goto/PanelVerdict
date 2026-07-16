@@ -3,10 +3,8 @@ from pathlib import Path
 from pydantic import PostgresDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# backend/app/config.py to root director 
-ROOT_ENV = (
-    Path(__file__).resolve().parents[2] / ".env"
-) 
+# parents[2]: app/ -> backend/ -> repo root, where the shared .env lives
+ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
