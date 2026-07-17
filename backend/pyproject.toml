@@ -1,0 +1,19 @@
+[project]
+name = "panelverdict-backend"
+version = "0.1.0"
+description = "PanelVerdict backend — FastAPI API + (later) LangGraph orchestrator and panel pipeline."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi[standard]>=0.139.2",
+    "psycopg[binary]>=3.3.4",
+    "pydantic-settings>=2.14.2",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.22",
+]
