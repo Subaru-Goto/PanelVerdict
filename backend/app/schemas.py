@@ -1,13 +1,5 @@
-"""Data contract for the panel pipeline (ticket 002 vote schema).
-
-Three shapes, matching the 002 resolution:
-  1. PanelVoteOutput  — what the LLM returns (identity-blind, positional)
-  2. VoteRecord       — what the system stores after resolving position -> variant id
-  3. Verdict          — the tracer's naive count (no Bayesian yet)
-"""
-
-
 from pydantic import BaseModel
+from typing import Literal
 
 
 class PanelVoteOutput(BaseModel):
@@ -17,14 +9,8 @@ class PanelVoteOutput(BaseModel):
     labelled options in a (counterbalanced) order and picks by position.
     """
 
-    # TODO: chosen — which option did the persona pick?
-    #   The model only knows positions, not A/B. Constrain it to exactly the
-    #   two positional labels so a malformed value can't slip through.
-    #   (hint: Literal["option_1", "option_2"])
-
-    # TODO: reason — a one-line, CONTENT-based rationale (str).
-    #   Content-based (not "the first one") so it stays meaningful after we
-    #   discard the presentation order.
+    chosen: Literal["option_1", "option_2"]
+    reason: str
 
 
 class VoteRecord(BaseModel):
@@ -33,19 +19,15 @@ class VoteRecord(BaseModel):
     `chosen` (a position) is resolved to `chosen_variant_id` using the
     presentation order the system created for this persona.
     """
-
-    # TODO: persona_id (str)
-    # TODO: chosen_variant_id (str) — resolved from PanelVoteOutput.chosen
-    #       via presentation_order
-    # TODO: presentation_order (list[str]) — the variant_ids in the order
-    #       shown to this persona; SYSTEM metadata, not model output
-    # TODO: reason (str) — carried through from PanelVoteOutput
+    persona_id: str
+    test_id: str
+    chosen_variant_id: str
+    presentation_order: list[str]
+    reason: str
 
 
 class Verdict(BaseModel):
     """Naive count verdict for the tracer (no posterior — that's ticket 009)."""
-
-    # TODO: counts (dict[str, int]) — votes per variant_id
-    # TODO: total (int) — number of votes counted
-    # TODO: winner (str) — variant_id with the most votes
-    #   (think: what should happen on a tie? fine to keep it simple for the tracer)
+    counts: dict[str, int]
+    total: int
+    winner: str
