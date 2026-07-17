@@ -26,5 +26,5 @@ Done when a hello-world request flows through the whole stack: frontend → API 
 
 ## Delivered so far
 
-- Backend half (units 1–3): monorepo `backend/`, FastAPI `/health` → Postgres check, docker-compose Postgres 16 + **pgvector (extension enabled + auto-init SQL in `db/init/`)**, no-hardcode env config from the repo-root `.env`. Verified live: `{"status":"ok","db":"up"}`; `vector` extension 0.8.5 confirmed.
+- Backend half (units 1–3): monorepo `backend/`, FastAPI `/health` → Postgres check, docker-compose Postgres 18 + **pgvector (extension enabled + auto-init SQL in `db/init/`)**, no-hardcode env config from the repo-root `.env`. Verified live: `{"status":"ok","db":"up"}`; `vector` extension 0.8.5 confirmed.
 - Remaining: `/frontend` scaffold, hello-world frontend→API→DB flow, CORS.
