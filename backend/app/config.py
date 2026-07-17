@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     postgres_db: str
     postgres_host: str = "localhost"
     postgres_port: int = 5432
+    frontend_origin: str = "http://localhost:3000"
+
 
     @property
     def database_url(self) -> str:
