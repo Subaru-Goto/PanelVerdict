@@ -27,4 +27,6 @@ Done when a hello-world request flows through the whole stack: frontend → API 
 ## Delivered so far
 
 - Backend half (units 1–3): monorepo `backend/`, FastAPI `/health` → Postgres check, docker-compose Postgres 18 + **pgvector (extension enabled + auto-init SQL in `db/init/`)**, no-hardcode env config from the repo-root `.env`. Verified live: `{"status":"ok","db":"up"}`; `vector` extension 0.8.5 confirmed.
-- Remaining: `/frontend` scaffold, hello-world frontend→API→DB flow, CORS.
+- Frontend half (units 4–5): Next.js 16 App Router scaffold (TypeScript, Tailwind v4), client-side `HealthCheck` component (`app/components/`) that fetches `GET /health` from the browser, CORS middleware allowing the configured frontend origin, API base URL from `NEXT_PUBLIC_API_URL`.
+- **Done criterion met** — full stack verified live end to end: browser → API → DB → back renders `API: ok · DB: up`.
+- Note: `langgraph` was added to `backend/pyproject.toml` (see Consciously-deferred above — that note is now stale; reconcile).
