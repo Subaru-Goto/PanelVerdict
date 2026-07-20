@@ -66,3 +66,14 @@ class Verdict(BaseModel):
     counts: dict[str, int]
     total: int
     winner: str
+
+
+class EvaluateRequest(BaseModel):
+    headline_a: str
+    headline_b: str
+
+
+class EvaluateResponse(BaseModel):
+    verdict: Verdict
+    variants: dict[str, str]
+    votes: list[VoteRecord]
