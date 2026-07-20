@@ -1,6 +1,5 @@
 from pathlib import Path
-
-from pydantic import PostgresDsn
+from pydantic import PostgresDsn, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # parents[2]: app/ -> backend/ -> repo root, where the shared .env lives
@@ -16,7 +15,10 @@ class Settings(BaseSettings):
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     frontend_origin: str = "http://localhost:3000"
-
+    openrouter_api_key: SecretStr | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    panel_model: str = "openai/gpt-5-mini"
+    analyst_model: str = "openai/gpt-5-mini"
 
     @property
     def database_url(self) -> str:

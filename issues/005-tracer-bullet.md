@@ -3,7 +3,7 @@ title: "Tracer bullet: 2 headlines → fixed panel → naive verdict, end to end
 labels: [wayfinder:task]
 parent: 000-map
 blocked_by: [002-decide-vote-schema, 003-decide-panel-model-and-provider, 004-standup-skeleton-infra]
-assignee: null
+assignee: subaru
 status: open
 ---
 

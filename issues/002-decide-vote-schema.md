@@ -78,3 +78,14 @@ Confirm the v1 treatment: the neither-rate is **reported descriptively but NOT m
 - Vote caching + test-retest QA metric → orchestration (**005** / **008**).
 - Representative panel sampling + sample-stability QA → **006** / **007** / **008**; adaptive stopping → **009**.
 - Exact stratification dimensions → **007**.
+
+## Amendment (2026-07-19) — `temperature≈0` is unavailable for the chosen model
+
+The v1 panel model `openai/gpt-5-mini` ([003](003-decide-panel-model-and-provider.md)) rejects any non-default `temperature` (HTTP 400; GPT-5 reasoning models fix it at 1). So the "temperature ≈ 0 → each persona's vote is (near-)deterministic" assumption in the Reproducibility section above **does not hold** — per-persona votes carry sampling variance.
+
+Determinism instead rests on:
+1. the **seeded, reproducible population** — already the *primary* variance source, unchanged;
+2. best-effort **`seed`** (if supported by the model/provider); and
+3. **per-vote caching** keyed on `(persona, test, order)` (008) for exact replay.
+
+Test-retest agreement remains a **QA metric** (as already noted — "almost, not bit-identical"), just with a wider band. If exact per-vote reproducibility ever becomes a hard requirement, that converts into a model-selection constraint (prefer a model that supports `temperature`/`seed`) → feeds [003](003-decide-panel-model-and-provider.md).

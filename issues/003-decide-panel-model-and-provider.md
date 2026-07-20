@@ -38,3 +38,9 @@ Full research + live pricing: [`docs/research/panel-model-selection.md`](../docs
 - **Analyst model:** a **reasoning model** — separate role/run, so its selection is deferred to **[012](012-build-analyst-chatbot-tools.md)** (not this ticket). Using a different model for the analyst does not violate the one-model-per-run rule.
 
 **Downstream:** final model confirmation → manipulation check (005/006/008-era); 402 handling + resumable caching → orchestration (005/008); analyst reasoning-model pick → 012.
+
+## Finding (2026-07-19, from the 005 build) — chosen model rejects `temperature`
+
+`openai/gpt-5-mini` is a GPT-5 reasoning model and accepts **only the default `temperature=1`**; any other value returns **HTTP 400** ("Unsupported value: 'temperature' does not support 0 with this model"). The panel client therefore must **not send `temperature`** at all.
+
+Consequence: the `temperature≈0` per-persona-determinism lever assumed in [002](002-decide-vote-schema.md) is **unavailable** for this model — see the 002 reproducibility amendment. Reproducibility now rests on the seeded population (002's primary variance source), best-effort `seed`, and per-vote caching (008). **Any future model swap must re-check parameter support** (temperature/seed) as a selection criterion, alongside cost + trait fidelity.
