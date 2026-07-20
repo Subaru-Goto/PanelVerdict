@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
     frontend_origin: str = "http://localhost:3000"
     openrouter_api_key: SecretStr | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
     panel_model: str = "openai/gpt-5-mini"
     analyst_model: str = "openai/gpt-5-mini"
 
