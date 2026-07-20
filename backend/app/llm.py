@@ -1,15 +1,17 @@
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+
+from app.schemas import PanelVoteOutput
 
 
 def build_vote_messages(
     system_prompt: str, option_1: str, option_2: str
 ) -> list[BaseMessage]:
-    """Assemble the chat messages for one persona's vote.
+    """Build the chat messages for one persona's vote.
 
-    system = the persona prompt (who they are); human = the task: the two
-    options presented positionally (identity-blind) with a request for a
-    content-based reason (002). Pure and network-free, so it is unit-testable
-    without calling a model.
+    system = the persona prompt (who they are); human = the task, presenting
+    the two options positionally (blind to identity) and asking for a
+    content-based reason.
     """
     task = (
         "Here are two options.\n"
@@ -19,3 +21,29 @@ def build_vote_messages(
         "reason based on the content — not its position."
     )
     return [SystemMessage(content=system_prompt), HumanMessage(content=task)]
+
+
+class OpenRouterPanelLLM:
+    """PanelLLM backed by an OpenRouter chat model via LangChain.
+
+    Config is injected so this module stays import-safe; wiring lives at the
+    endpoint layer.
+    """
+
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
+        # No temperature: gpt-5-mini (a reasoning model) rejects any non-default
+        # temperature with a 400.
+        self._model = ChatOpenAI(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+        ).with_structured_output(PanelVoteOutput)
+
+    def vote(
+        self, *, system_prompt: str, option_1: str, option_2: str
+    ) -> PanelVoteOutput:
+        messages = build_vote_messages(system_prompt, option_1, option_2)
+        result = self._model.invoke(messages)
+        if not isinstance(result, PanelVoteOutput):
+            raise RuntimeError(f"panel model returned no structured vote: {result!r}")
+        return result
