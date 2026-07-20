@@ -11,8 +11,8 @@ class TraitLevel(str, Enum):
 
 
 class BigFive(BaseModel):
-    """The five domains as enum buckets derived from the sampled continuous
-    scores (001 decision 6). Grouped so callers can iterate the traits.
+    """The five personality domains as level buckets, grouped into one type so
+    callers can iterate the traits.
     """
 
     openness: TraitLevel  # curiosity, imagination, appetite for novelty vs. convention
@@ -23,11 +23,7 @@ class BigFive(BaseModel):
 
 
 class Persona(BaseModel):
-    """One panelist (001 field set), stored structured — never as free text.
-
-    For the fixed tracer panel these are hardcoded; the real pool (006)
-    samples them.
-    """
+    """One panelist, stored as structured typed fields (never free text)."""
 
     id: str
     age: int = Field(ge=18, le=100)
@@ -65,7 +61,7 @@ class VoteRecord(BaseModel):
 
 
 class Verdict(BaseModel):
-    """Naive count verdict for the tracer (no posterior — that's ticket 009)."""
+    """Naive vote-count verdict: per-variant counts, total, and the winner."""
 
     counts: dict[str, int]
     total: int

@@ -2,12 +2,11 @@ from app.schemas import Verdict, VoteRecord
 
 
 def tally_votes(records: list[VoteRecord], variant_ids: list[str]) -> Verdict:
-    """Naive count verdict for the tracer (no posterior — that's 009).
+    """Count votes per variant.
 
-    counts is zero-filled over variant_ids, so a variant that received no
-    votes still reports 0. On a tie, winner is the first tied variant in
-    variant_ids order — an arbitrary placeholder; modelling real uncertainty
-    is 009's job.
+    counts is zero-filled over variant_ids, so a variant with no votes still
+    reports 0. On a tie, winner is the first tied variant in variant_ids order
+    (an arbitrary tiebreak).
     """
     counts = {variant_id: 0 for variant_id in variant_ids}
     for record in records:

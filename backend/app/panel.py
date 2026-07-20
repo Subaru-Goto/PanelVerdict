@@ -37,12 +37,10 @@ def _join_with_and(items: list[str]) -> str:
 
 
 def render_persona_prompt(persona: Persona) -> str:
-    """Render a structured persona into its natural-language system prompt.
+    """Render a persona into its natural-language system prompt.
 
-    This is the seam 008 upgrades to psychometric BFI-2 prose. For the tracer
-    a plain template is enough. The prompt describes the PERSON only — it says
-    nothing about the two options or how to vote (that belongs to the vote
-    step, so position handling stays in one place).
+    Describes the person only — nothing about the options or how to vote; that
+    stays in the vote step so position handling lives in one place.
     """
     dispositions = "; ".join(
         _TRAIT_PHRASES[trait][level] for trait, level in persona.big_five

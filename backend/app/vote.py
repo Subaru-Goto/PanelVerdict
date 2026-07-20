@@ -15,10 +15,9 @@ def resolve_choice(
 ) -> str:
     """Map a positional pick back to the variant id it referred to.
 
-    The model votes by position (option_1/option_2, identity-blind);
-    presentation_order holds the variant_ids in the order this persona saw
-    them. This re-attaches identity (002): option_1 -> the variant shown
-    first, option_2 -> the variant shown second.
+    The model votes by position (option_1/option_2, blind to identity);
+    presentation_order holds the variant_ids in the order shown. So option_1
+    -> the variant shown first, option_2 -> the variant shown second.
     """
     return presentation_order[0] if chosen == "option_1" else presentation_order[1]
 
@@ -30,16 +29,15 @@ def collect_panel_votes(
     panel: list[Persona],
     llm: PanelLLM,
 ) -> list[VoteRecord]:
-    """Cast every persona's vote and return fully-identified records.
+    """Cast every persona's vote and return one fully-identified record each.
 
     Each persona sees the two variants in a counterbalanced order, votes
     positionally (blind to identity), and the position is resolved back to a
-    variant_id. Aggregation (the verdict) is a separate step.
+    variant_id.
     """
     if len(variants) != 2:
         raise ValueError(
-            f"collect_panel_votes requires exactly 2 variants, got {len(variants)}; "
-            "multivariate (N-variant) is a v2 change (002 forward-compat)."
+            f"collect_panel_votes requires exactly 2 variants, got {len(variants)}"
         )
 
     base = list(variants)
