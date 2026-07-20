@@ -2,21 +2,8 @@ from typing import Literal
 
 import pytest
 
-from app.schemas import BigFive, PanelVoteOutput, Persona
+from app.schemas import BigFive, Persona
 from app.vote import collect_panel_votes, resolve_choice
-
-
-class StubLLM:
-    """A PanelLLM that returns the same canned vote for every call."""
-
-    def __init__(self, chosen: Literal["option_1", "option_2"], reason: str = "stub"):
-        self._chosen = chosen
-        self._reason = reason
-
-    def vote(
-        self, *, system_prompt: str, option_1: str, option_2: str
-    ) -> PanelVoteOutput:
-        return PanelVoteOutput(chosen=self._chosen, reason=self._reason)
 
 
 def _persona(pid: str) -> Persona:
@@ -59,13 +46,13 @@ def test_resolve_choice(
     assert resolve_choice(chosen, presentation_order) == expected
 
 
-def test_collect_panel_votes_single_persona_builds_record() -> None:
+def test_collect_panel_votes_single_persona_builds_record(stub_llm) -> None:
     variants = {"vA": "Save 50% today", "vB": "Limited time: half price"}
     records = collect_panel_votes(
         test_id="t1",
         variants=variants,
         panel=[_persona("p1")],
-        llm=StubLLM(chosen="option_1"),
+        llm=stub_llm(chosen="option_1"),
     )
 
     assert len(records) == 1
@@ -77,13 +64,13 @@ def test_collect_panel_votes_single_persona_builds_record() -> None:
     assert record.reason == "stub"
 
 
-def test_collect_panel_votes_counterbalances_order_by_index() -> None:
+def test_collect_panel_votes_counterbalances_order_by_index(stub_llm) -> None:
     variants = {"vA": "Save 50% today", "vB": "Limited time: half price"}
     records = collect_panel_votes(
         test_id="t1",
         variants=variants,
         panel=[_persona("p1"), _persona("p2")],
-        llm=StubLLM(chosen="option_1"),
+        llm=stub_llm(chosen="option_1"),
     )
 
     # Constant vote ("option_1"), so any difference is the order alternating:
@@ -102,7 +89,7 @@ def test_collect_panel_votes_counterbalances_order_by_index() -> None:
     ],
 )
 def test_collect_panel_votes_requires_exactly_two_variants(
-    variants: dict[str, str],
+    variants: dict[str, str], stub_llm
 ) -> None:
     # Empty panel: the check must fire up front, independent of the loop.
     with pytest.raises(ValueError, match="exactly 2 variants"):
@@ -110,5 +97,5 @@ def test_collect_panel_votes_requires_exactly_two_variants(
             test_id="t1",
             variants=variants,
             panel=[],
-            llm=StubLLM(chosen="option_1"),
+            llm=stub_llm(chosen="option_1"),
         )

@@ -1,27 +1,11 @@
-from typing import Literal
-
 from fastapi.testclient import TestClient
 
 from app.main import app, get_panel_llm
 from app.panel import FIXED_PANEL
-from app.schemas import PanelVoteOutput
 
 
-class _StubLLM:
-    """Local PanelLLM double so the endpoint test needs no network."""
-
-    def __init__(self, chosen: Literal["option_1", "option_2"], reason: str):
-        self._chosen = chosen
-        self._reason = reason
-
-    def vote(
-        self, *, system_prompt: str, option_1: str, option_2: str
-    ) -> PanelVoteOutput:
-        return PanelVoteOutput(chosen=self._chosen, reason=self._reason)
-
-
-def test_evaluate_returns_verdict_variants_and_reasons() -> None:
-    app.dependency_overrides[get_panel_llm] = lambda: _StubLLM(
+def test_evaluate_returns_verdict_variants_and_reasons(stub_llm) -> None:
+    app.dependency_overrides[get_panel_llm] = lambda: stub_llm(
         chosen="option_1", reason="clear discount framing"
     )
     try:
