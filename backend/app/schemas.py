@@ -22,15 +22,40 @@ class BigFive(BaseModel):
     neuroticism: TraitLevel  # negative-emotion proneness; low = stable
 
 
+class Locale(str, Enum):
+    US = "US"
+    JP = "JP"
+    DE = "DE"
+
+
+class CultureTag(str, Enum):
+    WESTERN = "western"
+    ASIAN = "asian"
+
+
+# Coarse targeting bucket, derived from country — never stored on a Persona.
+COUNTRY_CULTURE_TAG: dict[Locale, CultureTag] = {
+    Locale.US: CultureTag.WESTERN,
+    Locale.DE: CultureTag.WESTERN,
+    Locale.JP: CultureTag.ASIAN,
+}
+
+
+class EducationLevel(str, Enum):
+    BELOW_SECONDARY = "below_secondary"  # ISCED 0–2, no secondary completion
+    SECONDARY = "secondary"  # ISCED 3–4, secondary done, no university degree
+    TERTIARY = "tertiary"  # ISCED 5–8, university degree or higher
+
+
 class Persona(BaseModel):
     """One panelist, stored as structured typed fields (never free text)."""
 
     id: str
+    country: Locale
     age: int = Field(ge=18, le=100)
     gender: Literal["male", "female"]
-    region: str
-    income: str
-    education: str
+    income_quintile: int = Field(ge=1, le=5)  # within-country income rank band
+    education: EducationLevel
     interests: list[str] = Field(min_length=1, max_length=5)
     big_five: BigFive
 

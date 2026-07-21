@@ -10,11 +10,11 @@ def _persona(pid: str) -> Persona:
     """Valid persona with filler traits — only the id matters to these tests."""
     return Persona(
         id=pid,
+        country="US",
         age=30,
         gender="male",
-        region="X",
-        income="middle",
-        education="X",
+        income_quintile=3,
+        education="secondary",
         interests=["x"],
         big_five=BigFive(
             openness="low",
