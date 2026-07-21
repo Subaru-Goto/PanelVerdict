@@ -82,6 +82,17 @@ Destatis publishes Mikrozensus and Zensus **aggregate tables** via GENESIS-Onlin
 
 ## 3. Japan — no public microdata; census has no income → reconstruct ❌ microdata
 
+### Update (2026-07-21) — individual-income source found (user-supplied); frame mismatch resolved
+
+The household-vs-individual frame mismatch flagged below is **fixed by a better source**: the **就業構造基本調査 (Employment Status Survey, Statistics Bureau, 2022; ~540k households / ~1.08M persons aged 15+)**. Per its glossary (§20 所得) + survey-items list, it collects **individual annual income (所得, main job — self-employed = business profit, employees = gross pay) jointly with age × sex × education × prefecture × employment status**, *and* household income (世帯所得, §8). This is the **same-survey, same-frame** individual income source we wanted — no cross-survey household bridge.
+
+- Income cross-tabs live in this survey's full e-Stat 統計表 (the published 結果の概要 booklet doesn't tabulate 所得 — pull the specific 所得 × age × sex (× education/prefecture) table on e-Stat when wiring IPF).
+- **Corroborating / gap-fill:** 賃金構造基本統計調査 (Basic Survey on Wage Structure, 2025) publishes clean income × age × sex × **education** × prefecture cross-tabs *directly* — but **employees only** (excludes self-employed + non-workers). Use it for the employee income-by-education gradient; use the Employment Status Survey for full coverage.
+- Education categories (小中 / 高校 / 専門学校 / 短大・高専 / 大学 / 大学院) map cleanly to **ISCED**.
+- **Nuance:** individual work-income (所得) applies to workers (有業者); non-working personas (≈39% of 15+) should draw **household income (世帯所得)** instead — both are in the same survey.
+
+**Revised strategy:** still IPF from public cross-tabs (no public microdata), but the income targets are now **individual and same-frame** → **Japan upgrades from 🔴 to 🟡** (on par with Germany's income-IPF). The census-vs-income frame mismatch is no longer the pipeline's weak link. (The §3c/§3d notes below describe the *superseded* household-bridge fallback — kept for context.)
+
 ### 3a. No public PUMS-equivalent; microdata is application-gated
 Japan's official-statistics microdata regime (post-2007 Statistics Act) offers three secondary-use routes — **on-site use**, **custom-made tabulation**, and **anonymized data (匿名データ)** — all administered through the **Micro Data Usage Portal "miripo"** and the National Statistics Center (NSTAC), and all **require an application and a usage fee**, with use restricted to **academic research / higher education**.
 - Statistics Bureau overview: `https://www.stat.go.jp/english/` (checked 2026-07-21)
@@ -110,7 +121,7 @@ e-Stat (`https://www.e-stat.go.jp/en/`) publishes 2020 Population Census cross-t
 - **Education:** "**type of last school completed**" — primary/lower-secondary (小学校・中学校), upper-secondary (高校/旧中), junior college / technical college (短大・高専), university (大学), graduate (大学院). Maps onto ISCED 2011 (see §5).
 - **Region:** **47 prefectures (都道府県)**, groupable into the standard 8 regions (Hokkaido, Tohoku, Kanto, Chubu, Kinki, Chugoku, Shikoku, Kyushu-Okinawa); municipalities and major cities also published.
 
-**Verdict for 006b:** **Full IPF reconstruction.** Build the demographic joint from the e-Stat census cross-tab (age×gender×education×prefecture), then **raking/IPF an income dimension** on using a *separate* income survey's marginals (income × age-band, income × region) as targets — with an explicit note that census-vs-income-survey population frames differ (individual vs household), the weakest link in the Japan pipeline.
+**Verdict for 006b (revised — see the 2026-07-21 update at the top of this section):** **IPF reconstruction from same-frame individual cross-tabs.** Build the demographic joint from the e-Stat census cross-tab (age×gender×education×prefecture), then IPF an **individual income** dimension on from the **就業構造基本調査 (Employment Status Survey)** — individual 所得 for workers + 世帯所得 for non-workers, same survey frame — with 賃金構造基本統計調査 as the employee income-by-education corroborator. The earlier household-survey (FIES) bridge is the *superseded fallback*.
 
 ---
 
@@ -184,9 +195,12 @@ japan:
   demographics_source: e-Stat 2020 Population Census cross-tab (table 62-2)
   demographics_access: public, free download (e-Stat)
   demographics_joint: [age_band, gender, education, region]  # region = 47 prefectures; age in 5yr bands
-  income_gap: "Population Census collects NO income"
-  income_source: FIES / National Survey of Family Income, Consumption & Wealth (SEPARATE survey, household-level)
-  income_method: IPF/raking income marginals onto census demographic joint (frame mismatch: household vs individual)
+  income_gap: "Population Census collects NO income (use a separate survey)"
+  income_source: 就業構造基本調査 Employment Status Survey 2022  # INDIVIDUAL income (所得) + household income (世帯所得), same frame as demographics
+  income_source_corroborating: 賃金構造基本統計調査 Basic Survey on Wage Structure  # income x age x sex x education x prefecture, published directly, EMPLOYEES ONLY
+  income_source_superseded_fallback: FIES / National Survey  # household-level; only if ESS income cross-tabs prove unusable
+  income_method: IPF/raking individual income (ESS) onto census demographic joint  # same-frame -> no household/individual mismatch
+  income_note: "所得 = work income (workers); non-workers draw 世帯所得 (household income), also in ESS"
   microdata_ideal: on-site/anonymized via miripo-NSTAC       # application + fee; INFEASIBLE ~2wk
 
 harmonization:

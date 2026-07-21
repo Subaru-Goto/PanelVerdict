@@ -33,3 +33,12 @@ Design basis: [001](001-decide-persona-schema-and-seed.md) (esp. the 2026-07-21 
   - *Psychometric grounding* — the 006a Big Five norms are validated on adults (D&L covers down to 16); conditioning minors extrapolates.
   - *Ethics/compliance* — simulating minors touches COPPA (<13, US) and equivalents in JP/DE; 18+ sidesteps it.
   - Whatever is chosen, update `Persona.age` in `backend/app/schemas.py`.
+
+## Resolved (2026-07-21, post data-source research + user-supplied JP sources)
+
+See [`docs/research/demographic-sources.md`](../docs/research/demographic-sources.md).
+
+- **Fidelity = (B) hybrid** — the data forces it (microdata-everywhere is infeasible): **US** direct from ACS PUMS; **DE** demographics direct from **Destatis public cross-tabs** (no institutional affiliation → not IPUMS-International) + income IPF from Mikrozensus bracket cross-tabs; **JP** IPF from public e-Stat cross-tabs.
+- **Harmonization:** education → **ISCED 2011** (~5 coarse levels); income → **within-country quantiles** (not PPP — congruent-by-construction, and consistent with the no-cross-country-comparison stance).
+- **Japan income upgraded (🔴→🟡):** individual, same-frame **就業構造基本調査 (Employment Status Survey 2022)** — collects individual 所得 + 世帯所得 jointly with age×sex×education×prefecture; corroborated by **賃金構造基本統計調査** (employees-only). Removes the household→individual bridge; Japan now ~on par with Germany.
+- **Age floor:** still open — decide at the schema step (step 3).
