@@ -101,6 +101,7 @@ backend/
 
 - **`pipeline/` never imported by `app/`;** the dependency edge is one-way, through the committed CSVs only.
 - **Deps isolated:** pandas/numpy live in a `pipeline` uv group, *not* runtime deps — pandas never ships to production; the app stays a thin CSV reader.
+- **Storage seam:** stage 2 reads the joint through a single `load_joint(country) -> list[JointCell]` accessor, never by opening files inline — so the storage behind it (committed CSVs now → a DB later, if many countries/versions ever warrant it) is swappable in *one function*, no changes to the sampler or build scripts. (The big DB customer is the persona *pool* itself — 006f/pgvector — not these tiny input tables.)
 
 ### Acquisition = manual, documented (not automated fetch)
 
