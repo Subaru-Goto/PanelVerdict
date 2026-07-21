@@ -19,10 +19,10 @@ Design basis: [001](001-decide-persona-schema-and-seed.md) (esp. the 2026-07-21 
 
 ## Sequence (research-first — decided 2026-07-21)
 
-1. **Data-source research pass** → `docs/research/demographic-sources.md`: what's publicly available per country (microdata vs cross-tabs), native category schemes, access/licensing, IPUMS-International coverage of DE/JP, harmonization options. *(in progress)*
-2. **Harmonization + fidelity decisions** (grill — see open decisions).
-3. **Schema evolution** (`backend/app/schemas.py`): add `country` + `culture_tag`; type `region` (sub-national, country-dependent vocab), `income`, `education` per the harmonization decision; set the age floor. Kept atomic — done after 1–2 so fields aren't typed twice. (`BigFive` → continuous is **006c**, not here.)
-4. **The sampler**: per-country joint draw (direct microdata, or IPF-reconstructed from cross-tabs), fixed seed, dev at ~200/country.
+1. **Data-source research pass** → `docs/research/demographic-sources.md`. ✅ *(PR #10)*
+2. **Harmonization + fidelity decisions** (grill). ✅ *(see Resolved)*
+3. **Schema evolution** (`backend/app/schemas.py`): added `country: Locale` + derived `culture_tag`; dropped `region`; `income` → `income_quintile`; `education` → `EducationLevel`. ✅ *(PR #11)*
+4. **The sampler** — see **Sampler design** below. ⬅ *next*
 
 ## Open decisions
 
@@ -39,10 +39,44 @@ Design basis: [001](001-decide-persona-schema-and-seed.md) (esp. the 2026-07-21 
 See [`docs/research/demographic-sources.md`](../docs/research/demographic-sources.md).
 
 - **Fidelity = (B) hybrid** — the data forces it (microdata-everywhere is infeasible): **US** direct from ACS PUMS; **DE** demographics direct from **Destatis public cross-tabs** (no institutional affiliation → not IPUMS-International) + income IPF from Mikrozensus bracket cross-tabs; **JP** IPF from public e-Stat cross-tabs.
-- **Harmonization:** education → **ISCED 2011** (~5 coarse levels); income → **within-country quantiles** (not PPP — congruent-by-construction, and consistent with the no-cross-country-comparison stance).
+- **Harmonization:** education → **ISCED 2011** (3 levels: below_secondary / secondary / tertiary); income → **within-country quantiles** (not PPP — congruent-by-construction, and consistent with the no-cross-country-comparison stance).
 - **Japan income upgraded (🔴→🟡):** individual, same-frame **就業構造基本調査 (Employment Status Survey 2022)** — collects individual 所得 + 世帯所得 jointly with age×sex×education×prefecture; corroborated by **賃金構造基本統計調査** (employees-only). Removes the household→individual bridge; Japan now ~on par with Germany.
 - **Age floor = 18** (2026-07-21). Cleanest ethics/compliance posture across US/JP/DE and future-proof against the regulatory trend restricting under-18s online (e.g. Australia's under-16 social-media ban and similar pushes). Grounded (inside the D&L 16–19 band) and simplest — matches the tracer's existing `Persona.age = Field(ge=18)`, so no schema change for the floor. Documented limitation: no teen (13–17) coverage — an acceptable, increasingly regulation-aligned v1 boundary.
 - **Sub-national region dropped for v1** (2026-07-21). Kanto/Kansai/Länder/US-division level is deferred under 001's "earn their place" rule: it has a small effect on votes, isn't conditioned into Big Five (decision (i)), and was the single most expensive field to type (country-dependent vocab). The **region concept that matters is Western vs Asian**, which is `culture_tag` — a deterministic function of `country` (JP→Asian, US/DE→Western), a first-class targeting key but **derived, not a stored `Persona` field**. The sampler marginalises over sub-national region (joint over age×gender×income×education per country; congruence intact). Add sub-national region later only if targeting shows it moves results.
 - **Income = within-country quintiles (1–5)** (2026-07-21). `income: str` → `income_quintile: int = Field(ge=1, le=5)`. Quintiles (not deciles) — coarse but enough to target high/low income, and maps cleanly onto the bracketed public data.
-- **Education = ISCED 2011 collapsed to ~5 levels** (2026-07-21). `education: str` → an `EducationLevel` enum.
+- **Education = ISCED 2011 collapsed to 3 levels** (2026-07-21). `education: str` → an `EducationLevel` enum (`below_secondary` / `secondary` / `tertiary`; boundaries at high-school and university completion). Coarsened from an initial 5 — finer levels are false precision for v1's copy-engagement signal and fight the fuzziest ISCED boundaries; split later only if the manipulation check earns it.
 - **New field `country: Locale`** (US/JP/DE) — the grounding key.
+
+## Sampler design (2026-07-21 grill)
+
+**Two stages**, so the data heterogeneity (US microdata vs DE/JP cross-tabs) is quarantined in stage 1 and the sampler on top is one uniform path.
+
+### Stage 1 — build-joint (offline, per country)
+
+A **general engine**, not per-country bespoke code: `(cross-tabs, seed) → (joint, fidelity descriptor)`. Produces a compact joint distribution over `age_band × gender × education × income_quintile`.
+
+- **US** — aggregate ACS PUMS records directly (IPF degenerates to tabulation) → **exact**.
+- **DE / JP / future countries** — **IPF/raking** from whatever public cross-tabs exist, seeded with the richest available demographic cross-tab (census `age×gender×education`), raking income in. IPF implemented **in-repo** (short, unit-testable against target margins; no dependency).
+- **Income → quintile is computed here** (US: exact percentiles of continuous income; DE/JP: cumulative population share of income brackets), folded into the joint so stage 2 never sees raw income.
+- **Fidelity is declared per dimension-pair:** `observed` (some input cross-tab contains the pair) vs `imputed_independent` (no input covers it — IPF cannot invent the correlation). One engine spans the completeness spectrum: **US exact → JP high → DE medium (edu×income may be imputed) → data-poor future country low.** **Adding a country = supply its cross-tabs; the engine emits a joint + auto-declares fidelity; no new code, no "complete data" requirement.**
+- **Raw source data is NOT committed** — stage-1 scripts crunch the gigabyte sources offline into the small artifact.
+
+### The artifact (committed)
+
+Flat CSV per country (`backend/app/data/joint/{us,de,jp}.csv`), one row per occupied cell, columns `age_band, gender, education, income_quintile, weight` (~KB), plus provenance + the fidelity descriptor (source, date, exact-vs-IPF, observed/imputed pairs).
+
+- **Common `age_band` scheme across all countries — the D&L bands:** `18-19, 20-29, 30-39, 40-49, 50-59, 60-69, 70-79, 80+`. Common (not per-country) for uniform/comparable tables, easy country-addition, and end-to-end consistency with Big Five conditioning (006c). Census 5-year groups nest in; US aggregates down; youngest clipped to 18.
+
+### Stage 2 — sample (runtime, uniform, seeded)
+
+Country-agnostic pure function `(joint table, seed, N) → N × PersonaDemographics`: weighted-pick a row ∝ `weight` → **uniform-resolve `age_band` → concrete `age`** → emit. **Fixed seed → reproducible pool** (002/007). Dev at ~200/country; full pool a later batch (006f).
+
+### Output type
+
+`PersonaDemographics(BaseModel)`: `country, age, gender, income_quintile, education` — typed/validated, reuses `Locale`/`EducationLevel`. **`Persona` inherits it** (`class Persona(PersonaDemographics)` + `id, interests, big_five`) so the field defs live in one place. Big Five → 006c, interests → 006d, assembly + persistence → 006f.
+
+### Fidelity flags (carried into the 006g QC)
+
+- **DE `edu×income`** may be `imputed_independent` if no public `income×education` cross-tab exists → declared, revisit when a better table surfaces (don't block v1).
+- **Uniform-within-band** age resolution flattens the within-band age slope (worse for wide bands) — acceptable v1.
+- **JP** Employment-Status-Survey income covers employed persons; reconciling with the all-population census frame (non-employed → bottom income) is a stage-1 detail.
