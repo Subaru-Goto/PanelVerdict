@@ -80,3 +80,50 @@ Country-agnostic pure function `(joint table, seed, N) → N × PersonaDemograph
 - **DE `edu×income`** may be `imputed_independent` if no public `income×education` cross-tab exists → declared, revisit when a better table surfaces (don't block v1).
 - **Uniform-within-band** age resolution flattens the within-band age slope (worse for wide bands) — acceptable v1.
 - **JP** Employment-Status-Survey income covers employed persons; reconciling with the all-population census frame (non-employed → bottom income) is a stage-1 detail.
+
+## Data-acquisition & pipeline layout (2026-07-21 grill)
+
+Stage 1 is **offline tooling, run rarely** (only on a data-vintage update); stage 2 is the runtime app. They're cleanly separated and share data **only through committed files, never imported code**.
+
+### Layout
+
+```
+backend/
+  app/                          # runtime (stage 2); reads CSVs with stdlib csv
+    data/joint/{us,de,jp}.csv         # COMMITTED stage-1 output
+    data/joint/{us,de,jp}.meta.json   # COMMITTED provenance + fidelity sidecar
+  pipeline/                     # offline tooling (stage 1) — NOT imported by app/
+    raw/                        # GITIGNORED: downloaded PUMS / cross-tabs
+    ipf.py                      # in-repo IPF engine
+    build_{us,de,jp}.py         # raw → joint
+    README.md                   # exact sources, table IDs, vintages, how to re-run
+```
+
+- **`pipeline/` never imported by `app/`;** the dependency edge is one-way, through the committed CSVs only.
+- **Deps isolated:** pandas/numpy live in a `pipeline` uv group, *not* runtime deps — pandas never ships to production; the app stays a thin CSV reader.
+- **Storage seam:** stage 2 reads the joint through a single `load_joint(country) -> list[JointCell]` accessor, never by opening files inline — so the storage behind it (committed CSVs now → a DB later, if many countries/versions ever warrant it) is swappable in *one function*, no changes to the sampler or build scripts. (The big DB customer is the persona *pool* itself — 006f/pgvector — not these tiny input tables.)
+
+### Acquisition = manual, documented (not automated fetch)
+
+The pipeline runs rarely, so we **don't** maintain three brittle national-API integrations (Census keyless, e-Stat appID, Destatis registration). Instead: **manual download into gitignored `raw/`, per a precise `README.md` recipe** (exact table IDs, filters, vintages, save-as paths); build scripts read local files and never touch the network. **No API credentials to manage.** Reproducibility rests on documented pinning + the committed outputs, not live re-fetching.
+
+- **Committed: only the derived joint CSVs + `.meta.json`** (our transformation, a few KB). **Raw is gitignored** — US PUMS is gigabytes, and committing raw government tables raises redistribution-licensing questions. (Optional later: commit a small input to `pipeline/inputs/` if a source's license clearly permits.)
+
+### Provenance — sidecar `.meta.json` per country
+
+Structured (so 006g QC can parse fidelity programmatically): `source`, `table_id`, `vintage`, `retrieved`, `raw_checksum`, `build` script, and the `fidelity` descriptor (`exact` bool, `observed_pairs`, `imputed_independent`). CSV stays pure data.
+
+### Gender × income (pay gap) — fidelity ladder
+
+Modeled (kept, for predictive accuracy — see the "keep gender" decision). The pay gap is a **hard, cross-nationally-comparable economic statistic** (measured from earnings, not self-report), so unlike Big Five means, borrowing across countries is legitimate. Fallback ladder, each tier **declared**:
+
+1. **Full joint** `income×gender×age×education` — US (microdata), JP (Employment Status Survey).
+2. **Country's own published pay-gap marginal**, post-raked — DE (Destatis Gender Pay Gap).
+3. **OECD per-country** gender wage gap ([OECD indicator](https://www.oecd.org/en/data/indicators/gender-wage-gap.html)) — that country's real figure when its national cross-tab is absent.
+4. **OECD average** — true last resort (broader base than any two countries, so less biased than a US+JP mean). Declared as an estimate.
+
+v1 uses **tiers 1–2 only** (US/JP full joint, DE own marginal); tiers 3–4 are documented policy for future data-poorer countries. A single marginal captures the overall shift but not the age/education interaction — declared as `marginal-only`.
+
+### Build order
+
+US first (exact, no IPF — the simplest path and it validates the whole two-stage flow), then DE, then JP (IPF).
