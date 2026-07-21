@@ -61,3 +61,22 @@ After a psychometric deep-dive, two items deferred to v2 above are **promoted in
 2. **Domain inter-correlation matrix (Σ)** — candidate: a large recent open dataset (SAPA-project / IPIP) or recent meta-analysis. May supersede the directional Donnellan & Lucas 2008 priors.
 
 Field set unchanged (demographics + interests + Big Five).
+
+## Amendment (2026-07-21) — multi-region grounding, Big Five μ conditioning, and language
+
+Resolved via a design grill (feeds 006a–006f). Supersedes decision 3's implicit single-population (US ACS PUMS) assumption.
+
+**v1 is multi-region — seed three countries: Japan, US, Germany.** A synthetic-panel tool whose pool is one country can't honestly serve a marketer targeting another region. "Western" spans {US, DE}, so the coarse-targeting mechanism is genuinely exercised (a tag mapping to >1 country). All three have both Big Five grounding (DE = the GSOEP half of Donnellan & Lucas 2008; US = Soto 2011 / Kajonius & Johnson 2019 corroboration; JP = BFI-2-J) and a national census (ACS / Destatis-Eurostat / e-Stat).
+
+**Grounding key = country, not continent.** Demographics must be sampled from a real national census ("congruent by construction"); there is no "Asian" or "Western" census. So each persona is grounded in exactly one **country/locale**. Continent/culture ("Asian", "Western") is a **derived `culture_tag`** over the country key, used only for coarse *targeting* — the targeting vocabulary stays coarse while the grounding key stays country-precise. A coarse request ("Asian audience") resolves to the seeded countries carrying that tag; **coverage = the seed list** (unseeded regions/countries return empty — a 007 concern).
+
+- **Schema implication (006b):** add a top-level **country/locale** field (grounding key) + a derived **culture_tag**; the existing `region` field becomes **sub-national** geography whose vocabulary is country-dependent (US Census division vs Japanese region). All three are currently free `str` → typed in 006b.
+- **Pool sizing:** each country is an independent 001-style pool (5,000 full / ~200 dev subset). Develop + demo at **~200/country**; full per-country size is a tunable one-shot batch (006f). Adding personas or **new countries later is a data/config operation** (census + culture_tag), not a rewrite — the pipeline is country-parameterized.
+
+**Big Five μ conditioning — decision (i): country does NOT condition μ.** Every country uses the **same shared age/gender z-scored contrasts** (Donnellan & Lucas 2008; see 006a research note). Considered and rejected:
+- **(iii) per-country *absolute* means** ("Japanese lower on Extraversion than Americans") — the **reference-group-effect artifact** this ticket already excluded (Heine et al. 2002; McCrae & Terracciano 2005; Terracciano et al. 2005). Ruled out.
+- **(ii) per-country contrasts, each z-scored *within its own country*** — dodges the artifact (no cross-national level comparison) and would *use* the Japan sources, but rejected for v1: Japan's per-country norm data is weak (BFI-2-J = 2 age bands, N=500), the age/gender structure is ~universal (maturity principle replicates cross-culturally; Bleidorn et al. 2013), and it would turn every future country into a per-country norm research project (undercutting cheap expansion).
+
+Culture's *behavioral* effect on votes enters through **demographics + interests + the LLM enacting a culturally-situated persona**, not a Big Five mean shift. The Japan sources (BFI-2-J etc.) are retained as **validation checks** that the structure + age direction hold there (they do — older Japanese show lower N, higher C/A/O, matching D&L).
+
+**Language is not an engineered generation channel.** The test's language is carried by the marketer's **headline input**; the panel model (gpt-5-mini) is natively multilingual and evaluates it as-is — nothing to build. Persona prompts stay **English** for v1; language-matched persona rendering (+ reasoning) is a deferred **fidelity refinement** tied to the reason-quality eval (006). Language selection lives at the **frontend/presentation layer** — the marketer views the report and chats with the analyst in a chosen language (i18n at 011/012).
