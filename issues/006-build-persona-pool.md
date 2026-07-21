@@ -22,7 +22,7 @@ Delivered as an idempotent seed script (safe to re-run).
 
 This is an **umbrella** — the build is split into small, independently reviewable slices. Per-slice scope + open decisions live in each child ticket; the design basis for all of them is [001](001-decide-persona-schema-and-seed.md). 006 closes when every child closes.
 
-- [ ] [006a](006a-seed-data-research.md) — seed-data research: μ (age×gender norms) + Σ (inter-trait correlation matrix)
+- [x] [006a](006a-seed-data-research.md) — seed-data research: μ (age×gender norms) + Σ (inter-trait correlation matrix) — *done, PR #9*
 - [ ] [006b](006b-demographics-sampler.md) — demographics sampler (ACS PUMS); settle age floor; type demographic fields
 - [ ] [006c](006c-bigfive-sampler.md) — Big Five correlated-MVN sampler → enum buckets *(blocked by 006a)*
 - [ ] [006d](006d-interests-synthesis.md) — interests synthesis + embeddings *(blocked by 006b, 006c)*

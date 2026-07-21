@@ -4,7 +4,7 @@ labels: [wayfinder:research]
 parent: 006-build-persona-pool
 blocked_by: []
 assignee: null
-status: open
+status: closed
 ---
 
 ## Question
@@ -30,3 +30,7 @@ A cited note — `docs/research/persona-seed-data.md` — containing:
 - **Σ** as a 5×5 correlation matrix (with the source sample described).
 - Every figure attributed to a dated, primary source; note any conflicts and which we adopt and why.
 - A short statement of how buckets are derived from the realized sample (continuous → `TraitLevel` LOW/MEDIUM/HIGH), so 006c has an unambiguous rule.
+
+## Done (2026-07-21, PR #9)
+
+Delivered [`docs/research/persona-seed-data.md`](../docs/research/persona-seed-data.md): μ ← Donnellan & Lucas 2008 (age×gender z-scores), Σ ← van der Linden et al. 2010 (5×5 observed r), fixed ±0.5 bucketize, drop-in Python block, confidence flags. Under the 001 multi-region amendment (decision (i)) these are **shared age/gender contrasts across JP/US/DE** — not per-country; Japan/US sources serve as validation checks.
