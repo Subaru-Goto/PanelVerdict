@@ -42,11 +42,9 @@ COUNTRY_CULTURE_TAG: dict[Locale, CultureTag] = {
 
 
 class EducationLevel(str, Enum):
-    LOWER_SECONDARY = "lower_secondary"  # ISCED 0–2
-    UPPER_SECONDARY = "upper_secondary"  # ISCED 3
-    POST_SECONDARY = "post_secondary"  # ISCED 4, post-secondary non-tertiary
-    BACHELOR = "bachelor"  # ISCED 5–6
-    MASTER_PLUS = "master_plus"  # ISCED 7–8
+    BELOW_SECONDARY = "below_secondary"  # ISCED 0–2, no secondary completion
+    SECONDARY = "secondary"  # ISCED 3–4, secondary done, no university degree
+    TERTIARY = "tertiary"  # ISCED 5–8, university degree or higher
 
 
 class Persona(BaseModel):

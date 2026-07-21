@@ -14,7 +14,7 @@ def _persona(pid: str) -> Persona:
         age=30,
         gender="male",
         income_quintile=3,
-        education="upper_secondary",
+        education="secondary",
         interests=["x"],
         big_five=BigFive(
             openness="low",

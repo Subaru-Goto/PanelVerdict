@@ -43,11 +43,9 @@ _COUNTRY_NAME: dict[Locale, str] = {
 }
 
 _EDUCATION_PHRASE: dict[EducationLevel, str] = {
-    EducationLevel.LOWER_SECONDARY: "left school before finishing secondary education",
-    EducationLevel.UPPER_SECONDARY: "finished secondary school",
-    EducationLevel.POST_SECONDARY: "did some post-secondary or vocational study",
-    EducationLevel.BACHELOR: "hold a bachelor's degree",
-    EducationLevel.MASTER_PLUS: "hold a postgraduate degree",
+    EducationLevel.BELOW_SECONDARY: "left school before finishing secondary education",
+    EducationLevel.SECONDARY: "finished secondary school but didn't go to university",
+    EducationLevel.TERTIARY: "hold a university degree",
 }
 
 
@@ -85,7 +83,7 @@ FIXED_PANEL: list[Persona] = [
         age=34,
         gender="female",
         income_quintile=3,
-        education="bachelor",
+        education="tertiary",
         interests=["trail running", "indie podcasts", "home cooking"],
         big_five=BigFive(
             openness="high",
@@ -104,7 +102,7 @@ FIXED_PANEL: list[Persona] = [
         age=24,
         gender="male",
         income_quintile=2,
-        education="post_secondary",
+        education="secondary",
         interests=["weightlifting", "personal budgeting", "restoring old cars"],
         big_five=BigFive(
             openness="low",
@@ -120,7 +118,7 @@ FIXED_PANEL: list[Persona] = [
         age=61,
         gender="female",
         income_quintile=4,
-        education="master_plus",
+        education="tertiary",
         interests=["contemporary art", "learning Italian", "birdwatching"],
         big_five=BigFive(
             openness="high",
@@ -136,7 +134,7 @@ FIXED_PANEL: list[Persona] = [
         age=47,
         gender="male",
         income_quintile=3,
-        education="upper_secondary",
+        education="secondary",
         interests=["fishing", "classic rock", "grilling"],
         big_five=BigFive(
             openness="medium",
@@ -152,7 +150,7 @@ FIXED_PANEL: list[Persona] = [
         age=29,
         gender="female",
         income_quintile=4,
-        education="bachelor",
+        education="tertiary",
         interests=["real estate", "home fitness", "true-crime podcasts"],
         big_five=BigFive(
             openness="medium",
