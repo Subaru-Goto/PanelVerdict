@@ -3,7 +3,7 @@ import random
 import pytest
 
 from app.sampler import JointCell, _resolve_age, load_joint, sample_demographics
-from app.schemas import Locale, PersonaDemographics
+from app.schemas import EducationLevel, Locale, PersonaDemographics
 
 
 @pytest.fixture
@@ -17,6 +17,24 @@ def joint_file(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("app.sampler._JOINT_DIR", tmp_path)
     return tmp_path
+
+
+@pytest.mark.parametrize(
+    ("band", "low", "high"),
+    [("20-29", 20, 29), ("80+", 80, 100), ("18-19", 18, 19)],
+)
+def test_resolve_age_stays_within_band(band, low, high):
+    rng = random.Random(0)
+    ages = [_resolve_age(band, EducationLevel.SECONDARY, rng) for _ in range(50)]
+    assert all(low <= age <= high for age in ages)
+
+
+def test_resolve_age_tertiary_never_below_21():
+    # "20-29" + tertiary would otherwise emit 20-year-old graduates
+    rng = random.Random(0)
+    ages = [_resolve_age("20-29", EducationLevel.TERTIARY, rng) for _ in range(200)]
+    assert min(ages) >= 21
+    assert max(ages) <= 29
 
 
 def test_load_joint_skips_comments_and_validates(joint_file):
@@ -46,12 +64,3 @@ def test_sample_weights_bias_the_draw(joint_file):
     people = sample_demographics(Locale.US, 1000, seed=2)
     twenties = sum(1 for p in people if 20 <= p.age <= 29)
     assert twenties > len(people) * 0.4
-
-
-@pytest.mark.parametrize(
-    ("band", "low", "high"),
-    [("20-29", 20, 29), ("80+", 80, 100), ("18-19", 18, 19)],
-)
-def test_resolve_age_stays_within_band(band, low, high):
-    rng = random.Random(0)
-    assert all(low <= _resolve_age(band, rng) <= high for _ in range(50))

@@ -16,6 +16,10 @@ from app.schemas import EducationLevel, Locale, PersonaDemographics
 
 _JOINT_DIR = Path(__file__).parent / "data" / "joint"
 
+# Earliest age a bachelor's can plausibly be held (3-year degrees, e.g. Germany).
+# One global floor rather than a per-country table we can't maintain at scale.
+_MIN_TERTIARY_AGE = 21
+
 
 class JointCell(BaseModel):
     """One cell of a country's joint distribution (a row of its committed CSV)."""
@@ -40,13 +44,22 @@ def load_joint(country: Locale) -> list[JointCell]:
         return [JointCell.model_validate(row) for row in reader]
 
 
-def _resolve_age(age_band: str, rng: random.Random) -> int:
-    """Pick a concrete age uniformly within a band ("20-29", or open-ended "80+")."""
+def _resolve_age(age_band: str, education: EducationLevel, rng: random.Random) -> int:
+    """Pick a concrete age uniformly within a band ("20-29", or open-ended "80+").
+
+    Tertiary is floored at `_MIN_TERTIARY_AGE`: uniform-within-band would otherwise
+    emit degree holders too young to have plausibly finished university.
+    """
     if age_band.endswith("+"):
-        # The data has no upper bound here; cap at Persona's max age.
-        return rng.randint(int(age_band[:-1]), 100)
-    low, high = age_band.split("-")
-    return rng.randint(int(low), int(high))
+        # No upper bound in the data; cap at Persona's max age.
+        low, high = int(age_band[:-1]), 100
+    else:
+        lo, hi = age_band.split("-")
+        low, high = int(lo), int(hi)
+    if education is EducationLevel.TERTIARY:
+        # Floor tertiary, but never past the band's top (guards impossible cells).
+        low = min(max(low, _MIN_TERTIARY_AGE), high)
+    return rng.randint(low, high)
 
 
 def sample_demographics(
@@ -64,7 +77,7 @@ def sample_demographics(
     return [
         PersonaDemographics(
             country=country,
-            age=_resolve_age(cell.age_band, rng),
+            age=_resolve_age(cell.age_band, cell.education, rng),
             gender=cell.gender,
             income_quintile=cell.income_quintile,
             education=cell.education,

@@ -7,7 +7,11 @@ import pandas as pd  # noqa: E402
 from app.schemas import Locale  # noqa: E402
 from app.sampler import sample_demographics  # noqa: E402
 from pipeline import build_us  # noqa: E402
-from pipeline.build_us import _age_band, _education_level, assign_income_quintile  # noqa: E402
+from pipeline.build_us import (  # noqa: E402
+    _age_band,
+    _education_level,
+    assign_income_quintile,
+)
 
 
 @pytest.mark.parametrize(
