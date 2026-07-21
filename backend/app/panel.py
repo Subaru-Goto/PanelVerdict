@@ -1,4 +1,4 @@
-from app.schemas import BigFive, Persona, TraitLevel
+from app.schemas import BigFive, EducationLevel, Locale, Persona, TraitLevel
 
 _TRAIT_PHRASES: dict[str, dict[TraitLevel, str]] = {
     "openness": {
@@ -36,6 +36,30 @@ def _join_with_and(items: list[str]) -> str:
     return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
+_COUNTRY_NAME: dict[Locale, str] = {
+    Locale.US: "the United States",
+    Locale.JP: "Japan",
+    Locale.DE: "Germany",
+}
+
+_EDUCATION_PHRASE: dict[EducationLevel, str] = {
+    EducationLevel.LOWER_SECONDARY: "left school before finishing secondary education",
+    EducationLevel.UPPER_SECONDARY: "finished secondary school",
+    EducationLevel.POST_SECONDARY: "did some post-secondary or vocational study",
+    EducationLevel.BACHELOR: "hold a bachelor's degree",
+    EducationLevel.MASTER_PLUS: "hold a postgraduate degree",
+}
+
+
+def _income_band(quintile: int) -> str:
+    """Quintile → relative income band; income is ranked within the person's own country."""
+    if quintile <= 2:
+        return "the lower income range"
+    if quintile == 3:
+        return "the middle income range"
+    return "the upper income range"
+
+
 def render_persona_prompt(persona: Persona) -> str:
     """Render a persona into its natural-language system prompt.
 
@@ -47,7 +71,8 @@ def render_persona_prompt(persona: Persona) -> str:
     )
     return (
         f"You are a {persona.age}-year-old {persona.gender} living in "
-        f"{persona.region}, with {persona.income} income and {persona.education}. "
+        f"{_COUNTRY_NAME[persona.country]}. You {_EDUCATION_PHRASE[persona.education]}, "
+        f"and your income is in {_income_band(persona.income_quintile)} for your country. "
         f"In your spare time you're into {_join_with_and(persona.interests)}. "
         f"By temperament, you're {dispositions}."
     )
@@ -56,11 +81,11 @@ def render_persona_prompt(persona: Persona) -> str:
 FIXED_PANEL: list[Persona] = [
     Persona(
         id="p1",
+        country="US",
         age=34,
         gender="female",
-        region="Pacific Northwest, US",
-        income="middle",
-        education="bachelor's degree",
+        income_quintile=3,
+        education="bachelor",
         interests=["trail running", "indie podcasts", "home cooking"],
         big_five=BigFive(
             openness="high",
@@ -75,11 +100,11 @@ FIXED_PANEL: list[Persona] = [
     # midlifer, a driven woman with mainstream tastes.
     Persona(
         id="p2",
+        country="US",
         age=24,
         gender="male",
-        region="Midwest, US",
-        income="low",
-        education="some college",
+        income_quintile=2,
+        education="post_secondary",
         interests=["weightlifting", "personal budgeting", "restoring old cars"],
         big_five=BigFive(
             openness="low",
@@ -91,11 +116,11 @@ FIXED_PANEL: list[Persona] = [
     ),
     Persona(
         id="p3",
+        country="US",
         age=61,
         gender="female",
-        region="Northeast, US",
-        income="high",
-        education="graduate degree",
+        income_quintile=4,
+        education="master_plus",
         interests=["contemporary art", "learning Italian", "birdwatching"],
         big_five=BigFive(
             openness="high",
@@ -107,11 +132,11 @@ FIXED_PANEL: list[Persona] = [
     ),
     Persona(
         id="p4",
+        country="US",
         age=47,
         gender="male",
-        region="South, US",
-        income="middle",
-        education="high school",
+        income_quintile=3,
+        education="upper_secondary",
         interests=["fishing", "classic rock", "grilling"],
         big_five=BigFive(
             openness="medium",
@@ -123,11 +148,11 @@ FIXED_PANEL: list[Persona] = [
     ),
     Persona(
         id="p5",
+        country="US",
         age=29,
         gender="female",
-        region="Southwest, US",
-        income="high",
-        education="bachelor's degree",
+        income_quintile=4,
+        education="bachelor",
         interests=["real estate", "home fitness", "true-crime podcasts"],
         big_five=BigFive(
             openness="medium",
