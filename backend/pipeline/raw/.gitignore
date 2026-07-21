@@ -1,0 +1,4 @@
+# Raw source data is never committed (gigabytes + redistribution licensing).
+# Keep the directory, ignore its contents.
+*
+!.gitignore

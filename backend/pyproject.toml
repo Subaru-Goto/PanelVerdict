@@ -23,3 +23,8 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.15.22",
 ]
+# Offline data pipeline only (stage 1). NOT runtime deps — the app reads the
+# committed joint CSVs with stdlib csv. Install with `uv sync --group pipeline`.
+pipeline = [
+    "pandas>=2.2.0",
+]
