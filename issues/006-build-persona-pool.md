@@ -18,6 +18,18 @@ Generate the v1 persona pool per the 001 schema:
 
 Delivered as an idempotent seed script (safe to re-run).
 
+## Children
+
+This is an **umbrella** — the build is split into small, independently reviewable slices. Per-slice scope + open decisions live in each child ticket; the design basis for all of them is [001](001-decide-persona-schema-and-seed.md). 006 closes when every child closes.
+
+- [ ] [006a](006a-seed-data-research.md) — seed-data research: μ (age×gender norms) + Σ (inter-trait correlation matrix)
+- [ ] [006b](006b-demographics-sampler.md) — demographics sampler (ACS PUMS); settle age floor; type demographic fields
+- [ ] [006c](006c-bigfive-sampler.md) — Big Five correlated-MVN sampler → enum buckets *(blocked by 006a)*
+- [ ] [006d](006d-interests-synthesis.md) — interests synthesis + embeddings *(blocked by 006b, 006c)*
+- [ ] [006e](006e-content-checks.md) — content checks: validation, injection screen, anti-stereotype audit *(blocked by 006d)*
+- [ ] [006f](006f-persistence.md) — persistence: Postgres + pgvector + idempotent seed script *(blocked by 006b–006e)*
+- [ ] [006g](006g-pool-overview.md) — pool-overview QC artifact *(blocked by 006f)*
+
 ## Decided (from ticket 001)
 
 - **v1 fields:** demographics (age, gender, income, education, region) + interests + Big Five (O/C/E/A/N). NFC/maximizing/CSII are NOT in v1 (earned later via the manipulation check).
@@ -33,11 +45,3 @@ Delivered as an idempotent seed script (safe to re-run).
   3. **anti-stereotype audit** — measure demographic→interest concentration; flag/regenerate over-concentrated slices (prompt-time anti-stereotype constraints help but the statistical audit is what catches it).
 - **Pool overview (QC artifact):** emit distributions vs. targets (demographics vs. ACS; Big Five vs. priors), interest frequency + diversity with stereotype-concentration flags, and browse individual personas. Overlaps the `search_personas` tool (ticket 012) — audit = aggregate view, tool = drill-down.
 - **Validate at the population level** (pool proportions match seed sources), never per-persona.
-
-## Open decisions (decide here, with the real data in front of you)
-
-- **Age floor.** The tracer (005) defaults `Persona.age` to `ge=18`, but this was a conservative placeholder, not a decision. Settle it here — it's a three-way trade-off:
-  - *Market coverage* — teens (13–17) are a real marketing audience; an 18+ pool can't serve advertisers targeting them, even though ACS PUMS has the data.
-  - *Psychometric grounding* — the 001 Big Five norms (BFI-2, age-conditioned) are validated on adults; conditioning minors' traits extrapolates past the seed data, so personas get less grounded exactly for under-18s.
-  - *Ethics/compliance* — simulating minors for marketing testing touches COPPA (<13) and ad-to-minors standards; 18+ sidesteps it.
-  - Whatever is chosen, update the `Persona.age` constraint in `backend/app/schemas.py` to match.
