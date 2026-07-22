@@ -1,6 +1,7 @@
 import random
 
 import pytest
+from pydantic import ValidationError
 
 from app.sampler import JointCell, _resolve_age, load_joint, sample_demographics
 from app.schemas import EducationLevel, Locale, PersonaDemographics
@@ -9,7 +10,6 @@ from app.schemas import EducationLevel, Locale, PersonaDemographics
 @pytest.fixture
 def joint_file(tmp_path, monkeypatch):
     (tmp_path / "us.csv").write_text(
-        "# provenance: test fixture\n"
         "age_band,gender,education,income_quintile,weight\n"
         "20-29,female,tertiary,4,0.5\n"
         "30-39,male,secondary,2,0.3\n"
@@ -37,11 +37,21 @@ def test_resolve_age_tertiary_never_below_21():
     assert max(ages) <= 29
 
 
-def test_load_joint_skips_comments_and_validates(joint_file):
+def test_load_joint_parses_and_validates(joint_file):
     cells = load_joint(Locale.US)
     assert len(cells) == 3
     assert all(isinstance(c, JointCell) for c in cells)
     assert cells[0].age_band == "20-29"
+
+
+def test_load_joint_rejects_a_malformed_row(tmp_path, monkeypatch):
+    (tmp_path / "us.csv").write_text(
+        "age_band,gender,education,income_quintile,weight\n"
+        "20-29,female,tertiary,9,0.5\n"  # quintile 9 is out of range
+    )
+    monkeypatch.setattr("app.sampler._JOINT_DIR", tmp_path)
+    with pytest.raises(ValidationError):
+        load_joint(Locale.US)
 
 
 def test_sample_is_deterministic_per_seed(joint_file):

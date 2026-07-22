@@ -39,9 +39,7 @@ def load_joint(country: Locale) -> list[JointCell]:
     """
     path = _JOINT_DIR / f"{country.value.lower()}.csv"
     with path.open(newline="") as f:
-        # Provenance may be carried in leading '#' lines; skip them before the header.
-        reader = csv.DictReader(line for line in f if not line.startswith("#"))
-        return [JointCell.model_validate(row) for row in reader]
+        return [JointCell.model_validate(row) for row in csv.DictReader(f)]
 
 
 def _resolve_age(age_band: str, education: EducationLevel, rng: random.Random) -> int:
