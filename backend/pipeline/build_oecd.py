@@ -1,8 +1,8 @@
-"""Stage 1 — build a country's joint from the OECD SDMX API (+ World Bank PIP for income).
+"""Stage 1 — build a country's demographic joint from the OECD SDMX API.
 
-Replaces the per-country national builders: one keyless API, queried by country code.
-`age × gender × education` come as direct OECD cross-tabs (education native ISCED-2011);
-income attaches as an imputed marginal (declared). Design: issues/006b (2026-07-22 amendment).
+One keyless API, queried by country code. `age × gender × education` come as
+direct OECD cross-tabs (education native ISCED-2011); income attaches as an
+imputed marginal (declared). Design: issues/006b.
 """
 
 import csv

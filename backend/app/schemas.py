@@ -48,10 +48,7 @@ class EducationLevel(str, Enum):
 
 
 class PersonaDemographics(BaseModel):
-    """The demographic core a persona is grounded on — what the 006b sampler emits.
-
-    Big Five (006c) and interests (006d) are added later; `Persona` extends this.
-    """
+    """The demographic core a persona is grounded on — what the sampler emits."""
 
     country: Locale
     age: int = Field(ge=18, le=100)
