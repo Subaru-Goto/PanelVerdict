@@ -12,6 +12,7 @@ from pipeline.build_oecd import (
     _edu_band_for_5yr,
     _education_is_incomplete,
     _INCOME_SPLIT,
+    _rake_income,
     _isced_to_education,
     _ref_area,
     _sex_to_gender,
@@ -126,6 +127,43 @@ def test_attach_income_skews_with_education():
     # off-diagonal argument needs, and no row collapses onto a single quintile.
     assert joint[("40-49", "male", top, 5)] > joint[("40-49", "male", top, 1)]
     assert joint[("40-49", "male", bottom, 1)] > joint[("40-49", "male", bottom, 5)]
+
+
+def _skewed_joint() -> dict[tuple[str, str, EducationLevel, int], float]:
+    # two cells of 100 each whose splits skew opposite ways, so the raw quintile
+    # marginal is non-uniform (q1=43 ... q5=35) — something to rake.
+    tertiary = [8.0, 14.0, 20.0, 28.0, 30.0]
+    below = [35.0, 28.0, 20.0, 12.0, 5.0]
+    joint: dict[tuple[str, str, EducationLevel, int], float] = {}
+    for q in range(1, 6):
+        joint[("30-39", "male", EducationLevel.TERTIARY, q)] = tertiary[q - 1]
+        joint[("30-39", "male", EducationLevel.BELOW_SECONDARY, q)] = below[q - 1]
+    return joint
+
+
+def test_rake_income_makes_quintiles_uniform():
+    raked = _rake_income(_skewed_joint())
+    total = sum(raked.values())
+    for q in range(1, 6):
+        share = sum(w for (*_, qq), w in raked.items() if qq == q) / total
+        assert share == pytest.approx(0.20, abs=1e-6)
+
+
+def test_rake_income_preserves_cell_totals():
+    joint = _skewed_joint()
+    raked = _rake_income(joint)
+    for edu in (EducationLevel.TERTIARY, EducationLevel.BELOW_SECONDARY):
+        before = sum(w for (_, _, e, _), w in joint.items() if e == edu)
+        after = sum(w for (_, _, e, _), w in raked.items() if e == edu)
+        assert after == pytest.approx(before)  # real demographics must not move
+
+
+def test_rake_income_preserves_education_income_association():
+    raked = _rake_income(_skewed_joint())
+    ter = {q: raked[("30-39", "male", EducationLevel.TERTIARY, q)] for q in range(1, 6)}
+    low = {q: raked[("30-39", "male", EducationLevel.BELOW_SECONDARY, q)] for q in range(1, 6)}
+    assert ter[5] > ter[1]  # tertiary still skews high after raking
+    assert low[1] > low[5]  # below-secondary still skews low
 
 
 def test_income_splits_are_valid_distributions():

@@ -5,16 +5,16 @@
     "OECD.EDU.IMEP,DSD_EAG_LSO_EA@DF_LSO_NEAC_DISTR_EA"
   ],
   "income_marginal": [
-    0.1481727759157085,
-    0.18177896706361132,
-    0.2072338853290661,
-    0.23638625782962489,
-    0.22642811386198924
+    0.2,
+    0.2,
+    0.2,
+    0.2,
+    0.2
   ],
   "imputations": [
     "education below 25 and 65+ borrow the nearest observed band (25-34 / 55-64)",
     "18-19 taken as 2/5 of the 15-19 population band",
-    "income quintile conditioned on education only, via a fixed prior",
+    "income quintile conditioned on education (fixed prior), then raked to a uniform 20% marginal",
     "missing attainment level(s) completed from peers (US, DE)"
   ]
 }

@@ -51,7 +51,8 @@ _EDU_ATTAIN = "ISCED11A_0T2+ISCED11A_3_4+ISCED11A_5T8"
 _IMPUTATIONS = [
     "education below 25 and 65+ borrow the nearest observed band (25-34 / 55-64)",
     "18-19 taken as 2/5 of the 15-19 population band",
-    "income quintile conditioned on education only, via a fixed prior",
+    "income quintile conditioned on education (fixed prior), then raked to a "
+    "uniform 20% marginal",
 ]
 
 # High-completion peers whose below/secondary split stands in when a country
@@ -101,7 +102,7 @@ def build_oecd(country: Locale, *, fetch: Callable[[str], str]) -> "BuildResult"
             f"missing attainment level(s) completed from peers ({names})"
         )
 
-    joint = attach_income(combine(population, education))
+    joint = _rake_income(attach_income(combine(population, education)))
     rows = [
         JointCell(
             age_band=band,
@@ -312,6 +313,40 @@ def attach_income(
         for quintile, share in enumerate(_INCOME_SPLIT[edu], start=1):
             joint[(band, gender, edu, quintile)] = weight * share
     return joint
+
+
+def _rake_income(
+    joint: dict[tuple[str, str, EducationLevel, int], float],
+) -> dict[tuple[str, str, EducationLevel, int], float]:
+    """Rake the income split so quintiles are a true 20% each of the population.
+
+    The fixed prior leaves the population-weighted quintile marginal off 20%
+    (worse for high-tertiary countries). IPF reconciles two constraints — each
+    age×gender×education cell keeps its real total, and every quintile sums to
+    20% overall — adjusting only the within-cell split. It preserves the
+    education→income association (odds ratios), so tertiary still skews high.
+    """
+    cells = {(band, gender, edu) for (band, gender, edu, _) in joint}
+    quintiles = range(1, 6)
+    target_col = sum(joint.values()) / 5
+    target_row = {cell: sum(joint[(*cell, q)] for q in quintiles) for cell in cells}
+
+    raked = dict(joint)
+    for _ in range(100):
+        col_sum = {q: sum(raked[(*cell, q)] for cell in cells) for q in quintiles}
+        for cell in cells:
+            for q in quintiles:
+                raked[(*cell, q)] *= target_col / col_sum[q]
+        for cell in cells:
+            row_sum = sum(raked[(*cell, q)] for q in quintiles)
+            for q in quintiles:
+                raked[(*cell, q)] *= target_row[cell] / row_sum
+        drift = max(
+            abs(sum(raked[(*cell, q)] for cell in cells) - target_col) for q in quintiles
+        )
+        if drift < 1e-9:
+            break
+    return raked
 
 
 def _floor_fraction(group: str) -> float:
