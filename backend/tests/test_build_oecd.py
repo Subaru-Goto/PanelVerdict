@@ -248,6 +248,14 @@ def test_complete_education_from_peers_fills_only_the_missing_level():
     assert filled[(*cell, "ISCED11A_0T2")] == pytest.approx(0.15)  # 1 - .30 - .55
 
 
+def test_complete_education_from_peers_fails_loud_on_incomplete_peer():
+    cell = ("Y25T34", "M")
+    target = {(*cell, "ISCED11A_5T8"): 0.60}  # needs below + secondary
+    bad_peer = {(*cell, "ISCED11A_0T2"): 0.10, (*cell, "ISCED11A_5T8"): 0.50}  # no secondary
+    with pytest.raises(ValueError, match="peer"):
+        _complete_education_from_peers(target, [bad_peer])
+
+
 def test_build_oecd_wires_fixtures_into_joint_rows():
     pop_text = (_FIXTURES / "oecd_population_usa.csv").read_text()
     edu_text = (_FIXTURES / "oecd_education_usa.csv").read_text()

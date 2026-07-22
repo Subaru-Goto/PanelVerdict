@@ -239,10 +239,14 @@ def _complete_education_from_peers(
         if not missing:
             continue
         missing_mass = 1.0 - sum(reported.values())
-        peer_share = {
-            isced: sum(peer[(age, sex, isced)] for peer in peers) / len(peers)
-            for isced in missing
-        }
+        peer_share = {}
+        for isced in missing:
+            if any((age, sex, isced) not in peer for peer in peers):
+                raise ValueError(
+                    f"a peer lacks {isced} at {(age, sex)}; it cannot supply the "
+                    "split — choose peers that report every level"
+                )
+            peer_share[isced] = sum(peer[(age, sex, isced)] for peer in peers) / len(peers)
         total = sum(peer_share.values())
         for isced in missing:
             filled[(age, sex, isced)] = missing_mass * peer_share[isced] / total
@@ -328,21 +332,24 @@ def _rake_income(
     """
     cells = {(band, gender, edu) for (band, gender, edu, _) in joint}
     quintiles = range(1, 6)
-    target_col = sum(joint.values()) / 5
-    target_row = {cell: sum(joint[(*cell, q)] for q in quintiles) for cell in cells}
+    target_quintile_mass = sum(joint.values()) / 5
+    cell_total = {cell: sum(joint[(*cell, q)] for q in quintiles) for cell in cells}
 
     raked = dict(joint)
     for _ in range(100):
-        col_sum = {q: sum(raked[(*cell, q)] for cell in cells) for q in quintiles}
+        # pass 1: scale each quintile column to a uniform 20% of the population
+        quintile_sum = {q: sum(raked[(*cell, q)] for cell in cells) for q in quintiles}
         for cell in cells:
             for q in quintiles:
-                raked[(*cell, q)] *= target_col / col_sum[q]
+                raked[(*cell, q)] *= target_quintile_mass / quintile_sum[q]
+        # pass 2: scale each cell's row back to its real (age×gender×education) total
         for cell in cells:
-            row_sum = sum(raked[(*cell, q)] for q in quintiles)
+            cell_sum = sum(raked[(*cell, q)] for q in quintiles)
             for q in quintiles:
-                raked[(*cell, q)] *= target_row[cell] / row_sum
+                raked[(*cell, q)] *= cell_total[cell] / cell_sum
         drift = max(
-            abs(sum(raked[(*cell, q)] for cell in cells) - target_col) for q in quintiles
+            abs(sum(raked[(*cell, q)] for cell in cells) - target_quintile_mass)
+            for q in quintiles
         )
         if drift < 1e-9:
             break
