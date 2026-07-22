@@ -5,6 +5,8 @@ Replaces the per-country national builders: one keyless API, queried by country 
 income attaches as an imputed marginal (declared). Design: issues/006b (2026-07-22 amendment).
 """
 
+import csv
+import io
 from collections import defaultdict
 
 from app.schemas import EducationLevel
@@ -17,6 +19,19 @@ _ISCED_TO_EDUCATION = {
     "ISCED11A_3_4": EducationLevel.SECONDARY,
     "ISCED11A_5T8": EducationLevel.TERTIARY,
 }
+
+
+def parse_sdmx_csv(text: str, dims: tuple[str, ...]) -> dict[tuple[str, ...], float]:
+    """Read an SDMX-CSV response into OBS_VALUE keyed by the given dimensions.
+
+    Stays format-dumb: it only knows the SDMX-CSV convention of one column per
+    dimension plus an OBS_VALUE column. Which dimensions form the key, and any
+    scaling of the value, are the caller's concern.
+    """
+    reader = csv.DictReader(io.StringIO(text))
+    return {
+        tuple(row[dim] for dim in dims): float(row["OBS_VALUE"]) for row in reader
+    }
 
 
 def _isced_to_education(code: str) -> EducationLevel:

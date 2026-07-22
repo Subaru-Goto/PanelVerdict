@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from app.schemas import EducationLevel
@@ -9,7 +11,10 @@ from pipeline.build_oecd import (
     _sex_to_gender,
     attach_income,
     combine,
+    parse_sdmx_csv,
 )
+
+_FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.mark.parametrize(
@@ -118,3 +123,17 @@ def test_income_splits_are_valid_distributions():
     for split in _INCOME_SPLIT.values():
         assert len(split) == 5
         assert sum(split) == pytest.approx(1.0)
+
+
+def test_parse_sdmx_csv_keys_population_by_age_and_sex():
+    text = (_FIXTURES / "oecd_population_usa.csv").read_text()
+    pop = parse_sdmx_csv(text, ("AGE", "SEX"))
+    assert pop[("Y40T44", "M")] == pytest.approx(10967569.0)
+    assert len(pop) == 30  # 15 five-year groups x 2 sexes
+
+
+def test_parse_sdmx_csv_keys_education_by_age_sex_attainment():
+    text = (_FIXTURES / "oecd_education_usa.csv").read_text()
+    edu = parse_sdmx_csv(text, ("AGE", "SEX", "ATTAINMENT_LEV"))
+    assert edu[("Y25T34", "F", "ISCED11A_5T8")] == pytest.approx(57.22052002)
+    assert len(edu) == 24  # 4 age bands x 2 sexes x 3 attainment levels
