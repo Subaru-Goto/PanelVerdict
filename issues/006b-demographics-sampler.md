@@ -127,3 +127,14 @@ v1 uses **tiers 1–2 only** (US/JP full joint, DE own marginal); tiers 3–4 ar
 ### Build order
 
 US first (exact, no IPF — the simplest path and it validates the whole two-stage flow), then DE, then JP (IPF).
+
+## Amendment (2026-07-22) — pivot to OECD as a single harmonized source
+
+Supersedes the per-country national-source plan above (ACS PUMS / Destatis / e-Stat) and its per-country manual downloads. Research: [`docs/research/oecd-demographic-data.md`](../docs/research/oecd-demographic-data.md) (verified against the live OECD SDMX API).
+
+**Why:** per-country acquisition (a separate manual download + adapter each) doesn't scale. Instead, one harmonized programmatic source queried by country code.
+
+- **OECD SDMX REST API** (`sdmx.oecd.org/public/rest`) — **public, keyless**, one query grammar. Supplies **`age × gender × education` as direct cross-tabs**, education **native ISCED-2011** (`0T2 / 3_4 / 5T8` = our below/secondary/tertiary — the per-country education crosswalk is gone). Adding a country later = a query, not a new source.
+- **Income is the accepted weak point.** The OECD IDD has **no sex and no education dimension** — income can't be crossed with demographics anywhere in OECD (or in published aggregate data generally). So income enters as a **country marginal**; `education×income` is **imputed-independent**, `gender×income` is a pay-gap-ratio tilt, `age×income` is coarse (working/retired). This is the intrinsic price of no-per-country-microdata, and it's **declared** in the fidelity descriptor. **World Bank PIP** (keyless, 160+ countries) is the income-decile + non-member fallback.
+- **Supersedes:** the three per-country builders collapse into one **`build_oecd(country)`**; the PUMS `build_us.py` is removed. The `age×gender×education` block is *directly observed* (less IPF than planned); IPF/independence only attaches the income marginal.
+- **Unchanged:** stage 2 — the sampler, `load_joint`, `PersonaDemographics`, the schema, and their tests all stand; only stage-1 acquisition changed.
