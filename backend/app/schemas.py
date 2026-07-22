@@ -47,15 +47,20 @@ class EducationLevel(str, Enum):
     TERTIARY = "tertiary"  # ISCED 5–8, university degree or higher
 
 
-class Persona(BaseModel):
-    """One panelist, stored as structured typed fields (never free text)."""
+class PersonaDemographics(BaseModel):
+    """The demographic core a persona is grounded on — what the sampler emits."""
 
-    id: str
     country: Locale
     age: int = Field(ge=18, le=100)
     gender: Literal["male", "female"]
     income_quintile: int = Field(ge=1, le=5)  # within-country income rank band
     education: EducationLevel
+
+
+class Persona(PersonaDemographics):
+    """One panelist, stored as structured typed fields (never free text)."""
+
+    id: str
     interests: list[str] = Field(min_length=1, max_length=5)
     big_five: BigFive
 

@@ -127,3 +127,40 @@ v1 uses **tiers 1–2 only** (US/JP full joint, DE own marginal); tiers 3–4 ar
 ### Build order
 
 US first (exact, no IPF — the simplest path and it validates the whole two-stage flow), then DE, then JP (IPF).
+
+## Amendment (2026-07-22) — pivot to OECD as a single harmonized source
+
+Supersedes the per-country national-source plan above (ACS PUMS / Destatis / e-Stat) and its per-country manual downloads. Research: [`docs/research/oecd-demographic-data.md`](../docs/research/oecd-demographic-data.md) (verified against the live OECD SDMX API).
+
+**Why:** per-country acquisition (a separate manual download + adapter each) doesn't scale. Instead, one harmonized programmatic source queried by country code.
+
+- **OECD SDMX REST API** (`sdmx.oecd.org/public/rest`) — **public, keyless**, one query grammar. Supplies **`age × gender × education` as direct cross-tabs**, education **native ISCED-2011** (`0T2 / 3_4 / 5T8` = our below/secondary/tertiary — the per-country education crosswalk is gone). Adding a country later = a query, not a new source.
+- **Income is the accepted weak point.** The OECD IDD has **no sex and no education dimension** — income can't be crossed with demographics anywhere in OECD (or in published aggregate data generally). So income enters as a **country marginal**; `education×income` is **imputed-independent**, `gender×income` is a pay-gap-ratio tilt, `age×income` is coarse (working/retired). This is the intrinsic price of no-per-country-microdata, and it's **declared** in the fidelity descriptor. **World Bank PIP** (keyless, 160+ countries) is the income-decile + non-member fallback.
+- **Supersedes:** the three per-country builders collapse into one **`build_oecd(country)`**; the PUMS `build_us.py` is removed. The `age×gender×education` block is *directly observed* (less IPF than planned); IPF/independence only attaches the income marginal.
+- **Unchanged:** stage 2 — the sampler, `load_joint`, `PersonaDemographics`, the schema, and their tests all stand; only stage-1 acquisition changed.
+
+### Age reconciliation in `combine` (2026-07-22 grill)
+
+Three age grids don't align: our stored **D&L bands** (`18-19, 20-29, 30-39, 40-49, 50-59, 60-69, 70-79, 80+`), OECD **population** (5-year: `Y15T19 … Y_GE85`), and OECD **education** (`Y25T34, Y35T44, Y45T54, Y55T64` — 25-64 only, offset from ours).
+
+- **5-year lattice blend.** Reconcile on the 5-year population grid, not the D&L bands directly: every 5-year group nests *entirely* inside one education band (`Y25T29, Y30T34 ⊂ Y25T34`; etc.), so there's no arbitrary tie-break. Each 5-year cell takes its containing education band's `P(edu | age, sex)`, weighted by that group's population; cells are then summed up into D&L bands — the D&L education mix falls out as the population-weighted blend.
+- **Gaps → nearest observed band, declared imputed.** Education is age-*ordered* (young = not-yet-completed; old = lower-tertiary cohort), so the adjacent band is a better prior than a pooled grand mean. Groups `<25` (18-24) borrow `Y25T34`; groups `≥65` borrow `Y55T64`. Flagged imputed in the fidelity descriptor. (A country missing a *whole* dimension is the separate IPF/pooled-borrow case, not this.)
+- **`18-19` sub-band.** No clean count exists (population's finest is `Y15T19`, which includes 15-17 below our floor). Take the uniform fraction (2/5 of `Y15T19`), declared.
+
+### Income (`attach_income`) — keep + condition on education (2026-07-22 grill + measurement)
+
+**Measured first.** Held a mid-range persona fixed, varied only income across the three rendered bands, on a price-framed pair vs a neutral control (`scratchpad/measure_income.py`, ~48 gpt-5-mini calls). Result: P(prefer premium) rose **0.25 → 0.62 → 1.00** with income while the control stayed flat (≤0.12), and the *reasons* shifted from "affordable/value" to "durable/quality". Income is genuinely enacted and moves the vote — and because it does, incoherent (independent) income would inject real persona-inconsistent flips. So income earns its place **only if conditioned coherently**.
+
+- **Condition on education, probabilistically.** `attach_income` splits each cell's weight across the five quintiles by a fixed monotone `P(quintile | education)` table (`_INCOME_SPLIT`). Education is the strongest groundable predictor and we already have it per cell. Probabilistic (not deterministic) is essential: the row *spread* is what keeps educated-poor / uneducated-rich personas — without spread, income collapses into a relabel of education and adds nothing.
+- **Fixed literature prior, not OECD earnings, for v1.** The measurement showed income matters via *direction + spread*, not census-grade per-country precision; OECD relative-earnings gives only a mean and we'd have to invent the spread anyway. Behind the `_INCOME_SPLIT` seam so per-country earnings can swap in later.
+- **Marginal drift: accept-and-declare.** A fixed conditional won't make the population-weighted quintile marginal land exactly on 20%. Record the *realized* marginal in each country's fidelity sidecar; add IPF raking only if a country (likely high-tertiary, e.g. JP) drifts more than a few points. Don't pre-optimize an unconfirmed problem.
+- **v1 scope:** conditions on education only. Gender pay-gap and age (working/retired) tilts are deferred refinements, not v1.
+
+### Post-implementation corrections (2026-07-22, from code review)
+
+- **Stage 2 was not entirely unchanged.** The "Unchanged" note above (only stage-1 acquisition changed) is superseded: `sampler.py` gained `_MIN_TERTIARY_AGE = 21`, a floor on uniform age resolution so a tertiary cell can't emit a degree-holder too young to have finished university. A deliberate correctness fix (caught while building), not part of the OECD acquisition change. One global floor, not a per-country table we can't maintain at scale.
+- **`.meta.json` de-scoped for v1.** The sidecar spec above (line 114: `table_id`, `vintage`, `retrieved`, `raw_checksum`, `build`, structured per-pair `fidelity`) was written for the manual-download plan. Under the OECD builder v1 emits `{country, source, income_marginal, imputations}` — enough to see provenance and the accept-and-declare drift. The richer machine-parseable fields (vintage/checksum/per-dimension-pair `observed`-vs-`imputed`) are deferred until 006g QC actually consumes them; `raw_checksum` in particular is moot now that fetch is programmatic, not a committed raw file.
+
+### IPF raking added (2026-07-22, threshold triggered)
+
+The "add raking only if drift > a few points" condition (income section) fired: measured drift was US Q1 −4.7pp, JP Q1 −5.2pp, DE ≤1.7pp — 2 of 3 countries over. So `_rake_income` (IPF) now runs in `build_oecd` for all countries: each age×gender×education cell keeps its real total while every quintile is forced to a true 20%, adjusting only the within-cell split. The education→income association is preserved (US tertiary Q1 .11/Q5 .28; below-secondary Q1 .42/Q5 .04). All three joints now carry a uniform quintile marginal; the sidecar's `income_marginal` records it as the convergence check.
