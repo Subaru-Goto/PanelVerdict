@@ -4,8 +4,10 @@ from app.schemas import EducationLevel
 from pipeline.build_oecd import (
     _dl_band_for_5yr,
     _edu_band_for_5yr,
+    _INCOME_SPLIT,
     _isced_to_education,
     _sex_to_gender,
+    attach_income,
     combine,
 )
 
@@ -90,3 +92,29 @@ def test_combine_applies_floor_fraction_to_youngest_group():
     # 500 * (2/5) * 1.0 = 200; the 15-17 portion is dropped.
     assert joint[("18-19", "male", EducationLevel.SECONDARY)] == pytest.approx(200.0)
     assert sum(joint.values()) == pytest.approx(200.0)
+
+
+def test_attach_income_splits_each_cell_into_five_quintiles_conserving_mass():
+    combined = {("30-39", "female", EducationLevel.TERTIARY): 100.0}
+    joint = attach_income(combined)
+    assert sorted(q for (*_, q) in joint) == [1, 2, 3, 4, 5]
+    assert sum(joint.values()) == pytest.approx(100.0)
+
+
+def test_attach_income_skews_with_education():
+    combined = {
+        ("40-49", "male", EducationLevel.TERTIARY): 100.0,
+        ("40-49", "male", EducationLevel.BELOW_SECONDARY): 100.0,
+    }
+    joint = attach_income(combined)
+    top, bottom = EducationLevel.TERTIARY, EducationLevel.BELOW_SECONDARY
+    # tertiary is top-heavy, below-secondary bottom-heavy — the coherence the
+    # off-diagonal argument needs, and no row collapses onto a single quintile.
+    assert joint[("40-49", "male", top, 5)] > joint[("40-49", "male", top, 1)]
+    assert joint[("40-49", "male", bottom, 1)] > joint[("40-49", "male", bottom, 5)]
+
+
+def test_income_splits_are_valid_distributions():
+    for split in _INCOME_SPLIT.values():
+        assert len(split) == 5
+        assert sum(split) == pytest.approx(1.0)

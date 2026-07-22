@@ -67,6 +67,32 @@ def _edu_band_for_5yr(group: str) -> str:
     return f"Y{start}T{start + 9}"
 
 
+# P(income quintile | education): a fixed, monotone prior with spread — income
+# is grounded on education (the strongest predictor), but each row keeps mass
+# across quintiles so educated-poor / uneducated-rich personas survive. Declared
+# imputed; swap for per-country OECD earnings behind this table if drift warrants.
+_INCOME_SPLIT: dict[EducationLevel, tuple[float, float, float, float, float]] = {
+    EducationLevel.BELOW_SECONDARY: (0.35, 0.28, 0.20, 0.12, 0.05),
+    EducationLevel.SECONDARY: (0.20, 0.22, 0.22, 0.20, 0.16),
+    EducationLevel.TERTIARY: (0.08, 0.14, 0.20, 0.28, 0.30),
+}
+
+
+def attach_income(
+    combined: dict[tuple[str, str, EducationLevel], float],
+) -> dict[tuple[str, str, EducationLevel, int], float]:
+    """Expand each age×gender×education cell into five income-quintile cells.
+
+    The cell's weight is split across quintiles by `_INCOME_SPLIT[education]`,
+    so mass is conserved and income skews with education.
+    """
+    joint: dict[tuple[str, str, EducationLevel, int], float] = {}
+    for (band, gender, edu), weight in combined.items():
+        for quintile, share in enumerate(_INCOME_SPLIT[edu], start=1):
+            joint[(band, gender, edu, quintile)] = weight * share
+    return joint
+
+
 def _floor_fraction(group: str) -> float:
     """Share of a 5-year group at or above the 18 age floor.
 
