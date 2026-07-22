@@ -7,8 +7,10 @@ import app.sampler as sampler
 from app.sampler import JointCell, load_joint
 from app.schemas import EducationLevel, Locale
 from pipeline.build_oecd import (
+    _complete_education_from_peers,
     _dl_band_for_5yr,
     _edu_band_for_5yr,
+    _education_is_incomplete,
     _INCOME_SPLIT,
     _isced_to_education,
     _ref_area,
@@ -146,12 +148,66 @@ def test_parse_sdmx_csv_keys_education_by_age_sex_attainment():
     assert len(edu) == 24  # 4 age bands x 2 sexes x 3 attainment levels
 
 
+def test_parse_sdmx_csv_skips_rows_with_no_observation():
+    # JP reports only tertiary in this dataflow; the below/secondary rows come
+    # back with an empty OBS_VALUE (no observation, not malformed) — skip them.
+    text = (_FIXTURES / "oecd_education_jpn.csv").read_text()
+    edu = parse_sdmx_csv(text, ("AGE", "SEX", "ATTAINMENT_LEV"))
+    assert len(edu) == 8  # 4 age bands x 2 sexes, tertiary only
+    assert all(isced == "ISCED11A_5T8" for (_, _, isced) in edu)
+
+
 @pytest.mark.parametrize(
     ("country", "code"),
     [(Locale.US, "USA"), (Locale.JP, "JPN"), (Locale.DE, "DEU")],
 )
 def test_ref_area(country, code):
     assert _ref_area(country) == code
+
+
+def test_education_is_incomplete():
+    tertiary_only = {("Y25T34", "M", "ISCED11A_5T8"): 0.6}
+    missing_below = {
+        ("Y25T34", "M", "ISCED11A_3_4"): 0.4,
+        ("Y25T34", "M", "ISCED11A_5T8"): 0.6,
+    }
+    complete = {
+        ("Y25T34", "M", "ISCED11A_0T2"): 0.1,
+        ("Y25T34", "M", "ISCED11A_3_4"): 0.3,
+        ("Y25T34", "M", "ISCED11A_5T8"): 0.6,
+    }
+    assert _education_is_incomplete(tertiary_only) is True
+    assert _education_is_incomplete(missing_below) is True  # any gap shape, not just JP's
+    assert _education_is_incomplete(complete) is False
+
+
+def test_complete_education_from_peers():
+    cell = ("Y25T34", "M")
+    peers = [
+        {(*cell, "ISCED11A_0T2"): 0.10, (*cell, "ISCED11A_3_4"): 0.40, (*cell, "ISCED11A_5T8"): 0.50},
+        {(*cell, "ISCED11A_0T2"): 0.20, (*cell, "ISCED11A_3_4"): 0.40, (*cell, "ISCED11A_5T8"): 0.40},
+    ]
+    target = {(*cell, "ISCED11A_5T8"): 0.60}
+    filled = _complete_education_from_peers(target, peers)
+    # peer mean shares of the missing levels: below 0.15, secondary 0.40 (sum .55)
+    # missing mass 0.40 splits proportionally: below .40*.15/.55, secondary .40*.40/.55
+    assert filled[(*cell, "ISCED11A_5T8")] == pytest.approx(0.60)  # reported level exact
+    assert filled[(*cell, "ISCED11A_0T2")] == pytest.approx(0.40 * 0.15 / 0.55)
+    assert filled[(*cell, "ISCED11A_3_4")] == pytest.approx(0.40 * 0.40 / 0.55)
+    assert sum(filled.values()) == pytest.approx(1.0)
+
+
+def test_complete_education_from_peers_fills_only_the_missing_level():
+    cell = ("Y35T44", "F")
+    peers = [
+        {(*cell, "ISCED11A_0T2"): 0.10, (*cell, "ISCED11A_3_4"): 0.30, (*cell, "ISCED11A_5T8"): 0.60},
+    ]
+    # reports secondary + tertiary, only below-secondary missing
+    target = {(*cell, "ISCED11A_3_4"): 0.30, (*cell, "ISCED11A_5T8"): 0.55}
+    filled = _complete_education_from_peers(target, peers)
+    assert filled[(*cell, "ISCED11A_3_4")] == pytest.approx(0.30)  # untouched
+    assert filled[(*cell, "ISCED11A_5T8")] == pytest.approx(0.55)  # untouched
+    assert filled[(*cell, "ISCED11A_0T2")] == pytest.approx(0.15)  # 1 - .30 - .55
 
 
 def test_build_oecd_wires_fixtures_into_joint_rows():
@@ -182,6 +238,37 @@ def test_build_oecd_wires_fixtures_into_joint_rows():
 
     assert len(result.income_marginal) == 5
     assert sum(result.income_marginal) == pytest.approx(1.0)
+
+
+def test_build_oecd_borrows_jp_split_from_peers():
+    fx = {
+        "jp_pop": (_FIXTURES / "oecd_population_jpn.csv").read_text(),
+        "jp_edu": (_FIXTURES / "oecd_education_jpn.csv").read_text(),
+        "us_edu": (_FIXTURES / "oecd_education_usa.csv").read_text(),
+        "de_edu": (_FIXTURES / "oecd_education_deu.csv").read_text(),
+    }
+
+    def fake_fetch(url: str) -> str:
+        if "DF_POP_HIST" in url:
+            return fx["jp_pop"]
+        if "USA" in url:
+            return fx["us_edu"]
+        if "DEU" in url:
+            return fx["de_edu"]
+        return fx["jp_edu"]
+
+    result = build_oecd(Locale.JP, fetch=fake_fetch)
+
+    # JP reports only tertiary; the peer borrow must fill below-secondary + secondary
+    assert {c.education for c in result.rows} == {
+        EducationLevel.BELOW_SECONDARY,
+        EducationLevel.SECONDARY,
+        EducationLevel.TERTIARY,
+    }
+    assert any(
+        "peers" in note and "US" in note and "DE" in note
+        for note in result.imputations
+    )
 
 
 def test_write_joint_round_trips_through_load_joint(tmp_path, monkeypatch):

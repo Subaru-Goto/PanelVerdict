@@ -54,6 +54,10 @@ _IMPUTATIONS = [
     "income quintile conditioned on education only, via a fixed prior",
 ]
 
+# High-completion peers whose below/secondary split stands in when a country
+# reports only tertiary (e.g. JP). Chosen for similarity, not averaged blindly.
+_SPLIT_PEERS: tuple[Locale, ...] = (Locale.US, Locale.DE)
+
 
 def _ref_area(country: Locale) -> str:
     return _REF_AREA[country]
@@ -69,6 +73,14 @@ def _edu_url(country: Locale) -> str:
     return f"{_SDMX_BASE}/{_EDU_FLOW}/{key}?lastNObservations=1"
 
 
+def _fetch_education(
+    country: Locale, fetch: Callable[[str], str]
+) -> dict[tuple[str, str, str], float]:
+    """Fetch a country's education cross-tab as (age, sex, ISCED) -> share."""
+    percent = parse_sdmx_csv(fetch(_edu_url(country)), ("AGE", "SEX", "ATTAINMENT_LEV"))
+    return {key: value / 100 for key, value in percent.items()}
+
+
 def build_oecd(country: Locale, *, fetch: Callable[[str], str]) -> "BuildResult":
     """Build a country's joint from the OECD API via an injected `fetch`.
 
@@ -77,8 +89,17 @@ def build_oecd(country: Locale, *, fetch: Callable[[str], str]) -> "BuildResult"
     one place that knows OECD reports attainment as a percent.
     """
     population = parse_sdmx_csv(fetch(_pop_url(country)), ("AGE", "SEX"))
-    edu_percent = parse_sdmx_csv(fetch(_edu_url(country)), ("AGE", "SEX", "ATTAINMENT_LEV"))
-    education = {key: value / 100 for key, value in edu_percent.items()}
+    education = _fetch_education(country, fetch)
+    imputations = list(_IMPUTATIONS)
+    if _education_is_incomplete(education):
+        peers = [p for p in _SPLIT_PEERS if p != country]
+        education = _complete_education_from_peers(
+            education, [_fetch_education(p, fetch) for p in peers]
+        )
+        names = ", ".join(p.value for p in peers)
+        imputations.append(
+            f"missing attainment level(s) completed from peers ({names})"
+        )
 
     joint = attach_income(combine(population, education))
     rows = [
@@ -101,7 +122,7 @@ def build_oecd(country: Locale, *, fetch: Callable[[str], str]) -> "BuildResult"
         country=country,
         rows=rows,
         income_marginal=marginal,
-        imputations=_IMPUTATIONS,
+        imputations=imputations,
     )
 
 
@@ -162,7 +183,9 @@ def parse_sdmx_csv(text: str, dims: tuple[str, ...]) -> dict[tuple[str, ...], fl
     """
     reader = csv.DictReader(io.StringIO(text))
     return {
-        tuple(row[dim] for dim in dims): float(row["OBS_VALUE"]) for row in reader
+        tuple(row[dim] for dim in dims): float(row["OBS_VALUE"])
+        for row in reader
+        if row["OBS_VALUE"] != ""  # empty = no observation (e.g. JP's missing split)
     }
 
 
@@ -172,6 +195,57 @@ def _isced_to_education(code: str) -> EducationLevel:
 
 def _sex_to_gender(code: str) -> str:
     return {"F": "female", "M": "male"}[code]
+
+
+_EDUCATION_ISCED = ("ISCED11A_0T2", "ISCED11A_3_4", "ISCED11A_5T8")
+
+
+def _education_is_incomplete(education: dict[tuple[str, str, str], float]) -> bool:
+    """True if any age×sex cell is missing one of the three attainment levels.
+
+    Country-agnostic: it detects a gap of any shape (e.g. JP reports only
+    tertiary), not a specific missing level.
+    """
+    cells = {(age, sex) for (age, sex, _) in education}
+    return any(
+        (age, sex, isced) not in education
+        for age, sex in cells
+        for isced in _EDUCATION_ISCED
+    )
+
+
+def _complete_education_from_peers(
+    education: dict[tuple[str, str, str], float],
+    peers: list[dict[tuple[str, str, str], float]],
+) -> dict[tuple[str, str, str], float]:
+    """Fill whichever attainment levels a country omits, from peers.
+
+    Works for any gap shape, not just JP's tertiary-only: per age×sex, the
+    unreported mass (1 - sum of reported) is spread across the missing levels in
+    proportion to the peers' mean shares of those same levels, so a similar peer
+    group carries over its structure (and its age gradient). Reported levels stay
+    exact. Declared imputed by the caller.
+    """
+    cells = {(age, sex) for (age, sex, _) in education}
+    filled = dict(education)
+    for age, sex in cells:
+        reported = {
+            isced: education[(age, sex, isced)]
+            for isced in _EDUCATION_ISCED
+            if (age, sex, isced) in education
+        }
+        missing = [isced for isced in _EDUCATION_ISCED if isced not in reported]
+        if not missing:
+            continue
+        missing_mass = 1.0 - sum(reported.values())
+        peer_share = {
+            isced: sum(peer[(age, sex, isced)] for peer in peers) / len(peers)
+            for isced in missing
+        }
+        total = sum(peer_share.values())
+        for isced in missing:
+            filled[(age, sex, isced)] = missing_mass * peer_share[isced] / total
+    return filled
 
 
 def _low_age(group: str) -> int:
