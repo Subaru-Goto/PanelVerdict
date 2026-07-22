@@ -1,0 +1,19 @@
+{
+  "country": "DE",
+  "source": [
+    "OECD.ELS.SAE,DSD_POPULATION@DF_POP_HIST",
+    "OECD.EDU.IMEP,DSD_EAG_LSO_EA@DF_LSO_NEAC_DISTR_EA"
+  ],
+  "income_marginal": [
+    0.1837307437081288,
+    0.20290248078074322,
+    0.21025569038192768,
+    0.21397184504025216,
+    0.18913924008894825
+  ],
+  "imputations": [
+    "education below 25 and 65+ borrow the nearest observed band (25-34 / 55-64)",
+    "18-19 taken as 2/5 of the 15-19 population band",
+    "income quintile conditioned on education only, via a fixed prior"
+  ]
+}
