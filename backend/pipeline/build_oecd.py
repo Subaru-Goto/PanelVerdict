@@ -8,8 +8,21 @@ income attaches as an imputed marginal (declared). Design: issues/006b (2026-07-
 import csv
 import io
 from collections import defaultdict
+from collections.abc import Callable
 
-from app.schemas import EducationLevel
+from pydantic import BaseModel
+
+from app.sampler import JointCell
+from app.schemas import EducationLevel, Locale
+
+
+class BuildResult(BaseModel):
+    """A country's built joint plus the fidelity it was built at."""
+
+    country: Locale
+    rows: list[JointCell]
+    income_marginal: list[float]  # realized, population-weighted quintile shares
+    imputations: list[str]
 
 
 # OECD reports attainment on ISCED-2011 already; these three aggregates are
@@ -19,6 +32,75 @@ _ISCED_TO_EDUCATION = {
     "ISCED11A_3_4": EducationLevel.SECONDARY,
     "ISCED11A_5T8": EducationLevel.TERTIARY,
 }
+
+
+_REF_AREA: dict[Locale, str] = {Locale.US: "USA", Locale.JP: "JPN", Locale.DE: "DEU"}
+
+_SDMX_BASE = "https://sdmx.oecd.org/public/rest/data"
+_POP_FLOW = "OECD.ELS.SAE,DSD_POPULATION@DF_POP_HIST"
+_EDU_FLOW = "OECD.EDU.IMEP,DSD_EAG_LSO_EA@DF_LSO_NEAC_DISTR_EA"
+_POP_AGES = (
+    "Y15T19+Y20T24+Y25T29+Y30T34+Y35T39+Y40T44+Y45T49+Y50T54"
+    "+Y55T59+Y60T64+Y65T69+Y70T74+Y75T79+Y80T84+Y_GE85"
+)
+_EDU_AGES = "Y25T34+Y35T44+Y45T54+Y55T64"
+_EDU_ATTAIN = "ISCED11A_0T2+ISCED11A_3_4+ISCED11A_5T8"
+
+_IMPUTATIONS = [
+    "education below 25 and 65+ borrow the nearest observed band (25-34 / 55-64)",
+    "18-19 taken as 2/5 of the 15-19 population band",
+    "income quintile conditioned on education only, via a fixed prior",
+]
+
+
+def _ref_area(country: Locale) -> str:
+    return _REF_AREA[country]
+
+
+def _pop_url(country: Locale) -> str:
+    key = f"{_ref_area(country)}.POP.PS.M+F.{_POP_AGES}.H"
+    return f"{_SDMX_BASE}/{_POP_FLOW}/{key}?lastNObservations=1"
+
+
+def _edu_url(country: Locale) -> str:
+    key = f"{_ref_area(country)}.M+F.{_EDU_AGES}.{_EDU_ATTAIN}..........OBS..."
+    return f"{_SDMX_BASE}/{_EDU_FLOW}/{key}?lastNObservations=1"
+
+
+def build_oecd(country: Locale, *, fetch: Callable[[str], str]) -> "BuildResult":
+    """Build a country's joint from the OECD API via an injected `fetch`.
+
+    `fetch(url) -> csv text` is injected so the orchestration is unit-testable
+    without network. Education percentages are normalised to shares here — the
+    one place that knows OECD reports attainment as a percent.
+    """
+    population = parse_sdmx_csv(fetch(_pop_url(country)), ("AGE", "SEX"))
+    edu_percent = parse_sdmx_csv(fetch(_edu_url(country)), ("AGE", "SEX", "ATTAINMENT_LEV"))
+    education = {key: value / 100 for key, value in edu_percent.items()}
+
+    joint = attach_income(combine(population, education))
+    rows = [
+        JointCell(
+            age_band=band,
+            gender=gender,
+            education=education_level,
+            income_quintile=quintile,
+            weight=weight,
+        )
+        for (band, gender, education_level, quintile), weight in joint.items()
+        if weight > 0
+    ]
+    total = sum(joint.values())
+    marginal = [
+        sum(w for (*_, q), w in joint.items() if q == quintile) / total
+        for quintile in range(1, 6)
+    ]
+    return BuildResult(
+        country=country,
+        rows=rows,
+        income_marginal=marginal,
+        imputations=_IMPUTATIONS,
+    )
 
 
 def parse_sdmx_csv(text: str, dims: tuple[str, ...]) -> dict[tuple[str, ...], float]:

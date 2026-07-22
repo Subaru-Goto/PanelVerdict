@@ -2,14 +2,16 @@ from pathlib import Path
 
 import pytest
 
-from app.schemas import EducationLevel
+from app.schemas import EducationLevel, Locale
 from pipeline.build_oecd import (
     _dl_band_for_5yr,
     _edu_band_for_5yr,
     _INCOME_SPLIT,
     _isced_to_education,
+    _ref_area,
     _sex_to_gender,
     attach_income,
+    build_oecd,
     combine,
     parse_sdmx_csv,
 )
@@ -137,3 +139,41 @@ def test_parse_sdmx_csv_keys_education_by_age_sex_attainment():
     edu = parse_sdmx_csv(text, ("AGE", "SEX", "ATTAINMENT_LEV"))
     assert edu[("Y25T34", "F", "ISCED11A_5T8")] == pytest.approx(57.22052002)
     assert len(edu) == 24  # 4 age bands x 2 sexes x 3 attainment levels
+
+
+@pytest.mark.parametrize(
+    ("country", "code"),
+    [(Locale.US, "USA"), (Locale.JP, "JPN"), (Locale.DE, "DEU")],
+)
+def test_ref_area(country, code):
+    assert _ref_area(country) == code
+
+
+def test_build_oecd_wires_fixtures_into_joint_rows():
+    pop_text = (_FIXTURES / "oecd_population_usa.csv").read_text()
+    edu_text = (_FIXTURES / "oecd_education_usa.csv").read_text()
+
+    def fake_fetch(url: str) -> str:
+        return pop_text if "DF_POP_HIST" in url else edu_text
+
+    result = build_oecd(Locale.US, fetch=fake_fetch)
+
+    assert result.country is Locale.US
+    assert {c.income_quintile for c in result.rows} == {1, 2, 3, 4, 5}
+    assert {c.gender for c in result.rows} == {"male", "female"}
+
+    # End-to-end reconciliation: both 80+ groups (Y80T84, Y_GE85, female) roll
+    # into "80+" and, being >=65, borrow the Y55T64 education mix. Summing over
+    # quintiles undoes the income split, so this checks parse+combine alone.
+    mass = sum(
+        c.weight
+        for c in result.rows
+        if c.age_band == "80+"
+        and c.gender == "female"
+        and c.education is EducationLevel.TERTIARY
+    )
+    expected = (4520502 + 4374285) * (46.78384781 / 100)
+    assert mass == pytest.approx(expected)
+
+    assert len(result.income_marginal) == 5
+    assert sum(result.income_marginal) == pytest.approx(1.0)
