@@ -7,8 +7,10 @@ income attaches as an imputed marginal (declared). Design: issues/006b (2026-07-
 
 import csv
 import io
+import json
 from collections import defaultdict
 from collections.abc import Callable
+from pathlib import Path
 
 from pydantic import BaseModel
 
@@ -101,6 +103,54 @@ def build_oecd(country: Locale, *, fetch: Callable[[str], str]) -> "BuildResult"
         income_marginal=marginal,
         imputations=_IMPUTATIONS,
     )
+
+
+_JOINT_COLUMNS = ["age_band", "gender", "education", "income_quintile", "weight"]
+
+
+def write_joint(result: BuildResult, dest_dir: Path) -> None:
+    """Write the joint CSV (what the sampler reads) plus a fidelity sidecar.
+
+    The CSV columns mirror `JointCell` so `load_joint` reconstructs the cells
+    verbatim; the `.meta.json` carries the fidelity the CSV can't (realized
+    income marginal, declared imputations, source).
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    stem = result.country.value.lower()
+    with (dest_dir / f"{stem}.csv").open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_JOINT_COLUMNS)
+        writer.writeheader()
+        for cell in result.rows:
+            writer.writerow(
+                {
+                    "age_band": cell.age_band,
+                    "gender": cell.gender,
+                    "education": cell.education.value,
+                    "income_quintile": cell.income_quintile,
+                    "weight": cell.weight,
+                }
+            )
+    meta = {
+        "country": result.country.value,
+        "source": [_POP_FLOW, _EDU_FLOW],
+        "income_marginal": result.income_marginal,
+        "imputations": result.imputations,
+    }
+    (dest_dir / f"{stem}.meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+
+
+def _http_fetch(url: str) -> str:
+    import urllib.request
+
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.sdmx.data+csv; version=2.0",
+            "User-Agent": "Mozilla/5.0 (panelverdict pipeline)",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return resp.read().decode()
 
 
 def parse_sdmx_csv(text: str, dims: tuple[str, ...]) -> dict[tuple[str, ...], float]:
@@ -223,3 +273,16 @@ def combine(
         for isced, share in shares.items():
             joint[(dl_band, gender, _isced_to_education(isced))] += weight * share
     return dict(joint)
+
+
+if __name__ == "__main__":
+    import sys
+
+    country = Locale(sys.argv[1])
+    dest = Path(__file__).parents[1] / "app" / "data" / "joint"
+    result = build_oecd(country, fetch=_http_fetch)
+    write_joint(result, dest)
+    print(
+        f"wrote {country.value}: {len(result.rows)} rows; "
+        f"income_marginal={[round(x, 3) for x in result.income_marginal]}"
+    )

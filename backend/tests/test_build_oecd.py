@@ -1,7 +1,10 @@
+import json
 from pathlib import Path
 
 import pytest
 
+import app.sampler as sampler
+from app.sampler import JointCell, load_joint
 from app.schemas import EducationLevel, Locale
 from pipeline.build_oecd import (
     _dl_band_for_5yr,
@@ -12,8 +15,10 @@ from pipeline.build_oecd import (
     _sex_to_gender,
     attach_income,
     build_oecd,
+    BuildResult,
     combine,
     parse_sdmx_csv,
+    write_joint,
 )
 
 _FIXTURES = Path(__file__).parent / "fixtures"
@@ -177,3 +182,27 @@ def test_build_oecd_wires_fixtures_into_joint_rows():
 
     assert len(result.income_marginal) == 5
     assert sum(result.income_marginal) == pytest.approx(1.0)
+
+
+def test_write_joint_round_trips_through_load_joint(tmp_path, monkeypatch):
+    monkeypatch.setattr(sampler, "_JOINT_DIR", tmp_path)
+    result = BuildResult(
+        country=Locale.US,
+        rows=[
+            JointCell(
+                age_band="20-29",
+                gender="female",
+                education=EducationLevel.TERTIARY,
+                income_quintile=3,
+                weight=12.5,
+            )
+        ],
+        income_marginal=[0.2, 0.2, 0.2, 0.2, 0.2],
+        imputations=["income conditioned on education only"],
+    )
+    write_joint(result, tmp_path)
+    # the CSV the sampler will actually read must reconstruct the same cells
+    assert load_joint(Locale.US) == result.rows
+    meta = json.loads((tmp_path / "us.meta.json").read_text())
+    assert meta["income_marginal"] == result.income_marginal
+    assert meta["imputations"] == result.imputations
