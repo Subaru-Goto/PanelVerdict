@@ -32,3 +32,28 @@ Age bands are reconciled on the 5-year population lattice; education gaps
 [`docs/research/oecd-demographic-data.md`](../../docs/research/oecd-demographic-data.md).
 The `.meta.json` sidecar records the source dataflows, the realized income
 marginal, and the declared imputations.
+
+## Add a country
+
+For an OECD member with complete data, it's three edits + one command — no new
+logic (`parse → combine → attach_income → rake` all run by country code):
+
+1. `Locale` enum (`app/schemas.py`) — add the member, e.g. `FR = "FR"`.
+2. `COUNTRY_CULTURE_TAG` (`app/schemas.py`) — map it, e.g. `Locale.FR: CultureTag.WESTERN`.
+3. `_REF_AREA` (`build_oecd.py`) — add its OECD 3-letter code, e.g. `Locale.FR: "FRA"`.
+4. `uv run python -m pipeline.build_oecd FR` → commit the generated `fr.csv` + `fr.meta.json`.
+
+Income and Big Five cost nothing per country: income is a country-agnostic prior
+raked per-country automatically; Big Five (006c) is country-agnostic norms.
+
+Three cases need more than the enum:
+
+- **Non-OECD country** — may be absent from the dataflows; the build fails. Needs
+  the World Bank PIP fallback (designed, not yet implemented).
+- **Partial attainment + dissimilar structure** — a country reporting only part of
+  the ISCED split auto-borrows from `_SPLIT_PEERS` (US, DE). Those are
+  high-completion peers; a high-below-secondary country (e.g. MX, TR) needs a
+  curated peer set, and the fail-loud guard will stop a build whose peers can't
+  supply a missing level.
+- **Culture outside western/asian** — `CultureTag` has only those two; a country
+  that is cleanly neither needs a new value (a modeling decision, not a mechanical add).
