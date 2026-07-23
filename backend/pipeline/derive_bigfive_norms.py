@@ -10,17 +10,18 @@ Run: `python -m pipeline.derive_bigfive_norms`. Raw inputs transcribed in
 
 import json
 from pathlib import Path
+from typing import TypedDict
+
+from app.schemas import TRAIT_ORDER
 
 # Table 1 publishes domains in this column order; μ is emitted in TRAIT_ORDER.
 _TABLE1_ORDER = ["E", "A", "C", "N", "O"]
-TRAIT_ORDER = ["O", "C", "E", "A", "N"]
-BANDS = ["16-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80+"]
+AGE_BANDS = ["16-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80+"]
 
 # Donnellan & Lucas 2008 Table 1 — T-score means (T-scale: mean 50, SD 10),
-# columns [E, A, C, N, O]. The
-# two source panels: BHPS = British Household Panel Study (UK); GSOEP = German
-# Socio-Economic Panel (Germany). Top band is the paper's 80-85 (BHPS) / 80-84
-# (GSOEP), both taken as our "80+".
+# columns [E, A, C, N, O]. Source panels: BHPS = British Household Panel Study
+# (UK); GSOEP = German Socio-Economic Panel (Germany). Top band is the paper's
+# 80-85 (BHPS) / 80-84 (GSOEP), both taken as our "80+".
 _T_BHPS = {
     "16-19": [53.01, 48.61, 42.76, 50.47, 50.45],
     "20-29": [51.58, 50.00, 47.88, 50.10, 51.08],
@@ -42,7 +43,7 @@ _T_GSOEP = {
     "80+": [47.57, 54.16, 49.84, 50.74, 45.56],
 }
 
-# Table 3 — overall gender Cohen's d per domain (positive = women higher),
+# Table 3 — overall gender Cohen's d per domain (positive = women higher), [E,A,C,N,O].
 _D_BHPS = [0.20, 0.31, 0.11, 0.51, -0.15]
 _D_GSOEP = [0.16, 0.35, 0.11, 0.39, 0.12]
 
@@ -63,7 +64,21 @@ def _reorder(values: list[float]) -> list[float]:
     return [values[i] for i in _TO_TRAIT_ORDER]
 
 
-def derive() -> dict:
+class _Provenance(TypedDict):
+    mu_source: str
+    mu_derivation: str
+    sigma_source: str
+    trait_order: list[str]
+    note: str
+
+
+class _Norms(TypedDict):
+    provenance: _Provenance
+    mu: dict[str, list[float]]
+    sigma: list[list[float]]
+
+
+def derive() -> _Norms:
     """Compute the norms artifact (μ + Σ + provenance) from the raw inputs.
 
     Per age band × domain: pool the two samples' T-scores and map to z,
@@ -76,8 +91,7 @@ def derive() -> dict:
     """
     mu: dict[str, list[float]] = {}
     d = [(_D_BHPS[i] + _D_GSOEP[i]) / 2 for i in range(5)]
-    for band in BANDS:
-        # (T - 50)/10: recenter by the T-mean (50), rescale by the T-SD (10) -> z
+    for band in AGE_BANDS:
         z = [((_T_BHPS[band][i] + _T_GSOEP[band][i]) / 2 - 50) / 10 for i in range(5)]
         female = _reorder([round(z[i] + d[i] / 2, 4) for i in range(5)])
         male = _reorder([round(z[i] - d[i] / 2, 4) for i in range(5)])

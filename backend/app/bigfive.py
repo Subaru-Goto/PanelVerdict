@@ -12,13 +12,9 @@ import numpy as np
 
 from app.schemas import BigFive, TraitLevel
 
-# Trait/band order live in code (they match BigFive's field order); the empirical
-# μ/Σ live in the loaded artifact, so the numbers have one home and carry their
-# own provenance (sources + derivation). Shared across all countries — 001
-# decision (i): country does not condition the Big Five μ.
-TRAIT_ORDER = ["O", "C", "E", "A", "N"]
-AGE_BANDS = ["16-19", "20-29", "30-39", "40-49", "50-59", "60-69", "70-79", "80+"]
-
+# The empirical μ/Σ live in the loaded artifact — one home for the numbers,
+# carrying their own provenance. Shared across all countries (001 decision (i):
+# country does not condition the Big Five μ).
 _NORMS = json.loads((Path(__file__).parent / "data" / "bigfive_norms.json").read_text())
 MU: dict[str, list[float]] = _NORMS["mu"]
 SIGMA: list[list[float]] = _NORMS["sigma"]

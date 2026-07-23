@@ -3,14 +3,14 @@ import pytest
 
 from app.bigfive import (
     _mu_band,
-    AGE_BANDS,
+    bigfive_from_levels,
     bucketize,
     MU,
     sample_big_five,
     SIGMA,
-    TRAIT_ORDER,
 )
-from app.schemas import TraitLevel
+from app.schemas import TRAIT_ORDER, TraitLevel
+from pipeline.derive_bigfive_norms import AGE_BANDS
 
 
 @pytest.mark.parametrize(
@@ -27,6 +27,20 @@ from app.schemas import TraitLevel
 )
 def test_bucketize(score, level):
     assert bucketize(score) == level
+
+
+def test_bigfive_from_levels_round_trips_through_bucketize():
+    # the representative score for each level must bucketize back to that level,
+    # i.e. _LEVEL_SCORE stays outside the ±0.5 cutoffs — locks that coupling
+    for level in TraitLevel:
+        bf = bigfive_from_levels(
+            openness=level,
+            conscientiousness=level,
+            extraversion=level,
+            agreeableness=level,
+            neuroticism=level,
+        )
+        assert all(bucketize(score) == level for _, score in bf)
 
 
 @pytest.mark.parametrize(

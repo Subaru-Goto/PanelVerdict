@@ -23,6 +23,11 @@ class BigFive(BaseModel):
     neuroticism: float  # negative-emotion proneness; low = stable
 
 
+# Big Five domain order — matches BigFive's field order above; the sampler and its
+# offline norms derivation both order μ/Σ vectors by this.
+TRAIT_ORDER = ["O", "C", "E", "A", "N"]
+
+
 class Locale(str, Enum):
     US = "US"
     JP = "JP"
