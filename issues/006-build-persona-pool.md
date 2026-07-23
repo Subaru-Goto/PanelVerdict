@@ -25,8 +25,8 @@ This is an **umbrella** — the build is split into small, independently reviewa
 - [x] [006a](006a-seed-data-research.md) — seed-data research: μ (age×gender norms) + Σ (inter-trait correlation matrix) — *done, PR #9*
 - [x] [006b](006b-demographics-sampler.md) — demographics sampler (per-country US/JP/DE); country/culture_tag; type demographic fields; settle age floor — *done, PR #14*
 - [x] [006c](006c-bigfive-sampler.md) — Big Five correlated-MVN sampler → enum buckets — *done, PR #17*
-- [ ] [006d](006d-interests-synthesis.md) — interests synthesis + embeddings *(blocked by 006b, 006c)*
-- [ ] [006e](006e-content-checks.md) — content checks: validation, injection screen, anti-stereotype audit *(blocked by 006d)*
+- [x] [006d](006d-interests-synthesis.md) — interests synthesis + embeddings — *done, PR #19*
+- [ ] [006e](006e-content-checks.md) — content checks: validation, injection screen, anti-stereotype audit *(unblocked)*
 - [ ] [006f](006f-persistence.md) — persistence: Postgres + pgvector + idempotent seed script *(blocked by 006b–006e)*
 - [ ] [006g](006g-pool-overview.md) — pool-overview QC artifact *(blocked by 006f)*
 
