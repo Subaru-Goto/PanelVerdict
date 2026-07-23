@@ -1,4 +1,5 @@
-from app.schemas import BigFive, EducationLevel, Locale, Persona, TraitLevel
+from app.bigfive import bigfive_from_levels, bucketize
+from app.schemas import EducationLevel, Locale, Persona, TraitLevel
 
 _TRAIT_PHRASES: dict[str, dict[TraitLevel, str]] = {
     "openness": {
@@ -65,7 +66,7 @@ def render_persona_prompt(persona: Persona) -> str:
     stays in the vote step so position handling lives in one place.
     """
     dispositions = "; ".join(
-        _TRAIT_PHRASES[trait][level] for trait, level in persona.big_five
+        _TRAIT_PHRASES[trait][bucketize(score)] for trait, score in persona.big_five
     )
     return (
         f"You are a {persona.age}-year-old {persona.gender} living in "
@@ -85,12 +86,12 @@ FIXED_PANEL: list[Persona] = [
         income_quintile=3,
         education="tertiary",
         interests=["trail running", "indie podcasts", "home cooking"],
-        big_five=BigFive(
-            openness="high",
-            conscientiousness="high",
-            extraversion="medium",
-            agreeableness="medium",
-            neuroticism="low",
+        big_five=bigfive_from_levels(
+            openness=TraitLevel.HIGH,
+            conscientiousness=TraitLevel.HIGH,
+            extraversion=TraitLevel.MEDIUM,
+            agreeableness=TraitLevel.MEDIUM,
+            neuroticism=TraitLevel.LOW,
         ),
     ),
     # Traits deliberately cross-cut demographics (001 anti-stereotype): a
@@ -104,12 +105,12 @@ FIXED_PANEL: list[Persona] = [
         income_quintile=2,
         education="secondary",
         interests=["weightlifting", "personal budgeting", "restoring old cars"],
-        big_five=BigFive(
-            openness="low",
-            conscientiousness="high",
-            extraversion="high",
-            agreeableness="low",
-            neuroticism="medium",
+        big_five=bigfive_from_levels(
+            openness=TraitLevel.LOW,
+            conscientiousness=TraitLevel.HIGH,
+            extraversion=TraitLevel.HIGH,
+            agreeableness=TraitLevel.LOW,
+            neuroticism=TraitLevel.MEDIUM,
         ),
     ),
     Persona(
@@ -120,12 +121,12 @@ FIXED_PANEL: list[Persona] = [
         income_quintile=4,
         education="tertiary",
         interests=["contemporary art", "learning Italian", "birdwatching"],
-        big_five=BigFive(
-            openness="high",
-            conscientiousness="medium",
-            extraversion="low",
-            agreeableness="high",
-            neuroticism="low",
+        big_five=bigfive_from_levels(
+            openness=TraitLevel.HIGH,
+            conscientiousness=TraitLevel.MEDIUM,
+            extraversion=TraitLevel.LOW,
+            agreeableness=TraitLevel.HIGH,
+            neuroticism=TraitLevel.LOW,
         ),
     ),
     Persona(
@@ -136,12 +137,12 @@ FIXED_PANEL: list[Persona] = [
         income_quintile=3,
         education="secondary",
         interests=["fishing", "classic rock", "grilling"],
-        big_five=BigFive(
-            openness="medium",
-            conscientiousness="low",
-            extraversion="medium",
-            agreeableness="high",
-            neuroticism="high",
+        big_five=bigfive_from_levels(
+            openness=TraitLevel.MEDIUM,
+            conscientiousness=TraitLevel.LOW,
+            extraversion=TraitLevel.MEDIUM,
+            agreeableness=TraitLevel.HIGH,
+            neuroticism=TraitLevel.HIGH,
         ),
     ),
     Persona(
@@ -152,12 +153,12 @@ FIXED_PANEL: list[Persona] = [
         income_quintile=4,
         education="tertiary",
         interests=["real estate", "home fitness", "true-crime podcasts"],
-        big_five=BigFive(
-            openness="medium",
-            conscientiousness="high",
-            extraversion="medium",
-            agreeableness="low",
-            neuroticism="low",
+        big_five=bigfive_from_levels(
+            openness=TraitLevel.MEDIUM,
+            conscientiousness=TraitLevel.HIGH,
+            extraversion=TraitLevel.MEDIUM,
+            agreeableness=TraitLevel.LOW,
+            neuroticism=TraitLevel.LOW,
         ),
     ),
 ]

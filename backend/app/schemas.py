@@ -11,15 +11,21 @@ class TraitLevel(str, Enum):
 
 
 class BigFive(BaseModel):
-    """The five personality domains as level buckets, grouped into one type so
-    callers can iterate the traits.
+    """The five personality domains as sampled z-scores, grouped so callers can
+    iterate the traits. The continuous score is the source of truth; `TraitLevel`
+    is derived at render via `bucketize` (so cut-offs can change without resampling).
     """
 
-    openness: TraitLevel  # curiosity, imagination, appetite for novelty vs. convention
-    conscientiousness: TraitLevel  # organization, self-discipline, deliberation
-    extraversion: TraitLevel  # sociability, assertiveness, energy, reward-seeking
-    agreeableness: TraitLevel  # compassion, trust, cooperation, politeness
-    neuroticism: TraitLevel  # negative-emotion proneness; low = stable
+    openness: float  # curiosity, imagination, appetite for novelty vs. convention
+    conscientiousness: float  # organization, self-discipline, deliberation
+    extraversion: float  # sociability, assertiveness, energy, reward-seeking
+    agreeableness: float  # compassion, trust, cooperation, politeness
+    neuroticism: float  # negative-emotion proneness; low = stable
+
+
+# Big Five domain order — matches BigFive's field order above; the sampler and its
+# offline norms derivation both order μ/Σ vectors by this.
+TRAIT_ORDER = ["O", "C", "E", "A", "N"]
 
 
 class Locale(str, Enum):
