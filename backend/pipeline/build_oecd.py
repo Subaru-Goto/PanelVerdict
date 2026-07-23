@@ -3,9 +3,6 @@
 One keyless API, queried by country code. `age × gender × education` come as
 direct OECD cross-tabs (education native ISCED-2011); income attaches as an
 imputed marginal (declared). Design: issues/006b.
-
-Data flows through the stages as pandas DataFrames; the scalar mapping helpers
-(`_dl_band_for_5yr`, `_sex_to_gender`, …) are applied vectorised via `.map`.
 """
 
 import csv
@@ -197,25 +194,34 @@ def _complete_education_from_peers(
     group carries over its structure (and its age gradient). Reported levels stay
     exact. Declared imputed by the caller.
     """
-    peer_share = (
-        pd.concat(peers).groupby(["age", "sex", "isced"])["share"].mean()
-    )
+    stacked = pd.concat(peers)
+    peer_sum = stacked.groupby(["age", "sex", "isced"])["share"].sum()
+    peer_count = stacked.groupby(["age", "sex", "isced"])["share"].size()
     additions = []
     for (age, sex), cell in education.groupby(["age", "sex"]):
         missing = [i for i in _EDUCATION_ISCED if i not in set(cell["isced"])]
         if not missing:
             continue
-        available = [i for i in missing if (age, sex, i) in peer_share.index]
-        if len(available) < len(missing):
-            raise ValueError(
-                f"a peer lacks {set(missing) - set(available)} at {(age, sex)}; "
-                "it cannot supply the split — choose peers that report every level"
-            )
-        weights = peer_share.loc[[(age, sex, i) for i in missing]]
+        for isced in missing:
+            # every peer must report the level, else the peer set is inadequate
+            # for this cell — fail loud rather than average over the subset.
+            if peer_count.get((age, sex, isced), 0) < len(peers):
+                raise ValueError(
+                    f"a peer lacks {isced} at {(age, sex)}; it cannot supply the "
+                    "split — choose peers that report every level"
+                )
+        means = {i: peer_sum[(age, sex, i)] / len(peers) for i in missing}
         missing_mass = 1.0 - cell["share"].sum()
-        for isced, w in zip(missing, weights, strict=True):
-            share = missing_mass * w / weights.sum()
-            additions.append({"age": age, "sex": sex, "isced": isced, "share": share})
+        total = sum(means.values())
+        for isced, mean_share in means.items():
+            additions.append(
+                {
+                    "age": age,
+                    "sex": sex,
+                    "isced": isced,
+                    "share": missing_mass * mean_share / total,
+                }
+            )
     return pd.concat([education, pd.DataFrame(additions)], ignore_index=True)
 
 
@@ -237,6 +243,8 @@ def combine(population: pd.DataFrame, education: pd.DataFrame) -> pd.DataFrame:
     )
     merged = merged.assign(
         weight=merged["floored"] * merged["share"],
+        # store the enum's string value: pandas coerces a str-Enum column to str
+        # dtype anyway, and JointCell re-parses the string back to EducationLevel.
         education=merged["isced"].map(lambda c: _isced_to_education(c).value),
     )
     return (
@@ -289,7 +297,7 @@ def _rake_income(joint: pd.DataFrame) -> pd.DataFrame:
 
     table.iloc[:, :] = matrix
     return table.reset_index().melt(
-        id_vars=cells, value_name="weight"
+        id_vars=cells, var_name="income_quintile", value_name="weight"
     )
 
 

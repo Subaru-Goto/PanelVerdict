@@ -32,6 +32,17 @@ def _education_df(rows: list[tuple[str, str, str, float]]) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=["age", "sex", "isced", "share"])
 
 
+def _cell_weight(joint: pd.DataFrame, edu: EducationLevel, quintile: int) -> float:
+    cell = joint[
+        (joint["education"] == edu.value) & (joint["income_quintile"] == quintile)
+    ]
+    return cell["weight"].iloc[0]
+
+
+def _share(education: pd.DataFrame, isced: str) -> float:
+    return education[education["isced"] == isced]["share"].iloc[0]
+
+
 @pytest.mark.parametrize(
     ("code", "level"),
     [
@@ -144,19 +155,11 @@ def test_attach_income_skews_with_education():
         ]
     )
     joint = attach_income(combined)
-
-    def weight(edu: EducationLevel, quintile: int) -> float:
-        cell = joint[
-            (joint["education"] == edu.value) & (joint["income_quintile"] == quintile)
-        ]
-        return cell["weight"].iloc[0]
-
     # tertiary is top-heavy, below-secondary bottom-heavy — the coherence the
     # off-diagonal argument needs, and no row collapses onto a single quintile.
-    assert weight(EducationLevel.TERTIARY, 5) > weight(EducationLevel.TERTIARY, 1)
-    assert weight(EducationLevel.BELOW_SECONDARY, 1) > weight(
-        EducationLevel.BELOW_SECONDARY, 5
-    )
+    top, bottom = EducationLevel.TERTIARY, EducationLevel.BELOW_SECONDARY
+    assert _cell_weight(joint, top, 5) > _cell_weight(joint, top, 1)
+    assert _cell_weight(joint, bottom, 1) > _cell_weight(joint, bottom, 5)
 
 
 def _skewed_joint() -> pd.DataFrame:
@@ -182,25 +185,17 @@ def test_rake_income_makes_quintiles_uniform():
 def test_rake_income_preserves_cell_totals():
     joint = _skewed_joint()
     raked = _rake_income(joint)
-    before = joint.groupby("education", observed=True)["weight"].sum()
-    after = raked.groupby("education", observed=True)["weight"].sum()
+    before = joint.groupby("education")["weight"].sum()
+    after = raked.groupby("education")["weight"].sum()
     for edu in before.index:  # real demographics must not move
         assert after[edu] == pytest.approx(before[edu])
 
 
 def test_rake_income_preserves_education_income_association():
     raked = _rake_income(_skewed_joint())
-
-    def weight(edu: EducationLevel, quintile: int) -> float:
-        cell = raked[
-            (raked["education"] == edu.value) & (raked["income_quintile"] == quintile)
-        ]
-        return cell["weight"].iloc[0]
-
-    assert weight(EducationLevel.TERTIARY, 5) > weight(EducationLevel.TERTIARY, 1)
-    assert weight(EducationLevel.BELOW_SECONDARY, 1) > weight(
-        EducationLevel.BELOW_SECONDARY, 5
-    )
+    top, bottom = EducationLevel.TERTIARY, EducationLevel.BELOW_SECONDARY
+    assert _cell_weight(raked, top, 5) > _cell_weight(raked, top, 1)  # skews high
+    assert _cell_weight(raked, bottom, 1) > _cell_weight(raked, bottom, 5)  # skews low
 
 
 def test_income_splits_are_valid_distributions():
@@ -282,15 +277,11 @@ def test_complete_education_from_peers():
     ]
     target = _education_df([("Y25T34", "M", "ISCED11A_5T8", 0.60)])
     filled = _complete_education_from_peers(target, peers)
-
-    def share(isced: str) -> float:
-        return filled[filled["isced"] == isced]["share"].iloc[0]
-
     # peer mean shares of the missing levels: below 0.15, secondary 0.40 (sum .55)
     # missing mass 0.40 splits proportionally: below .40*.15/.55, secondary .40*.40/.55
-    assert share("ISCED11A_5T8") == pytest.approx(0.60)  # reported level exact
-    assert share("ISCED11A_0T2") == pytest.approx(0.40 * 0.15 / 0.55)
-    assert share("ISCED11A_3_4") == pytest.approx(0.40 * 0.40 / 0.55)
+    assert _share(filled, "ISCED11A_5T8") == pytest.approx(0.60)  # reported level exact
+    assert _share(filled, "ISCED11A_0T2") == pytest.approx(0.40 * 0.15 / 0.55)
+    assert _share(filled, "ISCED11A_3_4") == pytest.approx(0.40 * 0.40 / 0.55)
     assert filled["share"].sum() == pytest.approx(1.0)
 
 
@@ -309,13 +300,9 @@ def test_complete_education_from_peers_fills_only_the_missing_level():
         [("Y35T44", "F", "ISCED11A_3_4", 0.30), ("Y35T44", "F", "ISCED11A_5T8", 0.55)]
     )
     filled = _complete_education_from_peers(target, peers)
-
-    def share(isced: str) -> float:
-        return filled[filled["isced"] == isced]["share"].iloc[0]
-
-    assert share("ISCED11A_3_4") == pytest.approx(0.30)  # untouched
-    assert share("ISCED11A_5T8") == pytest.approx(0.55)  # untouched
-    assert share("ISCED11A_0T2") == pytest.approx(0.15)  # 1 - .30 - .55
+    assert _share(filled, "ISCED11A_3_4") == pytest.approx(0.30)  # untouched
+    assert _share(filled, "ISCED11A_5T8") == pytest.approx(0.55)  # untouched
+    assert _share(filled, "ISCED11A_0T2") == pytest.approx(0.15)  # 1 - .30 - .55
 
 
 def test_complete_education_from_peers_fails_loud_on_incomplete_peer():
@@ -325,6 +312,24 @@ def test_complete_education_from_peers_fails_loud_on_incomplete_peer():
     )  # no secondary
     with pytest.raises(ValueError, match="peer"):
         _complete_education_from_peers(target, [bad_peer])
+
+
+def test_complete_education_from_peers_fails_loud_when_one_peer_partially_reports():
+    # every peer must report every missing level; a partial peer must not be
+    # silently averaged over the subset that does report it.
+    target = _education_df([("Y25T34", "M", "ISCED11A_5T8", 0.60)])
+    complete = _education_df(
+        [
+            ("Y25T34", "M", "ISCED11A_0T2", 0.10),
+            ("Y25T34", "M", "ISCED11A_3_4", 0.40),
+            ("Y25T34", "M", "ISCED11A_5T8", 0.50),
+        ]
+    )
+    partial = _education_df(
+        [("Y25T34", "M", "ISCED11A_0T2", 0.20), ("Y25T34", "M", "ISCED11A_5T8", 0.50)]
+    )  # reports below but not secondary
+    with pytest.raises(ValueError, match="peer"):
+        _complete_education_from_peers(target, [complete, partial])
 
 
 def test_build_oecd_wires_fixtures_into_joint_rows():
