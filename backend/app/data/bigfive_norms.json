@@ -1,0 +1,166 @@
+{
+  "provenance": {
+    "mu_source": "Donnellan & Lucas 2008, Psychology and Aging 23(3):558-566, Tables 1+3 (BHPS = British Household Panel Study, UK, N~14039; GSOEP = German Socio-Economic Panel, Germany, N~20852; 15-item BFI)",
+    "mu_derivation": "per age band x domain: z = ((T_BHPS + T_GSOEP)/2 - 50)/10; gender split mu(female)=z+d/2, mu(male)=z-d/2 from pooled per-domain Cohen's d",
+    "sigma_source": "van der Linden, te Nijenhuis & Bakker 2010, J. Research in Personality 44:315-327, Table 2 observed r (K=212, N=144117); Neuroticism sign convention",
+    "trait_order": [
+      "O",
+      "C",
+      "E",
+      "A",
+      "N"
+    ],
+    "note": "Shared across all countries (001 decision (i): country does not condition Big Five mu). Raw inputs: docs/research/donnellan-lucas-2008-table1.md. Regenerate: python -m pipeline.derive_bigfive_norms."
+  },
+  "mu": {
+    "16-19|female": [
+      0.1025,
+      -0.7325,
+      0.299,
+      0.0775,
+      0.1885
+    ],
+    "16-19|male": [
+      0.1175,
+      -0.8425,
+      0.119,
+      -0.2525,
+      -0.2615
+    ],
+    "20-29|female": [
+      0.1195,
+      -0.1935,
+      0.216,
+      0.1475,
+      0.2295
+    ],
+    "20-29|male": [
+      0.1345,
+      -0.3035,
+      0.036,
+      -0.1825,
+      -0.2205
+    ],
+    "30-39|female": [
+      -0.0065,
+      0.0835,
+      0.081,
+      0.176,
+      0.223
+    ],
+    "30-39|male": [
+      0.0085,
+      -0.0265,
+      -0.099,
+      -0.154,
+      -0.227
+    ],
+    "40-49|female": [
+      -0.068,
+      0.157,
+      0.009,
+      0.226,
+      0.2125
+    ],
+    "40-49|male": [
+      -0.053,
+      0.047,
+      -0.171,
+      -0.104,
+      -0.2375
+    ],
+    "50-59|female": [
+      -0.083,
+      0.153,
+      -0.0825,
+      0.2415,
+      0.2295
+    ],
+    "50-59|male": [
+      -0.068,
+      0.043,
+      -0.2625,
+      -0.0885,
+      -0.2205
+    ],
+    "60-69|female": [
+      -0.222,
+      0.0285,
+      -0.1475,
+      0.242,
+      0.194
+    ],
+    "60-69|male": [
+      -0.207,
+      -0.0815,
+      -0.3275,
+      -0.088,
+      -0.256
+    ],
+    "70-79|female": [
+      -0.411,
+      -0.062,
+      -0.255,
+      0.3595,
+      0.1065
+    ],
+    "70-79|male": [
+      -0.396,
+      -0.172,
+      -0.435,
+      0.0295,
+      -0.3435
+    ],
+    "80+|female": [
+      -0.606,
+      -0.1145,
+      -0.261,
+      0.445,
+      0.088
+    ],
+    "80+|male": [
+      -0.591,
+      -0.2245,
+      -0.441,
+      0.115,
+      -0.362
+    ]
+  },
+  "sigma": [
+    [
+      1.0,
+      0.14,
+      0.31,
+      0.14,
+      -0.12
+    ],
+    [
+      0.14,
+      1.0,
+      0.21,
+      0.31,
+      -0.32
+    ],
+    [
+      0.31,
+      0.21,
+      1.0,
+      0.18,
+      -0.26
+    ],
+    [
+      0.14,
+      0.31,
+      0.18,
+      1.0,
+      -0.26
+    ],
+    [
+      -0.12,
+      -0.32,
+      -0.26,
+      -0.26,
+      1.0
+    ]
+  ]
+}

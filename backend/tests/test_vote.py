@@ -2,7 +2,8 @@ from typing import Literal
 
 import pytest
 
-from app.schemas import BigFive, Persona
+from app.bigfive import bigfive_from_levels
+from app.schemas import Persona, TraitLevel
 from app.vote import collect_panel_votes, resolve_choice
 
 
@@ -16,12 +17,12 @@ def _persona(pid: str) -> Persona:
         income_quintile=3,
         education="secondary",
         interests=["x"],
-        big_five=BigFive(
-            openness="low",
-            conscientiousness="low",
-            extraversion="low",
-            agreeableness="low",
-            neuroticism="low",
+        big_five=bigfive_from_levels(
+            openness=TraitLevel.LOW,
+            conscientiousness=TraitLevel.LOW,
+            extraversion=TraitLevel.LOW,
+            agreeableness=TraitLevel.LOW,
+            neuroticism=TraitLevel.LOW,
         ),
     )
 
