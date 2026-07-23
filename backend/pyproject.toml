@@ -13,6 +13,9 @@ dependencies = [
 
 [tool.uv]
 package = false
+# pipeline is offline-only at runtime, but its tests import pandas — include it
+# by default so `uv run pytest` works without a group flag.
+default-groups = ["dev", "pipeline"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -22,4 +25,7 @@ testpaths = ["tests"]
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.15.22",
+]
+pipeline = [
+    "pandas>=2.2.0",
 ]
