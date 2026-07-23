@@ -28,11 +28,11 @@ MAX_INTERESTS = 5
 _MIN_TAG_LEN = 3
 _MAX_TAG_LEN = 40
 
-# Short noun-phrase tags only: a letter, then letters/spaces/hyphens/apostrophes,
-# ending on a letter. Combined with the length cap this bounds the injection
-# surface (no digits, punctuation, or URLs) without being the full screen — that,
-# plus the statistical audit, is 006e.
-_TAG_PATTERN = re.compile(r"^[A-Za-z][A-Za-z '\-]*[A-Za-z]$")
+# Short noun-phrase tags: alphanumerics plus internal spaces/hyphens/apostrophes,
+# starting and ending on an alphanumeric. Excluding punctuation and URLs, with the
+# length cap, bounds the injection surface — the full screen (and the statistical
+# audit) is 006e. Digits stay: "3D printing", "K-pop", "Formula 1" are real hobbies.
+_TAG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 '\-]*[A-Za-z0-9]$")
 
 _EDUCATION_DESC: dict[EducationLevel, str] = {
     EducationLevel.BELOW_SECONDARY: "did not finish secondary school",

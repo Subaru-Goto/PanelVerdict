@@ -40,16 +40,14 @@ class StubEmbedder:
         return [[float(i)] * self._dim for i in range(len(texts))]
 
 
-def _demographics(**overrides: object) -> PersonaDemographics:
-    base: dict[str, object] = {
-        "country": "US",
-        "age": 34,
-        "gender": "female",
-        "income_quintile": 3,
-        "education": "tertiary",
-    }
-    base.update(overrides)
-    return PersonaDemographics(**base)
+def _demographics() -> PersonaDemographics:
+    return PersonaDemographics(
+        country="US",
+        age=34,
+        gender="female",
+        income_quintile=3,
+        education="tertiary",
+    )
 
 
 def _big_five() -> BigFive:
@@ -94,7 +92,6 @@ def test_normalize_trims_collapses_and_dedupes_case_insensitively() -> None:
         ["trail running", "home cooking", "x"],  # a tag shorter than the min
         ["trail running", "home cooking", "a" * 41],  # a tag past the max length
         ["trail running", "home cooking", "drop table; hack"],  # bad characters
-        ["trail running", "home cooking", "web 2 dev"],  # digits not allowed
     ],
 )
 def test_validate_rejects_bad_sets(tags: list[str]) -> None:
@@ -103,7 +100,8 @@ def test_validate_rejects_bad_sets(tags: list[str]) -> None:
 
 
 def test_validate_accepts_a_good_set() -> None:
-    _validate(["trail running", "restoring old cars", "women's football"])
+    # digits belong: "3D printing", "Formula 1" are real specific hobbies (D1/D3)
+    _validate(["trail running", "3D printing", "women's football", "Formula 1"])
 
 
 def test_synthesize_returns_normalized_tags_on_first_valid_batch() -> None:
