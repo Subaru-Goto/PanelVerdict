@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     panel_model: str = "openai/gpt-5-mini"
     analyst_model: str = "openai/gpt-5-mini"
+    embedding_model: str = "openai/text-embedding-3-small"
 
     @property
     def database_url(self) -> str:

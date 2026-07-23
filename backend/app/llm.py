@@ -1,7 +1,7 @@
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-from app.schemas import PanelVoteOutput
+from app.schemas import InterestSynthesis, PanelVoteOutput
 
 
 def build_vote_messages(
@@ -47,3 +47,41 @@ class OpenRouterPanelLLM:
         if not isinstance(result, PanelVoteOutput):
             raise RuntimeError(f"panel model returned no structured vote: {result!r}")
         return result
+
+
+class OpenRouterInterestLLM:
+    """InterestLLM backed by an OpenRouter chat model via LangChain."""
+
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
+        self._model = ChatOpenAI(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+        ).with_structured_output(InterestSynthesis)
+
+    def generate(self, *, prompt: str) -> InterestSynthesis:
+        messages = [
+            SystemMessage(
+                content="You invent realistic, specific personal interests for "
+                "synthetic survey personas."
+            ),
+            HumanMessage(content=prompt),
+        ]
+        result = self._model.invoke(messages)
+        if not isinstance(result, InterestSynthesis):
+            raise RuntimeError(f"interest model returned no structured list: {result!r}")
+        return result
+
+
+class OpenRouterEmbedder:
+    """Embedder backed by OpenRouter's embeddings endpoint via LangChain."""
+
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
+        self._embeddings = OpenAIEmbeddings(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+        )
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return self._embeddings.embed_documents(texts)

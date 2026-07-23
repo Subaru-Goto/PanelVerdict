@@ -1,5 +1,5 @@
 from app.bigfive import bigfive_from_levels, bucketize
-from app.schemas import EducationLevel, Locale, Persona, TraitLevel
+from app.schemas import COUNTRY_NAME, EducationLevel, Persona, TraitLevel
 
 _TRAIT_PHRASES: dict[str, dict[TraitLevel, str]] = {
     "openness": {
@@ -37,12 +37,6 @@ def _join_with_and(items: list[str]) -> str:
     return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
-_COUNTRY_NAME: dict[Locale, str] = {
-    Locale.US: "the United States",
-    Locale.JP: "Japan",
-    Locale.DE: "Germany",
-}
-
 _EDUCATION_PHRASE: dict[EducationLevel, str] = {
     EducationLevel.BELOW_SECONDARY: "left school before finishing secondary education",
     EducationLevel.SECONDARY: "finished secondary school but didn't go to university",
@@ -70,7 +64,7 @@ def render_persona_prompt(persona: Persona) -> str:
     )
     return (
         f"You are a {persona.age}-year-old {persona.gender} living in "
-        f"{_COUNTRY_NAME[persona.country]}. You {_EDUCATION_PHRASE[persona.education]}, "
+        f"{COUNTRY_NAME[persona.country]}. You {_EDUCATION_PHRASE[persona.education]}, "
         f"and your income is in {_income_band(persona.income_quintile)} for your country. "
         f"In your spare time you're into {_join_with_and(persona.interests)}. "
         f"By temperament, you're {dispositions}."

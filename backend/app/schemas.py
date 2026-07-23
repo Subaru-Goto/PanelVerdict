@@ -46,6 +46,13 @@ COUNTRY_CULTURE_TAG: dict[Locale, CultureTag] = {
     Locale.JP: CultureTag.ASIAN,
 }
 
+# Human-readable country name, shared by every prompt that names the country.
+COUNTRY_NAME: dict[Locale, str] = {
+    Locale.US: "the United States",
+    Locale.JP: "Japan",
+    Locale.DE: "Germany",
+}
+
 
 class EducationLevel(str, Enum):
     BELOW_SECONDARY = "below_secondary"  # ISCED 0–2, no secondary completion
@@ -69,6 +76,17 @@ class Persona(PersonaDemographics):
     id: str
     interests: list[str] = Field(min_length=1, max_length=5)
     big_five: BigFive
+
+
+class InterestSynthesis(BaseModel):
+    """One persona's interests as the LLM returns them (structured output).
+
+    Deliberately permissive — the real gate (count / length / format) is
+    `app.interests._validate`, kept as the single tested source of truth so the
+    rules live in one place rather than split with this schema.
+    """
+
+    interests: list[str]
 
 
 class PanelVoteOutput(BaseModel):
