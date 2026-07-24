@@ -19,3 +19,4 @@ The exact chip set is fog until this ticket is worked (see map Notes).
 ## Notes
 
 - **Vector index (deferred here from 006f).** `search_personas` needs the pgvector similarity index (HNSW/IVFFlat) on `interests.embedding` — 006f persists vectors but builds no index. Its migration must build the index with `CREATE INDEX CONCURRENTLY` (avoids locking the table), which **cannot run inside Alembic's default transaction** — wrap it in `op.get_context().autocommit_block()`. Also decide here whether search needs a per-persona mean-pooled embedding vs. querying per-interest rows.
+- **pgvector adapter on pooled connections.** If the search runtime uses a `psycopg_pool.ConnectionPool`, register the vector adapter per connection via the pool's `configure=` callback — use **`register_vector`** alone, NOT 006f's `prepare_connection` (which also runs `apply_schema` DDL and must not fire on every checkout).
