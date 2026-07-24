@@ -83,13 +83,21 @@ def test_clean_tags_trims_collapses_and_dedupes_case_insensitively() -> None:
     ]
 
 
+def test_clean_tags_folds_typographic_punctuation_to_ascii() -> None:
+    # non-breaking hyphen and curly apostrophe -> ASCII, so the tag validates
+    assert _clean_tags(["tea‑tasting", "women’s football"]) == [
+        "tea-tasting",
+        "women's football",
+    ]
+
+
 @pytest.mark.parametrize(
     "tags",
     [
         ["reading", "cooking"],  # too few
         ["a", "b", "c", "d", "e", "f"],  # too many
         ["trail running", "home cooking", "x"],  # a tag shorter than the min
-        ["trail running", "home cooking", "a" * 41],  # a tag past the max length
+        ["trail running", "home cooking", "a" * 61],  # a tag past the max length
         ["trail running", "home cooking", "drop table; hack"],  # bad characters
     ],
 )
@@ -101,6 +109,11 @@ def test_validate_rejects_bad_sets(tags: list[str]) -> None:
 def test_validate_accepts_a_good_set() -> None:
     # digits belong: "3D printing", "Formula 1" are real specific hobbies (D1/D3)
     _validate(["trail running", "3D printing", "women's football", "Formula 1"])
+
+
+def test_validate_accepts_diacritics_in_english_loanwords() -> None:
+    # interests are English, but English loanwords keep diacritics
+    _validate(["collecting Pokémon cards", "café culture", "trail running"])
 
 
 def test_synthesize_returns_clean_tags_on_first_valid_batch() -> None:
