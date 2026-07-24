@@ -120,3 +120,11 @@ def test_persist_pool_writes_all_and_returns_count(conn):
 
     assert persist_pool(conn, iter(pool)) == 2
     assert _count(conn, "personas") == 2
+
+
+def test_persist_pool_counts_only_new_writes_on_rerun(conn):
+    pool = [_assembled(_persona(id_="US-00000")), _assembled(_persona(id_="US-00001"))]
+
+    assert persist_pool(conn, pool) == 2
+    assert persist_pool(conn, pool) == 0  # all already present — nothing new written
+    assert _count(conn, "personas") == 2

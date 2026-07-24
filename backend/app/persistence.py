@@ -32,11 +32,13 @@ def prepare_connection(conn: psycopg.Connection) -> None:
     register_vector(conn)
 
 
-def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> None:
-    """Write one persona + its interests in a single transaction.
+def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bool:
+    """Write one persona + its interests in a single transaction; return whether
+    it was newly written.
 
     `ON CONFLICT (id) DO NOTHING` makes a re-run a no-op for personas already
-    present; when the persona is skipped its interests are skipped too (D3).
+    present (returns False); when the persona is skipped its interests are skipped
+    too (D3).
     """
     persona = assembled.persona
     big_five = persona.big_five
@@ -64,7 +66,7 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> No
             ),
         )
         if result.rowcount == 0:
-            return
+            return False
         with conn.cursor() as cur:
             cur.executemany(
                 """
@@ -79,12 +81,10 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> No
                     )
                 ],
             )
+    return True
 
 
 def persist_pool(conn: psycopg.Connection, pool: Iterable[AssembledPersona]) -> int:
-    """Persist every assembled persona (one transaction each) and return the count."""
-    count = 0
-    for assembled in pool:
-        persist_persona(conn, assembled)
-        count += 1
-    return count
+    """Persist every assembled persona (one transaction each); return the number
+    newly written — personas already present are skipped and not counted (D3)."""
+    return sum(persist_persona(conn, assembled) for assembled in pool)
