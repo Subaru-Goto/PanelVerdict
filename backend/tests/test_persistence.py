@@ -101,6 +101,17 @@ def test_deleting_a_persona_cascades_to_its_interests(conn):
     assert _count(conn, "interests") == 0
 
 
+def test_persona_and_interests_write_atomically(conn):
+    # a wrong-dimension vector fails the interests insert; the persona row must
+    # roll back with it — never left orphaned (D3 one-transaction-per-persona)
+    persona = _persona(interests=("hiking",))
+    bad = AssembledPersona(persona=persona, interest_vectors=[[0.1] * (_DIM + 1)])
+
+    with pytest.raises(psycopg.Error):
+        persist_persona(conn, bad)
+    assert _count(conn, "personas") == 0
+
+
 def test_persist_pool_writes_all_and_returns_count(conn):
     pool = [
         _assembled(_persona(id_="US-00000")),
