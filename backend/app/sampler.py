@@ -6,10 +6,10 @@ Design: `issues/006b-demographics-sampler.md`.
 """
 
 import csv
-import random
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 from pydantic import BaseModel, Field
 
 from app.schemas import EducationLevel, Locale, PersonaDemographics
@@ -42,7 +42,9 @@ def load_joint(country: Locale) -> list[JointCell]:
         return [JointCell.model_validate(row) for row in csv.DictReader(f)]
 
 
-def _resolve_age(age_band: str, education: EducationLevel, rng: random.Random) -> int:
+def _resolve_age(
+    age_band: str, education: EducationLevel, rng: np.random.Generator
+) -> int:
     """Pick a concrete age uniformly within a band ("20-29", or open-ended "80+").
 
     Tertiary is floored at `_MIN_TERTIARY_AGE`: uniform-within-band would otherwise
@@ -57,28 +59,34 @@ def _resolve_age(age_band: str, education: EducationLevel, rng: random.Random) -
     if education is EducationLevel.TERTIARY:
         # Floor tertiary, but never past the band's top (guards impossible cells).
         low = min(max(low, _MIN_TERTIARY_AGE), high)
-    return rng.randint(low, high)
+    return int(rng.integers(low, high + 1))
+
+
+def sample_one(
+    country: Locale, cells: list[JointCell], rng: np.random.Generator
+) -> PersonaDemographics:
+    """Draw one record from pre-loaded `cells`: a weighted cell, then a concrete age.
+
+    Split out from `sample_demographics` so a caller that seeds per persona (the
+    pool assembler, 006f) reuses the exact cell-choice + age-resolution logic
+    without reloading the table each draw. No country-specific logic here — the
+    heterogeneity was all resolved offline into the joint table.
+    """
+    weights = np.array([cell.weight for cell in cells])
+    cell = cells[int(rng.choice(len(cells), p=weights / weights.sum()))]
+    return PersonaDemographics(
+        country=country,
+        age=_resolve_age(cell.age_band, cell.education, rng),
+        gender=cell.gender,
+        income_quintile=cell.income_quintile,
+        education=cell.education,
+    )
 
 
 def sample_demographics(
     country: Locale, n: int, *, seed: int
 ) -> list[PersonaDemographics]:
-    """Draw `n` demographic records for `country`; deterministic for a given seed.
-
-    Cells are drawn with probability proportional to their weight, then the band
-    is resolved to a concrete age. No country-specific logic lives here — the
-    heterogeneity was all resolved offline into the joint table.
-    """
+    """Draw `n` demographic records for `country`; deterministic for a given seed."""
     cells = load_joint(country)
-    rng = random.Random(seed)
-    chosen = rng.choices(cells, weights=[cell.weight for cell in cells], k=n)
-    return [
-        PersonaDemographics(
-            country=country,
-            age=_resolve_age(cell.age_band, cell.education, rng),
-            gender=cell.gender,
-            income_quintile=cell.income_quintile,
-            education=cell.education,
-        )
-        for cell in chosen
-    ]
+    rng = np.random.default_rng(seed)
+    return [sample_one(country, cells, rng) for _ in range(n)]
