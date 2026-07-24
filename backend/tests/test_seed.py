@@ -4,7 +4,7 @@ from testcontainers.postgres import PostgresContainer
 
 from app.persistence import prepare_connection
 from app.schemas import InterestSynthesis, Locale
-from app.seed import SeedResult, build_quotas, seed_pool
+from app.seed import SeedResult, _parse_countries, build_quotas, seed_pool
 
 _DIM = 1536
 _INTERESTS = ["trail running", "home cooking", "indie podcasts"]
@@ -71,6 +71,10 @@ def test_seed_pool_resume_skips_without_reassembling(conn):
     assert result == SeedResult(requested=3, written=0, skipped=3)
     assert llm.calls == 3
     assert _persona_count(conn) == 3
+
+
+def test_parse_countries_dedups_preserving_order():
+    assert _parse_countries("US,US,JP") == [Locale.US, Locale.JP]
 
 
 def test_build_quotas_hits_exact_size_split_across_countries():

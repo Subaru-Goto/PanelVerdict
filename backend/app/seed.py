@@ -70,7 +70,9 @@ def seed_pool(
 
 
 def _parse_countries(value: str) -> list[Locale]:
-    return [Locale(code.strip().upper()) for code in value.split(",")]
+    # dedup (order-preserving) so a "US,US" typo can't silently shrink the pool
+    codes = (Locale(code.strip().upper()) for code in value.split(","))
+    return list(dict.fromkeys(codes))
 
 
 def main() -> None:
