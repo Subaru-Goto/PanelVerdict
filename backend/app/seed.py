@@ -14,8 +14,9 @@ import psycopg
 from app.assembly import assemble_pool
 from app.config import settings
 from app.interests import Embedder, InterestLLM
-from app.llm import OpenRouterEmbedder, OpenRouterInterestLLM
+from app.llm import OpenRouterEmbedder, OpenRouterInterestLLM, OpenRouterJudge
 from app.persistence import persist_persona, prepare_connection
+from app.qc import format_qc_report, run_qc
 from app.schemas import Locale
 
 _POOL_SIZES = {"dev": 200, "full": 5000}
@@ -80,6 +81,7 @@ def main() -> None:
     parser.add_argument("--size", choices=_POOL_SIZES, default="dev")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--countries", type=_parse_countries, default=list(Locale))
+    parser.add_argument("--qc-sample", type=int, default=50)
     args = parser.parse_args()
 
     if settings.openrouter_api_key is None:
@@ -95,6 +97,11 @@ def main() -> None:
         base_url=settings.openrouter_base_url,
         model=settings.embedding_model,
     )
+    judge = OpenRouterJudge(
+        api_key=api_key,
+        base_url=settings.openrouter_base_url,
+        model=settings.judge_model,
+    )
 
     quotas = build_quotas(args.size, args.countries)
     requested = sum(quotas.values())
@@ -108,7 +115,9 @@ def main() -> None:
         result = seed_pool(
             conn, quotas, master_seed=args.seed, llm=llm, embedder=embedder
         )
-    print(f"Done: {result.written} written, {result.skipped} skipped.")
+        print(f"Done: {result.written} written, {result.skipped} skipped.")
+        report = run_qc(conn, judge=judge, sample_size=args.qc_sample)
+    print(format_qc_report(report))
 
 
 if __name__ == "__main__":
