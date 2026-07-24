@@ -69,7 +69,6 @@ def evaluate_sample(
     failures = [s for s in scored if s.score.rating < pass_threshold]
     return PlausibilityReport(
         n=len(scored),
-        # passes = total − failures, so the threshold is expressed only once
         pass_rate=(len(scored) - len(failures)) / len(scored),
         mean_rating=sum(ratings) / len(ratings),
         failures=failures,
