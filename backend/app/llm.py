@@ -1,7 +1,7 @@
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-from app.schemas import InterestSynthesis, PanelVoteOutput
+from app.schemas import InterestSynthesis, PanelVoteOutput, PlausibilityScore
 
 
 def build_vote_messages(
@@ -85,3 +85,26 @@ class OpenRouterEmbedder:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         return self._embeddings.embed_documents(texts)
+
+
+class OpenRouterJudge:
+    """Judge backed by an OpenRouter chat model via LangChain (006e G-Eval)."""
+
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
+        self._model = ChatOpenAI(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+        ).with_structured_output(PlausibilityScore)
+
+    def score(self, *, prompt: str) -> PlausibilityScore:
+        messages = [
+            SystemMessage(
+                content="You are a careful evaluator of synthetic survey personas."
+            ),
+            HumanMessage(content=prompt),
+        ]
+        result = self._model.invoke(messages)
+        if not isinstance(result, PlausibilityScore):
+            raise RuntimeError(f"judge returned no structured score: {result!r}")
+        return result

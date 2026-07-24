@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     panel_model: str = "openai/gpt-5-mini"
     analyst_model: str = "openai/gpt-5-mini"
     embedding_model: str = "openai/text-embedding-3-small"
+    judge_model: str = "openai/gpt-5-mini"
 
     @property
     def database_url(self) -> str:
