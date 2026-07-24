@@ -82,9 +82,7 @@ def test_assemble_persona_composes_the_full_pipeline() -> None:
     assert persona.id == "US-00003"
     assert persona.country is Locale.US
     assert persona.interests == _VALID
-    # one embedding per interest, aligned by position
     assert len(result.interest_vectors) == len(persona.interests)
-    # Big Five was sampled (continuous scores present)
     assert isinstance(persona.big_five.openness, float)
 
 

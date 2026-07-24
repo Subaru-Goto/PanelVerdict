@@ -66,9 +66,8 @@ def assemble_persona(
 ) -> AssembledPersona:
     """Build one persona deterministically from its slot.
 
-    Sample demographics + Big Five from the slot's own RNGs, synthesize + screen
-    interests, embed them, and assemble. `cells` are passed in so the caller loads
-    a country's joint table once rather than per persona.
+    `cells` are passed in so the caller loads a country's joint table once rather
+    than per persona.
     """
     demo_rng, big_five_rng = _slot_rngs(master_seed, country, index)
     demographics = sample_one(country, cells, demo_rng)
