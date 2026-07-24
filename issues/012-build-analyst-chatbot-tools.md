@@ -15,3 +15,7 @@ The chatbot + tool-calling requirement, embedded in the report and **scoped to t
 - **suggested-question chips** rather than free composition (each chip maps to a requirement and demos reliably).
 
 The exact chip set is fog until this ticket is worked (see map Notes).
+
+## Notes
+
+- **Vector index (deferred here from 006f).** `search_personas` needs the pgvector similarity index (HNSW/IVFFlat) on `interests.embedding` — 006f persists vectors but builds no index. Its migration must build the index with `CREATE INDEX CONCURRENTLY` (avoids locking the table), which **cannot run inside Alembic's default transaction** — wrap it in `op.get_context().autocommit_block()`. Also decide here whether search needs a per-persona mean-pooled embedding vs. querying per-interest rows.
