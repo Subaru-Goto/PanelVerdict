@@ -89,6 +89,13 @@ class InterestSynthesis(BaseModel):
     interests: list[str]
 
 
+class PlausibilityScore(BaseModel):
+    """A judge's plausibility rating for one persona (G-Eval structured output)."""
+
+    rating: int = Field(ge=1, le=5)
+    reason: str
+
+
 class PanelVoteOutput(BaseModel):
     """One persona's vote as the LLM returns it.
 
