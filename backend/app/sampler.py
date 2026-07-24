@@ -60,25 +60,30 @@ def _resolve_age(age_band: str, education: EducationLevel, rng: random.Random) -
     return rng.randint(low, high)
 
 
+def sample_one(
+    country: Locale, cells: list[JointCell], rng: random.Random
+) -> PersonaDemographics:
+    """Draw one record from pre-loaded `cells`: a weighted cell, then a concrete age.
+
+    Split out from `sample_demographics` so a caller that seeds per persona (the
+    pool assembler, 006f) reuses the exact cell-choice + age-resolution logic
+    without reloading the table each draw. No country-specific logic here — the
+    heterogeneity was all resolved offline into the joint table.
+    """
+    (cell,) = rng.choices(cells, weights=[cell.weight for cell in cells], k=1)
+    return PersonaDemographics(
+        country=country,
+        age=_resolve_age(cell.age_band, cell.education, rng),
+        gender=cell.gender,
+        income_quintile=cell.income_quintile,
+        education=cell.education,
+    )
+
+
 def sample_demographics(
     country: Locale, n: int, *, seed: int
 ) -> list[PersonaDemographics]:
-    """Draw `n` demographic records for `country`; deterministic for a given seed.
-
-    Cells are drawn with probability proportional to their weight, then the band
-    is resolved to a concrete age. No country-specific logic lives here — the
-    heterogeneity was all resolved offline into the joint table.
-    """
+    """Draw `n` demographic records for `country`; deterministic for a given seed."""
     cells = load_joint(country)
     rng = random.Random(seed)
-    chosen = rng.choices(cells, weights=[cell.weight for cell in cells], k=n)
-    return [
-        PersonaDemographics(
-            country=country,
-            age=_resolve_age(cell.age_band, cell.education, rng),
-            gender=cell.gender,
-            income_quintile=cell.income_quintile,
-            education=cell.education,
-        )
-        for cell in chosen
-    ]
+    return [sample_one(country, cells, rng) for _ in range(n)]
