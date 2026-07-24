@@ -1,25 +1,13 @@
-"""Stage 3 — synthesize the one un-groundable persona field: interests.
-
-Demographics (006b) and Big Five (006c) are sampled numerically; interests are
-LLM-synthesized conditioned on both, then embedded *per interest* for fuzzy
-targeting and the 006e anti-stereotype audit. Design: issues/006d-interests-synthesis.md.
-
-The LLM and embedder are injected as Protocols so this module is import-safe and
-unit-testable without the network; the concrete OpenRouter adapters live in
-app.llm. Generation is single-persona (D5): each persona is an independent draw,
-which is what makes the 006e population audit's frequencies unbiased.
-"""
-
 import re
 from typing import Protocol
 
 from app.bigfive import bucketize
+from app.content_checks import UnsafeInterest, screen_interests
 from app.schemas import (
     COUNTRY_NAME,
     BigFive,
     EducationLevel,
     InterestSynthesis,
-    Persona,
     PersonaDemographics,
 )
 
@@ -29,9 +17,8 @@ _MIN_TAG_LEN = 3
 _MAX_TAG_LEN = 40
 
 # Short noun-phrase tags: alphanumerics plus internal spaces/hyphens/apostrophes,
-# starting and ending on an alphanumeric. Excluding punctuation and URLs, with the
-# length cap, bounds the injection surface — the full screen (and the statistical
-# audit) is 006e. Digits stay: "3D printing", "K-pop", "Formula 1" are real hobbies.
+# starting and ending on an alphanumeric. Excluding punctuation and URLs.
+# Digits stay: "3D printing", "K-pop", "Formula 1" are real hobbies.
 _TAG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 '\-]*[A-Za-z0-9]$")
 
 _EDUCATION_DESC: dict[EducationLevel, str] = {
@@ -50,6 +37,8 @@ class InterestLLM(Protocol):
 
 
 class Embedder(Protocol):
+    """Embeds each text into its own vector."""
+
     def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
@@ -67,12 +56,7 @@ def _trait_levels(big_five: BigFive) -> str:
 
 
 def build_interest_prompt(demographics: PersonaDemographics, big_five: BigFive) -> str:
-    """The generation instruction: describe the person, then ask for interests.
-
-    Third-person and generation-facing — deliberately distinct from the
-    second-person vote prompt in app.panel. Encodes D2 (anti-stereotype) and
-    D3 (specific, not categorical).
-    """
+    """The generation instruction: describe the person, then ask for interests."""
     return (
         "Invent a realistic set of personal interests for one specific individual.\n"
         f"Person: {demographics.age}-year-old {demographics.gender} in "
@@ -81,7 +65,7 @@ def build_interest_prompt(demographics: PersonaDemographics, big_five: BigFive) 
         f"{_income_desc(demographics.income_quintile)}.\n"
         f"Personality (Big Five levels): {_trait_levels(big_five)}.\n"
         f"Give {MIN_INTERESTS}-{MAX_INTERESTS} specific hobbies or interests as short "
-        "noun phrases (e.g. 'trail running', 'restoring old cars'), never broad "
+        "noun phrases (e.g. 'trail running', 'restoring old cars', 'playing football'), never broad "
         "categories like 'sports'. Write a distinctive individual, not the "
         "stereotype of their demographic — at least one interest may cut against "
         "the obvious profile. Let personality and life stage shape the choices; "
@@ -90,7 +74,7 @@ def build_interest_prompt(demographics: PersonaDemographics, big_five: BigFive) 
     )
 
 
-def _normalize(raw: list[str]) -> list[str]:
+def _clean_tags(raw: list[str]) -> list[str]:
     """Trim, collapse internal whitespace, drop blanks, dedupe case-insensitively."""
     seen: set[str] = set()
     out: list[str] = []
@@ -123,19 +107,16 @@ def synthesize_interests(
     llm: InterestLLM,
     max_attempts: int = 3,
 ) -> list[str]:
-    """Generate one persona's interests, regenerating until they pass the gate.
-
-    Non-deterministic by nature (the LLM field) — 006f freezes the result by
-    persistence. Raises InvalidInterests if no attempt validates.
-    """
+    """Generate one persona's interests, regenerating until they pass the gate."""
     prompt = build_interest_prompt(demographics, big_five)
-    last_error: InvalidInterests | None = None
+    last_error: InvalidInterests | UnsafeInterest | None = None
     for _ in range(max_attempts):
-        tags = _normalize(llm.generate(prompt=prompt).interests)
+        tags = _clean_tags(llm.generate(prompt=prompt).interests)
         try:
             _validate(tags)
+            screen_interests(tags)
             return tags
-        except InvalidInterests as error:
+        except (InvalidInterests, UnsafeInterest) as error:
             last_error = error
     raise InvalidInterests(
         f"no valid interest set in {max_attempts} attempts (last: {last_error})"
@@ -143,25 +124,5 @@ def synthesize_interests(
 
 
 def embed_interests(tags: list[str], *, embedder: Embedder) -> list[list[float]]:
-    """One vector per interest (D4).
-
-    Each hobby is embedded separately, not as a joined string, so 006e can
-    cluster individual interests; persona-level targeting mean-pools these.
-    """
+    """One vector per interest in embedded format."""
     return embedder.embed(tags)
-
-
-def build_persona(
-    *,
-    persona_id: str,
-    demographics: PersonaDemographics,
-    big_five: BigFive,
-    interests: list[str],
-) -> Persona:
-    """Assemble the sampled parts into a full Persona."""
-    return Persona(
-        id=persona_id,
-        **demographics.model_dump(),
-        interests=interests,
-        big_five=big_five,
-    )
