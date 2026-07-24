@@ -1,9 +1,7 @@
 import psycopg
-import pytest
-from testcontainers.postgres import PostgresContainer
+from factories import DIM, make_assembled, make_persona
 
-from app.assembly import AssembledPersona
-from app.persistence import persist_persona, prepare_connection
+from app.persistence import persist_persona
 from app.plausibility import PlausibilityReport, PlausibilityScore
 from app.qc import (
     QCReport,
@@ -13,10 +11,7 @@ from app.qc import (
     load_persona_sample,
     run_qc,
 )
-from app.schemas import BigFive, Persona
 from app.stereotype_audit import AXES, AxisReport, GroupDispersion
-
-_DIM = 1536
 
 
 class StubJudge:
@@ -24,48 +19,9 @@ class StubJudge:
         return PlausibilityScore(rating=5, reason="ok")
 
 
-@pytest.fixture(scope="module")
-def pg_url():
-    with PostgresContainer("pgvector/pgvector:pg16") as pg:
-        yield pg.get_connection_url(driver=None)
-
-
-@pytest.fixture
-def conn(pg_url):
-    with psycopg.connect(pg_url) as connection:
-        prepare_connection(connection)
-        connection.execute("TRUNCATE personas CASCADE")
-        connection.commit()
-        yield connection
-
-
-def _persona(id_: str = "US-00000", interests=("hiking", "jazz")) -> Persona:
-    return Persona(
-        id=id_,
-        country="US",
-        age=34,
-        gender="female",
-        income_quintile=3,
-        education="tertiary",
-        interests=list(interests),
-        big_five=BigFive(
-            openness=0.1,
-            conscientiousness=0.2,
-            extraversion=-0.3,
-            agreeableness=0.4,
-            neuroticism=-0.5,
-        ),
-    )
-
-
-def _assembled(persona: Persona) -> AssembledPersona:
-    vectors = [[float(i)] * _DIM for i in range(len(persona.interests))]
-    return AssembledPersona(persona=persona, interest_vectors=vectors)
-
-
 def _seed(conn: psycopg.Connection, count: int) -> None:
     for i in range(count):
-        persist_persona(conn, _assembled(_persona(id_=f"US-{i:05d}")))
+        persist_persona(conn, make_assembled(make_persona(id_=f"US-{i:05d}")))
 
 
 def test_age_band_buckets_by_decade():
@@ -75,17 +31,17 @@ def test_age_band_buckets_by_decade():
 
 
 def test_load_audit_pool_builds_observations_and_vectors(conn):
-    persist_persona(conn, _assembled(_persona(interests=("hiking", "jazz"))))
+    persist_persona(conn, make_assembled(make_persona(interests=("hiking", "jazz"))))
 
     pool = load_audit_pool(conn)
 
     assert len(pool.observations) == 2
-    assert pool.vectors.shape == (2, _DIM)
+    assert pool.vectors.shape == (2, DIM)
     assert all(obs.age_band == "30s" for obs in pool.observations)  # age 34
 
 
 def test_load_persona_sample_reconstructs_full_personas(conn):
-    persist_persona(conn, _assembled(_persona(interests=("hiking", "jazz"))))
+    persist_persona(conn, make_assembled(make_persona(interests=("hiking", "jazz"))))
 
     sample = load_persona_sample(conn, limit=10)
 
@@ -107,8 +63,12 @@ def test_run_qc_produces_audit_and_plausibility(conn):
 
 def test_format_qc_report_summarizes_both_checks():
     report = QCReport(
-        audit={"country": AxisReport("country", 0.42, [GroupDispersion("US", 6, 0.40)])},
-        plausibility=PlausibilityReport(n=3, pass_rate=1.0, mean_rating=4.5, failures=[]),
+        audit={
+            "country": AxisReport("country", 0.42, [GroupDispersion("US", 6, 0.40)])
+        },
+        plausibility=PlausibilityReport(
+            n=3, pass_rate=1.0, mean_rating=4.5, failures=[]
+        ),
     )
 
     text = format_qc_report(report)
