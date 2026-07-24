@@ -1,5 +1,4 @@
-import random
-
+import numpy as np
 import pytest
 from pydantic import ValidationError
 
@@ -24,14 +23,14 @@ def joint_file(tmp_path, monkeypatch):
     [("20-29", 20, 29), ("80+", 80, 100), ("18-19", 18, 19)],
 )
 def test_resolve_age_stays_within_band(band, low, high):
-    rng = random.Random(0)
+    rng = np.random.default_rng(0)
     ages = [_resolve_age(band, EducationLevel.SECONDARY, rng) for _ in range(50)]
     assert all(low <= age <= high for age in ages)
 
 
 def test_resolve_age_tertiary_never_below_21():
     # "20-29" + tertiary would otherwise emit 20-year-old graduates
-    rng = random.Random(0)
+    rng = np.random.default_rng(0)
     ages = [_resolve_age("20-29", EducationLevel.TERTIARY, rng) for _ in range(200)]
     assert min(ages) >= 21
     assert max(ages) <= 29

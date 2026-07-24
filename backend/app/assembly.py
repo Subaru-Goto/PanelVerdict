@@ -1,11 +1,9 @@
 """Assemble fully-specified personas from the sampled + synthesized parts.
 
 Pure and side-effect-free (no DB): given a country, a slot index, and the master
-seed, produce a deterministic, per-slot-independent persona. Persistence (006f
-PR-2) consumes what this emits. Design: issues/006f-persistence.md (D3, D5).
+seed, produce a deterministic, per-slot-independent persona.
 """
 
-import random
 from collections.abc import Iterator
 from dataclasses import dataclass
 
@@ -20,10 +18,6 @@ from app.schemas import Locale, Persona
 # lexically sortable within a country.
 _ID_WIDTH = 5
 
-# Stable per-country entropy for per-slot seeding — fixed values (not Locale's
-# definition order) so reordering the enum can't silently reshuffle a pool.
-_COUNTRY_ENTROPY: dict[Locale, int] = {Locale.US: 0, Locale.JP: 1, Locale.DE: 2}
-
 
 @dataclass(frozen=True)
 class AssembledPersona:
@@ -34,25 +28,31 @@ class AssembledPersona:
 
 
 def persona_id(country: Locale, index: int) -> str:
-    """Stable ordinal id, e.g. `US-00042` (006f D3) — a label, never parsed."""
+    """Stable ordinal id, e.g. `US-00042` — a label, never parsed."""
     return f"{country.value}-{index:0{_ID_WIDTH}d}"
+
+
+def _country_entropy(country: Locale) -> int:
+    """Per-country seed entropy from the country code itself, so adding a country
+    needs no table here and enum reordering can't reshuffle existing pools.
+    """
+    return int.from_bytes(country.value.encode(), "big")
 
 
 def _slot_rngs(
     master_seed: int, country: Locale, index: int
-) -> tuple[random.Random, np.random.Generator]:
+) -> tuple[np.random.Generator, np.random.Generator]:
     """Independent (demographics, Big Five) RNGs for one slot.
 
     Seeding each slot from (master_seed, country, index) — rather than drawing
     from one shared stream — makes slot i the same person at any pool size, so
     the dev subset is a true prefix of the full pool and the pool can be extended
-    without disturbing existing personas (006f D3).
+    without disturbing existing personas.
     """
     demo_seq, big_five_seq = np.random.SeedSequence(
-        [master_seed, _COUNTRY_ENTROPY[country], index]
+        [master_seed, _country_entropy(country), index]
     ).spawn(2)
-    demo_seed = int(demo_seq.generate_state(1, dtype=np.uint64)[0])
-    return random.Random(demo_seed), np.random.default_rng(big_five_seq)
+    return np.random.default_rng(demo_seq), np.random.default_rng(big_five_seq)
 
 
 def assemble_persona(
@@ -93,9 +93,8 @@ def assemble_pool(
 ) -> Iterator[AssembledPersona]:
     """Yield the pool one persona at a time (sequential, lazy).
 
-    `quotas` is the per-country count — the one hand-managed cross-country knob
-    (D3). Yielding lazily lets the seed script persist as it goes (one transaction
-    per persona); threading + the persistence layer sit on top of this (006f PR-3).
+    `quotas` is the per-country count — the one hand-managed cross-country knob. Yielding lazily lets the seed script persist as it goes (one transaction 
+    per persona); threading + the persistence layer sit on top of it.
     """
     for country, n in quotas.items():
         cells = load_joint(country)
