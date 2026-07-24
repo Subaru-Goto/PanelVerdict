@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import psycopg
+from psycopg.rows import dict_row
 
 from app.plausibility import Judge, PlausibilityReport, evaluate_sample
 from app.schemas import BigFive, Persona
@@ -34,41 +35,44 @@ def _age_band(age: int) -> str:
 
 def load_audit_pool(conn: psycopg.Connection) -> Pool:
     """Read every (persona, interest) row + its embedding into an audit Pool."""
-    rows = conn.execute(
-        """
-        SELECT p.id, p.country, p.age, p.gender, p.education, i.interest, i.embedding
-        FROM personas p JOIN interests i ON i.persona_id = p.id
-        ORDER BY p.id, i.interest
-        """
-    ).fetchall()
+    with conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(
+            """
+            SELECT p.id, p.country, p.age, p.gender, p.education,
+                   i.interest, i.embedding
+            FROM personas p JOIN interests i ON i.persona_id = p.id
+            ORDER BY p.id, i.interest
+            """
+        ).fetchall()
     observations = [
         InterestObservation(
-            persona_id=pid,
-            country=country,
-            age_band=_age_band(age),
-            gender=gender,
-            education=education,
-            interest=interest,
+            persona_id=r["id"],
+            country=r["country"],
+            age_band=_age_band(r["age"]),
+            gender=r["gender"],
+            education=r["education"],
+            interest=r["interest"],
         )
-        for pid, country, age, gender, education, interest, _ in rows
+        for r in rows
     ]
-    vectors = np.array([row[6].to_numpy() for row in rows], dtype=np.float64)
+    vectors = np.array([r["embedding"].to_numpy() for r in rows], dtype=np.float64)
     return Pool(observations=observations, vectors=vectors)
 
 
 def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona]:
     """Reconstruct a random sample of full Persona objects for the plausibility judge."""
-    persona_rows = conn.execute(
-        """
-        SELECT id, country, age, gender, income_quintile, education,
-               openness, conscientiousness, extraversion, agreeableness, neuroticism
-        FROM personas ORDER BY random() LIMIT %s
-        """,
-        (limit,),
-    ).fetchall()
+    with conn.cursor(row_factory=dict_row) as cur:
+        persona_rows = cur.execute(
+            """
+            SELECT id, country, age, gender, income_quintile, education,
+                   openness, conscientiousness, extraversion, agreeableness, neuroticism
+            FROM personas ORDER BY random() LIMIT %s
+            """,
+            (limit,),
+        ).fetchall()
     if not persona_rows:
         return []
-    ids = [row[0] for row in persona_rows]
+    ids = [r["id"] for r in persona_rows]
     interests_by_id: dict[str, list[str]] = {}
     for pid, interest in conn.execute(
         "SELECT persona_id, interest FROM interests WHERE persona_id = ANY(%s)", (ids,)
@@ -76,22 +80,22 @@ def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona
         interests_by_id.setdefault(pid, []).append(interest)
     return [
         Persona(
-            id=pid,
-            country=country,
-            age=age,
-            gender=gender,
-            income_quintile=income_quintile,
-            education=education,
-            interests=interests_by_id[pid],
+            id=r["id"],
+            country=r["country"],
+            age=r["age"],
+            gender=r["gender"],
+            income_quintile=r["income_quintile"],
+            education=r["education"],
+            interests=interests_by_id[r["id"]],
             big_five=BigFive(
-                openness=o,
-                conscientiousness=c,
-                extraversion=e,
-                agreeableness=a,
-                neuroticism=n,
+                openness=r["openness"],
+                conscientiousness=r["conscientiousness"],
+                extraversion=r["extraversion"],
+                agreeableness=r["agreeableness"],
+                neuroticism=r["neuroticism"],
             ),
         )
-        for pid, country, age, gender, income_quintile, education, o, c, e, a, n in persona_rows
+        for r in persona_rows
     ]
 
 
