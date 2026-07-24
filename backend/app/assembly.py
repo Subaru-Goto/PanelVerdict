@@ -4,7 +4,7 @@ Pure and side-effect-free (no DB): given a country, a slot index, and the master
 seed, produce a deterministic, per-slot-independent persona.
 """
 
-from collections.abc import Iterator
+from collections.abc import Container, Iterator
 from dataclasses import dataclass
 
 import numpy as np
@@ -90,15 +90,19 @@ def assemble_pool(
     master_seed: int,
     llm: InterestLLM,
     embedder: Embedder,
+    skip: Container[str] = frozenset(),
 ) -> Iterator[AssembledPersona]:
     """Yield the pool one persona at a time (sequential, lazy).
 
-    `quotas` is the per-country count — the one hand-managed cross-country knob. Yielding lazily lets the seed script persist as it goes (one transaction 
-    per persona); threading + the persistence layer sit on top of it.
+    `quotas` is the per-country count — the one hand-managed cross-country knob.
+    `skip` holds persona ids to leave un-generated, so a resumed seed never pays
+    to assemble (or call the LLM for) personas it already persisted.
     """
     for country, n in quotas.items():
         cells = load_joint(country)
         for index in range(n):
+            if persona_id(country, index) in skip:
+                continue
             yield assemble_persona(
                 country,
                 index,
