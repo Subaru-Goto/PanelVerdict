@@ -1,12 +1,9 @@
 import psycopg
-import pytest
-from testcontainers.postgres import PostgresContainer
+from factories import DIM
 
-from app.persistence import prepare_connection
 from app.schemas import InterestSynthesis, Locale
 from app.seed import SeedResult, _parse_countries, build_quotas, seed_pool
 
-_DIM = 1536
 _INTERESTS = ["trail running", "home cooking", "indie podcasts"]
 
 
@@ -21,24 +18,23 @@ class CountingInterestLLM:
         return InterestSynthesis(interests=list(_INTERESTS))
 
 
+class FirstSlotFailsLLM:
+    """Invalid batches for the first persona's 3 attempts, then valid ones —
+    exactly one persona fails generation, the rest succeed."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, *, prompt: str) -> InterestSynthesis:
+        self.calls += 1
+        if self.calls <= 3:
+            return InterestSynthesis(interests=["too", "few"])
+        return InterestSynthesis(interests=list(_INTERESTS))
+
+
 class StubEmbedder:
     def embed(self, texts: list[str]) -> list[list[float]]:
-        return [[float(len(text))] * _DIM for text in texts]
-
-
-@pytest.fixture(scope="module")
-def pg_url():
-    with PostgresContainer("pgvector/pgvector:pg16") as pg:
-        yield pg.get_connection_url(driver=None)
-
-
-@pytest.fixture
-def conn(pg_url):
-    with psycopg.connect(pg_url) as connection:
-        prepare_connection(connection)
-        connection.execute("TRUNCATE personas CASCADE")
-        connection.commit()
-        yield connection
+        return [[float(len(text))] * DIM for text in texts]
 
 
 def _persona_count(conn: psycopg.Connection) -> int:
@@ -51,7 +47,7 @@ def test_seed_pool_persists_all_when_empty(conn):
         conn, {Locale.US: 3}, master_seed=1, llm=llm, embedder=StubEmbedder()
     )
 
-    assert result == SeedResult(requested=3, written=3, skipped=0)
+    assert result == SeedResult(requested=3, written=3, skipped=0, failed=0)
     assert _persona_count(conn) == 3
     assert llm.calls == 3
 
@@ -68,9 +64,23 @@ def test_seed_pool_resume_skips_without_reassembling(conn):
     # calls (the whole point of skipping existing ids before assembly)
     result = seed_pool(conn, quotas, master_seed=1, llm=llm, embedder=embedder)
 
-    assert result == SeedResult(requested=3, written=0, skipped=3)
+    assert result == SeedResult(requested=3, written=0, skipped=3, failed=0)
     assert llm.calls == 3
     assert _persona_count(conn) == 3
+
+
+def test_seed_pool_counts_generation_failures_separately_from_skips(conn):
+    result = seed_pool(
+        conn,
+        {Locale.US: 3},
+        master_seed=1,
+        llm=FirstSlotFailsLLM(),
+        embedder=StubEmbedder(),
+    )
+
+    # a failed persona is not a resume-skip: the pool is genuinely short
+    assert result == SeedResult(requested=3, written=2, skipped=0, failed=1)
+    assert _persona_count(conn) == 2
 
 
 def test_parse_countries_dedups_preserving_order():

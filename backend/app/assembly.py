@@ -4,15 +4,24 @@ Pure and side-effect-free (no DB): given a country, a slot index, and the master
 seed, produce a deterministic, per-slot-independent persona.
 """
 
-from collections.abc import Container, Iterator
+import logging
+from collections.abc import Callable, Container, Iterator
 from dataclasses import dataclass
 
 import numpy as np
 
 from app.bigfive import sample_big_five
-from app.interests import Embedder, InterestLLM, embed_interests, synthesize_interests
+from app.interests import (
+    Embedder,
+    InterestLLM,
+    InvalidInterests,
+    embed_interests,
+    synthesize_interests,
+)
 from app.sampler import JointCell, load_joint, sample_one
 from app.schemas import Locale, Persona
+
+logger = logging.getLogger(__name__)
 
 # Zero-pad the ordinal: a 5k pool needs 4 digits; 5 leaves headroom and keeps ids
 # lexically sortable within a country.
@@ -91,23 +100,32 @@ def assemble_pool(
     llm: InterestLLM,
     embedder: Embedder,
     skip: Container[str] = frozenset(),
+    on_failure: Callable[[str], None] = lambda pid: None,
 ) -> Iterator[AssembledPersona]:
     """Yield the pool one persona at a time (sequential, lazy).
 
     `quotas` is the per-country count — the one hand-managed cross-country knob.
     `skip` holds persona ids to leave un-generated, so a resumed seed never pays
-    to assemble (or call the LLM for) personas it already persisted.
+    to assemble (or call the LLM for) personas it already persisted. A persona
+    whose interests fail generation after retries is logged, reported via
+    `on_failure(pid)`, and skipped, so one bad draw can't abort the whole batch
+    but the caller can still count what went missing.
     """
     for country, n in quotas.items():
         cells = load_joint(country)
         for index in range(n):
-            if persona_id(country, index) in skip:
+            pid = persona_id(country, index)
+            if pid in skip:
                 continue
-            yield assemble_persona(
-                country,
-                index,
-                cells,
-                master_seed=master_seed,
-                llm=llm,
-                embedder=embedder,
-            )
+            try:
+                yield assemble_persona(
+                    country,
+                    index,
+                    cells,
+                    master_seed=master_seed,
+                    llm=llm,
+                    embedder=embedder,
+                )
+            except InvalidInterests as error:
+                logger.warning("skipping %s: interest generation failed (%s)", pid, error)
+                on_failure(pid)

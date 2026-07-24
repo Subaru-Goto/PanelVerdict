@@ -7,6 +7,7 @@ never re-pays the LLM/embedding cost for what it already has.
 """
 
 import argparse
+import logging
 from dataclasses import dataclass
 
 import psycopg
@@ -24,9 +25,13 @@ _POOL_SIZES = {"dev": 200, "full": 5000}
 
 @dataclass(frozen=True)
 class SeedResult:
+    """`skipped` = already in the pool (healthy resume); `failed` = interest
+    generation gave up after retries (pool is short — a re-run retries these)."""
+
     requested: int
     written: int
     skipped: int
+    failed: int
 
 
 def build_quotas(size: str, countries: list[Locale]) -> dict[Locale, int]:
@@ -57,6 +62,7 @@ def seed_pool(
     resumed run never assembles (or calls the LLM for) what it already has.
     """
     requested = sum(quotas.values())
+    failed: list[str] = []
     written = sum(
         persist_persona(conn, assembled)
         for assembled in assemble_pool(
@@ -65,9 +71,15 @@ def seed_pool(
             llm=llm,
             embedder=embedder,
             skip=_existing_ids(conn),
+            on_failure=failed.append,
         )
     )
-    return SeedResult(requested=requested, written=written, skipped=requested - written)
+    return SeedResult(
+        requested=requested,
+        written=written,
+        skipped=requested - written - len(failed),
+        failed=len(failed),
+    )
 
 
 def _parse_countries(value: str) -> list[Locale]:
@@ -83,6 +95,7 @@ def main() -> None:
     parser.add_argument("--countries", type=_parse_countries, default=list(Locale))
     parser.add_argument("--qc-sample", type=int, default=50)
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     if settings.openrouter_api_key is None:
         raise SystemExit("openrouter_api_key is not set; cannot generate the pool.")
@@ -105,7 +118,11 @@ def main() -> None:
 
     quotas = build_quotas(args.size, args.countries)
     requested = sum(quotas.values())
-    with psycopg.connect(settings.database_url) as conn:
+    # autocommit, or the per-persona transaction blocks silently become
+    # savepoints inside one run-long implicit transaction — an interrupt would
+    # then roll back every persona (and its paid LLM work) instead of just the
+    # one in flight
+    with psycopg.connect(settings.database_url, autocommit=True) as conn:
         prepare_connection(conn)
         already = len(_existing_ids(conn))
         print(
@@ -115,7 +132,10 @@ def main() -> None:
         result = seed_pool(
             conn, quotas, master_seed=args.seed, llm=llm, embedder=embedder
         )
-        print(f"Done: {result.written} written, {result.skipped} skipped.")
+        print(
+            f"Done: {result.written} written, {result.skipped} already present, "
+            f"{result.failed} failed (re-run to retry)."
+        )
         report = run_qc(conn, judge=judge, sample_size=args.qc_sample)
     print(format_qc_report(report))
 
