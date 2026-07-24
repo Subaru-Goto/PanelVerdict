@@ -114,6 +114,20 @@ def test_assemble_pool_respects_quotas_and_orders_ids(joint_dir) -> None:
     ]
 
 
+def test_assemble_pool_skips_given_ids(joint_dir) -> None:
+    partial = list(
+        assemble_pool(
+            {Locale.US: 3},
+            master_seed=1,
+            llm=StubInterestLLM(_VALID),
+            embedder=StubEmbedder(),
+            skip={"US-00001"},
+        )
+    )
+
+    assert [ap.persona.id for ap in partial] == ["US-00000", "US-00002"]
+
+
 def test_dev_subset_is_a_prefix_of_the_full_pool(joint_dir) -> None:
     # slot i is the same person at any pool size, so a smaller run is a true
     # prefix of a larger one (D3 per-slot seeding) — validate dev, ship full.
