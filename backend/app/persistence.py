@@ -1,0 +1,90 @@
+"""Persist assembled personas to Postgres + pgvector (006f PR-2).
+
+Connection is injected (not built from settings) so this is testable against a
+throwaway container without touching .env. Idempotent by design: re-running the
+seed skips personas already present (006f D3).
+"""
+
+from collections.abc import Iterable
+from pathlib import Path
+
+import numpy as np
+import psycopg
+from pgvector.psycopg import register_vector
+
+from app.assembly import AssembledPersona
+
+_SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
+
+
+def apply_schema(conn: psycopg.Connection) -> None:
+    """Create the pool schema if absent (idempotent — `CREATE … IF NOT EXISTS`)."""
+    conn.execute(_SCHEMA_SQL)
+    conn.commit()
+
+
+def prepare_connection(conn: psycopg.Connection) -> None:
+    """Ready a connection for the pool: ensure the schema, then register the
+    pgvector adapter so vector columns round-trip as numpy arrays. `register_vector`
+    needs the extension to exist, so it must follow `apply_schema`.
+    """
+    apply_schema(conn)
+    register_vector(conn)
+
+
+def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> None:
+    """Write one persona + its interests in a single transaction.
+
+    `ON CONFLICT (id) DO NOTHING` makes a re-run a no-op for personas already
+    present; when the persona is skipped its interests are skipped too (D3).
+    """
+    persona = assembled.persona
+    big_five = persona.big_five
+    with conn.transaction():
+        result = conn.execute(
+            """
+            INSERT INTO personas (
+                id, country, age, gender, income_quintile, education,
+                openness, conscientiousness, extraversion, agreeableness, neuroticism
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (
+                persona.id,
+                persona.country.value,
+                persona.age,
+                persona.gender,
+                persona.income_quintile,
+                persona.education.value,
+                big_five.openness,
+                big_five.conscientiousness,
+                big_five.extraversion,
+                big_five.agreeableness,
+                big_five.neuroticism,
+            ),
+        )
+        if result.rowcount == 0:
+            return
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO interests (persona_id, interest, embedding)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (persona_id, interest) DO NOTHING
+                """,
+                [
+                    (persona.id, interest, np.array(vector))
+                    for interest, vector in zip(
+                        persona.interests, assembled.interest_vectors, strict=True
+                    )
+                ],
+            )
+
+
+def persist_pool(conn: psycopg.Connection, pool: Iterable[AssembledPersona]) -> int:
+    """Persist every assembled persona (one transaction each) and return the count."""
+    count = 0
+    for assembled in pool:
+        persist_persona(conn, assembled)
+        count += 1
+    return count
