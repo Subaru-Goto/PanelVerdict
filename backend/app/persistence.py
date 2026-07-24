@@ -1,8 +1,8 @@
-"""Persist assembled personas to Postgres + pgvector (006f PR-2).
+"""Persist assembled personas to Postgres + pgvector.
 
-Connection is injected (not built from settings) so this is testable against a
-throwaway container without touching .env. Idempotent by design: re-running the
-seed skips personas already present (006f D3).
+The connection is injected (not built from settings) so this is testable against
+a throwaway container without live credentials. Idempotent: re-running the seed
+skips personas already present.
 """
 
 from collections.abc import Iterable
@@ -37,8 +37,8 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bo
     it was newly written.
 
     `ON CONFLICT (id) DO NOTHING` makes a re-run a no-op for personas already
-    present (returns False); when the persona is skipped its interests are skipped
-    too (D3).
+    present (returns False); when the persona is skipped its interests are
+    skipped too.
     """
     persona = assembled.persona
     big_five = persona.big_five
@@ -86,5 +86,5 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bo
 
 def persist_pool(conn: psycopg.Connection, pool: Iterable[AssembledPersona]) -> int:
     """Persist every assembled persona (one transaction each); return the number
-    newly written — personas already present are skipped and not counted (D3)."""
+    newly written — personas already present are skipped and not counted."""
     return sum(persist_persona(conn, assembled) for assembled in pool)

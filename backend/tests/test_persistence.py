@@ -69,7 +69,7 @@ def test_persist_writes_persona_and_its_interests(conn):
 
 def test_persist_is_idempotent_on_rerun(conn):
     persist_persona(conn, _assembled())
-    persist_persona(conn, _assembled())  # same id — must be skipped, not duplicated
+    persist_persona(conn, _assembled())
 
     assert _count(conn, "personas") == 1
     assert _count(conn, "interests") == 2
@@ -103,7 +103,7 @@ def test_deleting_a_persona_cascades_to_its_interests(conn):
 
 def test_persona_and_interests_write_atomically(conn):
     # a wrong-dimension vector fails the interests insert; the persona row must
-    # roll back with it — never left orphaned (D3 one-transaction-per-persona)
+    # roll back with it, never left orphaned
     persona = _persona(interests=("hiking",))
     bad = AssembledPersona(persona=persona, interest_vectors=[[0.1] * (_DIM + 1)])
 
@@ -126,5 +126,5 @@ def test_persist_pool_counts_only_new_writes_on_rerun(conn):
     pool = [_assembled(_persona(id_="US-00000")), _assembled(_persona(id_="US-00001"))]
 
     assert persist_pool(conn, pool) == 2
-    assert persist_pool(conn, pool) == 0  # all already present — nothing new written
+    assert persist_pool(conn, pool) == 0
     assert _count(conn, "personas") == 2

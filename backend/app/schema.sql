@@ -1,10 +1,9 @@
--- Persona pool schema (006f D2). Idempotent: safe to run on every seed.
--- v1 uses raw DDL (no migration tool); migrations arrive with the v2 deploy.
+-- Persona pool schema. Idempotent: safe to run on every seed.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- One row per persona. Hard fields are SQL-filterable columns; Big Five are the
--- continuous sampled scores (levels are derived at render, never stored).
+-- One row per persona. Big Five are the continuous sampled scores; levels are
+-- derived at render, never stored.
 CREATE TABLE IF NOT EXISTS personas (
     id                text PRIMARY KEY,           -- "{country}-{ordinal}", e.g. US-00042
     country           text NOT NULL,              -- Locale: US | JP | DE
@@ -20,8 +19,7 @@ CREATE TABLE IF NOT EXISTS personas (
 );
 
 -- One row per (persona, interest): per-interest embeddings can't be an array
--- column (pgvector holds one vector per row). No vector index in v1 — that is a
--- search concern deferred to 012.
+-- column (pgvector holds one vector per row).
 CREATE TABLE IF NOT EXISTS interests (
     persona_id text        NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
     interest   text        NOT NULL,
