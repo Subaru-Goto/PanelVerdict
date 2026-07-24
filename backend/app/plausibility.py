@@ -1,4 +1,4 @@
-"""Plausibility QC over generated personas (006e, D6).
+"""Plausibility QC over generated personas.
 
 A thin custom G-Eval: an injected judge LLM rates whether a persona reads as a
 plausible, coherent individual given its demographics + Big Five + interests. Runs
@@ -58,12 +58,7 @@ def score_persona(persona: Persona, *, judge: Judge) -> PlausibilityScore:
 def evaluate_sample(
     personas: list[Persona], *, judge: Judge, pass_threshold: int = 4
 ) -> PlausibilityReport:
-    """Score a sample and aggregate — the generation-health signal (not a gate).
-
-    Sampling is the caller's job (006f); this evaluates whatever it's given.
-    `failures` (rating below `pass_threshold`) are surfaced for human inspection,
-    but the headline is `pass_rate` — a low rate points at the generation prompt.
-    """
+    """Score a sample and aggregate — the generation-health signal (not a gate)."""
     scored = [
         ScoredPersona(persona.id, score_persona(persona, judge=judge))
         for persona in personas
@@ -71,11 +66,11 @@ def evaluate_sample(
     if not scored:
         return PlausibilityReport(0, 0.0, 0.0, [])
     ratings = [s.score.rating for s in scored]
-    passes = sum(1 for rating in ratings if rating >= pass_threshold)
     failures = [s for s in scored if s.score.rating < pass_threshold]
     return PlausibilityReport(
         n=len(scored),
-        pass_rate=passes / len(scored),
+        # passes = total − failures, so the threshold is expressed only once
+        pass_rate=(len(scored) - len(failures)) / len(scored),
         mean_rating=sum(ratings) / len(ratings),
         failures=failures,
     )
