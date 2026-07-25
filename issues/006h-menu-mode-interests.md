@@ -9,15 +9,15 @@ status: rejected
 
 ## Rejected (2026-07-25) — superseded by [006i](006i-leisure-profiles.md)
 
-Menu-mode would have worked mechanically (slice 1 shipped: weighted draw,
-openness wildcard, count draw — all tested), but making it *correct* required
-~430 per-entry weights and an interest-count distribution that no survey
-measures. There is no obtainable ground truth for an open hobby vocabulary per
+Menu-mode would have worked mechanically — slice 1 (weighted draw, openness
+wildcard, count draw) was built and tested, then **dropped unmerged** — but
+making it *correct* required ~430 per-entry weights and an interest-count
+distribution that no survey measures. There is no obtainable ground truth for an open hobby vocabulary per
 country, so the design's core input would have stayed invented — and adding a
 country would have meant re-inventing it. 006i replaces generated interests
 with surveyed time-use categories, where the ground truth exists and is
-re-pullable. Slice 1's code is repurposed there (weighted draw over ~10 sourced
-categories); slices 2-3 were never built.
+re-pullable. Slice 1's ~30 lines of draw logic reappear there as a weighted draw
+over ~10 sourced categories; slices 2-3 were never built.
 
 ## Goal
 
