@@ -3,5 +3,11 @@
   "imputations": [
     "age is not conditioned: the query pins age=TOTAL, though tus_20age publishes 16 age bands for DE",
     "participation rate for aggregated categories (tv_media, socializing, reading) is the independence union 1-prod(1-r), and their participant minutes are population minutes / that rate; every other category is read from the published PTP_RT and PTP_TIME cells"
+  ],
+  "unsupported": [
+    {
+      "category": "hobbies_amusements",
+      "reason": "not a Eurostat category: acl18 publishes games, reading, computer use, arts and gardening separately, so the coarse bucket is only meaningful for surveys that do not split them (Japan)"
+    }
   ]
 }

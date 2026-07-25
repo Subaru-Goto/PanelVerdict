@@ -2,7 +2,6 @@
 
 Country-agnostic and deterministic: the per-country/per-format work all happened
 offline in the pipeline, so this reads one joint table and draws from it.
-Design: `issues/006b-demographics-sampler.md`.
 """
 
 import csv
