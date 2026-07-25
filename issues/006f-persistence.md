@@ -4,7 +4,7 @@ labels: [wayfinder:task]
 parent: 006-build-persona-pool
 blocked_by: [006b-demographics-sampler, 006c-bigfive-sampler, 006d-interests-synthesis, 006e-content-checks]
 assignee: null
-status: open
+status: done
 ---
 
 ## Goal
