@@ -9,6 +9,11 @@ Bank entries are prompt examples, never a menu: nothing gates generated
 interests to bank membership. Content is LLM-drafted and human-skimmed —
 rough popularity tiers, not survey data (the model supplies the fit; the bank
 only decorrelates and re-centers on the mainstream).
+
+Entry convention — participation vs spectating are different interests, so:
+"playing X" for doing a sport, "watching X" for following it, bare form only
+where unambiguous ("fishing", "baking"). Tiers apply per form: watching
+football is common in the US while playing it as an adult is not.
 """
 
 import csv

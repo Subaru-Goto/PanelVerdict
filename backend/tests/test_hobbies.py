@@ -66,7 +66,7 @@ def test_committed_banks_pass_the_tag_gate(country: Locale) -> None:
     entries = bank.common + bank.niche
 
     assert len(set(entries)) == len(entries)
-    assert len(bank.common) >= 30  # enough spread to anchor a mainstream pool
-    assert len(bank.niche) >= 10
+    assert len(bank.common) >= 90  # enough spread to anchor a mainstream pool
+    assert len(bank.niche) >= 40
     for entry in entries:
         _validate(["trail running", "home cooking", entry])
