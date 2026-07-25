@@ -16,6 +16,7 @@ import json
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Literal
@@ -29,11 +30,14 @@ _Gender = Literal["male", "female"]
 _GENDERS: tuple[_Gender, ...] = ("male", "female")
 
 _Unit = Literal["minutes", "participant_minutes", "rates"]
+_CellKey = tuple[_Gender, str]
 
-# --- Germany: Eurostat acl18 activity codes ---------------------------------
-# A category needs more than one code only where the survey splits finer than
-# the pool does; those are the ones whose participation rate has to be derived
-# rather than read.
+# Everything `openpyxl.iter_rows(values_only=True)` can hand back.
+_CellValue = str | int | float | bool | datetime | date | time | timedelta | None
+
+# A category needs more than one Eurostat code only where the survey splits finer
+# than the pool does; those are the ones whose participation rate has to be
+# derived rather than read.
 _EUROSTAT_CODES: dict[LeisureCategory, tuple[str, ...]] = {
     LeisureCategory.TV_MEDIA: ("AC821", "AC831"),
     LeisureCategory.SOCIALIZING: ("AC511", "AC512_513_519", "AC514-516"),
@@ -61,12 +65,16 @@ _EUROSTAT_BASE = (
 )
 _EUROSTAT_CITATION = "eurostat:tus_20age"
 _EUROSTAT_SEX: dict[str, _Gender] = {"M": "male", "F": "female"}
+_EUROSTAT_UNITS: dict[str, _Unit] = {
+    "TIME_SP": "minutes",
+    "PTP_TIME": "participant_minutes",
+    "PTP_RT": "rates",
+}
 
 # Dimensions we index across; every other dimension must be pinned to one value
 # by the query, or the flat value index below would silently mis-map.
 _INDEXED_DIMS = ("sex", "acl18", "unit")
 
-# --- Japan: 社会生活基本調査 2021 diary activities ----------------------------
 # Keyed on the sheet's own English headers, so nothing here depends on matching
 # Japanese text. Each category maps to exactly one activity: the diary's leisure
 # taxonomy is coarser than the pool's, never finer, so Japan never aggregates.
@@ -80,17 +88,17 @@ _ESTAT_ACTIVITIES: dict[LeisureCategory, tuple[str, ...]] = {
     LeisureCategory.SOCIALIZING: ("Social life",),
 }
 
+_INSIDE_HOBBIES = (
+    "inside 趣味・娯楽 (hobbies_amusements); the diary does not separate it"
+)
+
 _ESTAT_UNSUPPORTED: dict[LeisureCategory, str] = {
-    LeisureCategory.GAMES: (
-        "inside 趣味・娯楽 (hobbies_amusements); the diary does not separate it"
-    ),
+    LeisureCategory.GAMES: _INSIDE_HOBBIES,
     LeisureCategory.READING: (
         "split across two diary activities and recoverable from neither: "
         "newspapers and magazines sit inside tv_media, books inside 趣味・娯楽"
     ),
-    LeisureCategory.COMPUTER_LEISURE: (
-        "inside 趣味・娯楽 (hobbies_amusements); the diary does not separate it"
-    ),
+    LeisureCategory.COMPUTER_LEISURE: _INSIDE_HOBBIES,
     LeisureCategory.ARTS_HOBBIES: (
         "inside 趣味・娯楽 (hobbies_amusements), which also covers games, books "
         "and computer use — reporting it under this name would mean something "
@@ -169,17 +177,20 @@ class SurveyCells:
     never have to coerce a duration string and a percentage out of one map.
     """
 
-    minutes: dict[tuple[str, str], int]
-    participant_minutes: dict[tuple[str, str], int]
-    rates: dict[tuple[str, str], float]
+    minutes: dict[_CellKey, int]
+    participant_minutes: dict[_CellKey, int]
+    rates: dict[_CellKey, float]
 
-    def record(self, unit: _Unit, key: tuple[str, str], value: float) -> None:
+    def record(self, unit: _Unit, key: _CellKey, value: float) -> None:
+        """File one published value under its unit, percentages as fractions."""
         if unit == "minutes":
             self.minutes[key] = int(value)
         elif unit == "participant_minutes":
             self.participant_minutes[key] = int(value)
-        else:
+        elif unit == "rates":
             self.rates[key] = value / 100
+        else:
+            raise ValueError(f"unknown unit {unit!r} for {key}")
 
 
 def _eurostat_url(country: Locale) -> str:
@@ -230,19 +241,18 @@ def parse_jsonstat(text: str) -> SurveyCells:
                     + unit_i * strides["unit"]
                 )
                 raw = values.get(str(flat))
-                if raw is None:
+                measure = _EUROSTAT_UNITS.get(unit)
+                if raw is None or measure is None:
                     continue
-                key = (gender, activity)
-                if unit == "TIME_SP":
-                    cells.minutes[key] = _hhmm_to_minutes(raw)
-                elif unit == "PTP_TIME":
-                    cells.participant_minutes[key] = _hhmm_to_minutes(raw)
-                elif unit == "PTP_RT":
-                    cells.rates[key] = float(raw) / 100
+                cells.record(
+                    measure,
+                    (gender, activity),
+                    float(raw) if measure == "rates" else _hhmm_to_minutes(raw),
+                )
     return cells
 
 
-def _cell_text(value: object) -> str:
+def _cell_text(value: _CellValue) -> str:
     """Header cells carry line breaks and furigana, so collapse whitespace before
     comparing against the published labels."""
     return " ".join(str(value).split()) if value is not None else ""
@@ -311,7 +321,7 @@ def parse_estat_table(payload: bytes) -> SurveyCells:
 
     # The sex label sits on the first row of its block only, so the row carrying
     # a bare 男/女 with no age beside it is that sex's all-ages row.
-    gender_rows: dict[_Gender, list[object]] = {}
+    gender_rows: dict[_Gender, list[_CellValue]] = {}
     for row in grid:
         for col, value in enumerate(row):
             gender = _ESTAT_SEX.get(_cell_text(value))
@@ -422,6 +432,7 @@ def _declare_coverage(
 
 
 def _build_germany(fetch: Callable[[str], bytes]) -> LeisureBuildResult:
+    unsupported = _declare_coverage(_EUROSTAT_CODES, _EUROSTAT_UNSUPPORTED)
     cells = parse_jsonstat(fetch(_eurostat_url(Locale.DE)).decode())
     rows, derived = _leisure_rows(cells, _EUROSTAT_CODES, _EUROSTAT_CITATION)
 
@@ -441,11 +452,12 @@ def _build_germany(fetch: Callable[[str], bytes]) -> LeisureBuildResult:
         country=Locale.DE,
         rows=rows,
         imputations=imputations,
-        unsupported=_declare_coverage(_EUROSTAT_CODES, _EUROSTAT_UNSUPPORTED),
+        unsupported=unsupported,
     )
 
 
 def _build_japan(fetch: Callable[[str], bytes]) -> LeisureBuildResult:
+    unsupported = _declare_coverage(_ESTAT_ACTIVITIES, _ESTAT_UNSUPPORTED)
     cells = parse_estat_table(fetch(_ESTAT_URL))
     rows, derived = _leisure_rows(cells, _ESTAT_ACTIVITIES, _ESTAT_CITATION)
     assert not derived, "every Japanese category maps to a single diary activity"
@@ -462,8 +474,17 @@ def _build_japan(fetch: Callable[[str], bytes]) -> LeisureBuildResult:
             "socializing is 交際・付き合い, which covers visits and ceremonies but "
             "not conversation at home; Eurostat's socializing does include it, so "
             "the two countries' figures are not comparable to each other",
+            "tv_media here counts newspapers and magazines along with TV and "
+            "radio, because the diary does not split them; Eurostat reports print "
+            "under reading instead, so the two countries' tv_media differ in scope",
+            "two published leisure activities are deliberately left unmapped: "
+            "休養・くつろぎ (rest and relaxation, 68.1% of men for 175 min) and "
+            "学習・自己啓発・訓練 (learning outside schoolwork, 9.1%). Neither has "
+            "a category: resting is downtime rather than an interest, and "
+            "Eurostat files it under personal care, so neither would carry "
+            "signal a headline vote could use",
         ],
-        unsupported=_declare_coverage(_ESTAT_ACTIVITIES, _ESTAT_UNSUPPORTED),
+        unsupported=unsupported,
     )
 
 

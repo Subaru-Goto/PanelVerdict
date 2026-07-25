@@ -36,9 +36,12 @@ class LeisureCategory(str, Enum):
     publishes games, reading, computer use, arts and gardening separately. Rather
     than degrade every country to Japan's granularity, each country fills the
     categories its own survey publishes and declares the rest unavailable in its
-    `.meta.json`. So a category means one thing wherever it appears — it just
-    isn't present everywhere. Personas are only ever compared within a country,
-    which is what makes that trade sound.
+    `.meta.json`. So a category is never reported under a name that means
+    something materially different — it just isn't present everywhere. Narrower
+    scope differences do survive (Japan's `sports_exercise` counts walking,
+    Germany reports that separately), and each is declared in the country's
+    `.meta.json` rather than smoothed over. Personas are only ever compared
+    within a country, which is what makes that trade sound.
     """
 
     TV_MEDIA = "tv_media"

@@ -57,18 +57,25 @@ invented ones.**
 
   **Amended again in slice 1c, once Japan's actual taxonomy was in hand.** The
   original plan was to harmonize down to the coarsest national taxonomy. Japan's
-  diary turns out to publish only 5 usable leisure activities, with one
-  "Hobbies and amusements" bucket covering games, books, computer use, arts and
-  gardening at once — so harmonizing down would have collapsed Germany's and the
-  US's finer data into a blob that carries almost no signal for headline voting,
-  which is the whole point of the profile. Instead each country fills what its
-  own survey publishes and declares the rest in `{cc}.meta.json`. A category
-  therefore means exactly one thing wherever it appears; it just isn't present
-  everywhere. `hobbies_amusements` exists for Japan's coarse bucket precisely so
-  it is *not* reported under `arts_hobbies`, which would be the same name meaning
-  two different things. The build fails if a category is neither mapped nor
-  declared unsupported, so adding an enum member cannot silently shorten a
-  country's table.
+  diary turns out to publish only 5 leisure activities that map onto this set,
+  with one "Hobbies and amusements" bucket covering games, books, computer use,
+  arts and gardening at once — so harmonizing down would have collapsed Germany's
+  and the US's finer data into a blob that carries almost no signal for headline
+  voting, which is the whole point of the profile. Instead each country fills
+  what its own survey publishes and declares the rest in `{cc}.meta.json`. A
+  category is therefore never reported under a name meaning something materially
+  different; it just isn't present everywhere. `hobbies_amusements` exists for
+  Japan's coarse bucket precisely so it is *not* reported under `arts_hobbies`,
+  which would be the same name meaning two different things. The build fails if
+  a category is neither mapped nor declared unsupported, so adding an enum member
+  cannot silently shorten a country's table.
+
+  Two published Japanese activities are deliberately left unmapped rather than
+  forgotten, and say so in `jp.meta.json`: 休養・くつろぎ (rest and relaxation,
+  68.1% of men for 175 min — second only to `tv_media`) and 学習・自己啓発・訓練
+  (9.1%). Resting is downtime rather than an interest and Eurostat files it under
+  personal care, so neither would carry signal a headline vote could use. Each
+  country's builder must declare published-but-unmapped activities the same way.
 
   This is sound because **personas are only ever compared within a country** —
   a US panel is scored against US personas, and the profile is consumed as a
@@ -76,8 +83,9 @@ invented ones.**
   join. Cross-country leisure comparison is the one thing this forfeits, and
   nothing in PanelVerdict asks for it. Scope differences that survive the
   mapping are declared rather than hidden: JP `sports_exercise` includes walking
-  (Germany reports it separately), and JP `socializing` is 交際・付き合い, which
-  excludes conversation at home where Eurostat's includes it.
+  (Germany reports it separately), JP `socializing` is 交際・付き合い, which
+  excludes conversation at home where Eurostat's includes it, and JP `tv_media`
+  counts newspapers and magazines that Germany files under `reading`.
 - **D3 — Generative model, per persona, fully sourced:** for each category,
   `participate ~ Bernoulli(participation_rate[country, gender])`, and if
   participating, minutes drawn around the **participant mean** — read from the

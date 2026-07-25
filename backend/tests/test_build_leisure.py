@@ -1,5 +1,6 @@
 import csv
 import json
+from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 
@@ -204,7 +205,9 @@ def test_build_leisure_germany_declares_the_japan_only_coarse_bucket() -> None:
     ("country", "fetch"),
     [(Locale.DE, de_fetch), (Locale.JP, jp_fetch)],
 )
-def test_every_country_accounts_for_every_category(country, fetch) -> None:
+def test_every_country_accounts_for_every_category(
+    country: Locale, fetch: Callable[[str], bytes]
+) -> None:
     # The invariant that makes a union vocabulary honest: a category is either
     # filled from a published cell or explicitly declared unavailable. Adding an
     # enum member without touching a country's mapping must fail, not default.
