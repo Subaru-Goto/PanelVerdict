@@ -1,17 +1,13 @@
-import numpy as np
 import pytest
 
 from app.bigfive import bigfive_from_levels
 from app.interests import (
-    _COMMON_EXAMPLES,
-    _UNCOMMON_EXAMPLES,
     MAX_INTERESTS,
     InvalidInterests,
     _clean_tags,
     _validate,
     build_interest_prompt,
     embed_interests,
-    sample_prompt_examples,
     synthesize_interests,
 )
 from app.schemas import BigFive, InterestSynthesis, PersonaDemographics, TraitLevel
@@ -64,34 +60,6 @@ def _big_five() -> BigFive:
 
 
 _VALID = ["trail running", "home cooking", "indie podcasts"]
-
-
-def test_sample_prompt_examples_is_deterministic_per_seed() -> None:
-    assert sample_prompt_examples(np.random.default_rng(7)) == sample_prompt_examples(
-        np.random.default_rng(7)
-    )
-    assert sample_prompt_examples(np.random.default_rng(7)) != sample_prompt_examples(
-        np.random.default_rng(8)
-    )
-
-
-def test_sample_prompt_examples_mixes_mostly_common_with_one_distinctive() -> None:
-    examples = sample_prompt_examples(np.random.default_rng(0))
-
-    assert len(examples) == 4
-    assert len(set(examples)) == 4
-    assert sum(e in _COMMON_EXAMPLES for e in examples) == 3
-    assert sum(e in _UNCOMMON_EXAMPLES for e in examples) == 1
-    # plain str, not numpy str_ — the examples end up inside an f-string prompt
-    assert all(type(e) is str for e in examples)
-
-
-def test_example_bank_entries_all_pass_the_tag_gate() -> None:
-    # a bank typo must fail here, not as a mysterious generation-time rejection
-    bank = _COMMON_EXAMPLES + _UNCOMMON_EXAMPLES
-    assert len(set(bank)) == len(bank)
-    for entry in bank:
-        _validate(["trail running", "home cooking", entry])
 
 
 _EXAMPLES = ["fishing", "karaoke", "board games", "beekeeping"]

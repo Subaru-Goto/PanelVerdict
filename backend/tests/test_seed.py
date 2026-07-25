@@ -1,8 +1,16 @@
+import argparse
+
 import psycopg
 from factories import DIM
 
 from app.schemas import InterestSynthesis, Locale
-from app.seed import SeedResult, _parse_countries, build_quotas, seed_pool
+from app.seed import (
+    SeedResult,
+    _parse_countries,
+    add_pool_args,
+    build_quotas,
+    seed_pool,
+)
 
 _INTERESTS = ["trail running", "home cooking", "indie podcasts"]
 
@@ -85,6 +93,30 @@ def test_seed_pool_counts_generation_failures_separately_from_skips(conn):
 
 def test_parse_countries_dedups_preserving_order():
     assert _parse_countries("US,US,JP") == [Locale.US, Locale.JP]
+
+
+def test_add_pool_args_defines_the_shared_pool_flags_with_defaults():
+    # shared by the seed and echo-audit CLIs — the audit must accept the exact
+    # flags the seed ran with, or it recomputes examples for the wrong pool
+    parser = argparse.ArgumentParser()
+    add_pool_args(parser)
+
+    args = parser.parse_args([])
+
+    assert vars(args) == {"size": "dev", "seed": 0, "countries": list(Locale)}
+
+
+def test_add_pool_args_parses_explicit_values():
+    parser = argparse.ArgumentParser()
+    add_pool_args(parser)
+
+    args = parser.parse_args(["--size", "full", "--seed", "9", "--countries", "jp,us"])
+
+    assert vars(args) == {
+        "size": "full",
+        "seed": 9,
+        "countries": [Locale.JP, Locale.US],
+    }
 
 
 def test_build_quotas_hits_exact_size_split_across_countries():

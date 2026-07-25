@@ -2,8 +2,6 @@ import re
 from collections.abc import Sequence
 from typing import Protocol
 
-import numpy as np
-
 from app.bigfive import bucketize
 from app.content_checks import UnsafeInterest, screen_interests
 from app.schemas import (
@@ -50,108 +48,6 @@ _EDUCATION_DESC: dict[EducationLevel, str] = {
 }
 
 
-# Example bank for the generation prompt. Static examples anchored the whole
-# pool onto themselves ("restoring old cars" -> a restoration monoculture), so
-# each persona gets its own draw instead — the anchoring effect then *injects*
-# variety, which matters because the interest model rejects a temperature knob.
-# Two tiers so every prompt is anchored mostly on mainstream hobbies: the first
-# pool run had zero of these, skewing the panel far from the median consumer.
-_COMMON_EXAMPLES: tuple[str, ...] = (
-    "watching football",
-    "video games",
-    "cooking",
-    "baking",
-    "reading novels",
-    "jogging",
-    "going to the gym",
-    "hiking",
-    "fishing",
-    "gardening",
-    "watching movies",
-    "playing guitar",
-    "cycling",
-    "swimming",
-    "yoga",
-    "board games",
-    "karaoke",
-    "watching anime",
-    "basketball",
-    "camping",
-    "knitting",
-    "home improvement",
-    "walking the dog",
-    "podcasts",
-    "crossword puzzles",
-    "thrift shopping",
-    "dancing",
-    "baseball",
-    "tennis",
-    "golf",
-    "bowling",
-    "birdwatching",
-    "sewing",
-    "drawing",
-    "playing cards",
-    "watching TV dramas",
-    "barbecue",
-    "visiting museums",
-    "live concerts",
-    "running",
-    "table tennis",
-    "badminton",
-    "photography",
-    "travel",
-    "chess",
-    "volleyball",
-    "skiing",
-    "picnics in the park",
-)
-_UNCOMMON_EXAMPLES: tuple[str, ...] = (
-    "beekeeping",
-    "lockpicking",
-    "amateur radio",
-    "fencing",
-    "pottery",
-    "stand-up comedy",
-    "rock climbing",
-    "archery",
-    "salsa dancing",
-    "calligraphy",
-    "bonsai",
-    "homebrewing",
-    "woodworking",
-    "amateur astronomy",
-    "drone racing",
-    "escape rooms",
-    "cosplay",
-    "geocaching",
-    "mushroom foraging",
-    "blacksmithing",
-    "triathlon",
-    "quilting",
-    "model trains",
-    "zine making",
-)
-_N_COMMON_EXAMPLES = 3
-_N_UNCOMMON_EXAMPLES = 1
-
-
-def sample_prompt_examples(rng: np.random.Generator) -> list[str]:
-    """One persona's prompt examples: mostly mainstream plus one distinctive."""
-    picks = [
-        _COMMON_EXAMPLES[i]
-        for i in rng.choice(len(_COMMON_EXAMPLES), size=_N_COMMON_EXAMPLES, replace=False)
-    ] + [
-        _UNCOMMON_EXAMPLES[i]
-        for i in rng.choice(
-            len(_UNCOMMON_EXAMPLES), size=_N_UNCOMMON_EXAMPLES, replace=False
-        )
-    ]
-    # shuffle so the distinctive example isn't always in the same position —
-    # a fixed slot would teach the model "always end with the quirky one"
-    return [picks[i] for i in rng.permutation(len(picks))]
-
-
 class InvalidInterests(ValueError):
     """A synthesized interest set that failed the generation-time gate."""
 
@@ -186,8 +82,8 @@ def build_interest_prompt(
 ) -> str:
     """The generation instruction: describe the person, then ask for interests.
 
-    `examples` are per-persona (see `sample_prompt_examples`): a static list
-    anchored every persona onto the same few hobbies.
+    `examples` are per-persona (see `hobbies.sample_prompt_examples`) so no
+    single example set can anchor the whole pool onto itself.
     """
     rendered_examples = ", ".join(f"'{example}'" for example in examples)
     return (

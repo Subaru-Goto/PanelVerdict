@@ -11,12 +11,12 @@ from dataclasses import dataclass
 import numpy as np
 
 from app.bigfive import sample_big_five
+from app.hobbies import HobbyBank, load_hobby_bank, sample_prompt_examples
 from app.interests import (
     Embedder,
     InterestLLM,
     InvalidInterests,
     embed_interests,
-    sample_prompt_examples,
     synthesize_interests,
 )
 from app.sampler import JointCell, load_joint, sample_one
@@ -70,10 +70,23 @@ def _slot_rngs(
     )
 
 
+def prompt_examples_for_slot(
+    country: Locale, index: int, bank: HobbyBank, *, master_seed: int
+) -> list[str]:
+    """The exact example draw slot (country, index) sees in its prompt.
+
+    Public so the echo audit can recompute a persisted persona's examples
+    offline instead of storing them.
+    """
+    _, _, example_rng = _slot_rngs(master_seed, country, index)
+    return sample_prompt_examples(bank, example_rng)
+
+
 def assemble_persona(
     country: Locale,
     index: int,
     cells: list[JointCell],
+    bank: HobbyBank,
     *,
     master_seed: int,
     llm: InterestLLM,
@@ -81,8 +94,8 @@ def assemble_persona(
 ) -> AssembledPersona:
     """Build one persona deterministically from its slot.
 
-    `cells` are passed in so the caller loads a country's joint table once rather
-    than per persona.
+    `cells` and `bank` are passed in so the caller loads a country's joint table
+    and hobby bank once rather than per persona.
     """
     demo_rng, big_five_rng, example_rng = _slot_rngs(master_seed, country, index)
     demographics = sample_one(country, cells, demo_rng)
@@ -91,7 +104,7 @@ def assemble_persona(
         demographics,
         big_five,
         llm=llm,
-        examples=sample_prompt_examples(example_rng),
+        examples=sample_prompt_examples(bank, example_rng),
     )
     return AssembledPersona(
         persona=Persona(
@@ -124,6 +137,7 @@ def assemble_pool(
     """
     for country, n in quotas.items():
         cells = load_joint(country)
+        bank = load_hobby_bank(country)
         for index in range(n):
             pid = persona_id(country, index)
             if pid in skip:
@@ -133,6 +147,7 @@ def assemble_pool(
                     country,
                     index,
                     cells,
+                    bank,
                     master_seed=master_seed,
                     llm=llm,
                     embedder=embedder,

@@ -88,11 +88,18 @@ def _parse_countries(value: str) -> list[Locale]:
     return list(dict.fromkeys(codes))
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Seed the persona pool.")
+def add_pool_args(parser: argparse.ArgumentParser) -> None:
+    """The pool-selection flags shared by the seed and echo-audit CLIs — the
+    audit must accept exactly the flags a seed run used, or it recomputes
+    prompt examples for a different pool than the one in the DB."""
     parser.add_argument("--size", choices=_POOL_SIZES, default="dev")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--countries", type=_parse_countries, default=list(Locale))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Seed the persona pool.")
+    add_pool_args(parser)
     parser.add_argument("--qc-sample", type=int, default=50)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
