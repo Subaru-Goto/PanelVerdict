@@ -192,6 +192,23 @@ def test_build_leisure_japan_declares_what_its_taxonomy_cannot_separate() -> Non
     assert all(reason.strip() for reason in unsupported.values())
 
 
+def test_rest_relaxation_is_filled_from_both_surveys() -> None:
+    # Eurostat publishes resting inside its AC4-8 leisure aggregate (AC531), not
+    # under personal care, so Japan's 休養・くつろぎ has a counterpart and neither
+    # country has to declare the category missing. The two are ~4x apart on scope,
+    # which jp.meta.json declares rather than smooths over.
+    de = _rows_by_key(build_leisure(Locale.DE, fetch=de_fetch))
+    jp = _rows_by_key(build_leisure(Locale.JP, fetch=jp_fetch))
+
+    de_male = de[(LeisureCategory.REST_RELAXATION, "male")]
+    assert de_male.participation_rate == pytest.approx(0.1845, abs=1e-4)
+    assert de_male.participant_minutes == pytest.approx(59.0)
+
+    jp_male = jp[(LeisureCategory.REST_RELAXATION, "male")]
+    assert jp_male.participation_rate == pytest.approx(0.681)
+    assert jp_male.participant_minutes == pytest.approx(175.0)
+
+
 def test_build_leisure_germany_declares_the_japan_only_coarse_bucket() -> None:
     # The enum is a union across surveys, so Germany has to account for the
     # category only Japan's coarser taxonomy produces.

@@ -55,6 +55,7 @@ class LeisureCategory(str, Enum):
     GARDENING_PETS = "gardening_pets"
     GOING_OUT = "going_out"
     VOLUNTEERING = "volunteering"
+    REST_RELAXATION = "rest_relaxation"
     HOBBIES_AMUSEMENTS = "hobbies_amusements"
 
 

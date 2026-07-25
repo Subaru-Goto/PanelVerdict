@@ -5,7 +5,8 @@
     "rates are diary-day rates (\u4e3b\u884c\u52d5, primary activity only), so they are far lower than the past-year \u884c\u52d5\u8005\u7387 the survey also publishes \u2014 volunteering is 1.8% of men on a given day against ~26% in a year",
     "socializing is \u4ea4\u969b\u30fb\u4ed8\u304d\u5408\u3044, which covers visits and ceremonies but not conversation at home; Eurostat's socializing does include it, so the two countries' figures are not comparable to each other",
     "tv_media here counts newspapers and magazines along with TV and radio, because the diary does not split them; Eurostat reports print under reading instead, so the two countries' tv_media differ in scope",
-    "two published leisure activities are deliberately left unmapped: \u4f11\u990a\u30fb\u304f\u3064\u308d\u304e (rest and relaxation, 68.1% of men for 175 min) and \u5b66\u7fd2\u30fb\u81ea\u5df1\u5553\u767a\u30fb\u8a13\u7df4 (learning outside schoolwork, 9.1%). Neither has a category: resting is downtime rather than an interest, and Eurostat files it under personal care, so neither would carry signal a headline vote could use"
+    "rest_relaxation is the widest scope gap in the table: \u4f11\u990a\u30fb\u304f\u3064\u308d\u304e is a broad catch-all for downtime (68.1% of men, 175 min) where Eurostat's AC531 'Resting - time out' is narrow (18.5%, 59 min), so the two are roughly 4x apart for definitional rather than behavioural reasons and must not be read across countries",
+    "\u5b66\u7fd2\u30fb\u81ea\u5df1\u5553\u767a\u30fb\u8a13\u7df4 (learning outside schoolwork, 9.1%) is published but left unmapped: Eurostat classifies free-time study under Study (AC221), outside the AC4-8 leisure aggregate, so giving it a category would widen leisure past what the other tables mean by it"
   ],
   "unsupported": [
     {

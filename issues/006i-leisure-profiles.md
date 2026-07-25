@@ -49,7 +49,7 @@ invented ones.**
 - **D2 — Category set is a *union* across surveys, with declared per-country
   coverage.** tv_media, socializing, games, sports_exercise, outdoor_walking,
   reading, arts_hobbies, going_out, computer_leisure, gardening_pets,
-  volunteering, hobbies_amusements. The mapping is the main data-engineering
+  volunteering, rest_relaxation, hobbies_amusements. The mapping is the main data-engineering
   task; the research doc §5 table is the starting point and each row cites its
   source. (Amended while building slice 1: `volunteering` added — published for
   DE and US; `arts_crafts_music` renamed `arts_hobbies` because the Eurostat
@@ -57,7 +57,7 @@ invented ones.**
 
   **Amended again in slice 1c, once Japan's actual taxonomy was in hand.** The
   original plan was to harmonize down to the coarsest national taxonomy. Japan's
-  diary turns out to publish only 5 leisure activities that map onto this set,
+  diary turns out to publish only 6 leisure activities that map onto this set,
   with one "Hobbies and amusements" bucket covering games, books, computer use,
   arts and gardening at once — so harmonizing down would have collapsed Germany's
   and the US's finer data into a blob that carries almost no signal for headline
@@ -70,22 +70,26 @@ invented ones.**
   a category is neither mapped nor declared unsupported, so adding an enum member
   cannot silently shorten a country's table.
 
-  Two published Japanese activities are deliberately left unmapped rather than
-  forgotten, and say so in `jp.meta.json`: 休養・くつろぎ (rest and relaxation,
-  68.1% of men for 175 min — second only to `tv_media`) and 学習・自己啓発・訓練
-  (9.1%). Resting is downtime rather than an interest and Eurostat files it under
-  personal care, so neither would carry signal a headline vote could use. Each
-  country's builder must declare published-but-unmapped activities the same way.
+  **Eurostat's own leisure aggregate (`AC4-8`) settles what counts as leisure.**
+  That is why `rest_relaxation` exists: Eurostat publishes resting as leisure
+  (`AC531`), so Japan's 休養・くつろぎ has a counterpart and both countries fill
+  it. By the same rule 学習・自己啓発・訓練 stays unmapped — Eurostat classifies
+  free-time study under Study (`AC221`), outside the leisure aggregate — and
+  `jp.meta.json` says so rather than dropping it in silence. Each country's
+  builder must declare published-but-unmapped activities the same way.
 
   This is sound because **personas are only ever compared within a country** —
   a US panel is scored against US personas, and the profile is consumed as a
   templated summary and its embedding (D6), never as a cross-country numeric
   join. Cross-country leisure comparison is the one thing this forfeits, and
   nothing in PanelVerdict asks for it. Scope differences that survive the
-  mapping are declared rather than hidden: JP `sports_exercise` includes walking
-  (Germany reports it separately), JP `socializing` is 交際・付き合い, which
-  excludes conversation at home where Eurostat's includes it, and JP `tv_media`
-  counts newspapers and magazines that Germany files under `reading`.
+  mapping are declared rather than hidden: `rest_relaxation` is the widest —
+  Japan's 休養・くつろぎ is a broad catch-all (68.1% of men) against Eurostat's
+  narrow "Resting - time out" (18.5%), ~4x apart for definitional rather than
+  behavioural reasons. Also JP `sports_exercise` includes walking (Germany
+  reports it separately), JP `socializing` is 交際・付き合い, which excludes
+  conversation at home where Eurostat's includes it, and JP `tv_media` counts
+  newspapers and magazines that Germany files under `reading`.
 - **D3 — Generative model, per persona, fully sourced:** for each category,
   `participate ~ Bernoulli(participation_rate[country, gender])`, and if
   participating, minutes drawn around the **participant mean** — read from the

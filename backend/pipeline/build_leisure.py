@@ -50,6 +50,7 @@ _EUROSTAT_CODES: dict[LeisureCategory, tuple[str, ...]] = {
     LeisureCategory.GARDENING_PETS: ("AC34",),
     LeisureCategory.GOING_OUT: ("AC52",),
     LeisureCategory.VOLUNTEERING: ("AC4",),
+    LeisureCategory.REST_RELAXATION: ("AC531",),
 }
 
 _EUROSTAT_UNSUPPORTED: dict[LeisureCategory, str] = {
@@ -86,6 +87,7 @@ _ESTAT_ACTIVITIES: dict[LeisureCategory, tuple[str, ...]] = {
     LeisureCategory.SPORTS_EXERCISE: ("Sports",),
     LeisureCategory.VOLUNTEERING: ("Volunteer and social activities",),
     LeisureCategory.SOCIALIZING: ("Social life",),
+    LeisureCategory.REST_RELAXATION: ("Rest and relaxation",),
 }
 
 _INSIDE_HOBBIES = (
@@ -477,12 +479,15 @@ def _build_japan(fetch: Callable[[str], bytes]) -> LeisureBuildResult:
             "tv_media here counts newspapers and magazines along with TV and "
             "radio, because the diary does not split them; Eurostat reports print "
             "under reading instead, so the two countries' tv_media differ in scope",
-            "two published leisure activities are deliberately left unmapped: "
-            "休養・くつろぎ (rest and relaxation, 68.1% of men for 175 min) and "
-            "学習・自己啓発・訓練 (learning outside schoolwork, 9.1%). Neither has "
-            "a category: resting is downtime rather than an interest, and "
-            "Eurostat files it under personal care, so neither would carry "
-            "signal a headline vote could use",
+            "rest_relaxation is the widest scope gap in the table: 休養・くつろぎ "
+            "is a broad catch-all for downtime (68.1% of men, 175 min) where "
+            "Eurostat's AC531 'Resting - time out' is narrow (18.5%, 59 min), so "
+            "the two are roughly 4x apart for definitional rather than "
+            "behavioural reasons and must not be read across countries",
+            "学習・自己啓発・訓練 (learning outside schoolwork, 9.1%) is published "
+            "but left unmapped: Eurostat classifies free-time study under Study "
+            "(AC221), outside the AC4-8 leisure aggregate, so giving it a "
+            "category would widen leisure past what the other tables mean by it",
         ],
         unsupported=unsupported,
     )
