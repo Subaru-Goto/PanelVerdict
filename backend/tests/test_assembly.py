@@ -5,9 +5,7 @@ from app.assembly import (
     assemble_persona,
     assemble_pool,
     persona_id,
-    prompt_examples_for_slot,
 )
-from app.hobbies import HobbyBank
 from app.sampler import JointCell
 from app.schemas import InterestSynthesis, Locale, Persona
 
@@ -37,11 +35,6 @@ class StubEmbedder:
 
 _VALID = ["trail running", "home cooking", "indie podcasts"]
 
-_BANK = HobbyBank(
-    common=("fishing", "karaoke", "board games", "cycling", "cooking"),
-    niche=("beekeeping", "lockpicking"),
-)
-
 _CELLS = [
     JointCell(
         age_band="20-29", gender="female", education="tertiary",
@@ -59,7 +52,6 @@ def _assemble(*, country=Locale.US, index=0, master_seed=7) -> AssembledPersona:
         country,
         index,
         _CELLS,
-        _BANK,
         master_seed=master_seed,
         llm=StubInterestLLM(_VALID),
         embedder=StubEmbedder(),
@@ -69,22 +61,15 @@ def _assemble(*, country=Locale.US, index=0, master_seed=7) -> AssembledPersona:
 @pytest.fixture
 def joint_dir(tmp_path, monkeypatch):
     joint = tmp_path / "joint"
-    hobbies = tmp_path / "hobbies"
     joint.mkdir()
-    hobbies.mkdir()
     rows = (
         "age_band,gender,education,income_quintile,weight\n"
         "20-29,female,tertiary,4,0.5\n"
         "30-39,male,secondary,2,0.5\n"
     )
-    bank_rows = "hobby,tier\n" + "".join(
-        f"{hobby},common\n" for hobby in _BANK.common
-    ) + "".join(f"{hobby},niche\n" for hobby in _BANK.niche)
     for country in ("us", "jp", "de"):
         (joint / f"{country}.csv").write_text(rows)
-        (hobbies / f"{country}.csv").write_text(bank_rows)
     monkeypatch.setattr("app.sampler._JOINT_DIR", joint)
-    monkeypatch.setattr("app.hobbies._HOBBY_DIR", hobbies)
     return tmp_path
 
 
@@ -117,39 +102,6 @@ def test_assemble_persona_is_reproducible_for_a_seed() -> None:
 def test_distinct_slots_draw_different_people() -> None:
     # per-slot seeding: slot 0 and slot 1 get independent Big Five draws
     assert _assemble(index=0).persona.big_five != _assemble(index=1).persona.big_five
-
-
-def test_each_slot_gets_its_own_prompt_examples() -> None:
-    # rotating per-slot examples: near-identical prompts for one demographic
-    # cell were collapsing interests into a template, so the example line must
-    # differ across slots — and stay identical for the same slot (determinism)
-    llm = StubInterestLLM(_VALID)
-    for index in (0, 1, 0):
-        assemble_persona(
-            Locale.US,
-            index,
-            _CELLS,
-            _BANK,
-            master_seed=7,
-            llm=llm,
-            embedder=StubEmbedder(),
-        )
-    slot0, slot1, slot0_again = (p.split("e.g.")[1] for p in llm.prompts)
-
-    assert slot0 != slot1
-    assert slot0 == slot0_again
-
-
-def test_prompt_examples_for_slot_matches_what_assembly_prompts() -> None:
-    # the echo audit recomputes a persisted persona's examples offline; the
-    # recomputation must reproduce assembly's draw exactly or echo rates lie
-    llm = StubInterestLLM(_VALID)
-    assemble_persona(
-        Locale.US, 3, _CELLS, _BANK, master_seed=7, llm=llm, embedder=StubEmbedder()
-    )
-    examples = prompt_examples_for_slot(Locale.US, 3, _BANK, master_seed=7)
-
-    assert all(f"'{example}'" in llm.prompts[0] for example in examples)
 
 
 def test_assemble_pool_respects_quotas_and_orders_ids(joint_dir) -> None:

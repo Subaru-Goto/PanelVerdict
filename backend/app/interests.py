@@ -1,5 +1,4 @@
 import re
-from collections.abc import Sequence
 from typing import Protocol
 
 from app.bigfive import bucketize
@@ -75,17 +74,8 @@ def _trait_levels(big_five: BigFive) -> str:
     return ", ".join(f"{trait} {bucketize(score).value}" for trait, score in big_five)
 
 
-def build_interest_prompt(
-    demographics: PersonaDemographics,
-    big_five: BigFive,
-    examples: Sequence[str],
-) -> str:
-    """The generation instruction: describe the person, then ask for interests.
-
-    `examples` are per-persona (see `hobbies.sample_prompt_examples`) so no
-    single example set can anchor the whole pool onto itself.
-    """
-    rendered_examples = ", ".join(f"'{example}'" for example in examples)
+def build_interest_prompt(demographics: PersonaDemographics, big_five: BigFive) -> str:
+    """The generation instruction: describe the person, then ask for interests."""
     return (
         "Invent a realistic set of personal interests for one specific individual.\n"
         f"Person: {demographics.age}-year-old {demographics.gender} in "
@@ -95,7 +85,7 @@ def build_interest_prompt(
         f"Personality (Big Five levels): {_trait_levels(big_five)}.\n"
         f"Give {MIN_INTERESTS}-{MAX_INTERESTS} interests. Rules:\n"
         "- Each is a real, recognized hobby or activity a person would name if "
-        f"asked 'what are you into?' — e.g. {rendered_examples}.\n"
+        "asked 'what are you into?'.\n"
         "- 1-4 words each; neither a broad category ('sports') nor an invented "
         "micro-niche.\n"
         "- In English, plain ASCII punctuation, no numbering or explanations.\n"
@@ -139,11 +129,10 @@ def synthesize_interests(
     big_five: BigFive,
     *,
     llm: InterestLLM,
-    examples: Sequence[str],
     max_attempts: int = 3,
 ) -> list[str]:
     """Generate one persona's interests, regenerating until they pass the gate."""
-    prompt = build_interest_prompt(demographics, big_five, examples)
+    prompt = build_interest_prompt(demographics, big_five)
     last_error: InvalidInterests | UnsafeInterest | None = None
     for _ in range(max_attempts):
         tags = _clean_tags(llm.generate(prompt=prompt).interests)
