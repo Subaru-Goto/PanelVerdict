@@ -128,6 +128,25 @@ def test_assemble_pool_skips_given_ids(joint_dir) -> None:
     assert [ap.persona.id for ap in partial] == ["US-00000", "US-00002"]
 
 
+def test_assemble_pool_skips_a_persona_that_fails_generation(joint_dir) -> None:
+    # a stub that always returns too few tags -> InvalidInterests after retries;
+    # assemble_pool logs it, reports the id via on_failure, and keeps going
+    # rather than aborting the whole batch
+    failed: list[str] = []
+    result = list(
+        assemble_pool(
+            {Locale.US: 2},
+            master_seed=1,
+            llm=StubInterestLLM(["too", "few"]),
+            embedder=StubEmbedder(),
+            on_failure=failed.append,
+        )
+    )
+
+    assert result == []
+    assert failed == ["US-00000", "US-00001"]
+
+
 def test_dev_subset_is_a_prefix_of_the_full_pool(joint_dir) -> None:
     # slot i is the same person at any pool size, so a smaller run is a true
     # prefix of a larger one (D3 per-slot seeding) — validate dev, ship full.

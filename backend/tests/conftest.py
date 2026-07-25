@@ -1,7 +1,10 @@
 from typing import Literal
 
+import psycopg
 import pytest
+from testcontainers.postgres import PostgresContainer
 
+from app.persistence import prepare_connection
 from app.schemas import PanelVoteOutput
 
 
@@ -21,3 +24,19 @@ class StubLLM:
 @pytest.fixture
 def stub_llm() -> type[StubLLM]:
     return StubLLM
+
+
+@pytest.fixture(scope="module")
+def pg_url():
+    # pgvector image, not stock postgres — the stock image lacks the extension.
+    with PostgresContainer("pgvector/pgvector:pg16") as pg:
+        yield pg.get_connection_url(driver=None)
+
+
+@pytest.fixture
+def conn(pg_url):
+    with psycopg.connect(pg_url) as connection:
+        prepare_connection(connection)
+        connection.execute("TRUNCATE personas CASCADE")
+        connection.commit()
+        yield connection

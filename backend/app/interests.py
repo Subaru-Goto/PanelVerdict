@@ -14,12 +14,31 @@ from app.schemas import (
 MIN_INTERESTS = 3
 MAX_INTERESTS = 5
 _MIN_TAG_LEN = 3
-_MAX_TAG_LEN = 40
+_MAX_TAG_LEN = 60
 
-# Short noun-phrase tags: alphanumerics plus internal spaces/hyphens/apostrophes,
-# starting and ending on an alphanumeric. Excluding punctuation and URLs.
-# Digits stay: "3D printing", "K-pop", "Formula 1" are real hobbies.
-_TAG_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 '\-]*[A-Za-z0-9]$")
+# Short noun-phrase tags: Unicode letters/digits plus internal spaces, hyphens,
+# and apostrophes, starting and ending on a letter or digit. Excludes punctuation
+# and URLs. Unicode (not [A-Za-z]) so English loanwords keep their diacritics
+# ("Pokémon", "café"); digits stay for "3D printing", "Formula 1". [^\W_] is a
+# word character minus underscore — i.e. any Unicode letter or digit.
+_TAG_PATTERN = re.compile(r"^[^\W_](?:[^\W_]|[ '\-])*[^\W_]$")
+
+# LLMs emit typographic punctuation (curly quotes, en/em/non-breaking hyphens):
+# cosmetically identical to ASCII but distinct code points the pattern rejects.
+# Fold them to ASCII before validation so they pass and dedupe as one spelling.
+_PUNCTUATION_FOLD = str.maketrans(
+    {
+        "‘": "'",
+        "’": "'",
+        "‐": "-",
+        "‑": "-",
+        "‒": "-",
+        "–": "-",
+        "—": "-",
+        "―": "-",
+        "−": "-",
+    }
+)
 
 _EDUCATION_DESC: dict[EducationLevel, str] = {
     EducationLevel.BELOW_SECONDARY: "did not finish secondary school",
@@ -64,22 +83,28 @@ def build_interest_prompt(demographics: PersonaDemographics, big_five: BigFive) 
         f"{_EDUCATION_DESC[demographics.education]}; "
         f"{_income_desc(demographics.income_quintile)}.\n"
         f"Personality (Big Five levels): {_trait_levels(big_five)}.\n"
-        f"Give {MIN_INTERESTS}-{MAX_INTERESTS} specific hobbies or interests as short "
-        "noun phrases (e.g. 'trail running', 'restoring old cars', 'playing football'), never broad "
-        "categories like 'sports'. Write a distinctive individual, not the "
-        "stereotype of their demographic — at least one interest may cut against "
-        "the obvious profile. Let personality and life stage shape the choices; "
-        "unusual-but-plausible interests are welcome when the personality supports "
-        "them."
+        f"Give {MIN_INTERESTS}-{MAX_INTERESTS} interests. Rules:\n"
+        "- Each is a real, recognized hobby or activity a person would name if "
+        "asked 'what are you into?' — e.g. 'trail running', 'shogi', "
+        "'restoring old cars', 'baking'.\n"
+        "- 1-4 words each; neither a broad category ('sports') nor an invented "
+        "micro-niche.\n"
+        "- In English, plain ASCII punctuation, no numbering or explanations.\n"
+        "- The interests must differ from each other in kind.\n"
+        "Make the person distinctive through an unexpected MIX of ordinary "
+        "interests, not the stereotype of their demographic — at least one "
+        "interest may cut against the obvious profile. Let personality and life "
+        "stage shape the choices."
     )
 
 
 def _clean_tags(raw: list[str]) -> list[str]:
-    """Trim, collapse internal whitespace, drop blanks, dedupe case-insensitively."""
+    """Fold typographic punctuation to ASCII, trim, collapse internal whitespace,
+    drop blanks, dedupe case-insensitively."""
     seen: set[str] = set()
     out: list[str] = []
     for tag in raw:
-        cleaned = " ".join(tag.split())
+        cleaned = " ".join(tag.translate(_PUNCTUATION_FOLD).split())
         key = cleaned.casefold()
         if cleaned and key not in seen:
             seen.add(key)
