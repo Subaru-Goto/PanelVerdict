@@ -1,8 +1,12 @@
-# Leisure time-use: primary sources for hobby-bank weights (US / JP / DE)
+# Leisure time-use: primary sources (US / JP / DE)
 
-Research date: 2026-07-25. Purpose: ground the hierarchical weights for
-`backend/app/data/hobbies/{us,jp,de}.csv` — category envelope shares from national
-time-use surveys, within-category splits from entry-level participation data.
+Research date: 2026-07-25. Purpose: ground the leisure profile tables at
+`backend/app/data/leisure/{us,jp,de}.csv` — participation rates and time spent per
+harmonized category, from national time-use surveys.
+
+The research was commissioned for a hobby-bank weighting scheme that 006i
+replaced; §2's named-activity rates are kept because they are the data a v2
+named-activity layer would use, per country, where such a survey exists.
 
 Metric vocabulary used below:
 
