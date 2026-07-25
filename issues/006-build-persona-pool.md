@@ -29,7 +29,8 @@ This is an **umbrella** — the build is split into small, independently reviewa
 - [x] [006e](006e-content-checks.md) — content checks: injection denylist, anti-stereotype audit, plausibility G-Eval — *done, PRs #21/#22/#23*
 - [x] [006f](006f-persistence.md) — persistence: Postgres + pgvector + idempotent seed script + QC report — *done, PRs #25/#26/#27/#28; example-bank follow-up PR #29*
 - [ ] [006g](006g-pool-overview.md) — pool-overview QC artifact *(blocked by 006f — now unblocked)*
-- [ ] [006h](006h-menu-mode-interests.md) — menu-mode interests: weighted banks, code-owned draw, LLM as fit-filter *(escalation from the measured PR #29 failure; blocks the production seed)*
+- [~] [006h](006h-menu-mode-interests.md) — menu-mode interests — *rejected: required ~430 invented weights; superseded by 006i*
+- [ ] [006i](006i-leisure-profiles.md) — leisure profiles from surveyed time-use; persona-summary embedding *(replaces generated interests; blocks the production seed)*
 
 ## Decided (from ticket 001)
 
