@@ -29,12 +29,16 @@ TRAIT_ORDER = ["O", "C", "E", "A", "N"]
 
 
 class LeisureCategory(str, Enum):
-    """How free time is spent, harmonized so a profile means the same thing in
-    every country.
+    """How free time is spent, as published by the national time-use surveys.
 
-    Granularity is set by the coarsest national taxonomy we have to map onto.
-    Only the German mapping is validated so far; whether every category can be
-    filled from the US and Japanese surveys is settled when those builders land.
+    This is the *union* of what the surveys measure, not a set every country can
+    fill: Japan's diary has one "Hobbies and amusements" bucket where Eurostat
+    publishes games, reading, computer use, arts and gardening separately. Rather
+    than degrade every country to Japan's granularity, each country fills the
+    categories its own survey publishes and declares the rest unavailable in its
+    `.meta.json`. So a category means one thing wherever it appears — it just
+    isn't present everywhere. Personas are only ever compared within a country,
+    which is what makes that trade sound.
     """
 
     TV_MEDIA = "tv_media"
@@ -48,6 +52,7 @@ class LeisureCategory(str, Enum):
     GARDENING_PETS = "gardening_pets"
     GOING_OUT = "going_out"
     VOLUNTEERING = "volunteering"
+    HOBBIES_AMUSEMENTS = "hobbies_amusements"
 
 
 class Locale(str, Enum):

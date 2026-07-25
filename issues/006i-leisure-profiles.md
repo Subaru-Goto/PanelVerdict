@@ -46,15 +46,38 @@ invented ones.**
   hard fields and the five Big Five columns). Plus one
   `summary_embedding vector(1536)` column. Net schema is *simpler* than today:
   one vector per persona instead of one per interest, one table instead of two.
-- **D2 — Harmonized category set (11)** mapped across the three surveys'
-  differing taxonomies: tv_media, socializing, games, sports_exercise,
-  outdoor_walking, reading, arts_hobbies, going_out, computer_leisure,
-  gardening_pets, volunteering. (Amended while building slice 1: `volunteering`
-  added — published for DE and US; `arts_crafts_music` renamed `arts_hobbies`
-  because the Eurostat aggregate excludes handicrafts, so the original name
-  would have misdescribed it.) Harmonization is the main data-engineering task; the mapping
-  table in the research doc §5 is the starting point and belongs in the CSV as
-  a cited `source` column per row.
+- **D2 — Category set is a *union* across surveys, with declared per-country
+  coverage.** tv_media, socializing, games, sports_exercise, outdoor_walking,
+  reading, arts_hobbies, going_out, computer_leisure, gardening_pets,
+  volunteering, hobbies_amusements. The mapping is the main data-engineering
+  task; the research doc §5 table is the starting point and each row cites its
+  source. (Amended while building slice 1: `volunteering` added — published for
+  DE and US; `arts_crafts_music` renamed `arts_hobbies` because the Eurostat
+  aggregate excludes handicrafts.)
+
+  **Amended again in slice 1c, once Japan's actual taxonomy was in hand.** The
+  original plan was to harmonize down to the coarsest national taxonomy. Japan's
+  diary turns out to publish only 5 usable leisure activities, with one
+  "Hobbies and amusements" bucket covering games, books, computer use, arts and
+  gardening at once — so harmonizing down would have collapsed Germany's and the
+  US's finer data into a blob that carries almost no signal for headline voting,
+  which is the whole point of the profile. Instead each country fills what its
+  own survey publishes and declares the rest in `{cc}.meta.json`. A category
+  therefore means exactly one thing wherever it appears; it just isn't present
+  everywhere. `hobbies_amusements` exists for Japan's coarse bucket precisely so
+  it is *not* reported under `arts_hobbies`, which would be the same name meaning
+  two different things. The build fails if a category is neither mapped nor
+  declared unsupported, so adding an enum member cannot silently shorten a
+  country's table.
+
+  This is sound because **personas are only ever compared within a country** —
+  a US panel is scored against US personas, and the profile is consumed as a
+  templated summary and its embedding (D6), never as a cross-country numeric
+  join. Cross-country leisure comparison is the one thing this forfeits, and
+  nothing in PanelVerdict asks for it. Scope differences that survive the
+  mapping are declared rather than hidden: JP `sports_exercise` includes walking
+  (Germany reports it separately), and JP `socializing` is 交際・付き合い, which
+  excludes conversation at home where Eurostat's includes it.
 - **D3 — Generative model, per persona, fully sourced:** for each category,
   `participate ~ Bernoulli(participation_rate[country, gender])`, and if
   participating, minutes drawn around the **participant mean** — read from the
@@ -71,9 +94,11 @@ invented ones.**
   injectable `fetch` callable (testable without network), writing committed
   `app/data/leisure/{us,jp,de}.csv`, and declaring imputations the way
   `BuildResult.imputations` already does. Access is asymmetric and that is
-  recorded, not hidden: Eurostat is a clean JSON API; ATUS needs the archive
-  mirror or microdata (bls.gov 403s scripts); JP needs e-Stat detail tables.
-  Manually extracted rows are allowed **only** with a `source` citation.
+  recorded, not hidden: Eurostat is a clean JSON API; e-Stat serves table 1-1 as
+  a spreadsheet with no application ID (its CSV/JSON endpoints need one, its
+  file download does not); ATUS needs the archive mirror or microdata (bls.gov
+  403s scripts). Manually extracted rows are allowed **only** with a `source`
+  citation.
 - **D6 — Semantic targeting preserved (007's vector half).** Template a prose
   persona summary from sourced facts — *"35-year-old man in Japan, university
   degree, high openness; spends most free time on TV and video games, some
@@ -93,8 +118,9 @@ invented ones.**
    survey is a different extraction problem with its own gaps to declare.
 1b. **US** (`us.csv`) — ATUS 2024 Table A-1 via the archive mirror; the doc's
    §1 rates are ungendered, so the by-sex columns need re-extracting.
-1c. **Japan** (`jp.csv`) — 社会生活基本調査; the summary PDF has no per-category
-   participation rates, so this needs the e-Stat detail tables.
+1c. **Japan** (`jp.csv`) — 社会生活基本調査 2021 table 1-1, downloaded from e-Stat
+   without an application ID. Publishes all three metrics by sex, so nothing is
+   derived; fills 5 of the 12 categories and declares the other 7 (see D2).
 2. `app/leisure.py`: `sample_leisure_profile(country, gender, rng)`. Pure logic, TDD.
 3. Schema + assembly + persistence: add leisure columns, drop `interests`, wire
    into `assemble_persona`.
@@ -121,7 +147,10 @@ invented ones.**
   publishes 60+ named rates (walking 44.3%, video games 42.9%, gardening 26.0%,
   karaoke 13.5%, baseball 6.3%); US via SPPA/USFWS; DE sports via DOSB
   memberships. Legitimate as *data*, never as invention — per country, as
-  available.
+  available. This is also the route that would recover what Japan's diary
+  taxonomy loses (D2): the 生活行動 tables name video games and gardening
+  separately, they are simply past-year rates rather than diary-day rates, so
+  they cannot be mixed into the same columns without a units error.
 - Age conditioning **everywhere, including DE** where 16 bands are published:
   slice 1 pins `age=TOTAL` and declares that in `de.meta.json`. Adding it
   multiplies the table by the band count and complicates the sampler, so it

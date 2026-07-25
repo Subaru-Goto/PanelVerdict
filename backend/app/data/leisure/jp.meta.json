@@ -1,0 +1,38 @@
+{
+  "country": "JP",
+  "imputations": [
+    "age is not conditioned: the all-ages row is read, though table 1-1 publishes 17 age bands",
+    "rates are diary-day rates (\u4e3b\u884c\u52d5, primary activity only), so they are far lower than the past-year \u884c\u52d5\u8005\u7387 the survey also publishes \u2014 volunteering is 1.8% of men on a given day against ~26% in a year",
+    "socializing is \u4ea4\u969b\u30fb\u4ed8\u304d\u5408\u3044, which covers visits and ceremonies but not conversation at home; Eurostat's socializing does include it, so the two countries' figures are not comparable to each other"
+  ],
+  "unsupported": [
+    {
+      "category": "games",
+      "reason": "inside \u8da3\u5473\u30fb\u5a2f\u697d (hobbies_amusements); the diary does not separate it"
+    },
+    {
+      "category": "reading",
+      "reason": "split across two diary activities and recoverable from neither: newspapers and magazines sit inside tv_media, books inside \u8da3\u5473\u30fb\u5a2f\u697d"
+    },
+    {
+      "category": "computer_leisure",
+      "reason": "inside \u8da3\u5473\u30fb\u5a2f\u697d (hobbies_amusements); the diary does not separate it"
+    },
+    {
+      "category": "arts_hobbies",
+      "reason": "inside \u8da3\u5473\u30fb\u5a2f\u697d (hobbies_amusements), which also covers games, books and computer use \u2014 reporting it under this name would mean something much broader here than it does for Germany"
+    },
+    {
+      "category": "gardening_pets",
+      "reason": "not a diary activity: gardening falls under \u8da3\u5473\u30fb\u5a2f\u697d or \u5bb6\u4e8b depending on whether the respondent treats it as a pastime or a chore"
+    },
+    {
+      "category": "going_out",
+      "reason": "not a diary activity: outings are coded to \u8da3\u5473\u30fb\u5a2f\u697d or \u4ea4\u969b\u30fb\u4ed8\u304d\u5408\u3044 by purpose, with no published split"
+    },
+    {
+      "category": "outdoor_walking",
+      "reason": "inside \u30b9\u30dd\u30fc\u30c4 (sports_exercise), which counts \u30a6\u30a9\u30fc\u30ad\u30f3\u30b0\u30fb\u8efd\u3044\u4f53\u64cd; Eurostat publishes walking apart from other sport, Japan does not"
+    }
+  ]
+}

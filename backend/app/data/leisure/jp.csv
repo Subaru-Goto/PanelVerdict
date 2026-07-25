@@ -1,0 +1,11 @@
+category,gender,participation_rate,participant_minutes,source
+tv_media,male,0.5420,242.0,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,female,0.5940,211.0,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+hobbies_amusements,male,0.2740,214.0,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_amusements,female,0.2310,160.0,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+sports_exercise,male,0.1320,121.0,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,female,0.1060,90.0,e-stat:shakai-seikatsu-2021:table1-1:Sports
+volunteering,male,0.0180,130.0,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,female,0.0140,118.0,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+socializing,male,0.0480,161.0,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,female,0.0820,141.0,e-stat:shakai-seikatsu-2021:table1-1:Social life
