@@ -28,6 +28,26 @@ class BigFive(BaseModel):
 TRAIT_ORDER = ["O", "C", "E", "A", "N"]
 
 
+class LeisureCategory(str, Enum):
+    """How free time is spent — harmonized across the national time-use surveys.
+
+    Coarse enough that all three surveys can fill every category (Japan's
+    published taxonomy is the binding constraint), so a persona's profile means
+    the same thing in every country.
+    """
+
+    TV_MEDIA = "tv_media"
+    SOCIALIZING = "socializing"
+    GAMES = "games"
+    SPORTS_EXERCISE = "sports_exercise"
+    READING = "reading"
+    ARTS_HOBBIES = "arts_hobbies"
+    COMPUTER_LEISURE = "computer_leisure"
+    GARDENING_PETS = "gardening_pets"
+    GOING_OUT = "going_out"
+    VOLUNTEERING = "volunteering"
+
+
 class Locale(str, Enum):
     US = "US"
     JP = "JP"
