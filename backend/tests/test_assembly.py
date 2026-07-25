@@ -11,12 +11,15 @@ from app.schemas import InterestSynthesis, Locale, Persona
 
 
 class StubInterestLLM:
-    """Returns one fixed valid interest batch for every call (no network)."""
+    """Returns one fixed valid interest batch for every call (no network);
+    records the prompts it was given."""
 
     def __init__(self, interests: list[str]) -> None:
         self._interests = interests
+        self.prompts: list[str] = []
 
     def generate(self, *, prompt: str) -> InterestSynthesis:
+        self.prompts.append(prompt)
         return InterestSynthesis(interests=list(self._interests))
 
 
@@ -97,6 +100,21 @@ def test_assemble_persona_is_reproducible_for_a_seed() -> None:
 def test_distinct_slots_draw_different_people() -> None:
     # per-slot seeding: slot 0 and slot 1 get independent Big Five draws
     assert _assemble(index=0).persona.big_five != _assemble(index=1).persona.big_five
+
+
+def test_each_slot_gets_its_own_prompt_examples() -> None:
+    # rotating per-slot examples: near-identical prompts for one demographic
+    # cell were collapsing interests into a template, so the example line must
+    # differ across slots — and stay identical for the same slot (determinism)
+    llm = StubInterestLLM(_VALID)
+    for index in (0, 1, 0):
+        assemble_persona(
+            Locale.US, index, _CELLS, master_seed=7, llm=llm, embedder=StubEmbedder()
+        )
+    slot0, slot1, slot0_again = (p.split("e.g.")[1] for p in llm.prompts)
+
+    assert slot0 != slot1
+    assert slot0 == slot0_again
 
 
 def test_assemble_pool_respects_quotas_and_orders_ids(joint_dir) -> None:
