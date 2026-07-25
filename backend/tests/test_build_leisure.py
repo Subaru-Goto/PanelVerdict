@@ -1,4 +1,5 @@
 import csv
+import json
 from pathlib import Path
 
 import pytest
@@ -29,33 +30,34 @@ def test_hhmm_to_minutes_parses_published_time_strings() -> None:
     assert _hhmm_to_minutes("0:06") == 6
 
 
-def test_parse_jsonstat_returns_published_cells_by_dimension() -> None:
+def test_parse_jsonstat_separates_the_three_published_units() -> None:
     cells = parse_jsonstat(fake_fetch("tus_20age?geo=DE"))
 
     # published values, read straight off the Eurostat table
-    assert cells[("M", "AC821", "PTP_RT")] == 73.25
-    assert cells[("F", "AC812", "PTP_RT")] == 17.98
-    assert cells[("M", "AC821", "TIME_SP")] == "2:12"
-    assert cells[("M", "AC821", "PTP_TIME")] == "3:00"
+    assert cells.minutes[("M", "AC821")] == 132  # 2:12
+    assert cells.participant_minutes[("M", "AC821")] == 180  # 3:00
+    assert cells.rates[("M", "AC821")] == pytest.approx(0.7325)
+    assert cells.rates[("F", "AC812")] == pytest.approx(0.1798)
 
 
-def test_build_leisure_derives_a_single_code_category_exactly() -> None:
-    # GAMES maps to AC733-735 alone, so no aggregation approximation applies:
-    # males 0:26/day at a 16.78% participation rate -> 26 / 0.1678 = 154.9 min
+def test_build_leisure_uses_the_published_participant_time_when_it_can() -> None:
+    # GAMES maps to AC733-735 alone, so Eurostat's own participation time
+    # (2:38 = 158 min at a 16.78% rate) is exact — deriving minutes/rate here
+    # would drift by ~3 minutes for no reason.
     row = _rows_by_key(build_leisure(Locale.DE, fetch=fake_fetch))[
         (LeisureCategory.GAMES, "male")
     ]
 
     assert row.participation_rate == pytest.approx(0.1678, abs=1e-4)
-    assert row.participant_minutes == pytest.approx(154.9, abs=0.1)
+    assert row.participant_minutes == pytest.approx(158.0, abs=0.1)
 
 
-def test_build_leisure_aggregates_codes_by_independence_union() -> None:
-    # TV_MEDIA = AC821 (2:12, 73.25%) + AC831 (0:07, 10.36%) for males.
-    # minutes add: 132 + 7 = 139. Rates cannot add (overlapping participants),
-    # so the union under independence is 1 - (1-.7325)(1-.1036) = 0.7602,
-    # giving 139 / 0.7602 = 182.8 participant minutes — which cross-checks
-    # against AC821's own published participation time of 3:00.
+def test_build_leisure_derives_only_for_aggregated_categories() -> None:
+    # TV_MEDIA = AC821 (2:12, 73.25%) + AC831 (0:07, 10.36%) for males. There is
+    # no published participation time for the union, so it must be derived:
+    # minutes add (132 + 7 = 139) but rates cannot (participants overlap), so
+    # the union under independence is 1 - (1-.7325)(1-.1036) = 0.7602, giving
+    # 139 / 0.7602 = 182.8 — which cross-checks against AC821's published 3:00.
     row = _rows_by_key(build_leisure(Locale.DE, fetch=fake_fetch))[
         (LeisureCategory.TV_MEDIA, "male")
     ]
@@ -64,12 +66,13 @@ def test_build_leisure_aggregates_codes_by_independence_union() -> None:
     assert row.participant_minutes == pytest.approx(182.8, abs=0.1)
 
 
-def test_build_leisure_declares_the_union_approximation() -> None:
+def test_build_leisure_declares_which_categories_were_derived() -> None:
     result = build_leisure(Locale.DE, fetch=fake_fetch)
 
     declared = " ".join(result.imputations)
     assert "independence" in declared.lower()
-    # only the multi-code categories are approximated; single-code ones are exact
+    # single-code categories are published exactly, so only the aggregated ones
+    # may appear in the declaration
     for category, codes in _EUROSTAT_CODES.items():
         assert (category.value in declared) is (len(codes) > 1)
 
@@ -84,6 +87,18 @@ def test_build_leisure_covers_every_category_for_both_genders() -> None:
         for category in LeisureCategory
         for gender in ("male", "female")
     }
+
+
+def test_walking_stays_its_own_category_since_it_is_published_separately() -> None:
+    # AC611 is published apart from AC6_X_611, and walking is the single most
+    # common activity in the Japanese survey — folding it into sports would
+    # discard the distinction before the sampler ever sees it.
+    row = _rows_by_key(build_leisure(Locale.DE, fetch=fake_fetch))[
+        (LeisureCategory.OUTDOOR_WALKING, "male")
+    ]
+
+    assert row.participation_rate == pytest.approx(0.1492, abs=1e-4)
+    assert row.participant_minutes == pytest.approx(99.0, abs=0.1)  # 1:39
 
 
 def test_build_leisure_cites_a_source_for_every_row() -> None:
@@ -111,3 +126,15 @@ def test_write_leisure_round_trips_through_the_committed_csv(tmp_path) -> None:
         r for r in written if r["category"] == "games" and r["gender"] == "male"
     )
     assert float(games_male["participation_rate"]) == pytest.approx(0.1678, abs=1e-4)
+
+
+def test_write_leisure_commits_the_imputations_beside_the_csv(tmp_path) -> None:
+    # a caveat that only reaches stdout is a caveat nobody reading the committed
+    # data will ever see (build_oecd's write_joint sets this precedent)
+    result = build_leisure(Locale.DE, fetch=fake_fetch)
+
+    write_leisure(result, tmp_path)
+
+    meta = json.loads((tmp_path / "de.meta.json").read_text())
+    assert meta["imputations"] == result.imputations
+    assert meta["country"] == "DE"

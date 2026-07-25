@@ -29,17 +29,19 @@ TRAIT_ORDER = ["O", "C", "E", "A", "N"]
 
 
 class LeisureCategory(str, Enum):
-    """How free time is spent — harmonized across the national time-use surveys.
+    """How free time is spent, harmonized so a profile means the same thing in
+    every country.
 
-    Coarse enough that all three surveys can fill every category (Japan's
-    published taxonomy is the binding constraint), so a persona's profile means
-    the same thing in every country.
+    Granularity is set by the coarsest national taxonomy we have to map onto.
+    Only the German mapping is validated so far; whether every category can be
+    filled from the US and Japanese surveys is settled when those builders land.
     """
 
     TV_MEDIA = "tv_media"
     SOCIALIZING = "socializing"
     GAMES = "games"
     SPORTS_EXERCISE = "sports_exercise"
+    OUTDOOR_WALKING = "outdoor_walking"
     READING = "reading"
     ARTS_HOBBIES = "arts_hobbies"
     COMPUTER_LEISURE = "computer_leisure"
