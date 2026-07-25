@@ -46,17 +46,21 @@ invented ones.**
   hard fields and the five Big Five columns). Plus one
   `summary_embedding vector(1536)` column. Net schema is *simpler* than today:
   one vector per persona instead of one per interest, one table instead of two.
-- **D2 — Harmonized category set (~8–10)** mapped across the three surveys'
+- **D2 — Harmonized category set (11)** mapped across the three surveys'
   differing taxonomies: tv_media, socializing, games, sports_exercise,
-  outdoor_walking, reading, arts_crafts_music, going_out, computer_leisure,
-  gardening_pets. Harmonization is the main data-engineering task; the mapping
+  outdoor_walking, reading, arts_hobbies, going_out, computer_leisure,
+  gardening_pets, volunteering. (Amended while building slice 1: `volunteering`
+  added — published for DE and US; `arts_crafts_music` renamed `arts_hobbies`
+  because the Eurostat aggregate excludes handicrafts, so the original name
+  would have misdescribed it.) Harmonization is the main data-engineering task; the mapping
   table in the research doc §5 is the starting point and belongs in the CSV as
   a cited `source` column per row.
 - **D3 — Generative model, per persona, fully sourced:** for each category,
   `participate ~ Bernoulli(participation_rate[country, gender])`, and if
-  participating, minutes drawn around the **participant mean**
-  (`population_mean / participation_rate` — arithmetic from published columns;
-  Eurostat publishes `PTP_TIME` directly). Deterministic off the existing
+  participating, minutes drawn around the **participant mean** — read from the
+  published `PTP_TIME` cell wherever one exists, and only derived
+  (`population_mean / participation_rate`) for aggregated categories that have
+  no published union. Deterministic off the existing
   per-slot RNG, so dev-subset-is-a-prefix and resume both still hold.
 - **D4 — Conditioning: country × gender now, age where published.** All three
   surveys give gender splits; Eurostat `tus_20age` gives 16 age bands for DE.
@@ -84,8 +88,13 @@ invented ones.**
 
 ## Slices (one PR each)
 
-1. `pipeline/build_leisure.py` + committed per-country CSVs (harmonized
-   categories, participation rate + participant mean by gender, `source` per row).
+1. `pipeline/build_leisure.py` + the harmonized category set + **Germany**
+   (`de.csv`, Eurostat JSON API). Split per country while building, because each
+   survey is a different extraction problem with its own gaps to declare.
+1b. **US** (`us.csv`) — ATUS 2024 Table A-1 via the archive mirror; the doc's
+   §1 rates are ungendered, so the by-sex columns need re-extracting.
+1c. **Japan** (`jp.csv`) — 社会生活基本調査; the summary PDF has no per-category
+   participation rates, so this needs the e-Stat detail tables.
 2. `app/leisure.py`: `sample_leisure_profile(country, gender, rng)`. Pure logic, TDD.
 3. Schema + assembly + persistence: add leisure columns, drop `interests`, wire
    into `assemble_persona`.
@@ -113,7 +122,10 @@ invented ones.**
   karaoke 13.5%, baseball 6.3%); US via SPPA/USFWS; DE sports via DOSB
   memberships. Legitimate as *data*, never as invention — per country, as
   available.
-- Age conditioning for countries where only gender is published now.
+- Age conditioning **everywhere, including DE** where 16 bands are published:
+  slice 1 pins `age=TOTAL` and declares that in `de.meta.json`. Adding it
+  multiplies the table by the band count and complicates the sampler, so it
+  waits for a measured need.
 - Within-category spread modelling if flat participant-mean jitter reads
   unrealistically in the eyeball.
 - JP 2021 COVID distortion (karaoke −17pts, travel, live events): use 2016

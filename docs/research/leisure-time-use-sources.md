@@ -76,6 +76,14 @@ TIME_SP (hh:mm, population), PTP_TIME (hh:mm among participants), **PTP_RT
 (participation rate on diary day, %)**. 16 age bands from Y10-14 to Y_GE75.
 Re-pull: `https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/tus_20age?format=JSON&geo=DE&lang=en`
 
+**Re-pull gotcha (found 2026-07-25 building the pipeline):** adding `&unit=PTP_RT`
+to the query returns `TIME_SP` *values* while echoing `PTP_RT` in the response
+metadata — the filter is silently ignored, so the numbers look like durations
+where rates were requested. Fetch **without** a unit filter (all three units
+arrive in one payload, 423 values for DE) and index by the `unit` dimension
+instead; `pipeline/build_leisure.py` derives JSON-stat strides from `size` and
+rejects any payload with an unpinned extra dimension.
+
 Leisure total (AC4-8_998_X_713, excl. handicrafts): **5:54/day** (M 6:08, F 5:41).
 
 | acl18 code | Activity | hh:mm | share | part. rate | M rate | F rate |

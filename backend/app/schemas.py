@@ -28,6 +28,28 @@ class BigFive(BaseModel):
 TRAIT_ORDER = ["O", "C", "E", "A", "N"]
 
 
+class LeisureCategory(str, Enum):
+    """How free time is spent, harmonized so a profile means the same thing in
+    every country.
+
+    Granularity is set by the coarsest national taxonomy we have to map onto.
+    Only the German mapping is validated so far; whether every category can be
+    filled from the US and Japanese surveys is settled when those builders land.
+    """
+
+    TV_MEDIA = "tv_media"
+    SOCIALIZING = "socializing"
+    GAMES = "games"
+    SPORTS_EXERCISE = "sports_exercise"
+    OUTDOOR_WALKING = "outdoor_walking"
+    READING = "reading"
+    ARTS_HOBBIES = "arts_hobbies"
+    COMPUTER_LEISURE = "computer_leisure"
+    GARDENING_PETS = "gardening_pets"
+    GOING_OUT = "going_out"
+    VOLUNTEERING = "volunteering"
+
+
 class Locale(str, Enum):
     US = "US"
     JP = "JP"
