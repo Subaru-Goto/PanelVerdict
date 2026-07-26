@@ -14,8 +14,8 @@ import psycopg
 
 from app.assembly import assemble_pool
 from app.config import settings
-from app.interests import Embedder, InterestLLM
-from app.llm import OpenRouterEmbedder, OpenRouterInterestLLM, OpenRouterJudge
+from app.assembly import Embedder
+from app.llm import OpenRouterEmbedder, OpenRouterJudge
 from app.persistence import persist_persona, prepare_connection
 from app.qc import format_qc_report, run_qc
 from app.schemas import Locale
@@ -25,13 +25,15 @@ _POOL_SIZES = {"dev": 200, "full": 5000}
 
 @dataclass(frozen=True)
 class SeedResult:
-    """`skipped` = already in the pool (healthy resume); `failed` = interest
-    generation gave up after retries (pool is short — a re-run retries these)."""
+    """`skipped` = already in the pool, i.e. a healthy resume.
+
+    There is no failure count: with no generated content left, assembly cannot
+    fail on a draw (006j).
+    """
 
     requested: int
     written: int
     skipped: int
-    failed: int
 
 
 def build_quotas(size: str, countries: list[Locale]) -> dict[Locale, int]:
@@ -53,33 +55,24 @@ def seed_pool(
     quotas: dict[Locale, int],
     *,
     master_seed: int,
-    llm: InterestLLM,
     embedder: Embedder,
 ) -> SeedResult:
     """Assemble and persist the pool, skipping personas already present.
 
     Existing ids are read once and handed to `assemble_pool` as a skip set, so a
-    resumed run never assembles (or calls the LLM for) what it already has.
+    resumed run never assembles (or embeds) what it already has.
     """
     requested = sum(quotas.values())
-    failed: list[str] = []
     written = sum(
         persist_persona(conn, assembled)
         for assembled in assemble_pool(
             quotas,
             master_seed=master_seed,
-            llm=llm,
             embedder=embedder,
             skip=_existing_ids(conn),
-            on_failure=failed.append,
         )
     )
-    return SeedResult(
-        requested=requested,
-        written=written,
-        skipped=requested - written - len(failed),
-        failed=len(failed),
-    )
+    return SeedResult(requested=requested, written=written, skipped=requested - written)
 
 
 def _parse_countries(value: str) -> list[Locale]:
@@ -107,11 +100,6 @@ def main() -> None:
     if settings.openrouter_api_key is None:
         raise SystemExit("openrouter_api_key is not set; cannot generate the pool.")
     api_key = settings.openrouter_api_key.get_secret_value()
-    llm = OpenRouterInterestLLM(
-        api_key=api_key,
-        base_url=settings.openrouter_base_url,
-        model=settings.interest_model,
-    )
     embedder = OpenRouterEmbedder(
         api_key=api_key,
         base_url=settings.openrouter_base_url,
@@ -136,13 +124,8 @@ def main() -> None:
             f"Seeding '{args.size}' pool (seed={args.seed}): ~{max(0, requested - already)} "
             f"personas to generate, {already} already in the pool."
         )
-        result = seed_pool(
-            conn, quotas, master_seed=args.seed, llm=llm, embedder=embedder
-        )
-        print(
-            f"Done: {result.written} written, {result.skipped} already present, "
-            f"{result.failed} failed (re-run to retry)."
-        )
+        result = seed_pool(conn, quotas, master_seed=args.seed, embedder=embedder)
+        print(f"Done: {result.written} written, {result.skipped} already present.")
         report = run_qc(conn, judge=judge, sample_size=args.qc_sample)
     print(format_qc_report(report))
 

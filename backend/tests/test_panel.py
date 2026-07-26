@@ -1,10 +1,7 @@
-import pytest
-
 from app.bigfive import _LEVEL_SCORE, bucketize
 from app.panel import (
     FIXED_PANEL,
     _TRAIT_PHRASES,
-    _join_with_and,
     persona_summary,
     render_persona_prompt,
 )
@@ -23,24 +20,6 @@ def _with_traits(**scores: float) -> BigFive:
         neuroticism=0.0,
     )
     return BigFive(**(base | scores))
-
-
-@pytest.mark.parametrize(
-    ("items", "expected"),
-    [
-        (["solo"], "solo"),
-        (["a", "b"], "a and b"),
-        (["a", "b", "c"], "a, b and c"),
-        (["a", "b", "c", "d"], "a, b, c and d"),
-    ],
-)
-def test_join_with_and(items: list[str], expected: str) -> None:
-    assert _join_with_and(items) == expected
-
-
-def test_join_with_and_empty_raises() -> None:
-    with pytest.raises(IndexError):
-        _join_with_and([])
 
 
 def test_every_trait_has_a_phrase_for_every_level() -> None:

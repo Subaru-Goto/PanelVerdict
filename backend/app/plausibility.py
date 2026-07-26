@@ -1,11 +1,15 @@
 """Plausibility QC over generated personas.
 
 A thin custom G-Eval: an injected judge LLM rates whether a persona reads as a
-plausible, coherent individual given its demographics + Big Five + interests. Runs
+plausible, coherent individual given its demographics + Big Five. Runs
 OFFLINE on a sample — the deliverable is the aggregate pass-rate, a health signal
 on the *generation prompt* (a low rate means fix the prompt, not regenerate
-individuals), never a per-persona gate. Complements the statistical audit: this
-catches implausibility (mode 1), the audit catches variance collapse (mode 2).
+individuals), never a per-persona gate.
+
+Narrowed by 006j: it used to judge invented interest text alongside the sampled
+fields, which was most of what the rubric was for. What is left is whether the
+demographic and trait combination reads as one person — thinner, but the only part
+that was ever about our own sampling rather than the model's hobby prior.
 
 The judge is injected as a Protocol so this is unit-testable without the network;
 the concrete OpenRouter adapter lives in app.llm.
@@ -19,9 +23,9 @@ from app.schemas import Persona, PlausibilityScore
 
 _RUBRIC = (
     "Rate on a 1-5 scale how plausibly this reads as a real, coherent individual: "
-    "are the interests appropriate for the age and life stage, and consistent with "
-    "the stated personality? 5 = fully believable; 1 = incoherent or a lazy "
-    "demographic stereotype. Give a brief reason."
+    "do the age, education, income and personality hang together as one person? "
+    "5 = fully believable; 1 = incoherent or a lazy demographic stereotype. "
+    "Give a brief reason."
 )
 
 

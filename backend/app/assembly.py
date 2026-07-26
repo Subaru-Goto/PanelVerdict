@@ -1,39 +1,41 @@
-"""Assemble fully-specified personas from the sampled + synthesized parts.
+"""Assemble fully-specified personas from the sampled parts.
 
 Pure and side-effect-free (no DB): given a country, a slot index, and the master
 seed, produce a deterministic, per-slot-independent persona.
+
+No LLM is involved. Every field is sampled from a committed table or from the
+published Big Five norms, so a slot is reproducible from the seed alone; the only
+model call is embedding the persona's summary for retrieval (006j).
 """
 
-import logging
-from collections.abc import Callable, Container, Iterator
+from collections.abc import Container, Iterator
 from dataclasses import dataclass
+from typing import Protocol
 
 import numpy as np
 
 from app.bigfive import sample_big_five
-from app.interests import (
-    Embedder,
-    InterestLLM,
-    InvalidInterests,
-    embed_interests,
-    synthesize_interests,
-)
+from app.panel import persona_summary
 from app.sampler import JointCell, load_joint, sample_one
 from app.schemas import Locale, Persona
-
-logger = logging.getLogger(__name__)
 
 # Zero-pad the ordinal: a 5k pool needs 4 digits; 5 leaves headroom and keeps ids
 # lexically sortable within a country.
 _ID_WIDTH = 5
 
 
+class Embedder(Protocol):
+    """Embeds each text into its own vector."""
+
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
+
+
 @dataclass(frozen=True)
 class AssembledPersona:
-    """A persona plus its per-interest embeddings, aligned 1:1 with `interests`."""
+    """A persona plus the embedding of its rendered summary (007's fuzzy half)."""
 
     persona: Persona
-    interest_vectors: list[list[float]]
+    summary_vector: list[float]
 
 
 def persona_id(country: Locale, index: int) -> str:
@@ -71,7 +73,6 @@ def assemble_persona(
     cells: list[JointCell],
     *,
     master_seed: int,
-    llm: InterestLLM,
     embedder: Embedder,
 ) -> AssembledPersona:
     """Build one persona deterministically from its slot.
@@ -81,16 +82,14 @@ def assemble_persona(
     """
     demo_rng, big_five_rng = _slot_rngs(master_seed, country, index)
     demographics = sample_one(country, cells, demo_rng)
-    big_five = sample_big_five(demographics.age, demographics.gender, big_five_rng)
-    interests = synthesize_interests(demographics, big_five, llm=llm)
+    persona = Persona(
+        id=persona_id(country, index),
+        **demographics.model_dump(),
+        big_five=sample_big_five(demographics.age, demographics.gender, big_five_rng),
+    )
     return AssembledPersona(
-        persona=Persona(
-            id=persona_id(country, index),
-            **demographics.model_dump(),
-            interests=interests,
-            big_five=big_five,
-        ),
-        interest_vectors=embed_interests(interests, embedder=embedder),
+        persona=persona,
+        summary_vector=embedder.embed([persona_summary(persona)])[0],
     )
 
 
@@ -98,19 +97,18 @@ def assemble_pool(
     quotas: dict[Locale, int],
     *,
     master_seed: int,
-    llm: InterestLLM,
     embedder: Embedder,
     skip: Container[str] = frozenset(),
-    on_failure: Callable[[str], None] = lambda pid: None,
 ) -> Iterator[AssembledPersona]:
     """Yield the pool one persona at a time (sequential, lazy).
 
     `quotas` is the per-country count — the one hand-managed cross-country knob.
     `skip` holds persona ids to leave un-generated, so a resumed seed never pays
-    to assemble (or call the LLM for) personas it already persisted. A persona
-    whose interests fail generation after retries is logged, reported via
-    `on_failure(pid)`, and skipped, so one bad draw can't abort the whole batch
-    but the caller can still count what went missing.
+    to assemble (or embed) personas it already persisted.
+
+    Nothing here can fail on content any more: with interests gone there is no
+    generated text to validate, so the log-and-skip path this needed for invalid
+    draws went with it (006j).
     """
     for country, n in quotas.items():
         cells = load_joint(country)
@@ -118,17 +116,10 @@ def assemble_pool(
             pid = persona_id(country, index)
             if pid in skip:
                 continue
-            try:
-                yield assemble_persona(
-                    country,
-                    index,
-                    cells,
-                    master_seed=master_seed,
-                    llm=llm,
-                    embedder=embedder,
-                )
-            except InvalidInterests as error:
-                logger.warning(
-                    "skipping %s: interest generation failed (%s)", pid, error
-                )
-                on_failure(pid)
+            yield assemble_persona(
+                country,
+                index,
+                cells,
+                master_seed=master_seed,
+                embedder=embedder,
+            )

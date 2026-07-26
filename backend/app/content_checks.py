@@ -1,7 +1,13 @@
+"""Detect text that reads like an injected instruction rather than content.
+
+Kept after 006j removed its only caller. No persona field is free text any more,
+so the pool can no longer be poisoned through generation — but these patterns are
+what 013 needs at the runtime boundary, where the headline variants and the target
+description actually arrive from a user. Screening belongs there, not here.
+"""
+
 import re
 
-# This guardrail is only for the internal prompt,
-#  no user inputs are used.
 _INJECTION_PATTERNS = [
     re.compile(pattern, re.IGNORECASE)
     for pattern in (
@@ -20,20 +26,5 @@ _INJECTION_PATTERNS = [
 ]
 
 
-class UnsafeInterest(ValueError):
-    """An interest that reads like an injected instruction, not a hobby."""
-
-
 def is_injection_like(text: str) -> bool:
     return any(pattern.search(text) for pattern in _INJECTION_PATTERNS)
-
-
-def screen_interests(tags: list[str]) -> None:
-    """Raise UnsafeInterest if any tag — or their concatenation — looks injected.
-    This is speciic to hobby checks rg. ["ignore....", "baseball", "playing sport"]
-    """
-    for candidate in (*tags, " ".join(tags)):
-        if is_injection_like(candidate):
-            raise UnsafeInterest(
-                f"interest content looks like an injected instruction: {candidate!r}"
-            )

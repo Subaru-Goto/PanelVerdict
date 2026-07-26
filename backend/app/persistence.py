@@ -33,12 +33,10 @@ def prepare_connection(conn: psycopg.Connection) -> None:
 
 
 def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bool:
-    """Write one persona + its interests in a single transaction; return whether
-    it was newly written.
+    """Write one persona and its summary vector; return whether it was newly written.
 
     `ON CONFLICT (id) DO NOTHING` makes a re-run a no-op for personas already
-    present (returns False); when the persona is skipped its interests are
-    skipped too.
+    present (returns False).
     """
     persona = assembled.persona
     big_five = persona.big_five
@@ -47,8 +45,9 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bo
             """
             INSERT INTO personas (
                 id, country, age, gender, income_quintile, education,
-                openness, conscientiousness, extraversion, agreeableness, neuroticism
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                openness, conscientiousness, extraversion, agreeableness,
+                neuroticism, summary_embedding
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO NOTHING
             """,
             (
@@ -63,25 +62,10 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bo
                 big_five.extraversion,
                 big_five.agreeableness,
                 big_five.neuroticism,
+                np.array(assembled.summary_vector),
             ),
         )
-        if result.rowcount == 0:
-            return False
-        with conn.cursor() as cur:
-            cur.executemany(
-                """
-                INSERT INTO interests (persona_id, interest, embedding)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (persona_id, interest) DO NOTHING
-                """,
-                [
-                    (persona.id, interest, np.array(vector))
-                    for interest, vector in zip(
-                        persona.interests, assembled.interest_vectors, strict=True
-                    )
-                ],
-            )
-    return True
+    return result.rowcount == 1
 
 
 def persist_pool(conn: psycopg.Connection, pool: Iterable[AssembledPersona]) -> int:
