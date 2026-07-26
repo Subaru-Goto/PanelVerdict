@@ -7,12 +7,39 @@ skips personas already present.
 
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TypedDict, cast
 
 import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector
+from psycopg.rows import dict_row
 
 from app.assembly import AssembledPersona
+from app.schemas import BigFive, Persona
+
+
+class PersonaRow(TypedDict):
+    """One `personas` row as the readers below select it.
+
+    Spelling the shape out rather than passing `dict[str, object]` around keeps the
+    SELECT and the field reads in one place: adding a column to `_PERSONA_COLUMNS`
+    without adding it here is then a type error rather than a KeyError at runtime.
+    """
+
+    id: str
+    country: str
+    age: int
+    gender: str
+    income_quintile: int
+    education: str
+    openness: float
+    conscientiousness: float
+    extraversion: float
+    agreeableness: float
+    neuroticism: float
+
+
+_PERSONA_COLUMNS = ", ".join(PersonaRow.__annotations__)
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
 
@@ -93,3 +120,44 @@ def persist_pool(conn: psycopg.Connection, pool: Iterable[AssembledPersona]) -> 
     """Persist every assembled persona (one transaction each); return the number
     newly written — personas already present are skipped and not counted."""
     return sum(persist_persona(conn, assembled) for assembled in pool)
+
+
+def _persona_from_row(row: PersonaRow) -> Persona:
+    """Rebuild a Persona from its columns. The summary embedding is deliberately
+    not read back — it is derived from these fields, and no reader needs both."""
+    return Persona(
+        id=row["id"],
+        country=row["country"],
+        age=row["age"],
+        gender=row["gender"],
+        income_quintile=row["income_quintile"],
+        education=row["education"],
+        big_five=BigFive(
+            openness=row["openness"],
+            conscientiousness=row["conscientiousness"],
+            extraversion=row["extraversion"],
+            agreeableness=row["agreeableness"],
+            neuroticism=row["neuroticism"],
+        ),
+    )
+
+
+def _read_personas(
+    conn: psycopg.Connection, clause: str, params: tuple = ()
+) -> list[Persona]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(
+            f"SELECT {_PERSONA_COLUMNS} FROM personas {clause}", params
+        ).fetchall()
+    return [_persona_from_row(cast(PersonaRow, row)) for row in rows]
+
+
+def load_pool(conn: psycopg.Connection) -> list[Persona]:
+    """Every persona, in id order — the aggregate view pool QC audits."""
+    return _read_personas(conn, "ORDER BY id")
+
+
+def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona]:
+    """A random sample, for the plausibility judge — which pays per persona, so it
+    reads a sample rather than the pool."""
+    return _read_personas(conn, "ORDER BY random() LIMIT %s", (limit,))

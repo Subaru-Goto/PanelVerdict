@@ -4,7 +4,7 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: [001-decide-persona-schema-and-seed, 004-standup-skeleton-infra]
 assignee: null
-status: open
+status: done
 ---
 
 ## Goal
@@ -28,7 +28,7 @@ This is an **umbrella** — the build is split into small, independently reviewa
 - [~] [006d](006d-interests-synthesis.md) — interests synthesis + embeddings — *shipped PR #19, now **superseded** by [006j](006j-persona-summary-embedding.md); removed in its slices 2-3*
 - [~] [006e](006e-content-checks.md) — content checks: injection denylist, anti-stereotype audit, plausibility G-Eval — *shipped PRs #21/#22/#23, now **partly superseded** by [006j](006j-persona-summary-embedding.md): the audit is retired, the denylist moves to [013](013-guardrails-mvp.md)*
 - [x] [006f](006f-persistence.md) — persistence: Postgres + pgvector + idempotent seed script + QC report — *done, PRs #25/#26/#27/#28; example-bank follow-up PR #29*
-- [ ] [006g](006g-pool-overview.md) — pool-overview QC artifact *(blocked by 006f — now unblocked)*
+- [x] [006g](006g-pool-overview.md) — pool-overview QC artifact — *done; the dev pool's worst of 64 comparisons is z = +2.38*
 - [~] [006h](006h-menu-mode-interests.md) — menu-mode interests — *rejected: required ~430 invented weights; superseded by 006i*
 - [~] [006i](006i-leisure-profiles.md) — leisure profiles from surveyed time-use — *data layer merged (PRs #31/#33/#34/#36/#37) and kept as reference data; leisure does not enter the persona. Closed 2026-07-26: no evidence it moves a vote, and it made each new country a bespoke extraction*
 - [x] [006j](006j-persona-summary-embedding.md) — persona summary embedding; `interests` dropped — *done, PRs #38/#39/#40/#41; its slice-4 ablation graduated to [014](014-targeting-manipulation-check.md)*

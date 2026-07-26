@@ -21,6 +21,15 @@ SIGMA: list[list[float]] = _NORMS["sigma"]
 _SIGMA = np.array(SIGMA)
 
 
+def mu_for(age: int, gender: Literal["male", "female"]) -> np.ndarray:
+    """The prior mean vector a persona of this age and gender is drawn around.
+
+    Public because a pool's expected trait means are the average of these, not zero
+    — μ moves with age and gender, so any check against the priors needs them.
+    """
+    return np.array(MU[f"{_mu_band(age)}|{gender}"])
+
+
 def sample_big_five(
     age: int, gender: Literal["male", "female"], rng: np.random.Generator
 ) -> BigFive:
@@ -29,7 +38,7 @@ def sample_big_five(
     `rng` is injected so the whole pool is reproducible from one master seed;
     scores are stored raw and bucketized only at render.
     """
-    mean = MU[f"{_mu_band(age)}|{gender}"]
+    mean = mu_for(age, gender)
     openness, conscientiousness, extraversion, agreeableness, neuroticism = (
         rng.multivariate_normal(mean, _SIGMA)
     )

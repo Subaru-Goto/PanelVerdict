@@ -15,6 +15,16 @@ Natural-language target description → **structured SQL filters + embedding que
 - panel sampling: 100–300 personas, ~80–90% target-matched + 10–20% random **control group**,
 - **fixed seed** → reproducible panels.
 
+## Amended 2026-07-26 — `culture_tag` is not a column, and should not become one
+
+The ladder below assumes a stored `culture_tag`. There isn't one: 006b never added
+it, and `schema.sql` carries only country. Nor should it — the tag is a pure
+function of country (US/DE → Western, JP → Asian), so storing it would be a
+denormalised copy that can drift from the column it derives from. The middle rung
+is `WHERE country IN (…)` with the mapping held in code.
+
+Unblocked 2026-07-26: 006 closed with 006g.
+
 ## Region coverage + fallback (from the 2026-07-21 grounding grill; see [001](001-decide-persona-schema-and-seed.md) amendment)
 
 The pool is **country-grounded** with a derived **`culture_tag`** (Asian/Western). v1 seeds JP/US/DE. **Coverage = the seed list**, so query translation must handle out-of-coverage targets:
