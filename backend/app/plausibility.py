@@ -7,7 +7,7 @@ Weaker than it looks, and worth knowing before trusting it: every field it judge
 is now sampled from a committed table or the published norms, so coherence is
 largely guaranteed by construction. Treat a high pass-rate as a smoke test. The
 check that can actually fail — realized pool distributions against the priors they
-were drawn from — is numpy, needs no judge, and is 006g's.
+were drawn from — is numpy, needs no judge, and lives in app.pool_overview.
 
 The judge is injected as a Protocol so this is unit-testable without the network;
 the concrete OpenRouter adapter lives in app.llm.
@@ -17,10 +17,10 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import psycopg
-from psycopg.rows import dict_row
 
 from app.panel import render_persona_prompt
-from app.schemas import BigFive, Persona, PlausibilityScore
+from app.persistence import load_persona_sample
+from app.schemas import Persona, PlausibilityScore
 
 _RUBRIC = (
     "Rate on a 1-5 scale how plausibly this reads as a real, coherent individual: "
@@ -78,37 +78,6 @@ def evaluate_sample(
         mean_rating=sum(ratings) / len(ratings),
         failures=failures,
     )
-
-
-def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona]:
-    """Rebuild a random sample of personas from their columns, for the judge."""
-    with conn.cursor(row_factory=dict_row) as cur:
-        rows = cur.execute(
-            """
-            SELECT id, country, age, gender, income_quintile, education,
-                   openness, conscientiousness, extraversion, agreeableness, neuroticism
-            FROM personas ORDER BY random() LIMIT %s
-            """,
-            (limit,),
-        ).fetchall()
-    return [
-        Persona(
-            id=r["id"],
-            country=r["country"],
-            age=r["age"],
-            gender=r["gender"],
-            income_quintile=r["income_quintile"],
-            education=r["education"],
-            big_five=BigFive(
-                openness=r["openness"],
-                conscientiousness=r["conscientiousness"],
-                extraversion=r["extraversion"],
-                agreeableness=r["agreeableness"],
-                neuroticism=r["neuroticism"],
-            ),
-        )
-        for r in rows
-    ]
 
 
 def run_plausibility_qc(

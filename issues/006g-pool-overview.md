@@ -4,8 +4,33 @@ labels: [wayfinder:task]
 parent: 006-build-persona-pool
 blocked_by: [006f-persistence]
 assignee: null
-status: open
+status: done
 ---
+
+## Resolution (2026-07-26)
+
+`app/pool_overview.py` — `python -m app.pool_overview [--sample N]`. Run against a
+freshly reseeded 200-persona dev pool: **worst of 64 comparisons was agreeableness
+sd at z = +2.38**, which across that many z-scores is unremarkable. The sampler is
+sound.
+
+Two things the build turned on that are worth carrying forward:
+
+- **The obvious Big Five check would have failed a correct sampler.** Personas are
+  drawn from `MVN(μ(age, gender), Σ)` with Σ's diagonal at exactly 1.0, so
+  "mean ≈ 0, sd ≈ 1" looks right — but μ moves with age and gender, and the law of
+  total covariance gives `E[X] = E[μ]`, `Cov(X) = Σ + Cov(μ)`. The pool's expected
+  openness mean is **−0.138**, not zero (the Donnellan & Lucas age gradient showing
+  through a pool older than the norming reference). Realized: −0.137, z = 0.02. At
+  the full 5,000 a naive check would have screamed at about nine standard errors on
+  a perfectly healthy pool — and only at that size, so the bug would have surfaced
+  exactly when it was most expensive.
+- **Comparison is per country, not pooled.** Each joint table is its own claim; a
+  US pool skewed one way against a JP pool skewed the other averages to a clean
+  marginal neither table supports.
+
+Marginals rather than cells, because a country table has 240 cells — even the full
+pool leaves ~7 draws each, so a cell-level test reads noise.
 
 ## Goal
 

@@ -3,12 +3,11 @@
 import psycopg
 from factories import make_assembled, make_persona
 
-from app.persistence import persist_persona
+from app.persistence import load_persona_sample, persist_persona
 from app.plausibility import (
     PlausibilityReport,
     PlausibilityScore,
     format_report,
-    load_persona_sample,
     run_plausibility_qc,
 )
 
