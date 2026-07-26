@@ -3,6 +3,8 @@
   "imputations": [
     "the 25-34 and 35-44 bands are not published ready-made and are the population-weighted mean of the survey's five-year groups, using the populations the table publishes beside them",
     "rates are diary-day rates (\u4e3b\u884c\u52d5, primary activity only), far below the past-year \u884c\u52d5\u8005\u7387 the survey also publishes \u2014 volunteering is 1.8% of men on a given day against ~26% in a year",
-    "socializing is \u4ea4\u969b\u30fb\u4ed8\u304d\u5408\u3044, which covers visits and ceremonies but not conversation at home; Eurostat's socializing includes it, so the two countries' figures are not comparable to each other"
+    "socializing is \u4ea4\u969b\u30fb\u4ed8\u304d\u5408\u3044, which covers visits and ceremonies but not conversation at home; Eurostat's socializing includes it, so the two countries' figures are not comparable to each other",
+    "\u4f11\u990a\u30fb\u304f\u3064\u308d\u304e (rest and relaxation, 68.1% of men) and \u5b66\u7fd2\u30fb\u81ea\u5df1\u5553\u767a\u30fb\u8a13\u7df4 (learning outside schoolwork) are published but not mapped: resting is downtime rather than an interest, and Eurostat classifies free-time study outside its leisure aggregate",
+    "every cell is conditioned on both gender and age, with no prior standing in for a missing one"
   ]
 }

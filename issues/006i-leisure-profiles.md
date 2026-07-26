@@ -42,61 +42,49 @@ invented ones.**
 ## Design
 
 - **D1 — Storage: wide columns on `personas`, `interests` table dropped.**
-  Per-category minutes as SQL columns (filterable — same rationale as 006f D2's
+  Per-category participation booleans as SQL columns (filterable — same rationale as 006f D2's
   hard fields and the five Big Five columns). Plus one
   `summary_embedding vector(1536)` column. Net schema is *simpler* than today:
   one vector per persona instead of one per interest, one table instead of two.
-- **D2 — Category set is a *union* across surveys, with declared per-country
-  coverage.** tv_media, socializing, games, sports_exercise, outdoor_walking,
-  reading, arts_hobbies, going_out, computer_leisure, gardening_pets,
-  volunteering, rest_relaxation, hobbies_amusements. The mapping is the main data-engineering
-  task; the research doc §5 table is the starting point and each row cites its
-  source. (Amended while building slice 1: `volunteering` added — published for
-  DE and US; `arts_crafts_music` renamed `arts_hobbies` because the Eurostat
-  aggregate excludes handicrafts.)
+- **D2 — Five categories every survey publishes: `tv_media`, `socializing`,
+  `sports_exercise`, `volunteering`, `hobbies_and_games`.** Japan's diary is the
+  coarsest of the three, so it sets the granularity and the others aggregate up
+  to meet it. Every country fills every category; no country carries a
+  partly-empty table or a category of its own.
 
-  **Amended again in slice 1c, once Japan's actual taxonomy was in hand.** The
-  original plan was to harmonize down to the coarsest national taxonomy. Japan's
-  diary turns out to publish only 6 leisure activities that map onto this set,
-  with one "Hobbies and amusements" bucket covering games, books, computer use,
-  arts and gardening at once — so harmonizing down would have collapsed Germany's
-  and the US's finer data into a blob that carries almost no signal for headline
-  voting, which is the whole point of the profile. Instead each country fills
-  what its own survey publishes and declares the rest in `{cc}.meta.json`. A
-  category is therefore never reported under a name meaning something materially
-  different; it just isn't present everywhere. `hobbies_amusements` exists for
-  Japan's coarse bucket precisely so it is *not* reported under `arts_hobbies`,
-  which would be the same name meaning two different things. The build fails if
-  a category is neither mapped nor declared unsupported, so adding an enum member
-  cannot silently shorten a country's table.
+  *This replaces two earlier attempts, both over-built.* First a set of 11–13
+  categories harmonized to the finest available taxonomy, then a **union**
+  vocabulary where each country filled what it published and declared the rest
+  in `{cc}.meta.json`, enforced by a coverage check. Both preserved German and
+  US granularity that the persona summary was never going to use, and the union
+  version needed a Japan-only `hobbies_amusements` category to avoid one name
+  meaning two things. The five-category set makes all of that machinery
+  unnecessary.
 
-  **Eurostat's own leisure aggregate (`AC4-8`) settles what counts as leisure.**
-  That is why `rest_relaxation` exists: Eurostat publishes resting as leisure
-  (`AC531`), so Japan's 休養・くつろぎ has a counterpart and both countries fill
-  it. By the same rule 学習・自己啓発・訓練 stays unmapped — Eurostat classifies
-  free-time study under Study (`AC221`), outside the leisure aggregate — and
-  `jp.meta.json` says so rather than dropping it in silence. Each country's
-  builder must declare published-but-unmapped activities the same way.
+  Coarsening **improved** comparability rather than costing it. Folding print
+  media into `tv_media` (`AC81_X_812` beside TV and radio) and walking into
+  `sports_exercise` (`AC611` beside `AC6_X_611`) makes Germany's definitions
+  match Japan's exactly, removing two of the three scope differences the union
+  design had to declare. `rest_relaxation` was dropped with them: it was the
+  widest gap in the table — Japan's broad 休養・くつろぎ at 68.1% of men against
+  Eurostat's narrow "Resting - time out" at 18.5%, mostly definitional — and
+  resting is not a hobby.
 
-  This is sound because **personas are only ever compared within a country** —
-  a US panel is scored against US personas, and the profile is consumed as a
-  templated summary and its embedding (D6), never as a cross-country numeric
-  join. Cross-country leisure comparison is the one thing this forfeits, and
-  nothing in PanelVerdict asks for it. Scope differences that survive the
-  mapping are declared rather than hidden: `rest_relaxation` is the widest —
-  Japan's 休養・くつろぎ is a broad catch-all (68.1% of men) against Eurostat's
-  narrow "Resting - time out" (18.5%), ~4x apart for definitional rather than
-  behavioural reasons. Also JP `sports_exercise` includes walking (Germany
-  reports it separately), JP `socializing` is 交際・付き合い, which excludes
-  conversation at home where Eurostat's includes it, and JP `tv_media` counts
-  newspapers and magazines that Germany files under `reading`.
+  Two scope differences survive and are declared in the country's `.meta.json`
+  rather than smoothed: JP `socializing` is 交際・付き合い, which excludes
+  conversation at home where Eurostat's includes it; and US `tv_media` is
+  television only, because ATUS publishes one undifferentiated "Reading for
+  personal interest" row that cannot be split between print media and books.
+- **D2b — Rates only, no durations.** The pool needs to know *whether* someone
+  is into something, not for how long. Minutes would be rendered as text
+  ("175 minutes a day") that is not comparable between surveys — the JP/DE
+  resting gap is the proof — and drawing a plausible duration needs a spread
+  model no survey supports (it was already deferred to v2 as unsourced). One
+  number per cell: the participation rate.
 - **D3 — Generative model, per persona, fully sourced:** for each category,
-  `participate ~ Bernoulli(participation_rate[country, gender])`, and if
-  participating, minutes drawn around the **participant mean** — read from the
-  published `PTP_TIME` cell wherever one exists, and only derived
-  (`population_mean / participation_rate`) for aggregated categories that have
-  no published union. Deterministic off the existing
-  per-slot RNG, so dev-subset-is-a-prefix and resume both still hold.
+  `participate ~ Bernoulli(participation_rate[country, gender, age_band])`.
+  That is the whole model — no second draw, no spread. Deterministic off the
+  existing per-slot RNG, so dev-subset-is-a-prefix and resume both still hold.
 
   **Leisure is not a personality signal, and must never be read as one.** Big
   Five is sampled independently, from published norms by age and gender
@@ -119,9 +107,14 @@ invented ones.**
   a published crosstab. What leisure buys instead is concreteness for the D6
   summary embedding, country realism in the vote prompt, and a real external
   validation target for 006g.
-- **D4 — Conditioning: country × gender now, age where published.** All three
-  surveys give gender splits; Eurostat `tus_20age` gives 16 age bands for DE.
-  Age conditioning lands per country as the data allows, not uniformly.
+- **D4 — Conditioning: country × gender × age band**, on the bands
+  `15-24 / 25-34 / 35-44 / 45-54 / 55-64 / 65+`. Eurostat publishes all six
+  directly; Japan publishes four ready-made and the two middle bands are the
+  population-weighted mean of its five-year groups, weighted on the populations
+  the table prints beside them; ATUS publishes no rates by age at all, so the US
+  will use the gender-only rung of D8 (slice 1b). Age is what the conditioning buys — Japanese
+  men's `tv_media` runs 0.23 at 15-24 to 0.88 at 65+, and `hobbies_and_games`
+  falls 0.38 to 0.20 across working age before recovering at retirement.
   Demographic conditioning is now *measured* rather than model judgment — the
   requirement that killed three interest designs.
 - **D5 — Pipeline mirrors `build_oecd`:** new `pipeline/build_leisure.py` with an
@@ -185,7 +178,8 @@ invented ones.**
 1. `pipeline/build_leisure.py` + the harmonized category set + **Germany**
    (`de.csv`, Eurostat JSON API). Split per country while building, because each
    survey is a different extraction problem with its own gaps to declare.
-1b. **US** (`us.csv`) — ATUS 2024 Table A-1 via the archive mirror; the doc's
+1b. **US** (`us.csv`) — ATUS Table A-1. BLS serves no machine-readable copy and
+   blocks scripted clients, and publishes rates by sex but not by age.
    §1 rates are ungendered, so the by-sex columns need re-extracting.
 1c. **Japan** (`jp.csv`) — 社会生活基本調査 2021 table 1-1, downloaded from e-Stat
    without an application ID. Publishes all three metrics by sex, so nothing is

@@ -2,6 +2,12 @@
   "country": "DE",
   "imputations": [
     "categories built from several acl18 codes (tv_media, socializing, sports_exercise, hobbies_and_games) take the union under independence, 1-prod(1-r), since the same person is counted under each code and published rates cannot be added",
-    "every age band maps to one published Eurostat band, so no age group is combined"
+    "every cell is conditioned on both gender and age: each band maps to one published Eurostat band, so no age group is combined and no prior stands in",
+    "AC531 is published but not mapped \u2014 resting/time out: downtime rather than an interest, and its Japanese counterpart \u4f11\u990a\u30fb\u304f\u3064\u308d\u304e is ~4x wider (68.1% of men against 18.5%), so the pair would compare badly even though both publish it",
+    "AC221 is published but not mapped \u2014 free time study: Eurostat files it under Study, outside AC4-8",
+    "AC34 is published but not mapped \u2014 gardening and pet care: Eurostat files it under household care, outside AC4-8, though Japan counts gardening-as-pastime inside \u8da3\u5473\u30fb\u5a2f\u697d",
+    "AC831 is 'listening to radio or recordings', so music listening lands in tv_media here while Japan counts it inside \u8da3\u5473\u30fb\u5a2f\u697d",
+    "AC711_712_719_731_732_739 is explicitly 'except making handicraft products', which Eurostat files under household care (AC3_713); Japan's \u8da3\u5473\u30fb\u5a2f\u697d includes handicrafts, so hobbies_and_games is narrower here",
+    "AC514-516 'virtual social life' has no counterpart in Japan's \u4ea4\u969b\u30fb\u4ed8\u304d\u5408\u3044"
   ]
 }

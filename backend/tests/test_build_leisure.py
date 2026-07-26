@@ -8,8 +8,10 @@ import pytest
 from app.schemas import LeisureCategory, Locale
 from pipeline.build_leisure import (
     _AGE_BANDS,
+    _EUROSTAT_AGE,
     SurveyCells,
     _cell_rate,
+    _leisure_rows,
     build_leisure,
     parse_estat_table,
     parse_jsonstat,
@@ -17,8 +19,6 @@ from pipeline.build_leisure import (
 )
 
 _FIXTURES = Path(__file__).parent / "fixtures"
-
-_TV_JP = "Watching TV, listening to the radio, reading newspapers or magazines"
 
 
 def de_fetch(url: str) -> bytes:
@@ -31,7 +31,9 @@ def jp_fetch(url: str) -> bytes:
     return (_FIXTURES / "estat_shakai_seikatsu_2021_table1_1.xlsx").read_bytes()
 
 
-def _rates(country: Locale, fetch: Callable[[str], bytes]) -> dict[tuple, float]:
+def _rates(
+    country: Locale, fetch: Callable[[str], bytes]
+) -> dict[tuple[LeisureCategory, str, str], float]:
     return {
         (row.category, row.gender, row.age_band): row.participation_rate
         for row in build_leisure(country, fetch=fetch).rows
@@ -175,6 +177,30 @@ def test_countries_conditioned_on_both_axes_declare_no_fallback() -> None:
     for country, fetch in ((Locale.DE, de_fetch), (Locale.JP, jp_fetch)):
         declared = " ".join(build_leisure(country, fetch=fetch).imputations)
         assert "not conditioned on both gender and age" not in declared
+
+
+def test_a_category_missing_from_a_mapping_fails_the_build() -> None:
+    # Iterating the mapping would emit a short table instead of complaining, so
+    # adding an enum member without mapping it has to be a build failure.
+    cells = SurveyCells(rates={}, populations={}, totals=("total", "TOTAL"))
+    partial = {LeisureCategory.TV_MEDIA: ("AC821",)}
+
+    with pytest.raises(ValueError, match="no activities mapped"):
+        _leisure_rows(cells, partial, _EUROSTAT_AGE, "test")
+
+
+def test_published_activities_left_unmapped_are_declared() -> None:
+    # A reader must be able to tell "we decided against this" from "we forgot".
+    # Eurostat's resting and gardening, and Japan's 休養・くつろぎ, are all
+    # published inside the leisure block and deliberately excluded.
+    declared_de = " ".join(build_leisure(Locale.DE, fetch=de_fetch).imputations)
+    for code in ("AC531", "AC221", "AC34"):
+        assert code in declared_de
+    # and the mapped-but-narrower cases say so too
+    assert "handicraft" in declared_de and "recordings" in declared_de
+
+    declared_jp = " ".join(build_leisure(Locale.JP, fetch=jp_fetch).imputations)
+    assert "休養・くつろぎ" in declared_jp
 
 
 def test_build_leisure_cites_a_source_for_every_row() -> None:

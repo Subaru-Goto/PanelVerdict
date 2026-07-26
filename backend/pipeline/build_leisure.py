@@ -33,6 +33,10 @@ from app.schemas import LeisureCategory, Locale
 
 _Gender = Literal["male", "female"]
 _GENDERS: tuple[_Gender, ...] = ("male", "female")
+# Surveys label their own all-gender and all-age aggregates, and those labels are
+# the fallback priors, so a cell key is the survey's vocabulary, not ours.
+_SurveyGender = _Gender | Literal["total"]
+_SurveyKey = tuple[str, str, str]  # (gender label, age label, activity)
 
 _AgeBand = Literal["15-24", "25-34", "35-44", "45-54", "55-64", "65+"]
 _AGE_BANDS: tuple[_AgeBand, ...] = (
@@ -62,8 +66,36 @@ _EUROSTAT_CODES: dict[LeisureCategory, tuple[str, ...]] = {
         "AC72",
         "AC733-735",
         "AC812",
+        "AC52",
     ),
 }
+
+# Published leisure activities deliberately left unmapped, and why. Declared so a
+# reader can tell "we decided against this" from "we forgot it" — the whole point
+# of citing sources. Keyed by code to keep the reason next to what it excludes.
+_EUROSTAT_UNMAPPED: dict[str, str] = {
+    "AC531": (
+        "resting/time out: downtime rather than an interest, and its Japanese "
+        "counterpart 休養・くつろぎ is ~4x wider (68.1% of men against 18.5%), so "
+        "the pair would compare badly even though both publish it"
+    ),
+    "AC221": "free time study: Eurostat files it under Study, outside AC4-8",
+    "AC34": (
+        "gardening and pet care: Eurostat files it under household care, outside "
+        "AC4-8, though Japan counts gardening-as-pastime inside 趣味・娯楽"
+    ),
+}
+
+# Where a mapped code still does not mean quite what Japan's label means. None is
+# fixable from published data, so each is declared rather than smoothed over.
+_EUROSTAT_SCOPE_NOTES: tuple[str, ...] = (
+    "AC831 is 'listening to radio or recordings', so music listening lands in "
+    "tv_media here while Japan counts it inside 趣味・娯楽",
+    "AC711_712_719_731_732_739 is explicitly 'except making handicraft products', "
+    "which Eurostat files under household care (AC3_713); Japan's 趣味・娯楽 "
+    "includes handicrafts, so hobbies_and_games is narrower here",
+    "AC514-516 'virtual social life' has no counterpart in Japan's 交際・付き合い",
+)
 
 _EUROSTAT_AGE: dict[_AgeBand, tuple[str, ...]] = {
     "15-24": ("Y15-24",),
@@ -78,7 +110,7 @@ _EUROSTAT_BASE = (
     "https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/tus_20age"
 )
 _EUROSTAT_CITATION = "eurostat:tus_20age"
-_EUROSTAT_SEX: dict[str, str] = {"M": "male", "F": "female", "T": "total"}
+_EUROSTAT_SEX: dict[str, _SurveyGender] = {"M": "male", "F": "female", "T": "total"}
 _EUROSTAT_AGE_TOTAL = "TOTAL"
 _EUROSTAT_RATE_UNIT = "PTP_RT"
 
@@ -116,7 +148,7 @@ _ESTAT_URL = (
     "?statInfId=000032262854&fileKind=0"
 )
 _ESTAT_CITATION = "e-stat:shakai-seikatsu-2021:table1-1"
-_ESTAT_SEX: dict[str, str] = {"男": "male", "女": "female", "総数": "total"}
+_ESTAT_SEX: dict[str, _SurveyGender] = {"男": "male", "女": "female", "総数": "total"}
 # The all-ages row of each block simply leaves the age cell blank.
 _ESTAT_AGE_TOTAL = ""
 _ESTAT_RATE_LABEL = "行動者率"
@@ -156,7 +188,7 @@ class SurveyCells:
     that exists rather than dropping the country.
     """
 
-    rates: dict[tuple[str, str, str], float]
+    rates: dict[_SurveyKey, float]
     populations: dict[tuple[str, str], float]
     totals: tuple[str, str]
 
@@ -196,7 +228,7 @@ def parse_jsonstat(text: str) -> SurveyCells:
         raise ValueError(f"payload publishes no {_EUROSTAT_RATE_UNIT} unit")
 
     values = payload["value"]
-    rates: dict[tuple[str, str, str], float] = {}
+    rates: dict[_SurveyKey, float] = {}
     for sex, sex_i in index["sex"].items():
         gender = _EUROSTAT_SEX.get(sex)
         if gender is None:
@@ -284,6 +316,17 @@ def _estat_rate_columns(grid: list[list[_CellValue]]) -> dict[str, int]:
     return columns
 
 
+def _find_column(
+    grid: list[list[_CellValue]], matches: Callable[[str], bool], description: str
+) -> int:
+    """The leftmost column whose header the predicate accepts."""
+    for row in grid:
+        for col, value in enumerate(row):
+            if matches(_cell_text(value)):
+                return col
+    raise ValueError(f"no column carries {description}")
+
+
 def parse_estat_table(payload: bytes) -> SurveyCells:
     """Flatten e-Stat table 1-1 into participation rates by gender and age group.
 
@@ -294,32 +337,20 @@ def parse_estat_table(payload: bytes) -> SurveyCells:
     grid = _estat_grid(payload)
     columns = _estat_rate_columns(grid)
 
-    sex_col = next(
-        (
-            col
-            for row in grid
-            for col, value in enumerate(row)
-            if _cell_text(value) in _ESTAT_SEX
-        ),
-        None,
+    sex_col = _find_column(
+        grid,
+        lambda text: text in _ESTAT_SEX,
+        f"a bare sex label ({'/'.join(_ESTAT_SEX)})",
     )
-    if sex_col is None:
-        raise ValueError(f"no column carries a bare sex label ({'/'.join(_ESTAT_SEX)})")
-    population_col = next(
-        (
-            col
-            for row in grid
-            for col, value in enumerate(row)
-            if _cell_text(value) == _ESTAT_POPULATION_HEADER
-        ),
-        None,
+    population_col = _find_column(
+        grid,
+        lambda text: text == _ESTAT_POPULATION_HEADER,
+        repr(_ESTAT_POPULATION_HEADER),
     )
-    if population_col is None:
-        raise ValueError(f"no column headed {_ESTAT_POPULATION_HEADER!r}")
 
     wanted_ages = {label for labels in _ESTAT_AGE.values() for label in labels}
     wanted_ages.add(_ESTAT_AGE_TOTAL)
-    rates: dict[tuple[str, str, str], float] = {}
+    rates: dict[_SurveyKey, float] = {}
     populations: dict[tuple[str, str], float] = {}
     gender: str | None = None
     for row in grid:
@@ -345,8 +376,6 @@ def parse_estat_table(payload: bytes) -> SurveyCells:
     )
 
 
-# Coarsest-first is wrong, so these are ordered finest-first: the first key that
-# the survey actually publishes wins.
 _Conditioning = Literal["gender and age", "gender only", "age only", "neither"]
 
 
@@ -362,6 +391,7 @@ def _cell_rate(
     total — and the builder declares which was used.
     """
     gender_total, age_total = cells.totals
+    # Ordered finest-first: the first key the survey actually publishes wins.
     candidates: tuple[tuple[str, str, _Conditioning], ...] = (
         (gender, age, "gender and age"),
         (gender, age_total, "gender only"),
@@ -415,7 +445,14 @@ def _leisure_rows(
     ages: dict[_AgeBand, tuple[str, ...]],
     citation: str,
 ) -> tuple[list[LeisureRow], set[_Conditioning]]:
-    """Every (category, gender, band) row, plus the conditioning levels used."""
+    """Every (category, gender, band) row, plus the conditioning levels used.
+
+    Iterating the mapping would silently emit a short table if a category were
+    ever left out of one, so the mapping is checked against the enum first.
+    """
+    unmapped = [c.value for c in LeisureCategory if c not in activities]
+    if unmapped:
+        raise ValueError(f"no activities mapped for {unmapped}")
     rows: list[LeisureRow] = []
     levels: set[_Conditioning] = set()
     for category, keys in activities.items():
@@ -459,8 +496,13 @@ def _build_germany(fetch: Callable[[str], bytes]) -> LeisureBuildResult:
         f"categories built from several acl18 codes ({', '.join(combined)}) take "
         "the union under independence, 1-prod(1-r), since the same person is "
         "counted under each code and published rates cannot be added",
-        "every age band maps to one published Eurostat band, so no age group "
-        "is combined",
+        "every cell is conditioned on both gender and age: each band maps to one "
+        "published Eurostat band, so no age group is combined and no prior stands in",
+        *(
+            f"{code} is published but not mapped — {reason}"
+            for code, reason in _EUROSTAT_UNMAPPED.items()
+        ),
+        *_EUROSTAT_SCOPE_NOTES,
     ]
     note = _conditioning_note(levels)
     return LeisureBuildResult(
@@ -488,6 +530,12 @@ def _build_japan(fetch: Callable[[str], bytes]) -> LeisureBuildResult:
             "socializing is 交際・付き合い, which covers visits and ceremonies but "
             "not conversation at home; Eurostat's socializing includes it, so the "
             "two countries' figures are not comparable to each other",
+            "休養・くつろぎ (rest and relaxation, 68.1% of men) and 学習・自己啓発・"
+            "訓練 (learning outside schoolwork) are published but not mapped: "
+            "resting is downtime rather than an interest, and Eurostat classifies "
+            "free-time study outside its leisure aggregate",
+            "every cell is conditioned on both gender and age, with no prior "
+            "standing in for a missing one",
             *([note] if note else []),
         ],
     )
