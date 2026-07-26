@@ -28,28 +28,6 @@ class BigFive(BaseModel):
 TRAIT_ORDER = ["O", "C", "E", "A", "N"]
 
 
-class LeisureCategory(str, Enum):
-    """How free time is spent, as published by the national time-use surveys.
-
-    Deliberately coarse: five categories every survey publishes, so each country
-    fills all of them and no country needs a category of its own. Japan's diary
-    sets the granularity — it has a single "Hobbies and amusements" bucket, so
-    Germany and the US aggregate their finer codes up to meet it rather than
-    everyone carrying a partly-empty table.
-
-    The point is a persona you can describe ("plays games, watches a lot of TV,
-    rarely volunteers"), not a time budget. Categories are matched on meaning:
-    `tv_media` includes print in every country because Japan's diary bundles it,
-    and `sports_exercise` includes walking everywhere for the same reason.
-    """
-
-    TV_MEDIA = "tv_media"
-    SOCIALIZING = "socializing"
-    SPORTS_EXERCISE = "sports_exercise"
-    VOLUNTEERING = "volunteering"
-    HOBBIES_AND_GAMES = "hobbies_and_games"
-
-
 class Locale(str, Enum):
     US = "US"
     JP = "JP"
