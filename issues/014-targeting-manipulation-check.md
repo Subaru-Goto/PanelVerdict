@@ -4,8 +4,36 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
 assignee: null
-status: open
+status: closed
 ---
+
+## Resolution (2026-07-26)
+
+**Traits move votes.** Adding temperament to the prompt changes 32.5% of votes
+against a 9.9–13.3% noise floor, with every validity check clean: the positive
+control at 1.00 in all three arms, the trait-free arm flat across all five levels
+(where the prompt is identical by construction), and no trait moving the control
+pair anywhere in the 5×6 matrix. Openness, conscientiousness and extraversion each
+carry the vote from never to always; agreeableness is weaker but ordered.
+
+Full numbers, method and limitations:
+[`docs/research/manipulation-check.md`](../docs/research/manipulation-check.md).
+
+Three things the run did not settle, and one it broke:
+
+- **The neuroticism pair cannot measure neuroticism.** Its no-persona baseline is
+  1.00, so a high-neuroticism persona has no headroom. That result is
+  uninterpretable, not negative, and the pair needs replacing.
+- **Three levels vs. five: no detectable difference** at 600 matched votes, where
+  an excess of ~2.7 points over the floor would have shown. Not significant at
+  this power rather than absent, and conditional on this model and these phrasings.
+  [006j](006j-persona-summary-embedding.md) D1b's retrieval justification is
+  untouched, so five levels stay.
+- **The stimuli overlap.** Each trait's own pair is its largest effect for three
+  of five traits, so the traits are separate levers — but the off-diagonals are
+  large and structured, and the pairs share a strong novel/cautious axis.
+- **Combinations are untested.** The sweep varies one trait and pins the other
+  four, while real personas carry five levels at once.
 
 ## Goal
 
