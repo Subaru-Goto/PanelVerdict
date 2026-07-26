@@ -97,6 +97,28 @@ invented ones.**
   (`population_mean / participation_rate`) for aggregated categories that have
   no published union. Deterministic off the existing
   per-slot RNG, so dev-subset-is-a-prefix and resume both still hold.
+
+  **Leisure is not a personality signal, and must never be read as one.** Big
+  Five is sampled independently, from published norms by age and gender
+  (`bigfive.py`); leisure is a parallel descriptive layer, and the two are drawn
+  from separate RNG streams with no correlation between them. That separation is
+  deliberate, because time-use largely measures *constraint*, not disposition:
+  Japanese men work 267 population-minutes a day against Germany's 172 and are
+  12pp likelier to be working at all, so their higher resting time is mostly what
+  is left after a longer working day. Reading minutes as traits would label a
+  whole country lethargic for working longer, and would call Germans altruistic
+  because `volunteering` is 14% there against Japan's 1.8% — an institutional
+  difference, not a moral one.
+
+  The honest cost of that stance: a high-openness persona currently draws the
+  same leisure distribution as a low-openness one, though real openness does
+  correlate with reading and arts. Conditioning leisure on traits would need
+  per-country time-use × personality crosstabs, and none of the three surveys
+  publishes one — so the only way to add the correlation is to invent it, which
+  is exactly what sank the hobby banks. It stays independent until someone finds
+  a published crosstab. What leisure buys instead is concreteness for the D6
+  summary embedding, country realism in the vote prompt, and a real external
+  validation target for 006g.
 - **D4 — Conditioning: country × gender now, age where published.** All three
   surveys give gender splits; Eurostat `tus_20age` gives 16 age bands for DE.
   Age conditioning lands per country as the data allows, not uniformly.
@@ -118,6 +140,21 @@ invented ones.**
   specifies (SQL for hard attributes, vector for fuzzy intent), and is richer
   than hobby-only vectors because demographics, traits, and leisure share one
   semantic space. No LLM in the loop: the summary is a deterministic template.
+
+  **Open question for slice 4 — absolute minutes or within-country bands?** D2's
+  per-country coverage argument rests on personas being compared only within a
+  country. Nothing enforces that: there is no selection layer yet (007), and if
+  an unspecified market means "draw from the whole pool", one panel can mix all
+  three countries. Absolute minutes would then leak survey-coding differences
+  into persona text as if they were behaviour — a Japanese persona reading as
+  idle next to a German one purely because 休養・くつろぎ is a broader code than
+  `AC531`. The precedent for the fix is already in `panel.py`: `_income_band`
+  renders income as a within-country band ("the lower income range") precisely
+  because quintiles are not comparable across countries. Leisure most likely
+  wants the same treatment — "relaxes more than most people where they live"
+  rather than "175 minutes a day". Decide after eyeballing real personas; the
+  data layer stores sourced absolute values either way, so this is purely a
+  rendering choice and nothing upstream has to change.
 - **D7 — Anti-stereotype QC changes purpose, doesn't disappear.** Cosine
   dispersion over invented interest text is meaningless once interests are
   code-sampled. The stronger check belongs to 006g: **realized pool
