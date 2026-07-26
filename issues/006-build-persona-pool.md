@@ -30,7 +30,8 @@ This is an **umbrella** — the build is split into small, independently reviewa
 - [x] [006f](006f-persistence.md) — persistence: Postgres + pgvector + idempotent seed script + QC report — *done, PRs #25/#26/#27/#28; example-bank follow-up PR #29*
 - [ ] [006g](006g-pool-overview.md) — pool-overview QC artifact *(blocked by 006f — now unblocked)*
 - [~] [006h](006h-menu-mode-interests.md) — menu-mode interests — *rejected: required ~430 invented weights; superseded by 006i*
-- [ ] [006i](006i-leisure-profiles.md) — leisure profiles from surveyed time-use; persona-summary embedding *(replaces generated interests; blocks the production seed)*
+- [~] [006i](006i-leisure-profiles.md) — leisure profiles from surveyed time-use — *data layer merged (PRs #31/#33/#34/#36/#37) and kept as reference data; leisure does not enter the persona. Closed 2026-07-26: no evidence it moves a vote, and it made each new country a bespoke extraction*
+- [ ] [006j](006j-persona-summary-embedding.md) — persona summary embedding; `interests` dropped *(replaces generated interests; blocks the production seed and 007's vector half)*
 
 ## Decided (from ticket 001)
 
@@ -38,7 +39,7 @@ This is an **umbrella** — the build is split into small, independently reviewa
 - **Generation = hybrid (C):**
   - Demographics — sample from **US Census ACS PUMS** (real joint distribution → congruent by construction). SQL-filterable.
   - Big Five — sample **continuous from a multivariate normal** (empirical inter-trait correlation matrix Σ), **mean-conditioned on age + gender**, then **derive enum buckets from the realized sample** so proportions are realistic by construction. **Amended 2026-07-17** (supersedes age-marginals-only; see 001 Amendment): correlations + gender promoted into v1; aspects/facets deferred to a post-quality-check revisit; domain-level (5) only. Behavior-shaper, prompt-rendered (not a targeting filter). **Render into the prompt as BFI-2-Expanded-style sentence descriptions of the sampled trait levels — never numeric/Likert** (best human-aligned enactment; Huang, Zhang, Soto & Evans 2026).
-  - Interests — LLM-synthesized (the one un-groundable field), embedded for fuzzy targeting.
+  - Interests — LLM-synthesized (the one un-groundable field), embedded for fuzzy targeting. **Reversed 2026-07-26 ([006j](006j-persona-summary-embedding.md)):** un-groundable turned out to mean unusable — four designs failed to control the distribution, and the two that could ground it (menu-mode, leisure profiles) cost invented weights or a bespoke extraction per country. The persona carries no interests; fuzzy targeting embeds a templated summary of demographics + Big Five instead.
 - **Sizes:** 5,000-persona v1 pool; ~200-persona dev subset for iteration.
 - **Seed-data research (do first — the "small research for 006"):** source two grounding tables — (1) **age × gender Big Five domain norms** (mean vectors μ) and (2) the **domain inter-correlation matrix (Σ)** — from current large samples (candidates: Soto & John 2017 BFI-2 norms; SAPA-project / IPIP; recent meta-analyses). Produces a short cited note that feeds the sampler; may supersede the directional Donnellan & Lucas 2008 priors. Required by the correlated-MVN sampling promoted in the 001 Amendment (2026-07-17).
 - **Checks on LLM-written content (interests + prose), before persisting:**

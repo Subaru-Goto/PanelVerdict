@@ -4,8 +4,26 @@ labels: [wayfinder:task]
 parent: 006-build-persona-pool
 blocked_by: [006b-demographics-sampler, 006c-bigfive-sampler]
 assignee: null
-status: done
+status: superseded
 ---
+
+## Superseded (2026-07-26) by [006j](006j-persona-summary-embedding.md)
+
+Shipped as designed (PR #19) and is being removed, so it is recorded as
+**superseded, not done**. D2 was the load-bearing assumption — "trust the model's
+latent base rates" — and measurement refuted it: `homebrewing` at ~10% of
+personas and `bonsai` at ~6% against real rates under 1%, with no mainstream
+hobby in the top 20. Three attempts to steer that distribution
+([PR #29](https://github.com/Subaru-Goto/PanelVerdict/pull/29),
+[006h](006h-menu-mode-interests.md), [006i](006i-leisure-profiles.md)) each
+failed on a different constraint, and the last of them showed the field wasn't
+worth grounding: no test showed an interest or leisure field changes a verdict,
+while Big Five conditioning LLM decisions is the mechanism the research actually
+supports.
+
+`synthesize_interests`, `embed_interests` and the per-interest vectors are
+removed in 006j slice 3. What survives: the injected `InterestLLM`/`Embedder`
+protocols and `app.llm`'s OpenRouter adapters, which the summary embedding reuses.
 
 ## Goal
 

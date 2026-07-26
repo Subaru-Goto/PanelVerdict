@@ -5,8 +5,70 @@ parent: 006-build-persona-pool
 blocked_by: [006f-persistence]
 supersedes: [006h-menu-mode-interests]
 assignee: null
-status: open
+status: closed
 ---
+
+## Closed (2026-07-26) — the data layer ships, leisure does not enter the persona
+
+**Slices 1, 1b and 1c are merged and stay** (PRs #31, #33, #34, #36, #37): the
+pipeline, the three 60-row tables and their `.meta.json` declarations. **Slice 2
+was built, reviewed, and then discarded rather than merged** — nothing under
+`app/` references leisure, and it was ~110 lines (load the table, one Bernoulli
+per category), so D3 and D4 below are enough to rebuild it if the ablation ever
+justifies it. **Slices 3, 4 and 5 do not
+proceed as leisure work**; the deletion in slice 5 and the summary embedding in
+slice 4 move to [006j](006j-persona-summary-embedding.md), where they belong
+regardless of what a persona's leisure looks like.
+
+Three reasons, in the order that decided it:
+
+1. **No demonstrated value.** The chain from a leisure category to a headline
+   vote is long and weak. What the literature actually establishes is Big
+   Five → LLM decision (the basis for 006's prompt-rendering decision); nothing
+   here establishes leisure → decision, and after two days of building we still
+   had no test showing a leisure field changes a verdict. Knowing a persona
+   walks does not predict which of two headlines they pick; "outgoing" or
+   "likes being outdoors" might, and that is a Big Five statement.
+2. **It broke the cost of adding a country, which is the thing v1 most needs to
+   stay cheap.** Demographics cost ~nothing per country (one OECD source covers
+   everyone) and Big Five costs nothing at all (001 decision (i): country does
+   not condition μ, so one norms file serves every country). Leisure cost a
+   bespoke extraction each time — Eurostat a clean JSON API, e-Stat a
+   spreadsheet with three side-by-side metric blocks and furigana in the age
+   labels, ATUS a PDF transcribed by hand because BLS blocks scripted clients at
+   the edge. To be precise: leisure *does* scale across the EU from the single
+   HETUS API; every non-EU country is its own project. Country #4 went from
+   free to days.
+3. **It pushed country-specific structure up into the persona and the prompt.**
+   D6's open question — absolute figures or within-country bands — was still
+   unresolved precisely because survey-coding differences would otherwise read
+   as behaviour in a cross-country panel.
+
+**What this costs, stated plainly rather than buried.** 006g loses its only
+*external* validation target: with no leisure sampled into personas there is no
+realized distribution to compare against the published tables, so the QC artifact
+falls back to demographics vs OECD and Big Five vs the 006a priors — both
+internal-consistency checks on our own samplers. And 007's fuzzy half narrows to
+dispositional and demographic targeting ("cautious, budget-conscious, mid-40s");
+activity targeting ("outdoorsy people") is out of coverage.
+
+**What is preserved.** The committed tables remain as reference data — they cost
+nothing sitting there and are the only published figures in the repo a pool could
+ever be checked against. The rule that keeps country #4 cheap if leisure returns:
+**leisure must be optional per country, never required**, so a new country
+without a survey simply has no leisure fields rather than blocking the seed.
+
+**If anyone wants to reopen this, the deciding experiment is an ablation, not an
+argument:** fix a set of headline pairs, run the same personas three ways
+(demographics only / + Big Five / + leisure), and see whether the verdicts move.
+That also tests the assumption *both* designs rest on and neither has checked —
+that persona attributes move votes at all. If varying Big Five alone doesn't
+shift the vote distribution, no attribute engineering fixes it and the prompt is
+the problem.
+
+Everything below is the design as it stood, kept because the extraction notes,
+the D8 fallback ladder and the union-vs-coarse history are the expensive part and
+would otherwise have to be rediscovered.
 
 ## Goal
 
