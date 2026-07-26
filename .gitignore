@@ -12,3 +12,6 @@ __pycache__/
 node_modules/
 .next/
 .env.local
+# 014 manipulation-check raw votes: paid model output, committed with the write-up
+# under docs/research/ rather than as loose run artifacts
+backend/experiments/out/

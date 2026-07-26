@@ -68,6 +68,21 @@ def _dispositions(big_five: BigFive) -> str:
     )
 
 
+def render_demographics_prompt(persona: Persona) -> str:
+    """The demographic half of the vote prompt, on its own.
+
+    Public because 014's manipulation check needs a trait-free arm, and deriving
+    it here rather than re-typing the sentence is what keeps that arm identical
+    to the real prompt minus temperament — a reworded copy would ablate wording
+    and traits together.
+    """
+    return (
+        f"You are a {persona.age}-year-old {persona.gender} living in "
+        f"{COUNTRY_NAME[persona.country]}. You {_EDUCATION_PHRASE[persona.education]}, "
+        f"and your income is in {_income_band(persona.income_quintile)} for your country."
+    )
+
+
 def render_persona_prompt(persona: Persona) -> str:
     """Render a persona into its natural-language system prompt.
 
@@ -75,9 +90,7 @@ def render_persona_prompt(persona: Persona) -> str:
     stays in the vote step so position handling lives in one place.
     """
     return (
-        f"You are a {persona.age}-year-old {persona.gender} living in "
-        f"{COUNTRY_NAME[persona.country]}. You {_EDUCATION_PHRASE[persona.education]}, "
-        f"and your income is in {_income_band(persona.income_quintile)} for your country. "
+        f"{render_demographics_prompt(persona)} "
         f"By temperament, you're {_dispositions(persona.big_five)}."
     )
 
