@@ -11,7 +11,8 @@ status: open
 
 Emit a QC artifact over the persisted pool that validates it **at the population level** (never per-persona — 001):
 
-- **Demographics** distributions vs. ACS targets.
+- **Demographics** distributions vs. their seed targets (~~ACS~~ the OECD joint
+  table, since 006b went multi-country).
 - **Big Five** distributions vs. the 006a μ/Σ priors.
 - ~~**Interest** frequency + diversity, with **stereotype-concentration flags**.~~
   *(removed 2026-07-26 — see below)*

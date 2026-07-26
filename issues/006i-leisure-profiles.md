@@ -12,10 +12,11 @@ status: closed
 
 **Slices 1, 1b and 1c are merged and stay** (PRs #31, #33, #34, #36, #37): the
 pipeline, the three 60-row tables and their `.meta.json` declarations. **Slice 2
-was built, reviewed, and then discarded rather than merged** — nothing under
-`app/` references leisure, and it was ~110 lines (load the table, one Bernoulli
-per category), so D3 and D4 below are enough to rebuild it if the ablation ever
-justifies it. **Slices 3, 4 and 5 do not
+was built, reviewed, and then discarded rather than merged** — it was ~110 lines
+(load the table, one Bernoulli per category), so D3 and D4 below are enough to
+rebuild it if the ablation ever justifies it. No *runtime* path reads leisure;
+note that `LeisureCategory` in `app/schemas.py` is still live and imported by
+`pipeline/build_leisure.py`, so it is not dead code to be swept up. **Slices 3, 4 and 5 do not
 proceed as leisure work**; the deletion in slice 5 and the summary embedding in
 slice 4 move to [006j](006j-persona-summary-embedding.md), where they belong
 regardless of what a persona's leisure looks like.
