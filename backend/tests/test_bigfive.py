@@ -16,17 +16,37 @@ from pipeline.derive_bigfive_norms import AGE_BANDS
 @pytest.mark.parametrize(
     ("score", "level"),
     [
-        (-2.0, TraitLevel.LOW),
+        (-3.0, TraitLevel.VERY_LOW),
+        (-1.6, TraitLevel.VERY_LOW),
+        (-1.5, TraitLevel.LOW),  # boundaries belong to the inner band
         (-0.6, TraitLevel.LOW),
-        (-0.5, TraitLevel.MEDIUM),  # boundary is MEDIUM (low <= z <= high)
+        (-0.5, TraitLevel.MEDIUM),
         (0.0, TraitLevel.MEDIUM),
-        (0.5, TraitLevel.MEDIUM),  # boundary is MEDIUM
+        (0.5, TraitLevel.MEDIUM),
         (0.6, TraitLevel.HIGH),
-        (2.0, TraitLevel.HIGH),
+        (1.5, TraitLevel.HIGH),
+        (1.6, TraitLevel.VERY_HIGH),
+        (3.0, TraitLevel.VERY_HIGH),
     ],
 )
 def test_bucketize(score, level):
     assert bucketize(score) == level
+
+
+def test_bucketize_cuts_a_normal_population_at_the_published_quantiles():
+    # the five levels are standard-normal quantiles, not chosen shares: +/-0.5 and
+    # +/-1.5 give 6.7 / 24.2 / 38.3 / 24.2 / 6.7. A test rather than a comment,
+    # because the cutoffs are the one place invented numbers could creep in.
+    draws = np.random.default_rng(0).normal(size=200_000)
+    shares = {level: 0.0 for level in TraitLevel}
+    for score in draws:
+        shares[bucketize(float(score))] += 1 / len(draws)
+
+    assert shares[TraitLevel.VERY_LOW] == pytest.approx(0.067, abs=0.005)
+    assert shares[TraitLevel.LOW] == pytest.approx(0.242, abs=0.005)
+    assert shares[TraitLevel.MEDIUM] == pytest.approx(0.383, abs=0.005)
+    assert shares[TraitLevel.HIGH] == pytest.approx(0.242, abs=0.005)
+    assert shares[TraitLevel.VERY_HIGH] == pytest.approx(0.067, abs=0.005)
 
 
 def test_bigfive_from_levels_round_trips_through_bucketize():

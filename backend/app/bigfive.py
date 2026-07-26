@@ -42,10 +42,11 @@ def sample_big_five(
     )
 
 
-# Fixed z-cutoffs (006a): z < low -> LOW, z > high -> HIGH, else MEDIUM. Yields
-# ~31/38/31% in the general population; a conditioned cell skews off that.
-_LOW_CUTOFF = -0.5
-_HIGH_CUTOFF = 0.5
+# Standard-normal quantile cutoffs (006j D1b): +/-0.5 and +/-1.5 cut a normal
+# population into 6.7 / 24.2 / 38.3 / 24.2 / 6.7. Derived from the distribution,
+# not chosen — a conditioned cell skews off those shares.
+_INNER_CUTOFF = 0.5
+_OUTER_CUTOFF = 1.5
 
 
 def _mu_band(age: int) -> str:
@@ -63,17 +64,31 @@ def _mu_band(age: int) -> str:
 
 
 def bucketize(score: float) -> TraitLevel:
-    """Map a sampled z-score to its trait level at render time."""
-    if score < _LOW_CUTOFF:
+    """Map a sampled z-score to its trait level at render time.
+
+    Boundaries belong to the inner band, so an exact -1.5 is LOW and an exact
+    -0.5 is MEDIUM.
+    """
+    if score < -_OUTER_CUTOFF:
+        return TraitLevel.VERY_LOW
+    if score < -_INNER_CUTOFF:
         return TraitLevel.LOW
-    if score > _HIGH_CUTOFF:
+    if score <= _INNER_CUTOFF:
+        return TraitLevel.MEDIUM
+    if score <= _OUTER_CUTOFF:
         return TraitLevel.HIGH
-    return TraitLevel.MEDIUM
+    return TraitLevel.VERY_HIGH
 
 
 # Representative z-score per level — a clearly-in-bucket value (bucketize inverts
 # it). For hand-authored panels that think in levels, not sampled personas.
-_LEVEL_SCORE = {TraitLevel.LOW: -0.8, TraitLevel.MEDIUM: 0.0, TraitLevel.HIGH: 0.8}
+_LEVEL_SCORE: dict[TraitLevel, float] = {
+    TraitLevel.VERY_LOW: -2.0,
+    TraitLevel.LOW: -1.0,
+    TraitLevel.MEDIUM: 0.0,
+    TraitLevel.HIGH: 1.0,
+    TraitLevel.VERY_HIGH: 2.0,
+}
 
 
 def bigfive_from_levels(
