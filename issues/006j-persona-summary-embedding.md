@@ -5,8 +5,24 @@ parent: 006-build-persona-pool
 blocked_by: [006f-persistence]
 supersedes: [006d-interests-synthesis, 006i-leisure-profiles]
 assignee: null
-status: open
+status: closed
 ---
+
+## Resolution (2026-07-26)
+
+Delivered in three PRs: five trait levels and a third-person renderer (#39), the
+end-to-end removal of `interests` plus the `summary_embedding` column (#40), and
+the retirement of the leisure pipeline it orphaned (#41). A persona is now a pure
+function of `master_seed` — the only model call in the pool build is the embedding,
+and it feeds no persona field.
+
+**Slice 4 did not ship here — it graduated.** The ablation D7 describes is the
+*targeting manipulation check* that 001, 003 and 006b have each named as a gate
+without any ticket owning it, and its consumers are those tickets rather than this
+one. It is now
+[Targeting manipulation check](014-targeting-manipulation-check.md), scoped to the
+constructed-persona trait sweep; the pool-level arm comparison sketched in D7 is
+recorded there as out of scope for a first pass.
 
 ## Goal
 
@@ -145,8 +161,8 @@ anywhere in the pool build is the embedding.**
   reproduces it byte for byte. Introduce migrations when there is data that
   cannot be regenerated (votes and test results, once persisted), and correct
   012's assumption in the same PR.
-- **D7 — Open, and the reason to build the ablation harness anyway: does any
-  persona attribute move a vote?** Nothing in this project has tested it. Fix a
+- **D7 — Open, and now owned by [014](014-targeting-manipulation-check.md): does
+  any persona attribute move a vote?** Nothing in this project has tested it. Fix a
   set of headline pairs and run the same personas with demographics only, then
   + Big Five at three levels, then + Big Five at five levels, and compare
   verdict distributions. If Big Five doesn't move them, the problem is the prompt
@@ -188,8 +204,8 @@ deleting the audit module without touching `qc.py` breaks the seed run.
    `content_checks.screen_interests`, `stereotype_audit.py`; narrow
    `plausibility.py` to demographic/trait coherence or retire it. Pure deletion,
    nothing referencing it by then.
-4. **Ablation harness (D7).** Verdict distributions across attribute sets over a
-   fixed headline-pair set.
+4. ~~**Ablation harness (D7).**~~ Graduated to
+   [014](014-targeting-manipulation-check.md) — see Resolution.
 
 Retrieval itself is **not** in this ticket — 007 owns query translation and the
 SQL/vector split (D1c). 006j only guarantees the column and the text.
