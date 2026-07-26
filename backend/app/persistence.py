@@ -7,7 +7,7 @@ skips personas already present.
 
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TypedDict, cast
+from typing import Literal, TypedDict, cast
 
 import numpy as np
 import psycopg
@@ -142,9 +142,20 @@ def _persona_from_row(row: PersonaRow) -> Persona:
     )
 
 
+# The readers pick an ordering, not a SQL fragment. Both callers today pass a
+# literal, so interpolating one would be harmless — but a helper that accepts SQL as
+# a string is only safe until someone forwards a request parameter into it.
+_ORDERINGS = {"id": "ORDER BY id", "random": "ORDER BY random()"}
+
+
 def _read_personas(
-    conn: psycopg.Connection, clause: str, params: tuple = ()
+    conn: psycopg.Connection,
+    *,
+    order: Literal["id", "random"],
+    limit: int | None = None,
 ) -> list[Persona]:
+    clause = _ORDERINGS[order] + (" LIMIT %s" if limit is not None else "")
+    params = () if limit is None else (limit,)
     with conn.cursor(row_factory=dict_row) as cur:
         rows = cur.execute(
             f"SELECT {_PERSONA_COLUMNS} FROM personas {clause}", params
@@ -154,10 +165,10 @@ def _read_personas(
 
 def load_pool(conn: psycopg.Connection) -> list[Persona]:
     """Every persona, in id order — the aggregate view pool QC audits."""
-    return _read_personas(conn, "ORDER BY id")
+    return _read_personas(conn, order="id")
 
 
 def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona]:
     """A random sample, for the plausibility judge — which pays per persona, so it
     reads a sample rather than the pool."""
-    return _read_personas(conn, "ORDER BY random() LIMIT %s", (limit,))
+    return _read_personas(conn, order="random", limit=limit)
