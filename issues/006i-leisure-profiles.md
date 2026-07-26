@@ -178,12 +178,12 @@ invented ones.**
 1. `pipeline/build_leisure.py` + the harmonized category set + **Germany**
    (`de.csv`, Eurostat JSON API). Split per country while building, because each
    survey is a different extraction problem with its own gaps to declare.
-1b. **US** (`us.csv`) — ATUS Table A-1. BLS serves no machine-readable copy and
-   blocks scripted clients, and publishes rates by sex but not by age.
-   §1 rates are ungendered, so the by-sex columns need re-extracting.
+1b. **US** (`us.csv`) — ATUS 2025 Table A-1, transcribed from the published PDF
+   (BLS serves no machine-readable copy and blocks scripted clients). Publishes
+   rates by sex but not by age, so every band uses the gender-only rung of D8.
 1c. **Japan** (`jp.csv`) — 社会生活基本調査 2021 table 1-1, downloaded from e-Stat
-   without an application ID. Publishes all three metrics by sex, so nothing is
-   derived; fills 5 of the 12 categories and declares the other 7 (see D2).
+   without an application ID. Publishes participation rates by sex and by
+   five-year age group, so nothing is derived beyond the two combined bands.
 2. `app/leisure.py`: `sample_leisure_profile(country, gender, rng)`. Pure logic, TDD.
 3. Schema + assembly + persistence: add leisure columns, drop `interests`, wire
    into `assemble_persona`.
@@ -206,6 +206,21 @@ invented ones.**
 
 ## Deferred to v2 (recorded, not lost)
 
+- **Split `hobbies_and_games` and `sports_exercise` into finer categories,
+  sampled as distributions.** The coarse five are what all three surveys share
+  *on a diary-day basis*; two of the three already publish the finer split, so
+  this is a data-availability problem, not a modelling one. ATUS Table A-1
+  separates playing games (18.5% of men), computer use for leisure (14.5%),
+  reading for personal interest (13.4%) and arts and entertainment (1.9%) — the
+  four rows this slice unions into one. Eurostat separates the same four
+  (`AC733-735`, `AC72`, `AC812`, `AC711_712...`) plus walking from other sport
+  (`AC611` vs `AC6_X_611`). Japan is the blocker: its diary has only 趣味・娯楽,
+  and the 60+ named activities it does publish (video games 42.9%, gardening
+  26.0%) are **past-year** rates, so they cannot share a column with diary-day
+  rates. Options when this is picked up: carry finer categories only for
+  countries that publish them and let the ladder (D8) serve Japan the coarse
+  parent, or add a second past-year layer with its own semantics. The first fits
+  D8 as it stands.
 - **Survey-sourced named activities** where the data exists: Japan already
   publishes 60+ named rates (walking 44.3%, video games 42.9%, gardening 26.0%,
   karaoke 13.5%, baseball 6.3%); US via SPPA/USFWS; DE sports via DOSB
