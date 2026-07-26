@@ -33,10 +33,11 @@ def test_bucketize(score, level):
     assert bucketize(score) == level
 
 
-def test_bucketize_cuts_a_normal_population_at_the_published_quantiles():
-    # the five levels are standard-normal quantiles, not chosen shares: +/-0.5 and
-    # +/-1.5 give 6.7 / 24.2 / 38.3 / 24.2 / 6.7. A test rather than a comment,
-    # because the cutoffs are the one place invented numbers could creep in.
+def test_bucketize_splits_a_normal_population_into_usable_levels():
+    # the cutoffs are round z-values; what justifies them is the split they
+    # produce on a normal population — 6.7 / 24.2 / 38.3 / 24.2 / 6.7, so no
+    # level is too rare to render. Asserted rather than commented, because a
+    # tweak to either cutoff silently changes how the whole pool reads.
     draws = np.random.default_rng(0).normal(size=200_000)
     shares = {level: 0.0 for level in TraitLevel}
     for score in draws:
@@ -51,7 +52,7 @@ def test_bucketize_cuts_a_normal_population_at_the_published_quantiles():
 
 def test_bigfive_from_levels_round_trips_through_bucketize():
     # the representative score for each level must bucketize back to that level,
-    # i.e. _LEVEL_SCORE stays outside the ±0.5 cutoffs — locks that coupling
+    # i.e. every _LEVEL_SCORE sits inside its own band — locks that coupling
     for level in TraitLevel:
         bf = bigfive_from_levels(
             openness=level,

@@ -44,13 +44,9 @@ def test_every_trait_has_a_phrase_for_every_level() -> None:
     # whichever persona happens to draw that intensity
     for trait, phrases in _TRAIT_PHRASES.items():
         assert set(phrases) == set(TraitLevel), trait
-    assert set(_TRAIT_PHRASES) == {
-        "openness",
-        "conscientiousness",
-        "extraversion",
-        "agreeableness",
-        "neuroticism",
-    }
+    # keyed by BigFive's own field names, so a renamed trait fails here rather
+    # than as a KeyError at render for whoever draws that trait first
+    assert set(_TRAIT_PHRASES) == set(BigFive.model_fields)
 
 
 def test_phrases_carry_no_pronoun_so_both_voices_can_share_them() -> None:

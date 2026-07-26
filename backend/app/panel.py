@@ -1,5 +1,5 @@
 from app.bigfive import bigfive_from_levels, bucketize
-from app.schemas import COUNTRY_NAME, EducationLevel, Persona, TraitLevel
+from app.schemas import BigFive, COUNTRY_NAME, EducationLevel, Persona, TraitLevel
 
 # Five intensities per trait, phrased without pronouns so the vote prompt (second
 # person) and the summary embedded for retrieval (third person) can share one
@@ -68,10 +68,10 @@ def _income_band(quintile: int) -> str:
     return "the upper income range"
 
 
-def _dispositions(persona: Persona) -> str:
+def _dispositions(big_five: BigFive) -> str:
     """The five trait phrases for a persona's sampled levels, in domain order."""
     return "; ".join(
-        _TRAIT_PHRASES[trait][bucketize(score)] for trait, score in persona.big_five
+        _TRAIT_PHRASES[trait][bucketize(score)] for trait, score in big_five
     )
 
 
@@ -86,23 +86,25 @@ def render_persona_prompt(persona: Persona) -> str:
         f"{COUNTRY_NAME[persona.country]}. You {_EDUCATION_PHRASE[persona.education]}, "
         f"and your income is in {_income_band(persona.income_quintile)} for your country. "
         f"In your spare time you're into {_join_with_and(persona.interests)}. "
-        f"By temperament, you're {_dispositions(persona)}."
+        f"By temperament, you're {_dispositions(persona.big_five)}."
     )
 
 
 def persona_summary(persona: Persona) -> str:
     """Render a persona as third-person prose, for the embedding 007 retrieves on.
 
-    Deliberately the same facts and the same trait phrasing as the vote prompt:
-    a target description is matched against this text, so anything it says that
-    the prompt doesn't would promise a panel the panel does not deliver.
+    Deliberately the same trait phrasing as the vote prompt: a target description
+    is matched against this text, so anything it claims that the prompt does not
+    say would promise a panel the panel does not deliver. Interests are the one
+    field it leaves out, because they are being removed (006j slice 2) — omitting
+    them errs toward promising less than the prompt delivers.
     """
     return (
         f"A {persona.age}-year-old {persona.gender} living in "
         f"{COUNTRY_NAME[persona.country]}, who "
         f"{_EDUCATION_PHRASE[persona.education]}, with an income in "
         f"{_income_band(persona.income_quintile)} for that country. "
-        f"By temperament: {_dispositions(persona)}."
+        f"By temperament: {_dispositions(persona.big_five)}."
     )
 
 

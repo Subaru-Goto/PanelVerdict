@@ -42,9 +42,11 @@ def sample_big_five(
     )
 
 
-# Standard-normal quantile cutoffs (006j D1b): +/-0.5 and +/-1.5 cut a normal
-# population into 6.7 / 24.2 / 38.3 / 24.2 / 6.7. Derived from the distribution,
-# not chosen — a conditioned cell skews off those shares.
+# Round z-values, one half-sigma apart (006j D1b). The cutoffs are a choice; what
+# follows from the normal distribution — and is what makes them defensible — is
+# the population split they produce: 6.7 / 24.2 / 38.3 / 24.2 / 6.7, so no level
+# is so rare it never renders. A demographically conditioned cell skews off those
+# shares, since μ moves with age and gender.
 _INNER_CUTOFF = 0.5
 _OUTER_CUTOFF = 1.5
 
