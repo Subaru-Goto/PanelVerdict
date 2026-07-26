@@ -31,32 +31,23 @@ TRAIT_ORDER = ["O", "C", "E", "A", "N"]
 class LeisureCategory(str, Enum):
     """How free time is spent, as published by the national time-use surveys.
 
-    This is the *union* of what the surveys measure, not a set every country can
-    fill: Japan's diary has one "Hobbies and amusements" bucket where Eurostat
-    publishes games, reading, computer use, arts and gardening separately. Rather
-    than degrade every country to Japan's granularity, each country fills the
-    categories its own survey publishes and declares the rest unavailable in its
-    `.meta.json`. So a category is never reported under a name that means
-    something materially different — it just isn't present everywhere. Narrower
-    scope differences do survive (Japan's `sports_exercise` counts walking,
-    Germany reports that separately), and each is declared in the country's
-    `.meta.json` rather than smoothed over. Personas are only ever compared
-    within a country, which is what makes that trade sound.
+    Deliberately coarse: five categories every survey publishes, so each country
+    fills all of them and no country needs a category of its own. Japan's diary
+    sets the granularity — it has a single "Hobbies and amusements" bucket, so
+    Germany and the US aggregate their finer codes up to meet it rather than
+    everyone carrying a partly-empty table.
+
+    The point is a persona you can describe ("plays games, watches a lot of TV,
+    rarely volunteers"), not a time budget. Categories are matched on meaning:
+    `tv_media` includes print in every country because Japan's diary bundles it,
+    and `sports_exercise` includes walking everywhere for the same reason.
     """
 
     TV_MEDIA = "tv_media"
     SOCIALIZING = "socializing"
-    GAMES = "games"
     SPORTS_EXERCISE = "sports_exercise"
-    OUTDOOR_WALKING = "outdoor_walking"
-    READING = "reading"
-    ARTS_HOBBIES = "arts_hobbies"
-    COMPUTER_LEISURE = "computer_leisure"
-    GARDENING_PETS = "gardening_pets"
-    GOING_OUT = "going_out"
     VOLUNTEERING = "volunteering"
-    REST_RELAXATION = "rest_relaxation"
-    HOBBIES_AMUSEMENTS = "hobbies_amusements"
+    HOBBIES_AND_GAMES = "hobbies_and_games"
 
 
 class Locale(str, Enum):

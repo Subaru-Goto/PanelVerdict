@@ -1,19 +1,17 @@
 import csv
 import json
 from collections.abc import Callable
-from io import BytesIO
 from pathlib import Path
 
 import pytest
-from openpyxl import Workbook
 
 from app.schemas import LeisureCategory, Locale
 from pipeline.build_leisure import (
-    _ESTAT_ACTIVITIES,
-    _EUROSTAT_CODES,
-    LeisureBuildResult,
-    LeisureRow,
-    _hhmm_to_minutes,
+    _AGE_BANDS,
+    _EUROSTAT_AGE,
+    SurveyCells,
+    _cell_rate,
+    _leisure_rows,
     build_leisure,
     parse_estat_table,
     parse_jsonstat,
@@ -22,12 +20,10 @@ from pipeline.build_leisure import (
 
 _FIXTURES = Path(__file__).parent / "fixtures"
 
-_TV_JP = "Watching TV, listening to the radio, reading newspapers or magazines"
-
 
 def de_fetch(url: str) -> bytes:
     assert "tus_20age" in url and "geo=DE" in url
-    return (_FIXTURES / "eurostat_tus_deu.json").read_bytes()
+    return (_FIXTURES / "eurostat_tus_deu_by_age.json").read_bytes()
 
 
 def jp_fetch(url: str) -> bytes:
@@ -35,206 +31,185 @@ def jp_fetch(url: str) -> bytes:
     return (_FIXTURES / "estat_shakai_seikatsu_2021_table1_1.xlsx").read_bytes()
 
 
-def _rows_by_key(
-    result: LeisureBuildResult,
-) -> dict[tuple[LeisureCategory, str], LeisureRow]:
-    return {(row.category, row.gender): row for row in result.rows}
+def _rates(
+    country: Locale, fetch: Callable[[str], bytes]
+) -> dict[tuple[LeisureCategory, str, str], float]:
+    return {
+        (row.category, row.gender, row.age_band): row.participation_rate
+        for row in build_leisure(country, fetch=fetch).rows
+    }
 
 
-def test_hhmm_to_minutes_parses_published_time_strings() -> None:
-    assert _hhmm_to_minutes("2:07") == 127
-    assert _hhmm_to_minutes("0:06") == 6
-
-
-def test_parse_jsonstat_separates_the_three_published_units() -> None:
+def test_parse_jsonstat_reads_rates_by_gender_and_age() -> None:
     cells = parse_jsonstat(de_fetch("tus_20age?geo=DE").decode())
 
-    # published values, read straight off the Eurostat table
-    assert cells.minutes[("male", "AC821")] == 132  # 2:12
-    assert cells.participant_minutes[("male", "AC821")] == 180  # 3:00
-    assert cells.rates[("male", "AC821")] == pytest.approx(0.7325)
-    assert cells.rates[("female", "AC812")] == pytest.approx(0.1798)
+    # published Eurostat cells, read straight off the table
+    assert cells.rates[("male", "Y15-24", "AC733-735")] == pytest.approx(0.3621)
+    assert cells.rates[("female", "Y_GE65", "AC821")] == pytest.approx(0.8687)
+    # the survey's own totals are kept, since they are the fallback prior
+    assert cells.totals == ("total", "TOTAL")
+    assert ("total", "TOTAL", "AC4") in cells.rates
 
 
-def test_build_leisure_uses_the_published_participant_time_when_it_can() -> None:
-    # GAMES maps to AC733-735 alone, so Eurostat's own participation time
-    # (2:38 = 158 min at a 16.78% rate) is exact — deriving minutes/rate here
-    # would drift by ~3 minutes for no reason.
-    row = _rows_by_key(build_leisure(Locale.DE, fetch=de_fetch))[
-        (LeisureCategory.GAMES, "male")
+def test_parse_estat_table_reads_rates_by_gender_and_age() -> None:
+    cells = parse_estat_table(jp_fetch("e-stat.go.jp"))
+
+    # 男 / 25～29歳 / 趣味・娯楽 is published as 36.5%, with the age group's own
+    # population beside it — the weight the two middle bands are combined on
+    assert cells.rates[("male", "25~29歳", "Hobbies and amusements")] == (
+        pytest.approx(0.365)
+    )
+    assert cells.populations[("male", "25~29歳")] == pytest.approx(3244.0)
+    assert cells.totals == ("total", "")
+
+
+def test_estat_age_labels_survive_furigana_and_a_fullwidth_tilde() -> None:
+    # the sheet writes "15～24歳サイ": a fullwidth tilde plus trailing furigana
+    cells = parse_estat_table(jp_fetch("e-stat.go.jp"))
+
+    assert ("male", "15~24歳", "Sports") in cells.rates
+    assert ("female", "65歳以上", "Sports") in cells.rates
+
+
+def test_build_leisure_covers_every_category_gender_and_band() -> None:
+    for country, fetch in ((Locale.DE, de_fetch), (Locale.JP, jp_fetch)):
+        rates = _rates(country, fetch)
+        assert set(rates) == {
+            (category, gender, band)
+            for category in LeisureCategory
+            for gender in ("male", "female")
+            for band in _AGE_BANDS
+        }
+
+
+def test_a_category_spanning_several_codes_is_the_independence_union() -> None:
+    # tv_media is AC821 + AC831 + AC81_X_812 for Germany, and one person is
+    # counted under each, so the rates cannot be added — the union is
+    # 1 - prod(1-r), which must exceed every part and stay under their sum.
+    cells = parse_jsonstat(de_fetch("tus_20age?geo=DE").decode())
+    parts = [
+        cells.rates[("male", "Y25-34", code)]
+        for code in ("AC821", "AC831", "AC81_X_812")
+    ]
+    expected = 1.0
+    for part in parts:
+        expected *= 1 - part
+
+    row = _rates(Locale.DE, de_fetch)[(LeisureCategory.TV_MEDIA, "male", "25-34")]
+
+    assert row == pytest.approx(1 - expected)
+    assert max(parts) < row < sum(parts)
+
+
+def test_japan_combines_its_five_year_groups_by_population() -> None:
+    # 25-34 is not published ready-made: 25～29歳 is 36.5% over 3244 thousand men
+    # and 30～34歳 is 29.1% over 3324, so the band is the population-weighted
+    # mean (.365*3244 + .291*3324) / 6568 = 0.3275 — not the plain average.
+    row = _rates(Locale.JP, jp_fetch)[
+        (LeisureCategory.HOBBIES_AND_GAMES, "male", "25-34")
     ]
 
-    assert row.participation_rate == pytest.approx(0.1678, abs=1e-4)
-    assert row.participant_minutes == pytest.approx(158.0, abs=0.1)
+    assert row == pytest.approx(0.3275, abs=1e-4)
+    assert row != pytest.approx((0.365 + 0.291) / 2, abs=1e-4)
 
 
-def test_build_leisure_derives_only_for_aggregated_categories() -> None:
-    # TV_MEDIA = AC821 (2:12, 73.25%) + AC831 (0:07, 10.36%) for males. There is
-    # no published participation time for the union, so it must be derived:
-    # minutes add (132 + 7 = 139) but rates cannot (participants overlap), so
-    # the union under independence is 1 - (1-.7325)(1-.1036) = 0.7602, giving
-    # 139 / 0.7602 = 182.8 — which cross-checks against AC821's published 3:00.
-    row = _rows_by_key(build_leisure(Locale.DE, fetch=de_fetch))[
-        (LeisureCategory.TV_MEDIA, "male")
+def test_bands_published_ready_made_are_read_not_combined() -> None:
+    # 45～54歳 is published as one group, so it is taken as-is
+    cells = parse_estat_table(jp_fetch("e-stat.go.jp"))
+    published = cells.rates[("male", "45~54歳", "Hobbies and amusements")]
+
+    row = _rates(Locale.JP, jp_fetch)[
+        (LeisureCategory.HOBBIES_AND_GAMES, "male", "45-54")
     ]
 
-    assert row.participation_rate == pytest.approx(0.7602, abs=1e-4)
-    assert row.participant_minutes == pytest.approx(182.8, abs=0.1)
+    assert row == pytest.approx(published)
 
 
-def test_build_leisure_declares_which_categories_were_derived() -> None:
-    result = build_leisure(Locale.DE, fetch=de_fetch)
+def test_age_conditioning_produces_a_real_gradient() -> None:
+    # the reason for conditioning at all: if every band came out the same, the
+    # extra column would be costing complexity and buying nothing
+    rates = _rates(Locale.JP, jp_fetch)
+    by_band = [rates[(LeisureCategory.TV_MEDIA, "male", b)] for b in _AGE_BANDS]
 
-    declared = " ".join(result.imputations)
-    assert "independence" in declared.lower()
-    # single-code categories are published exactly, so only the aggregated ones
-    # may appear in the declaration
-    for category, codes in _EUROSTAT_CODES.items():
-        assert (category.value in declared) is (len(codes) > 1)
+    assert by_band == sorted(by_band)  # TV rises monotonically with age in Japan
+    assert max(by_band) - min(by_band) > 0.3
 
 
-def test_walking_stays_its_own_category_since_it_is_published_separately() -> None:
-    # AC611 is published apart from AC6_X_611, and walking is the single most
-    # common activity in the Japanese survey — folding it into sports would
-    # discard the distinction before the sampler ever sees it.
-    row = _rows_by_key(build_leisure(Locale.DE, fetch=de_fetch))[
-        (LeisureCategory.OUTDOOR_WALKING, "male")
-    ]
+def test_a_missing_cell_falls_back_to_the_coarsest_published_prior() -> None:
+    # ATUS publishes participation by sex but not by age. Rather than drop such a
+    # country, the gender's own all-ages figure stands in for every band.
+    cells = SurveyCells(
+        rates={("male", "TOTAL", "reading"): 0.4, ("total", "TOTAL", "reading"): 0.35},
+        populations={},
+        totals=("total", "TOTAL"),
+    )
 
-    assert row.participation_rate == pytest.approx(0.1492, abs=1e-4)
-    assert row.participant_minutes == pytest.approx(99.0, abs=0.1)  # 1:39
+    assert _cell_rate(cells, "male", "Y25-34", "reading") == (0.4, "gender only")
+    # and with no gendered figure either, the national total is the last resort
+    assert _cell_rate(cells, "female", "Y25-34", "reading") == (0.35, "neither")
+
+
+def test_the_finest_published_cell_wins_over_its_priors() -> None:
+    cells = SurveyCells(
+        rates={
+            ("male", "Y25-34", "reading"): 0.5,
+            ("male", "TOTAL", "reading"): 0.4,
+            ("total", "TOTAL", "reading"): 0.35,
+        },
+        populations={},
+        totals=("total", "TOTAL"),
+    )
+
+    assert _cell_rate(cells, "male", "Y25-34", "reading") == (0.5, "gender and age")
+
+
+def test_a_cell_with_no_prior_at_any_level_is_an_error() -> None:
+    cells = SurveyCells(rates={}, populations={}, totals=("total", "TOTAL"))
+
+    with pytest.raises(KeyError, match="no published rate"):
+        _cell_rate(cells, "male", "Y25-34", "reading")
+
+
+def test_countries_conditioned_on_both_axes_declare_no_fallback() -> None:
+    # Germany and Japan both publish activity by gender and age, so nothing
+    # should be standing in for anything — a fallback note here would mean a
+    # mapping typo silently resolved to a coarser number.
+    for country, fetch in ((Locale.DE, de_fetch), (Locale.JP, jp_fetch)):
+        declared = " ".join(build_leisure(country, fetch=fetch).imputations)
+        assert "not conditioned on both gender and age" not in declared
+
+
+def test_a_category_missing_from_a_mapping_fails_the_build() -> None:
+    # Iterating the mapping would emit a short table instead of complaining, so
+    # adding an enum member without mapping it has to be a build failure.
+    cells = SurveyCells(rates={}, populations={}, totals=("total", "TOTAL"))
+    partial = {LeisureCategory.TV_MEDIA: ("AC821",)}
+
+    with pytest.raises(ValueError, match="no activities mapped"):
+        _leisure_rows(cells, partial, _EUROSTAT_AGE, "test")
+
+
+def test_published_activities_left_unmapped_are_declared() -> None:
+    # A reader must be able to tell "we decided against this" from "we forgot".
+    # Eurostat's resting and gardening, and Japan's 休養・くつろぎ, are all
+    # published inside the leisure block and deliberately excluded.
+    declared_de = " ".join(build_leisure(Locale.DE, fetch=de_fetch).imputations)
+    for code in ("AC531", "AC221", "AC34"):
+        assert code in declared_de
+    # and the mapped-but-narrower cases say so too
+    assert "handicraft" in declared_de and "recordings" in declared_de
+
+    declared_jp = " ".join(build_leisure(Locale.JP, fetch=jp_fetch).imputations)
+    assert "休養・くつろぎ" in declared_jp
 
 
 def test_build_leisure_cites_a_source_for_every_row() -> None:
-    for row in build_leisure(Locale.DE, fetch=de_fetch).rows:
-        assert "tus_20age" in row.source
-        assert all(code in row.source for code in _EUROSTAT_CODES[row.category])
-
-
-def test_parse_estat_table_reads_each_metric_from_its_own_block() -> None:
-    # The published sheet lays population minutes, participant minutes and
-    # participation rate side by side over one repeated set of activity headers.
-    # Reading the wrong block would swap a percentage for a duration, so pin one
-    # activity's three values: men's Sports is 16 / 121 min / 13.2%.
-    cells = parse_estat_table(jp_fetch("e-stat.go.jp"))
-
-    assert cells.minutes[("male", "Sports")] == 16
-    assert cells.participant_minutes[("male", "Sports")] == 121
-    assert cells.rates[("male", "Sports")] == pytest.approx(0.132)
-    # and the other gender's block is a separate row, not the same one reread
-    assert cells.rates[("female", "Sports")] == pytest.approx(0.106)
-
-
-def test_parse_estat_table_cross_checks_against_the_published_ratio() -> None:
-    # 行動者平均時間 is published, so it never has to be derived — but it should
-    # agree with 総平均時間 / 行動者率: 131 / 0.542 = 241.7 against a published 242.
-    cells = parse_estat_table(jp_fetch("e-stat.go.jp"))
-
-    derived = cells.minutes[("male", _TV_JP)] / cells.rates[("male", _TV_JP)]
-    assert derived == pytest.approx(
-        cells.participant_minutes[("male", _TV_JP)], abs=1.0
-    )
-
-
-def test_parse_estat_table_rejects_a_sheet_whose_metric_blocks_are_missing() -> None:
-    # The block labels are what tell minutes apart from percentages. If e-Stat
-    # ever reshapes the sheet, this must fail loudly rather than read column 26
-    # of whatever happens to be there.
-    workbook = Workbook()
-    sheet = workbook.active
-    assert sheet is not None
-    sheet["A1"] = "総平均時間 (分)"  # only one of the three blocks
-    sheet["B2"] = "Sports"
-    payload = BytesIO()
-    workbook.save(payload)
-
-    with pytest.raises(ValueError, match="metric-block"):
-        parse_estat_table(payload.getvalue())
-
-
-def test_build_leisure_japan_reads_every_category_from_a_published_cell() -> None:
-    # Each Japanese category maps to exactly one diary activity, so nothing is
-    # aggregated and nothing needs the independence union Germany needs.
-    result = build_leisure(Locale.JP, fetch=jp_fetch)
-    rows = _rows_by_key(result)
-
-    assert rows[(LeisureCategory.HOBBIES_AMUSEMENTS, "male")].participation_rate == (
-        pytest.approx(0.274)
-    )
-    assert rows[(LeisureCategory.HOBBIES_AMUSEMENTS, "male")].participant_minutes == (
-        pytest.approx(214.0)
-    )
-    assert rows[(LeisureCategory.TV_MEDIA, "female")].participation_rate == (
-        pytest.approx(0.594)
-    )
-    assert "independence" not in " ".join(result.imputations).lower()
-
-
-def test_build_leisure_japan_cites_the_table_and_activity_for_every_row() -> None:
-    for row in build_leisure(Locale.JP, fetch=jp_fetch).rows:
-        assert "shakai-seikatsu-2021" in row.source
-        assert all(name in row.source for name in _ESTAT_ACTIVITIES[row.category])
-
-
-def test_build_leisure_japan_declares_what_its_taxonomy_cannot_separate() -> None:
-    # Japan's diary has one "Hobbies and amusements" bucket where Eurostat
-    # publishes games, reading, computer use, arts and gardening separately.
-    # Those categories are absent rather than guessed at, and each says why.
-    result = build_leisure(Locale.JP, fetch=jp_fetch)
-
-    unsupported = {entry.category: entry.reason for entry in result.unsupported}
-    assert LeisureCategory.GAMES in unsupported
-    assert LeisureCategory.READING in unsupported
-    assert LeisureCategory.COMPUTER_LEISURE in unsupported
-    assert LeisureCategory.GARDENING_PETS in unsupported
-    assert LeisureCategory.ARTS_HOBBIES in unsupported
-    assert LeisureCategory.OUTDOOR_WALKING in unsupported
-    assert all(reason.strip() for reason in unsupported.values())
-
-
-def test_rest_relaxation_is_filled_from_both_surveys() -> None:
-    # Eurostat publishes resting inside its AC4-8 leisure aggregate (AC531), not
-    # under personal care, so Japan's 休養・くつろぎ has a counterpart and neither
-    # country has to declare the category missing. The two are ~4x apart on scope,
-    # which jp.meta.json declares rather than smooths over.
-    de = _rows_by_key(build_leisure(Locale.DE, fetch=de_fetch))
-    jp = _rows_by_key(build_leisure(Locale.JP, fetch=jp_fetch))
-
-    de_male = de[(LeisureCategory.REST_RELAXATION, "male")]
-    assert de_male.participation_rate == pytest.approx(0.1845, abs=1e-4)
-    assert de_male.participant_minutes == pytest.approx(59.0)
-
-    jp_male = jp[(LeisureCategory.REST_RELAXATION, "male")]
-    assert jp_male.participation_rate == pytest.approx(0.681)
-    assert jp_male.participant_minutes == pytest.approx(175.0)
-
-
-def test_build_leisure_germany_declares_the_japan_only_coarse_bucket() -> None:
-    # The enum is a union across surveys, so Germany has to account for the
-    # category only Japan's coarser taxonomy produces.
-    result = build_leisure(Locale.DE, fetch=de_fetch)
-
-    unsupported = {entry.category for entry in result.unsupported}
-    assert unsupported == {LeisureCategory.HOBBIES_AMUSEMENTS}
-
-
-@pytest.mark.parametrize(
-    ("country", "fetch"),
-    [(Locale.DE, de_fetch), (Locale.JP, jp_fetch)],
-)
-def test_every_country_accounts_for_every_category(
-    country: Locale, fetch: Callable[[str], bytes]
-) -> None:
-    # The invariant that makes a union vocabulary honest: a category is either
-    # filled from a published cell or explicitly declared unavailable. Adding an
-    # enum member without touching a country's mapping must fail, not default.
-    result = build_leisure(country, fetch=fetch)
-
-    filled = {row.category for row in result.rows}
-    declared = {entry.category for entry in result.unsupported}
-    assert filled | declared == set(LeisureCategory)
-    assert not filled & declared
-    assert len(result.rows) == len(filled) * 2
+    for country, fetch, dataset in (
+        (Locale.DE, de_fetch, "tus_20age"),
+        (Locale.JP, jp_fetch, "shakai-seikatsu-2021"),
+    ):
+        for row in build_leisure(country, fetch=fetch).rows:
+            assert dataset in row.source
 
 
 def test_build_leisure_us_points_at_its_own_slice() -> None:
@@ -243,47 +218,37 @@ def test_build_leisure_us_points_at_its_own_slice() -> None:
 
 
 def test_write_leisure_round_trips_through_the_committed_csv(tmp_path) -> None:
-    result = build_leisure(Locale.DE, fetch=de_fetch)
+    result = build_leisure(Locale.JP, fetch=jp_fetch)
 
     write_leisure(result, tmp_path)
 
-    with (tmp_path / "de.csv").open(newline="") as f:
+    with (tmp_path / "jp.csv").open(newline="") as f:
         written = list(csv.DictReader(f))
     assert len(written) == len(result.rows)
     assert set(written[0]) == {
         "category",
         "gender",
+        "age_band",
         "participation_rate",
-        "participant_minutes",
         "source",
     }
-    games_male = next(
-        r for r in written if r["category"] == "games" and r["gender"] == "male"
+    row = next(
+        r
+        for r in written
+        if r["category"] == "hobbies_and_games"
+        and r["gender"] == "male"
+        and r["age_band"] == "25-34"
     )
-    assert float(games_male["participation_rate"]) == pytest.approx(0.1678, abs=1e-4)
+    assert float(row["participation_rate"]) == pytest.approx(0.3275, abs=1e-4)
 
 
 def test_write_leisure_commits_the_imputations_beside_the_csv(tmp_path) -> None:
     # a caveat that only reaches stdout is a caveat nobody reading the committed
     # data will ever see (build_oecd's write_joint sets this precedent)
-    result = build_leisure(Locale.DE, fetch=de_fetch)
-
-    write_leisure(result, tmp_path)
-
-    meta = json.loads((tmp_path / "de.meta.json").read_text())
-    assert meta["imputations"] == result.imputations
-    assert meta["country"] == "DE"
-
-
-def test_write_leisure_commits_the_missing_categories_too(tmp_path) -> None:
-    # coverage is the whole point of a union vocabulary: a reader of jp.csv must
-    # be able to tell "no games row" from "Japan publishes no games figure"
     result = build_leisure(Locale.JP, fetch=jp_fetch)
 
     write_leisure(result, tmp_path)
 
     meta = json.loads((tmp_path / "jp.meta.json").read_text())
-    assert {entry["category"] for entry in meta["unsupported"]} == {
-        entry.category.value for entry in result.unsupported
-    }
-    assert all(entry["reason"] for entry in meta["unsupported"])
+    assert meta["imputations"] == result.imputations
+    assert meta["country"] == "JP"
