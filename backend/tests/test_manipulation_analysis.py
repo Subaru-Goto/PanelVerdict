@@ -10,7 +10,7 @@ from experiments.analysis import (
     noise_floor,
     position_bias,
 )
-from experiments.manipulation_check import VoteRow
+from experiments.design import VoteRow
 
 HIGH, LOW = "predicted_high", "predicted_low"
 
@@ -74,6 +74,16 @@ class TestNoiseFloor:
     def test_single_replicate_cells_contribute_nothing(self):
         assert noise_floor([row()]) == 0.0
 
+    def test_the_control_pair_is_excluded(self):
+        """It is authored to be undisputed, so pooling it drags the floor down."""
+        rows = [
+            row(pair_id="control", replicate=index, chosen=HIGH) for index in range(4)
+        ] + [
+            row(replicate=index, chosen=HIGH if index < 2 else LOW)
+            for index in range(4)
+        ]
+        assert noise_floor(rows) == pytest.approx(4 / 6)
+
 
 class TestFlipRate:
     def test_arms_that_agree_everywhere_do_not_flip(self):
@@ -93,9 +103,48 @@ class TestFlipRate:
         assert flip_rate(rows, "demographics", "traits_5") == 1.0
 
     def test_unmatched_cells_are_rejected_rather_than_silently_dropped(self):
-        rows = [row(arm="traits_5"), row(arm="demographics", pair_id="control")]
+        rows = [
+            row(arm="traits_5"),
+            row(arm="demographics", persona_id="openness-high"),
+        ]
         with pytest.raises(ValueError, match="do not line up"):
             flip_rate(rows, "demographics", "traits_5")
+
+    def test_the_control_pair_cannot_dilute_the_flip_rate(self):
+        rows = [
+            row(arm="traits_5", chosen=HIGH),
+            row(arm="demographics", chosen=LOW),
+            row(arm="traits_5", pair_id="control", chosen=HIGH),
+            row(arm="demographics", pair_id="control", chosen=HIGH),
+        ]
+        assert flip_rate(rows, "demographics", "traits_5") == 1.0
+
+    def test_restricting_to_the_extremes_undilutes_the_granularity_comparison(self):
+        """traits_3 and traits_5 render identically unless an extreme was drawn, so
+        the middle levels can only ever contribute zero flips."""
+        rows = [
+            row(
+                arm=arm,
+                level=level.value,
+                persona_id=f"openness-{level.value}",
+                chosen=chosen,
+            )
+            for level in TraitLevel
+            for arm, chosen in (
+                ("traits_3", LOW),
+                (
+                    "traits_5",
+                    HIGH
+                    if level in (TraitLevel.VERY_LOW, TraitLevel.VERY_HIGH)
+                    else LOW,
+                ),
+            )
+        ]
+        assert flip_rate(rows, "traits_3", "traits_5") == pytest.approx(2 / 5)
+        assert (
+            flip_rate(rows, "traits_3", "traits_5", levels=("very_low", "very_high"))
+            == 1.0
+        )
 
 
 class TestGradient:
@@ -113,6 +162,23 @@ class TestGradient:
         result = gradient(rows, trait="openness", arm="traits_5")
         assert list(result.shares) == [level.value for level in TraitLevel]
         assert list(result.shares.values()) == [0.0, 0.25, 0.5, 0.75, 1.0]
+
+    def test_the_two_segments_are_reported_against_the_control_level(self):
+        """The design's claim is divergence *from the control*, so each extreme is
+        reported against MEDIUM as well as against the other extreme."""
+        rows = sweep_rows(
+            {
+                TraitLevel.VERY_LOW: 0,
+                TraitLevel.LOW: 1,
+                TraitLevel.MEDIUM: 2,
+                TraitLevel.HIGH: 3,
+                TraitLevel.VERY_HIGH: 4,
+            },
+            n=4,
+        )
+        result = gradient(rows, trait="openness", arm="traits_5")
+        assert result.target_lift == pytest.approx(0.5)
+        assert result.opposite_lift == pytest.approx(-0.5)
 
     def test_span_is_the_target_minus_the_opposite_segment(self):
         rows = sweep_rows(

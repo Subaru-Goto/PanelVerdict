@@ -75,7 +75,12 @@ Three measurements, in this order — each one sizes the next:
 
 **Constructed personas, not the pool.** Fixing every field but one is what makes
 this causal rather than correlational, and it needs no database, no seeded pool
-and no retrieval. Sizing is `5 levels × 5 traits × pairs × replicates`.
+and no retrieval. Sizing is
+`arms × traits × 5 levels × pairs × replicates × 2 presentation orders` — both
+orders for every persona, because panel-level counterbalancing alternates on index
+parity and a five-level sweep is odd-sized, which would leave the imbalance locked
+to the trait level and let a position-biased model manufacture the gradient under
+test. The arms and pairs are selectable so measurement 1 can be bought on its own.
 
 **The pairs are the weakest joint.** Two headlines that differ only in wording
 ("Save 20% today" / "Get 20% off now") will move nothing, and the resulting null

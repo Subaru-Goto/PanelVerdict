@@ -3,14 +3,8 @@ import pytest
 from app.bigfive import bigfive_from_levels, bucketize
 from app.panel import render_persona_prompt
 from app.schemas import TraitLevel
-from experiments.manipulation_check import (
-    ARMS,
-    PAIRS,
-    TRAITS,
-    collect_rows,
-    render_arm,
-    sweep_personas,
-)
+from experiments.design import ARMS, PAIRS, TRAITS
+from experiments.manipulation_check import collect_rows, render_arm, sweep_personas
 
 
 def _levels(persona) -> dict[str, TraitLevel]:
@@ -134,12 +128,7 @@ class TestCollectRows:
         assert len(llm.prompts) == expected
 
     def test_every_persona_sees_both_orders_in_every_cell(self):
-        """Position bias must not be able to masquerade as a trait effect.
-
-        Panel-level counterbalancing cannot deliver this: the sweep has five
-        personas, so index parity would give three one order and two the other,
-        with the imbalance fixed to the level.
-        """
+        """Position bias must not be able to masquerade as a trait effect."""
         rows = collect_rows(llm=StubLLM(), traits=["openness"], replicates=1)
         cells: dict[tuple[str, str, str, int], set[str]] = {}
         for row in rows:
