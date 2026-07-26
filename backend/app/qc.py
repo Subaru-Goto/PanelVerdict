@@ -3,10 +3,9 @@
 Reads the persisted pool back from the DB, judges a sample, and formats a
 human-readable summary. Read-only — it measures the pool, never regenerates it.
 
-The stereotype-dispersion half is gone with interests (006j): cosine dispersion
-over generated interest text cannot measure a pool whose every field is sampled
-from a published table. What replaces it is comparing realized distributions
-against the priors they were drawn from, which belongs to 006g.
+Deliberately narrow: it judges whether a persona reads as one coherent person. It
+says nothing about whether the *pool* matches its seed distributions, which needs
+realized-vs-prior comparison and belongs to 006g.
 """
 
 from dataclasses import dataclass

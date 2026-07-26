@@ -18,9 +18,25 @@ _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
 
 
 def apply_schema(conn: psycopg.Connection) -> None:
-    """Create the pool schema if absent (idempotent — `CREATE … IF NOT EXISTS`)."""
+    """Create the pool schema if absent (idempotent — `CREATE … IF NOT EXISTS`),
+    then check it is the current one.
+
+    The check exists because `IF NOT EXISTS` silently accepts an out-of-date
+    table, and the resulting failure is invisible: a full pre-006j pool makes
+    every id a resume-skip, so no insert ever names the missing column and the run
+    reports "0 written, 200 already present" over a pool with no summary vectors.
+    """
     conn.execute(_SCHEMA_SQL)
     conn.commit()
+    try:
+        conn.execute("SELECT summary_embedding FROM personas LIMIT 0")
+    except psycopg.errors.UndefinedColumn as error:
+        conn.rollback()
+        raise RuntimeError(
+            "the personas table predates summary_embedding. Drop the database and "
+            "reseed: the pool is a pure function of the master seed, so nothing "
+            "is lost."
+        ) from error
 
 
 def prepare_connection(conn: psycopg.Connection) -> None:

@@ -1,9 +1,8 @@
 """Detect text that reads like an injected instruction rather than content.
 
-Kept after 006j removed its only caller. No persona field is free text any more,
-so the pool can no longer be poisoned through generation — but these patterns are
-what 013 needs at the runtime boundary, where the headline variants and the target
-description actually arrive from a user. Screening belongs there, not here.
+Has no caller: the persona pool it used to screen holds no free text. Kept for
+013, which screens the headline variants and target description a user actually
+sends. Delete it if 013 lands a different approach.
 """
 
 import re

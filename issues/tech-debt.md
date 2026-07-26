@@ -15,16 +15,11 @@ behaviour change, git-tracked renames) rather than mixing into feature work.
   extract into a shared `pipeline/_sources.py`.
 
 - **Module reorg (do after 006f closes).** `app/` is ~18 flat modules mixing two
-  subsystems: the offline **pipeline** (`sampler`, `bigfive`, `interests`,
-  `content_checks`, `assembly`, `persistence`, `seed`, `stereotype_audit`,
-  `plausibility`, `schema.sql`) and the **runtime API** (`main`, `panel`, `vote`,
+  subsystems: the offline **pipeline** (`sampler`, `bigfive`, `assembly`,
+  `persistence`, `seed`, `plausibility`, `schema.sql`) and the **runtime API**
+  (`main`, `panel`, `vote`,
   `verdict`, `llm`, `schemas`, `config`, `db`). Group by subsystem — lean toward
   `app/pipeline/` (the sharper boundary) over a smaller `app/db/`. Pure move: keep
   `schema.sql` next to its reader, rewrite imports, change no logic.
-- **`persist_persona` single cursor.** Use one `with conn.transaction(), conn.cursor() as cur:`
-  for both the persona INSERT and the interests `executemany`, instead of
-  `conn.execute` (implicit cursor) + a separate `conn.cursor()`. Cosmetic
-  consistency; functionally identical (reviewed 006f PR-2, banked here).
-  **Obsolete 2026-07-26 if [006j](006j-persona-summary-embedding.md) slice 2
-  lands first:** dropping the `interests` table removes the second cursor, so
-  fold this into that PR rather than doing it twice.
+- ~~**`persist_persona` single cursor.**~~ Done 2026-07-26: dropping the
+  `interests` table left one INSERT, so there is no second cursor to unify.

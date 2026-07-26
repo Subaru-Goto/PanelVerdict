@@ -16,7 +16,7 @@ def _seed(conn: psycopg.Connection, count: int) -> None:
         persist_persona(conn, make_assembled(make_persona(id_=f"US-{i:05d}")))
 
 
-def test_load_persona_sample_reconstructs_full_personas(conn):
+def test_load_persona_sample_rebuilds_personas_from_their_columns(conn):
     persist_persona(conn, make_assembled(make_persona()))
 
     sample = load_persona_sample(conn, limit=10)

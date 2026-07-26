@@ -12,9 +12,8 @@ from dataclasses import dataclass
 
 import psycopg
 
-from app.assembly import assemble_pool
+from app.assembly import Embedder, assemble_pool
 from app.config import settings
-from app.assembly import Embedder
 from app.llm import OpenRouterEmbedder, OpenRouterJudge
 from app.persistence import persist_persona, prepare_connection
 from app.qc import format_qc_report, run_qc
@@ -25,11 +24,7 @@ _POOL_SIZES = {"dev": 200, "full": 5000}
 
 @dataclass(frozen=True)
 class SeedResult:
-    """`skipped` = already in the pool, i.e. a healthy resume.
-
-    There is no failure count: with no generated content left, assembly cannot
-    fail on a draw (006j).
-    """
+    """`skipped` = already in the pool, i.e. a healthy resume."""
 
     requested: int
     written: int

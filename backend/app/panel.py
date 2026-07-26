@@ -85,11 +85,9 @@ def render_persona_prompt(persona: Persona) -> str:
 def persona_summary(persona: Persona) -> str:
     """Render a persona as third-person prose, for the embedding 007 retrieves on.
 
-    Deliberately the same trait phrasing as the vote prompt: a target description
-    is matched against this text, so anything it claims that the prompt does not
-    say would promise a panel the panel does not deliver. Interests are the one
-    field it leaves out, because they are being removed (006j slice 2) — omitting
-    them errs toward promising less than the prompt delivers.
+    Shares the vote prompt's phrasing on purpose: a target description is matched
+    against this text, so anything it claims that the prompt does not say would
+    promise a panel the panel cannot deliver.
     """
     return (
         f"A {persona.age}-year-old {persona.gender} living in "

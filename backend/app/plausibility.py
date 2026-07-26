@@ -6,10 +6,9 @@ OFFLINE on a sample — the deliverable is the aggregate pass-rate, a health sig
 on the *generation prompt* (a low rate means fix the prompt, not regenerate
 individuals), never a per-persona gate.
 
-Narrowed by 006j: it used to judge invented interest text alongside the sampled
-fields, which was most of what the rubric was for. What is left is whether the
-demographic and trait combination reads as one person — thinner, but the only part
-that was ever about our own sampling rather than the model's hobby prior.
+Weaker than it looks: with only sampled fields left to judge, it asks whether a
+demographic and trait combination hangs together, which the sampler mostly
+guarantees by construction. Treat a high pass-rate as a smoke test, not evidence.
 
 The judge is injected as a Protocol so this is unit-testable without the network;
 the concrete OpenRouter adapter lives in app.llm.

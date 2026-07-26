@@ -3,9 +3,9 @@
 Pure and side-effect-free (no DB): given a country, a slot index, and the master
 seed, produce a deterministic, per-slot-independent persona.
 
-No LLM is involved. Every field is sampled from a committed table or from the
-published Big Five norms, so a slot is reproducible from the seed alone; the only
-model call is embedding the persona's summary for retrieval (006j).
+Every persona field is sampled — from a committed table or the published Big Five
+norms — so a slot is reproducible from the seed alone. The one model call is
+embedding the summary for retrieval, and it feeds no persona field.
 """
 
 from collections.abc import Container, Iterator
@@ -105,10 +105,6 @@ def assemble_pool(
     `quotas` is the per-country count — the one hand-managed cross-country knob.
     `skip` holds persona ids to leave un-generated, so a resumed seed never pays
     to assemble (or embed) personas it already persisted.
-
-    Nothing here can fail on content any more: with interests gone there is no
-    generated text to validate, so the log-and-skip path this needed for invalid
-    draws went with it (006j).
     """
     for country, n in quotas.items():
         cells = load_joint(country)

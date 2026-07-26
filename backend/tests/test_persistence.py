@@ -47,6 +47,23 @@ def test_apply_schema_is_idempotent(conn):
     apply_schema(conn)
 
 
+def test_apply_schema_refuses_a_table_that_predates_summary_embedding(conn):
+    # CREATE TABLE IF NOT EXISTS accepts a stale table, and the failure is
+    # otherwise invisible: a full old pool makes every id a resume-skip, so no
+    # insert ever names the missing column and the seed reports success.
+    # Restores the real schema afterwards — the container is module-scoped.
+    conn.execute("DROP TABLE personas CASCADE")
+    conn.execute("CREATE TABLE personas (id text PRIMARY KEY)")
+    conn.commit()
+    try:
+        with pytest.raises(RuntimeError, match="predates summary_embedding"):
+            apply_schema(conn)
+    finally:
+        conn.execute("DROP TABLE personas")
+        conn.commit()
+        apply_schema(conn)
+
+
 def test_a_wrong_dimension_vector_writes_nothing(conn):
     # the vector is now a column on the persona row rather than a child table, so
     # a bad dimension must fail the whole insert instead of half-writing it
