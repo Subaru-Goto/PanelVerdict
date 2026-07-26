@@ -1,6 +1,8 @@
 import pytest
 
+from app.bigfive import _LEVEL_SCORE, bucketize
 from app.panel import (
+    FIXED_PANEL,
     _TRAIT_PHRASES,
     _join_with_and,
     persona_summary,
@@ -8,6 +10,8 @@ from app.panel import (
 )
 from app.schemas import BigFive, TraitLevel
 from tests.factories import make_persona
+
+_TRAITS = tuple(BigFive.model_fields)
 
 
 def _with_traits(**scores: float) -> BigFive:
@@ -47,6 +51,43 @@ def test_every_trait_has_a_phrase_for_every_level() -> None:
     # keyed by BigFive's own field names, so a renamed trait fails here rather
     # than as a KeyError at render for whoever draws that trait first
     assert set(_TRAIT_PHRASES) == set(BigFive.model_fields)
+
+
+def test_no_two_levels_share_a_phrase() -> None:
+    # a copy-pasted cell would silently restore the quantization five levels
+    # exist to remove — for that one trait only, with every other test green
+    phrases = [p for level in _TRAIT_PHRASES.values() for p in level.values()]
+
+    assert len(set(phrases)) == len(phrases)
+
+
+def test_every_phrase_reaches_a_rendered_summary() -> None:
+    # the completeness test checks the table's keys; this checks the phrases
+    # actually come out the other end, at every intensity
+    persona = make_persona()
+    rendered = set()
+    for level, score in ((lvl, _LEVEL_SCORE[lvl]) for lvl in TraitLevel):
+        summary = persona_summary(
+            persona.model_copy(
+                update={"big_five": _with_traits(**dict.fromkeys(_TRAITS, score))}
+            )
+        )
+        rendered.update(
+            phrase
+            for phrase in _TRAIT_PHRASES["openness"].values()
+            if phrase in summary
+        )
+        assert _TRAIT_PHRASES["neuroticism"][level] in summary
+
+    assert len(rendered) == len(TraitLevel)
+
+
+def test_the_fixed_panel_spans_the_full_range_of_intensities() -> None:
+    # the hand-authored panel is the demo; if it only ever uses three levels it
+    # under-represents the personas the pool actually draws
+    levels = {bucketize(score) for p in FIXED_PANEL for _, score in p.big_five}
+
+    assert levels == set(TraitLevel)
 
 
 def test_phrases_carry_no_pronoun_so_both_voices_can_share_them() -> None:

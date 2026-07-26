@@ -137,10 +137,10 @@ FIXED_PANEL: list[Persona] = [
         education="secondary",
         interests=["weightlifting", "personal budgeting", "restoring old cars"],
         big_five=bigfive_from_levels(
-            openness=TraitLevel.LOW,
+            openness=TraitLevel.VERY_LOW,
             conscientiousness=TraitLevel.HIGH,
-            extraversion=TraitLevel.HIGH,
-            agreeableness=TraitLevel.LOW,
+            extraversion=TraitLevel.VERY_HIGH,
+            agreeableness=TraitLevel.VERY_LOW,
             neuroticism=TraitLevel.MEDIUM,
         ),
     ),
@@ -153,9 +153,9 @@ FIXED_PANEL: list[Persona] = [
         education="tertiary",
         interests=["contemporary art", "learning Italian", "birdwatching"],
         big_five=bigfive_from_levels(
-            openness=TraitLevel.HIGH,
+            openness=TraitLevel.VERY_HIGH,
             conscientiousness=TraitLevel.MEDIUM,
-            extraversion=TraitLevel.LOW,
+            extraversion=TraitLevel.VERY_LOW,
             agreeableness=TraitLevel.HIGH,
             neuroticism=TraitLevel.LOW,
         ),
@@ -170,10 +170,10 @@ FIXED_PANEL: list[Persona] = [
         interests=["fishing", "classic rock", "grilling"],
         big_five=bigfive_from_levels(
             openness=TraitLevel.MEDIUM,
-            conscientiousness=TraitLevel.LOW,
+            conscientiousness=TraitLevel.VERY_LOW,
             extraversion=TraitLevel.MEDIUM,
             agreeableness=TraitLevel.HIGH,
-            neuroticism=TraitLevel.HIGH,
+            neuroticism=TraitLevel.VERY_HIGH,
         ),
     ),
     Persona(
