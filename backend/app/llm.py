@@ -69,7 +69,9 @@ class OpenRouterInterestLLM:
         ]
         result = self._model.invoke(messages)
         if not isinstance(result, InterestSynthesis):
-            raise RuntimeError(f"interest model returned no structured list: {result!r}")
+            raise RuntimeError(
+                f"interest model returned no structured list: {result!r}"
+            )
         return result
 
 

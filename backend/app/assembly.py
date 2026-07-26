@@ -128,5 +128,7 @@ def assemble_pool(
                     embedder=embedder,
                 )
             except InvalidInterests as error:
-                logger.warning("skipping %s: interest generation failed (%s)", pid, error)
+                logger.warning(
+                    "skipping %s: interest generation failed (%s)", pid, error
+                )
                 on_failure(pid)

@@ -37,12 +37,18 @@ _VALID = ["trail running", "home cooking", "indie podcasts"]
 
 _CELLS = [
     JointCell(
-        age_band="20-29", gender="female", education="tertiary",
-        income_quintile=4, weight=0.5,
+        age_band="20-29",
+        gender="female",
+        education="tertiary",
+        income_quintile=4,
+        weight=0.5,
     ),
     JointCell(
-        age_band="30-39", gender="male", education="secondary",
-        income_quintile=2, weight=0.5,
+        age_band="30-39",
+        gender="male",
+        education="secondary",
+        income_quintile=2,
+        weight=0.5,
     ),
 ]
 
@@ -115,7 +121,11 @@ def test_assemble_pool_respects_quotas_and_orders_ids(joint_dir) -> None:
     )
 
     assert [ap.persona.id for ap in pool] == [
-        "US-00000", "US-00001", "US-00002", "JP-00000", "JP-00001",
+        "US-00000",
+        "US-00001",
+        "US-00002",
+        "JP-00000",
+        "JP-00001",
     ]
 
 

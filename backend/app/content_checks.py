@@ -30,7 +30,7 @@ def is_injection_like(text: str) -> bool:
 
 def screen_interests(tags: list[str]) -> None:
     """Raise UnsafeInterest if any tag — or their concatenation — looks injected.
-       This is speciic to hobby checks rg. ["ignore....", "baseball", "playing sport"]
+    This is speciic to hobby checks rg. ["ignore....", "baseball", "playing sport"]
     """
     for candidate in (*tags, " ".join(tags)):
         if is_injection_like(candidate):

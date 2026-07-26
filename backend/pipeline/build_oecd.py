@@ -111,7 +111,12 @@ def _fetch_education(country: Locale, fetch: Callable[[str], str]) -> pd.DataFra
     """Education as `[age (OECD band), sex, isced, share]` (percent → share)."""
     df = parse_sdmx_csv(fetch(_edu_url(country)), ("AGE", "SEX", "ATTAINMENT_LEV"))
     df = df.rename(
-        columns={"AGE": "age", "SEX": "sex", "ATTAINMENT_LEV": "isced", "value": "share"}
+        columns={
+            "AGE": "age",
+            "SEX": "sex",
+            "ATTAINMENT_LEV": "isced",
+            "value": "share",
+        }
     )
     return df.assign(share=df["share"] / 100)
 
@@ -317,7 +322,9 @@ def build_oecd(country: Locale, *, fetch: Callable[[str], str]) -> BuildResult:
             education, [_fetch_education(p, fetch) for p in peers]
         )
         names = ", ".join(p.value for p in peers)
-        imputations.append(f"missing attainment level(s) completed from peers ({names})")
+        imputations.append(
+            f"missing attainment level(s) completed from peers ({names})"
+        )
 
     joint = _rake_income(attach_income(combine(population, education)))
     joint = joint[joint["weight"] > 0]
