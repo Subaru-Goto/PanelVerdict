@@ -20,5 +20,24 @@ Natural-language target description → **structured SQL filters + embedding que
 The pool is **country-grounded** with a derived **`culture_tag`** (Asian/Western). v1 seeds JP/US/DE. **Coverage = the seed list**, so query translation must handle out-of-coverage targets:
 
 - **Graceful degradation ladder:** `country → culture_tag → (global)`. e.g. a "China" target has no seeded country → fall back to `culture_tag = Asian` (currently only Japan is seeded).
+
+## Amended 2026-07-26 — what the vector half now carries
+
+[006j](006j-persona-summary-embedding.md) makes the fuzzy half a single
+`personas.summary_embedding` over a templated summary of **demographics + Big
+Five**. Mechanism unchanged (hybrid: SQL for hard attributes, vector for fuzzy);
+coverage narrower:
+
+- **In coverage:** dispositional and demographic targets — *"cautious,
+  budget-conscious homeowners in their 40s"* maps onto neuroticism,
+  conscientiousness, income quintile and age.
+- **Out of coverage:** activity or lifestyle targets — *"outdoorsy people"*,
+  *"gamers"*. Personas carry no interest or leisure field
+  ([006i](006i-leisure-profiles.md) closed; [006d](006d-interests-synthesis.md)
+  superseded), so nothing can match.
+
+An out-of-coverage *attribute* must be surfaced the same way an out-of-coverage
+*region* is — **never silently answered** with a panel matched on the remaining
+words of the query, which would look like a targeted panel and be a random one.
 - **Never silent.** Every fallback must be **surfaced to the user** — e.g. *"No China data; approximating with Asian-region personas (currently Japan only). Treat as indicative."* Silent substitution risks false confidence, and Japan is a weak proxy for China (different demographics/interests/language).
 - Empty result is an honest outcome when even the coarse tag has no seeded coverage — report it, don't fabricate a panel.

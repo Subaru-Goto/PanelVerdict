@@ -4,8 +4,28 @@ labels: [wayfinder:task]
 parent: 006-build-persona-pool
 blocked_by: [006d-interests-synthesis]
 assignee: null
-status: done
+status: superseded
 ---
+
+## Partly superseded (2026-07-26) by [006j](006j-persona-summary-embedding.md)
+
+With no LLM-generated interest text left in a persona, two of the three checks
+have nothing to act on:
+
+- **D3's anti-stereotype audit is retired.** Cosine dispersion over interest
+  vectors is meaningless once the vectors are gone, and code-sampled fields
+  cannot be stereotyped by the model — a Big Five draw is an MVN sample and its
+  distribution is checked directly against the 006a priors in 006g.
+- **D4's regenerate loop and D5's flag→regenerate composition go with it**,
+  along with the `avoid` hint added to `synthesize_interests`.
+- **D6's plausibility G-Eval narrows** to demographic/trait coherence, if it is
+  kept at all — most of what its rubric judged was interest plausibility.
+- **D2's injection denylist stays relevant** but for a smaller surface: no
+  free-text persona field is persisted at all now, so the residual path is
+  untrusted *variants and target descriptions* at vote time, which
+  [013](013-guardrails-mvp.md) already owns. Consider folding it there.
+
+Removal happens in 006j slice 3, not here.
 
 ## Goal
 
