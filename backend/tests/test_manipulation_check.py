@@ -1,10 +1,17 @@
+from threading import Lock
+
 import pytest
 
 from app.bigfive import bigfive_from_levels, bucketize
 from app.panel import render_persona_prompt
-from app.schemas import TraitLevel
+from app.schemas import PanelVoteOutput, TraitLevel
 from experiments.design import ARMS, PAIRS, TRAITS
-from experiments.manipulation_check import collect_rows, render_arm, sweep_personas
+from experiments.manipulation_check import (
+    collect_rows,
+    plan_cells,
+    render_arm,
+    sweep_personas,
+)
 
 
 def _levels(persona) -> dict[str, TraitLevel]:
@@ -111,12 +118,57 @@ class StubLLM:
 
     def __init__(self) -> None:
         self.prompts: list[str] = []
+        self._lock = Lock()
 
     def vote(self, *, system_prompt: str, option_1: str, option_2: str):
-        from app.schemas import PanelVoteOutput
-
-        self.prompts.append(system_prompt)
+        with self._lock:
+            self.prompts.append(system_prompt)
         return PanelVoteOutput(chosen="option_1", reason="stub")
+
+
+class ContentVoter:
+    """Deterministic and content-dependent, so a concurrent run is comparable to a
+    sequential one — a position-fixed stub would hide any reordering."""
+
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+        chosen = "option_1" if option_1 < option_2 else "option_2"
+        return PanelVoteOutput(chosen=chosen, reason=f"{len(system_prompt)}")
+
+
+class FlakyVoter:
+    """Fails the first `failures` calls, then votes. Models a transient 429."""
+
+    def __init__(self, failures: int) -> None:
+        self.remaining = failures
+        self._lock = Lock()
+
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+        with self._lock:
+            if self.remaining > 0:
+                self.remaining -= 1
+                raise RuntimeError("429 rate limited")
+        return PanelVoteOutput(chosen="option_1", reason="stub")
+
+
+class TestPlanCells:
+    def test_the_plan_covers_every_cell_before_a_single_call_is_paid_for(self):
+        cells = plan_cells(traits=["openness"], replicates=2)
+        assert len(cells) == len(ARMS) * len(TraitLevel) * len(PAIRS) * 2 * 2
+
+    def test_options_are_carried_in_presentation_order(self):
+        for cell in plan_cells(traits=["openness"], replicates=1):
+            pair = next(p for p in PAIRS if p.id == cell.pair_id)
+            first = (
+                pair.predicted_high
+                if cell.order[0] == "predicted_high"
+                else pair.predicted_low
+            )
+            assert cell.options[0] == first
+
+    def test_planning_is_pure_and_repeatable(self):
+        assert plan_cells(traits=["openness"], replicates=1) == plan_cells(
+            traits=["openness"], replicates=1
+        )
 
 
 class TestCollectRows:
@@ -157,3 +209,47 @@ class TestCollectRows:
         llm = StubLLM()
         collect_rows(llm=llm, traits=["openness"], replicates=1)
         assert len(set(llm.prompts)) > len(TraitLevel)
+
+
+class TestConcurrency:
+    def test_workers_change_the_wall_clock_and_nothing_else(self):
+        """Row order must not depend on completion order, or two runs of the same
+        design would produce different files and be hard to diff."""
+        sequential = collect_rows(llm=ContentVoter(), traits=["openness"], replicates=2)
+        concurrent = collect_rows(
+            llm=ContentVoter(), traits=["openness"], replicates=2, workers=4
+        )
+        assert concurrent == sequential
+
+    def test_every_cell_is_still_voted_on_exactly_once(self):
+        llm = StubLLM()
+        rows = collect_rows(llm=llm, traits=["openness"], replicates=1, workers=4)
+        assert len(llm.prompts) == len(rows)
+        assert len(
+            {(r.arm, r.persona_id, r.pair_id, r.replicate, r.order) for r in rows}
+        ) == len(rows)
+
+    def test_a_transient_failure_is_retried_rather_than_losing_the_run(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr("experiments.manipulation_check.sleep", lambda _: None)
+        rows = collect_rows(
+            llm=FlakyVoter(failures=2),
+            traits=["openness"],
+            replicates=1,
+            arms=("traits_5",),
+            pairs=(PAIRS[0],),
+            workers=2,
+        )
+        assert len(rows) == len(TraitLevel) * 2
+
+    def test_a_persistent_failure_still_surfaces(self, monkeypatch):
+        monkeypatch.setattr("experiments.manipulation_check.sleep", lambda _: None)
+        with pytest.raises(RuntimeError, match="429"):
+            collect_rows(
+                llm=FlakyVoter(failures=1000),
+                traits=["openness"],
+                replicates=1,
+                arms=("traits_5",),
+                pairs=(PAIRS[0],),
+            )

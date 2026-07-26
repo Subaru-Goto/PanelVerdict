@@ -18,7 +18,10 @@ paying for the rest:
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
+from time import sleep
 
 from app.bigfive import bigfive_from_levels, bucketize
 from app.config import settings
@@ -34,10 +37,21 @@ from experiments.design import (
     PAIRS,
     TRAITS,
     Arm,
+    Choice,
     HeadlinePair,
     VoteRow,
     write_rows,
 )
+
+# Every call is dominated by waiting on a reasoning model — the floor run measured
+# 4.65s per vote — so the wall clock is set by concurrency, not by the vote count.
+_DEFAULT_WORKERS = 8
+
+# Concurrency makes a transient rate-limit near-certain, and a paid run of several
+# thousand votes must not die on one. Few attempts and a short backoff because the
+# failure expected here is a 429, not an outage; raise them if a run says otherwise.
+_ATTEMPTS = 3
+_BACKOFF_SECONDS = 2
 
 # One person held constant, so the swept trait is the only thing that varies.
 # Mid-quintile and mid-education keep the baseline from being an unusual persona;
@@ -105,6 +119,89 @@ def render_arm(persona: Persona, arm: Arm) -> str:
     return render_persona_prompt(persona)
 
 
+@dataclass(frozen=True)
+class Cell:
+    """One planned vote: what to send, and how to label what comes back."""
+
+    arm: str
+    trait: str
+    level: str
+    persona_id: str
+    pair_id: str
+    replicate: int
+    order: tuple[Choice, Choice]
+    prompt: str
+    options: tuple[str, str]
+
+
+def plan_cells(
+    *,
+    traits: list[str],
+    replicates: int,
+    arms: tuple[Arm, ...] = ARMS,
+    pairs: tuple[HeadlinePair, ...] = PAIRS,
+) -> list[Cell]:
+    """Enumerate every (arm × level × pair × replicate × order) cell.
+
+    Separate from execution so the whole design is inspectable — and its size
+    known — before a single call is paid for.
+
+    Replicates re-run an identical prompt, which is what makes the noise floor
+    measurable: the panel model runs at default temperature, so a persona can flip
+    with no manipulation at all, and every effect size is read against that.
+    """
+    cells: list[Cell] = []
+    for trait in traits:
+        for persona in sweep_personas(trait):
+            level = bucketize(getattr(persona.big_five, trait))
+            for arm in arms:
+                prompt = render_arm(persona, arm)
+                for pair in pairs:
+                    text = {HIGH: pair.predicted_high, LOW: pair.predicted_low}
+                    for replicate in range(replicates):
+                        for order in ORDERS:
+                            cells.append(
+                                Cell(
+                                    arm=arm,
+                                    trait=trait,
+                                    level=level.value,
+                                    persona_id=persona.id,
+                                    pair_id=pair.id,
+                                    replicate=replicate,
+                                    order=order,
+                                    prompt=prompt,
+                                    options=(text[order[0]], text[order[1]]),
+                                )
+                            )
+    return cells
+
+
+def _vote(llm: PanelLLM, cell: Cell) -> VoteRow:
+    for attempt in range(_ATTEMPTS):
+        try:
+            output = llm.vote(
+                system_prompt=cell.prompt,
+                option_1=cell.options[0],
+                option_2=cell.options[1],
+            )
+            break
+        except Exception:
+            if attempt == _ATTEMPTS - 1:
+                raise
+            sleep(_BACKOFF_SECONDS * 2**attempt)
+    return VoteRow(
+        arm=cell.arm,
+        trait=cell.trait,
+        level=cell.level,
+        persona_id=cell.persona_id,
+        pair_id=cell.pair_id,
+        replicate=cell.replicate,
+        order=cell.order[0],
+        chosen=resolve_choice(output.chosen, list(cell.order)),
+        reason=output.reason,
+    )
+
+
 def collect_rows(
     *,
     llm: PanelLLM,
@@ -112,42 +209,20 @@ def collect_rows(
     replicates: int,
     arms: tuple[Arm, ...] = ARMS,
     pairs: tuple[HeadlinePair, ...] = PAIRS,
+    workers: int = 1,
 ) -> list[VoteRow]:
-    """Run every (arm × level × pair × replicate × order) cell and tag each vote.
+    """Vote on every planned cell and tag each result.
 
-    Replicates re-run an identical prompt, which is what makes the noise floor
-    measurable — the panel model runs at default temperature, so a persona can
-    flip with no manipulation at all, and every effect size is read against that.
+    Rows come back in plan order regardless of which call finished first, so the
+    file two runs of one design produce differs only where the model differed.
+    Concurrency is safe here because each cell is independent and carries its own
+    labels — nothing is accumulated across calls.
     """
-    rows: list[VoteRow] = []
-    for trait in traits:
-        for persona in sweep_personas(trait):
-            level = bucketize(getattr(persona.big_five, trait))
-            for arm in arms:
-                prompt = render_arm(persona, arm)
-                for pair in pairs:
-                    options = {HIGH: pair.predicted_high, LOW: pair.predicted_low}
-                    for replicate in range(replicates):
-                        for order in ORDERS:
-                            output = llm.vote(
-                                system_prompt=prompt,
-                                option_1=options[order[0]],
-                                option_2=options[order[1]],
-                            )
-                            rows.append(
-                                VoteRow(
-                                    arm=arm,
-                                    trait=trait,
-                                    level=level.value,
-                                    persona_id=persona.id,
-                                    pair_id=pair.id,
-                                    replicate=replicate,
-                                    order=order[0],
-                                    chosen=resolve_choice(output.chosen, list(order)),
-                                    reason=output.reason,
-                                )
-                            )
-    return rows
+    cells = plan_cells(traits=traits, replicates=replicates, arms=arms, pairs=pairs)
+    if workers == 1:
+        return [_vote(llm, cell) for cell in cells]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(lambda cell: _vote(llm, cell), cells))
 
 
 def _selected_arms(value: str) -> tuple[Arm, ...]:
@@ -180,23 +255,23 @@ def main() -> None:
     parser.add_argument("--arms", type=_selected_arms, default=ARMS)
     parser.add_argument("--pairs", type=_selected_pairs, default=PAIRS)
     parser.add_argument("--model", default=settings.panel_model)
+    parser.add_argument("--workers", type=int, default=_DEFAULT_WORKERS)
     parser.add_argument("--out", type=Path, default=Path("experiments/out/votes.jsonl"))
     args = parser.parse_args()
 
     traits = [trait.strip() for trait in args.traits.split(",")]
-    calls = (
-        len(args.arms)
-        * len(traits)
-        * len(TraitLevel)
-        * len(args.pairs)
-        * args.replicates
-        * len(ORDERS)
+    cells = plan_cells(
+        traits=traits,
+        replicates=args.replicates,
+        arms=args.arms,
+        pairs=args.pairs,
     )
     if settings.openrouter_api_key is None:
         raise SystemExit("openrouter_api_key is not set; cannot run the panel.")
 
     print(
-        f"{calls} votes on {args.model}: {len(args.arms)} arm(s), {len(traits)} trait(s)."
+        f"{len(cells)} votes on {args.model}: {len(args.arms)} arm(s), "
+        f"{len(traits)} trait(s), {args.workers} worker(s)."
     )
     llm = OpenRouterPanelLLM(
         api_key=settings.openrouter_api_key.get_secret_value(),
@@ -209,6 +284,7 @@ def main() -> None:
         replicates=args.replicates,
         arms=args.arms,
         pairs=args.pairs,
+        workers=args.workers,
     )
     write_rows(rows, args.out)
     print(f"Wrote {len(rows)} rows. Analyse: python -m experiments.analysis {args.out}")
