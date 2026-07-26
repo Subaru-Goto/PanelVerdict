@@ -4,8 +4,36 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
 assignee: null
-status: open
+status: closed
 ---
+
+## Resolution (2026-07-26)
+
+**Traits move votes.** Adding temperament to the prompt changes 32.5% of votes
+against a 9.9–13.3% noise floor, with every validity check clean: the positive
+control at 1.00 in all three arms, the trait-free arm flat across all five levels
+(where the prompt is identical by construction), and no trait moving the control
+pair anywhere in the 5×6 matrix. Openness, conscientiousness and extraversion each
+carry the vote from never to always; agreeableness is weaker but ordered.
+
+Full numbers, method and limitations:
+[`docs/research/manipulation-check.md`](../docs/research/manipulation-check.md).
+
+Three things the run did not settle, and one it broke:
+
+- **The neuroticism pair cannot measure neuroticism.** Its no-persona baseline is
+  1.00, so a high-neuroticism persona has no headroom. That result is
+  uninterpretable, not negative, and the pair needs replacing.
+- **Three levels vs. five: no detectable difference** at 600 matched votes, where
+  an excess of ~2.7 points over the floor would have shown. Not significant at
+  this power rather than absent, and conditional on this model and these phrasings.
+  [006j](006j-persona-summary-embedding.md) D1b's retrieval justification is
+  untouched, so five levels stay.
+- **The stimuli overlap.** Each trait's own pair is its largest effect for three
+  of five traits, so the traits are separate levers — but the off-diagonals are
+  large and structured, and the pairs share a strong novel/cautious axis.
+- **Combinations are untested.** The sweep varies one trait and pins the other
+  four, while real personas carry five levels at once.
 
 ## Goal
 
@@ -75,7 +103,12 @@ Three measurements, in this order — each one sizes the next:
 
 **Constructed personas, not the pool.** Fixing every field but one is what makes
 this causal rather than correlational, and it needs no database, no seeded pool
-and no retrieval. Sizing is `5 levels × 5 traits × pairs × replicates`.
+and no retrieval. Sizing is
+`arms × traits × 5 levels × pairs × replicates × 2 presentation orders` — both
+orders for every persona, because panel-level counterbalancing alternates on index
+parity and a five-level sweep is odd-sized, which would leave the imbalance locked
+to the trait level and let a position-biased model manufacture the gradient under
+test. The arms and pairs are selectable so measurement 1 can be bought on its own.
 
 **The pairs are the weakest joint.** Two headlines that differ only in wording
 ("Save 20% today" / "Get 20% off now") will move nothing, and the resulting null

@@ -100,6 +100,14 @@ anywhere in the pool build is the embedding.**
   | high | `0.5 < z ≤ 1.5` | 24.2% |
   | very high | `z > 1.5` | 6.7% |
 
+  **Measured 2026-07-26 ([014](014-targeting-manipulation-check.md)):** consequence
+  2 is not visible in behaviour. Restricted to the extreme levels, where the two
+  renderings differ, `traits_3` → `traits_5` flips 12.7% of votes against a
+  12.4–13.3% noise floor; across 600 matched votes an excess of ~2.7 points would
+  have resolved. Not significant at this power rather than absent — a differently
+  worded prompt or a finer-grained pair could move it. Consequence 1, retrieval,
+  is untested here and is what five levels now rests on.
+
   The z-score stays the source of truth and only the rendering gets finer, which
   is what `TraitLevel`'s docstring already reserves the right to change. Touches
   `TraitLevel`, `bucketize`, `_LEVEL_SCORE`/`bigfive_from_levels`, `_TRAIT_PHRASES`

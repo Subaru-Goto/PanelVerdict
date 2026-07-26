@@ -54,7 +54,7 @@ Confirm the v1 treatment: the neither-rate is **reported descriptively but NOT m
 
 - Order **randomised and stored per vote**; overall **50/50 counterbalanced** (deterministic — removes top-line position drift for free).
 - Pure randomisation is adequate for the top-line and large slices (n≈200 → ~7% max drift). **Stratified counterbalancing / minimisation (Pocock–Simon)** is the documented fallback — built only if small-segment reporting becomes a feature *and* position leakage is observed; exact strata graduate with the targeting design ([007](007-build-targeting-query-translation.md)).
-- **Residual position bias is measured per model** — a selection criterion for [003](003-decide-panel-model-and-provider.md).
+- **Residual position bias is measured per model** — a selection criterion for [003](003-decide-panel-model-and-provider.md). **Measured 2026-07-26 ([014](014-targeting-manipulation-check.md), 5,400 votes):** `gpt-5-mini` picks the first-shown option **0.66** of the time, and it concentrates in cells where content preference is weak — where the model has a real preference, order makes no difference. Counterbalancing is load-bearing here, not hygiene, and an odd-sized panel does not deliver it (index-parity alternation leaves the imbalance correlated with whatever the panel is ordered by).
 
 ### Bayesian treatment
 
