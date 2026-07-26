@@ -1,13 +1,61 @@
-category,gender,participation_rate,participant_minutes,source
-tv_media,male,0.5420,242.0,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
-tv_media,female,0.5940,211.0,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
-hobbies_amusements,male,0.2740,214.0,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
-hobbies_amusements,female,0.2310,160.0,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
-sports_exercise,male,0.1320,121.0,e-stat:shakai-seikatsu-2021:table1-1:Sports
-sports_exercise,female,0.1060,90.0,e-stat:shakai-seikatsu-2021:table1-1:Sports
-volunteering,male,0.0180,130.0,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
-volunteering,female,0.0140,118.0,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
-socializing,male,0.0480,161.0,e-stat:shakai-seikatsu-2021:table1-1:Social life
-socializing,female,0.0820,141.0,e-stat:shakai-seikatsu-2021:table1-1:Social life
-rest_relaxation,male,0.6810,175.0,e-stat:shakai-seikatsu-2021:table1-1:Rest and relaxation
-rest_relaxation,female,0.7190,161.0,e-stat:shakai-seikatsu-2021:table1-1:Rest and relaxation
+category,gender,age_band,participation_rate,source
+tv_media,male,15-24,0.2330,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,male,25-34,0.2421,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,male,35-44,0.3568,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,male,45-54,0.5170,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,male,55-64,0.6750,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,male,65+,0.8750,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,female,15-24,0.2800,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,female,25-34,0.2918,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,female,35-44,0.3883,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,female,45-54,0.5690,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,female,55-64,0.7350,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+tv_media,female,65+,0.8630,"e-stat:shakai-seikatsu-2021:table1-1:Watching TV, listening to the radio, reading newspapers or magazines"
+socializing,male,15-24,0.0610,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,male,25-34,0.0504,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,male,35-44,0.0404,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,male,45-54,0.0340,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,male,55-64,0.0360,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,male,65+,0.0600,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,female,15-24,0.0940,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,female,25-34,0.0724,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,female,35-44,0.0521,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,female,45-54,0.0620,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,female,55-64,0.0800,e-stat:shakai-seikatsu-2021:table1-1:Social life
+socializing,female,65+,0.1070,e-stat:shakai-seikatsu-2021:table1-1:Social life
+sports_exercise,male,15-24,0.1270,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,male,25-34,0.0639,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,male,35-44,0.0756,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,male,45-54,0.0920,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,male,55-64,0.1020,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,male,65+,0.2040,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,female,15-24,0.0770,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,female,25-34,0.0505,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,female,35-44,0.0567,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,female,45-54,0.0760,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,female,55-64,0.1050,e-stat:shakai-seikatsu-2021:table1-1:Sports
+sports_exercise,female,65+,0.1620,e-stat:shakai-seikatsu-2021:table1-1:Sports
+volunteering,male,15-24,0.0070,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,male,25-34,0.0035,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,male,35-44,0.0121,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,male,45-54,0.0100,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,male,55-64,0.0160,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,male,65+,0.0390,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,female,15-24,0.0050,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,female,25-34,0.0060,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,female,35-44,0.0107,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,female,45-54,0.0130,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,female,55-64,0.0140,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+volunteering,female,65+,0.0230,e-stat:shakai-seikatsu-2021:table1-1:Volunteer and social activities
+hobbies_and_games,male,15-24,0.3770,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,male,25-34,0.3275,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,male,35-44,0.2422,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,male,45-54,0.2020,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,male,55-64,0.1990,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,male,65+,0.2890,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,female,15-24,0.2820,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,female,25-34,0.2466,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,female,35-44,0.1846,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,female,45-54,0.1900,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,female,55-64,0.2100,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements
+hobbies_and_games,female,65+,0.2450,e-stat:shakai-seikatsu-2021:table1-1:Hobbies and amusements

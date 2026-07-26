@@ -155,6 +155,26 @@ invented ones.**
   rather than "175 minutes a day". Decide after eyeballing real personas; the
   data layer stores sourced absolute values either way, so this is purely a
   rendering choice and nothing upstream has to change.
+- **D8 — Missing cells fall back to the coarsest published prior, never to a
+  guess.** Surveys differ in what they cross: Eurostat and e-Stat publish
+  activity by gender *and* age, ATUS by sex alone (its age tables are
+  unpublished, available only by e-mailing BLS). So `_cell_rate` walks a ladder
+  — gender×age, then the gender's own all-ages figure, then the all-gender band,
+  then the national total — and takes the first the survey actually publishes.
+  The level used is declared in `{cc}.meta.json`, so a country conditioned on
+  less than both axes says so. Germany and Japan currently need no fallback; the
+  US will use the gender-only rung.
+
+  **Extending the ladder across countries is the next rung, not this slice's
+  work.** For a country with no time-use survey at all, the fallback should be
+  the mean of countries sharing its cultural cluster, then the global mean. Two
+  conditions before building it: it belongs in slice 2's loader (the pipeline
+  builds one country from one survey and should stay that way), and the
+  clustering must come from a **published** source — the Inglehart–Welzel /
+  World Values Survey cultural zones put DE in Protestant Europe, JP in
+  Confucian, US in English-Speaking — never from our own judgement about which
+  countries resemble each other. Until a country without data actually exists,
+  building it would be generality with nothing to validate against.
 - **D7 — Anti-stereotype QC changes purpose, doesn't disappear.** Cosine
   dispersion over invented interest text is meaningless once interests are
   code-sampled. The stronger check belongs to 006g: **realized pool
