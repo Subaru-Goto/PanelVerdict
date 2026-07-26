@@ -16,26 +16,31 @@ from app.assembly import AssembledPersona
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
 
+# Columns added after the first schema shipped. `CREATE TABLE IF NOT EXISTS` will
+# not add them to an existing table, so `apply_schema` probes for them; extend this
+# whenever a column is added rather than writing a second probe.
+_REQUIRED_COLUMNS = ("summary_embedding",)
+
 
 def apply_schema(conn: psycopg.Connection) -> None:
-    """Create the pool schema if absent (idempotent — `CREATE … IF NOT EXISTS`),
-    then check it is the current one.
+    """Create the pool schema if absent (idempotent), then refuse a stale one.
 
-    The check exists because `IF NOT EXISTS` silently accepts an out-of-date
-    table, and the resulting failure is invisible: a full pre-006j pool makes
+    `CREATE … IF NOT EXISTS` silently accepts an out-of-date table, and the
+    resulting failure is invisible rather than loud: a full pre-006j pool makes
     every id a resume-skip, so no insert ever names the missing column and the run
-    reports "0 written, 200 already present" over a pool with no summary vectors.
+    reports "0 written, 200 already present" over a pool with no embeddings.
     """
     conn.execute(_SCHEMA_SQL)
     conn.commit()
     try:
-        conn.execute("SELECT summary_embedding FROM personas LIMIT 0")
+        conn.execute(f"SELECT {', '.join(_REQUIRED_COLUMNS)} FROM personas LIMIT 0")
     except psycopg.errors.UndefinedColumn as error:
         conn.rollback()
         raise RuntimeError(
-            "the personas table predates summary_embedding. Drop the database and "
-            "reseed: the pool is a pure function of the master seed, so nothing "
-            "is lost."
+            "the personas table is missing a column this build writes "
+            f"({', '.join(_REQUIRED_COLUMNS)}). Drop the database and reseed: the "
+            "sampled columns are a pure function of the master seed, so no "
+            "information is lost."
         ) from error
 
 
@@ -78,7 +83,7 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bo
                 big_five.extraversion,
                 big_five.agreeableness,
                 big_five.neuroticism,
-                np.array(assembled.summary_vector),
+                np.array(assembled.summary_embedding),
             ),
         )
     return result.rowcount == 1

@@ -17,8 +17,10 @@ behaviour change, git-tracked renames) rather than mixing into feature work.
 - **Module reorg (do after 006f closes).** `app/` is ~18 flat modules mixing two
   subsystems: the offline **pipeline** (`sampler`, `bigfive`, `assembly`,
   `persistence`, `seed`, `plausibility`, `schema.sql`) and the **runtime API**
-  (`main`, `panel`, `vote`,
-  `verdict`, `llm`, `schemas`, `config`, `db`). Group by subsystem — lean toward
+  (`main`, `vote`, `verdict`, `llm`, `schemas`, `config`, `db`). `panel` belongs to
+  both — it renders the vote prompt at runtime *and* the summary the pool build
+  embeds — so the split has to decide where the rendering lives rather than
+  assuming it is runtime-only. Group by subsystem — lean toward
   `app/pipeline/` (the sharper boundary) over a smaller `app/db/`. Pure move: keep
   `schema.sql` next to its reader, rewrite imports, change no logic.
 - ~~**`persist_persona` single cursor.**~~ Done 2026-07-26: dropping the

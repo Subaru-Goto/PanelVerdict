@@ -32,7 +32,7 @@ def test_persist_is_idempotent_on_rerun(conn):
 def test_summary_embedding_round_trips_through_pgvector(conn):
     persona = make_persona()
     vector = [0.5] * DIM
-    persist_persona(conn, AssembledPersona(persona=persona, summary_vector=vector))
+    persist_persona(conn, AssembledPersona(persona=persona, summary_embedding=vector))
 
     stored = conn.execute(
         "SELECT summary_embedding FROM personas WHERE id = %s", (persona.id,)
@@ -47,7 +47,7 @@ def test_apply_schema_is_idempotent(conn):
     apply_schema(conn)
 
 
-def test_apply_schema_refuses_a_table_that_predates_summary_embedding(conn):
+def test_apply_schema_refuses_a_table_missing_a_column_it_writes(conn):
     # CREATE TABLE IF NOT EXISTS accepts a stale table, and the failure is
     # otherwise invisible: a full old pool makes every id a resume-skip, so no
     # insert ever names the missing column and the seed reports success.
@@ -56,7 +56,7 @@ def test_apply_schema_refuses_a_table_that_predates_summary_embedding(conn):
     conn.execute("CREATE TABLE personas (id text PRIMARY KEY)")
     conn.commit()
     try:
-        with pytest.raises(RuntimeError, match="predates summary_embedding"):
+        with pytest.raises(RuntimeError, match="missing a column"):
             apply_schema(conn)
     finally:
         conn.execute("DROP TABLE personas")
@@ -67,7 +67,7 @@ def test_apply_schema_refuses_a_table_that_predates_summary_embedding(conn):
 def test_a_wrong_dimension_vector_writes_nothing(conn):
     # the vector is now a column on the persona row rather than a child table, so
     # a bad dimension must fail the whole insert instead of half-writing it
-    bad = AssembledPersona(persona=make_persona(), summary_vector=[0.1] * (DIM + 1))
+    bad = AssembledPersona(persona=make_persona(), summary_embedding=[0.1] * (DIM + 1))
 
     with pytest.raises(psycopg.Error):
         persist_persona(conn, bad)

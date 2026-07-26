@@ -26,4 +26,4 @@ def make_persona(id_: str = "US-00000") -> Persona:
 
 def make_assembled(persona: Persona | None = None) -> AssembledPersona:
     persona = persona or make_persona()
-    return AssembledPersona(persona=persona, summary_vector=[0.5] * DIM)
+    return AssembledPersona(persona=persona, summary_embedding=[0.5] * DIM)

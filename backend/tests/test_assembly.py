@@ -1,5 +1,3 @@
-import inspect
-
 import pytest
 
 from app.assembly import (
@@ -83,7 +81,7 @@ def test_assemble_persona_composes_the_full_pipeline() -> None:
     assert persona.id == "US-00003"
     assert persona.country is Locale.US
     assert isinstance(persona.big_five.openness, float)
-    assert len(result.summary_vector) == 4
+    assert len(result.summary_embedding) == 4
 
 
 def test_assemble_persona_is_reproducible_for_a_seed() -> None:
@@ -91,7 +89,7 @@ def test_assemble_persona_is_reproducible_for_a_seed() -> None:
     second = _assemble(index=5, master_seed=99)
 
     assert first.persona == second.persona
-    assert first.summary_vector == second.summary_vector
+    assert first.summary_embedding == second.summary_embedding
 
 
 def test_distinct_slots_draw_different_people() -> None:
@@ -153,11 +151,3 @@ def test_the_embedded_text_is_the_persona_summary() -> None:
     result = assemble_persona(Locale.US, 0, _CELLS, master_seed=7, embedder=embedder)
 
     assert embedder.texts == [persona_summary(result.persona)]
-
-
-def test_assembly_needs_no_llm() -> None:
-    # the pool is a pure function of the seed now; only the embedder is injected
-    parameters = inspect.signature(assemble_persona).parameters
-
-    assert "llm" not in parameters
-    assert set(parameters) == {"country", "index", "cells", "master_seed", "embedder"}

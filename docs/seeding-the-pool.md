@@ -48,9 +48,14 @@ uv run python -m app.seed --size dev --seed 0
 ```
 
 Applies the schema, samples ~200 personas, embeds each one's summary, persists
-them, then prints the QC report. Nothing is LLM-generated — the only model call
-is the embedding — so cost is a fraction of a cent and the pool is identical on
-every run with the same seed.
+them, then judges a sample and prints the QC report.
+
+No persona field is LLM-generated, so the personas themselves are identical on
+every run with the same seed. Two model calls remain and are worth knowing about:
+one embedding per persona (cheap, and not bit-reproducible — a remote model, so
+`summary_embedding` can differ slightly between runs even though the sampled
+columns cannot), and the plausibility judge over `--qc-sample` personas, which is
+a chat model and is most of the cost. `--qc-sample 0` skips it.
 
 ### 3. Eyeball the personas
 

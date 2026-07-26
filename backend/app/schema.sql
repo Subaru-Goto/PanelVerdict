@@ -6,9 +6,8 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- derived at render, never stored. summary_embedding is the vector 007 retrieves
 -- on: one per persona, of the templated summary in app/panel.py.
 --
--- A database created before 006j has no summary_embedding column and a stale
--- interests table, and CREATE TABLE IF NOT EXISTS cannot fix either. Drop it and
--- reseed: the pool is a pure function of the master seed, so nothing is lost.
+-- IF NOT EXISTS cannot migrate an out-of-date table; app.persistence.apply_schema
+-- detects that case and says what to do.
 CREATE TABLE IF NOT EXISTS personas (
     id                text PRIMARY KEY,           -- "{country}-{ordinal}", e.g. US-00042
     country           text NOT NULL,              -- Locale: US | JP | DE

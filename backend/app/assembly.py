@@ -35,7 +35,7 @@ class AssembledPersona:
     """A persona plus the embedding of its rendered summary (007's fuzzy half)."""
 
     persona: Persona
-    summary_vector: list[float]
+    summary_embedding: list[float]
 
 
 def persona_id(country: Locale, index: int) -> str:
@@ -89,7 +89,7 @@ def assemble_persona(
     )
     return AssembledPersona(
         persona=persona,
-        summary_vector=embedder.embed([persona_summary(persona)])[0],
+        summary_embedding=embedder.embed([persona_summary(persona)])[0],
     )
 
 

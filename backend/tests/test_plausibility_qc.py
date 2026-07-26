@@ -1,9 +1,16 @@
+"""The DB-backed half of plausibility QC: read a sample back, judge it, format it."""
+
 import psycopg
 from factories import make_assembled, make_persona
 
 from app.persistence import persist_persona
-from app.plausibility import PlausibilityReport, PlausibilityScore
-from app.qc import QCReport, format_qc_report, load_persona_sample, run_qc
+from app.plausibility import (
+    PlausibilityReport,
+    PlausibilityScore,
+    format_report,
+    load_persona_sample,
+    run_plausibility_qc,
+)
 
 
 class StubJudge:
@@ -27,22 +34,18 @@ def test_load_persona_sample_rebuilds_personas_from_their_columns(conn):
     assert persona.big_five.openness == 0.1
 
 
-def test_run_qc_judges_the_sample(conn):
+def test_run_plausibility_qc_judges_the_sample(conn):
     _seed(conn, 3)
 
-    report = run_qc(conn, judge=StubJudge(), sample_size=10)
+    report = run_plausibility_qc(conn, judge=StubJudge(), sample_size=10)
 
-    assert report.plausibility.n == 3  # sample_size > pool → all judged
+    assert report.n == 3  # sample_size > pool → all judged
 
 
-def test_format_qc_report_summarizes_the_check():
-    report = QCReport(
-        plausibility=PlausibilityReport(
-            n=3, pass_rate=1.0, mean_rating=4.5, failures=[]
-        )
-    )
+def test_format_report_summarizes_the_check():
+    report = PlausibilityReport(n=3, pass_rate=1.0, mean_rating=4.5, failures=[])
 
-    text = format_qc_report(report)
+    text = format_report(report)
 
     assert "Plausibility (n=3)" in text
     assert "4.50" in text

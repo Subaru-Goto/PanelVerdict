@@ -1,11 +1,13 @@
 from app.bigfive import _LEVEL_SCORE, bucketize
 from app.panel import (
     FIXED_PANEL,
+    _EDUCATION_PHRASE,
     _TRAIT_PHRASES,
+    _income_band,
     persona_summary,
     render_persona_prompt,
 )
-from app.schemas import BigFive, TraitLevel
+from app.schemas import COUNTRY_NAME, BigFive, TraitLevel
 from tests.factories import make_persona
 
 _TRAITS = tuple(BigFive.model_fields)
@@ -96,15 +98,25 @@ def test_summary_describes_the_persona_in_the_third_person() -> None:
         assert pronoun not in summary
 
 
-def test_summary_and_vote_prompt_describe_the_same_temperament() -> None:
+def test_summary_and_vote_prompt_state_the_same_facts() -> None:
     # what retrieval matches on has to be what the persona is told it is,
-    # otherwise a retrieved panel isn't the panel that votes
+    # otherwise a retrieved panel isn't the panel that votes. The two renderers
+    # share only the clause fragments, so every shared fact needs asserting —
+    # traits alone would let education or income drift between the voices.
     persona = make_persona()
 
-    phrase = _TRAIT_PHRASES["agreeableness"][TraitLevel.MEDIUM]
+    summary = persona_summary(persona)
+    prompt = render_persona_prompt(persona)
 
-    assert phrase in persona_summary(persona)
-    assert phrase in render_persona_prompt(persona)
+    for fact in (
+        "34-year-old female",
+        COUNTRY_NAME[persona.country],
+        _EDUCATION_PHRASE[persona.education],
+        _income_band(persona.income_quintile),
+        _TRAIT_PHRASES["agreeableness"][TraitLevel.MEDIUM],
+    ):
+        assert fact in summary
+        assert fact in prompt
 
 
 def test_a_stronger_trait_score_reads_differently() -> None:

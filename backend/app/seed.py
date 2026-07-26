@@ -16,7 +16,7 @@ from app.assembly import Embedder, assemble_pool
 from app.config import settings
 from app.llm import OpenRouterEmbedder, OpenRouterJudge
 from app.persistence import persist_persona, prepare_connection
-from app.qc import format_qc_report, run_qc
+from app.plausibility import format_report, run_plausibility_qc
 from app.schemas import Locale
 
 _POOL_SIZES = {"dev": 200, "full": 5000}
@@ -121,8 +121,8 @@ def main() -> None:
         )
         result = seed_pool(conn, quotas, master_seed=args.seed, embedder=embedder)
         print(f"Done: {result.written} written, {result.skipped} already present.")
-        report = run_qc(conn, judge=judge, sample_size=args.qc_sample)
-    print(format_qc_report(report))
+        report = run_plausibility_qc(conn, judge=judge, sample_size=args.qc_sample)
+    print(format_report(report))
 
 
 if __name__ == "__main__":
