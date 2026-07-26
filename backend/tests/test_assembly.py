@@ -6,34 +6,23 @@ from app.assembly import (
     assemble_pool,
     persona_id,
 )
+from app.panel import persona_summary
 from app.sampler import JointCell
-from app.schemas import InterestSynthesis, Locale, Persona
-
-
-class StubInterestLLM:
-    """Returns one fixed valid interest batch for every call (no network);
-    records the prompts it was given."""
-
-    def __init__(self, interests: list[str]) -> None:
-        self._interests = interests
-        self.prompts: list[str] = []
-
-    def generate(self, *, prompt: str) -> InterestSynthesis:
-        self.prompts.append(prompt)
-        return InterestSynthesis(interests=list(self._interests))
+from app.schemas import Locale, Persona
 
 
 class StubEmbedder:
-    """One deterministic vector per text, so vectors align 1:1 with interests."""
+    """One deterministic vector per text (no network), and a record of what it was
+    asked to embed — so a test can assert the summary is what reaches the model."""
 
     def __init__(self, dim: int = 4) -> None:
         self._dim = dim
+        self.texts: list[str] = []
 
     def embed(self, texts: list[str]) -> list[list[float]]:
+        self.texts.extend(texts)
         return [[float(len(text))] * self._dim for text in texts]
 
-
-_VALID = ["trail running", "home cooking", "indie podcasts"]
 
 _CELLS = [
     JointCell(
@@ -59,7 +48,6 @@ def _assemble(*, country=Locale.US, index=0, master_seed=7) -> AssembledPersona:
         index,
         _CELLS,
         master_seed=master_seed,
-        llm=StubInterestLLM(_VALID),
         embedder=StubEmbedder(),
     )
 
@@ -92,9 +80,8 @@ def test_assemble_persona_composes_the_full_pipeline() -> None:
     assert isinstance(persona, Persona)
     assert persona.id == "US-00003"
     assert persona.country is Locale.US
-    assert persona.interests == _VALID
-    assert len(result.interest_vectors) == len(persona.interests)
     assert isinstance(persona.big_five.openness, float)
+    assert len(result.summary_embedding) == 4
 
 
 def test_assemble_persona_is_reproducible_for_a_seed() -> None:
@@ -102,7 +89,7 @@ def test_assemble_persona_is_reproducible_for_a_seed() -> None:
     second = _assemble(index=5, master_seed=99)
 
     assert first.persona == second.persona
-    assert first.interest_vectors == second.interest_vectors
+    assert first.summary_embedding == second.summary_embedding
 
 
 def test_distinct_slots_draw_different_people() -> None:
@@ -115,7 +102,6 @@ def test_assemble_pool_respects_quotas_and_orders_ids(joint_dir) -> None:
         assemble_pool(
             {Locale.US: 3, Locale.JP: 2},
             master_seed=1,
-            llm=StubInterestLLM(_VALID),
             embedder=StubEmbedder(),
         )
     )
@@ -134,32 +120,12 @@ def test_assemble_pool_skips_given_ids(joint_dir) -> None:
         assemble_pool(
             {Locale.US: 3},
             master_seed=1,
-            llm=StubInterestLLM(_VALID),
             embedder=StubEmbedder(),
             skip={"US-00001"},
         )
     )
 
     assert [ap.persona.id for ap in partial] == ["US-00000", "US-00002"]
-
-
-def test_assemble_pool_skips_a_persona_that_fails_generation(joint_dir) -> None:
-    # a stub that always returns too few tags -> InvalidInterests after retries;
-    # assemble_pool logs it, reports the id via on_failure, and keeps going
-    # rather than aborting the whole batch
-    failed: list[str] = []
-    result = list(
-        assemble_pool(
-            {Locale.US: 2},
-            master_seed=1,
-            llm=StubInterestLLM(["too", "few"]),
-            embedder=StubEmbedder(),
-            on_failure=failed.append,
-        )
-    )
-
-    assert result == []
-    assert failed == ["US-00000", "US-00001"]
 
 
 def test_dev_subset_is_a_prefix_of_the_full_pool(joint_dir) -> None:
@@ -171,9 +137,17 @@ def test_dev_subset_is_a_prefix_of_the_full_pool(joint_dir) -> None:
             for ap in assemble_pool(
                 {Locale.US: n},
                 master_seed=1,
-                llm=StubInterestLLM(_VALID),
                 embedder=StubEmbedder(),
             )
         ]
 
     assert build(2) == build(5)[:2]
+
+
+def test_the_embedded_text_is_the_persona_summary() -> None:
+    # what 007 retrieves on must be the rendered summary, not some other framing
+    embedder = StubEmbedder()
+
+    result = assemble_persona(Locale.US, 0, _CELLS, master_seed=7, embedder=embedder)
+
+    assert embedder.texts == [persona_summary(result.persona)]

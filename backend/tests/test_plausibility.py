@@ -20,7 +20,7 @@ class StubJudge:
         return PlausibilityScore(rating=rating, reason="stub")
 
 
-def _persona(persona_id: str, interests: list[str]) -> Persona:
+def _persona(persona_id: str) -> Persona:
     return Persona(
         id=persona_id,
         country="US",
@@ -28,7 +28,6 @@ def _persona(persona_id: str, interests: list[str]) -> Persona:
         gender="female",
         income_quintile=3,
         education="tertiary",
-        interests=interests,
         big_five=bigfive_from_levels(
             openness=TraitLevel.HIGH,
             conscientiousness=TraitLevel.HIGH,
@@ -40,11 +39,11 @@ def _persona(persona_id: str, interests: list[str]) -> Persona:
 
 
 def test_build_judge_prompt_frames_persona_and_rubric() -> None:
-    prompt = build_judge_prompt(_persona("p1", ["trail running", "home cooking"]))
+    prompt = build_judge_prompt(_persona("p1"))
 
     # the rendered persona (what the panel enacts) is embedded…
     assert "34-year-old female" in prompt
-    assert "trail running" in prompt
+    assert "By temperament" in prompt
     # …followed by the 1-5 rubric
     assert "1-5" in prompt
     assert "personality" in prompt
@@ -52,14 +51,14 @@ def test_build_judge_prompt_frames_persona_and_rubric() -> None:
 
 def test_score_persona_passes_the_judges_score_through() -> None:
     judge = StubJudge(5)
-    result = score_persona(_persona("p1", ["x"]), judge=judge)
+    result = score_persona(_persona("p1"), judge=judge)
 
     assert result == PlausibilityScore(rating=5, reason="stub")
     assert judge.calls == 1
 
 
 def test_evaluate_sample_aggregates_pass_rate_and_failures() -> None:
-    personas = [_persona(f"p{i}", ["x"]) for i in range(3)]
+    personas = [_persona(f"p{i}") for i in range(3)]
     judge = StubJudge(5, 4, 2)  # two pass (>=4), one fails
 
     report = evaluate_sample(personas, judge=judge, pass_threshold=4)

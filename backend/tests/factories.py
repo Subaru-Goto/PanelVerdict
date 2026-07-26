@@ -6,7 +6,7 @@ from app.schemas import BigFive, Persona
 DIM = 1536
 
 
-def make_persona(id_: str = "US-00000", interests=("hiking", "jazz")) -> Persona:
+def make_persona(id_: str = "US-00000") -> Persona:
     return Persona(
         id=id_,
         country="US",
@@ -14,7 +14,6 @@ def make_persona(id_: str = "US-00000", interests=("hiking", "jazz")) -> Persona
         gender="female",
         income_quintile=3,
         education="tertiary",
-        interests=list(interests),
         big_five=BigFive(
             openness=0.1,
             conscientiousness=0.2,
@@ -27,5 +26,4 @@ def make_persona(id_: str = "US-00000", interests=("hiking", "jazz")) -> Persona
 
 def make_assembled(persona: Persona | None = None) -> AssembledPersona:
     persona = persona or make_persona()
-    vectors = [[float(i)] * DIM for i in range(len(persona.interests))]
-    return AssembledPersona(persona=persona, interest_vectors=vectors)
+    return AssembledPersona(persona=persona, summary_embedding=[0.5] * DIM)

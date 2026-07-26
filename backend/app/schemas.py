@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 
 from enum import Enum
@@ -81,22 +81,21 @@ class PersonaDemographics(BaseModel):
 
 
 class Persona(PersonaDemographics):
-    """One panelist, stored as structured typed fields (never free text)."""
+    """One panelist, stored as structured typed fields — no free text at all.
 
-    id: str
-    interests: list[str] = Field(min_length=1, max_length=5)
-    big_five: BigFive
+    Every field is sampled or derived, so a persona is a pure function of the
+    master seed (006j): the database is a cache of that function, not a system
+    of record.
 
-
-class InterestSynthesis(BaseModel):
-    """One persona's interests as the LLM returns them (structured output).
-
-    Deliberately permissive — the real gate (count / length / format) is
-    `app.interests._validate`, kept as the single tested source of truth so the
-    rules live in one place rather than split with this schema.
+    `extra="forbid"` because pydantic's default would silently swallow a field
+    that no longer exists — dropping `interests` left a caller still passing it
+    and the whole suite stayed green.
     """
 
-    interests: list[str]
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    big_five: BigFive
 
 
 class PlausibilityScore(BaseModel):

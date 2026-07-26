@@ -16,28 +16,26 @@ def _count(conn: psycopg.Connection, table: str) -> int:
     return conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 
 
-def test_persist_writes_persona_and_its_interests(conn):
+def test_persist_writes_one_row_per_persona(conn):
     persist_persona(conn, make_assembled())
 
     assert _count(conn, "personas") == 1
-    assert _count(conn, "interests") == 2
 
 
 def test_persist_is_idempotent_on_rerun(conn):
-    persist_persona(conn, make_assembled())
-    persist_persona(conn, make_assembled())
+    assert persist_persona(conn, make_assembled()) is True
+    assert persist_persona(conn, make_assembled()) is False
 
     assert _count(conn, "personas") == 1
-    assert _count(conn, "interests") == 2
 
 
-def test_embedding_round_trips_through_pgvector(conn):
-    persona = make_persona(interests=("hiking",))
+def test_summary_embedding_round_trips_through_pgvector(conn):
+    persona = make_persona()
     vector = [0.5] * DIM
-    persist_persona(conn, AssembledPersona(persona=persona, interest_vectors=[vector]))
+    persist_persona(conn, AssembledPersona(persona=persona, summary_embedding=vector))
 
     stored = conn.execute(
-        "SELECT embedding FROM interests WHERE persona_id = %s", (persona.id,)
+        "SELECT summary_embedding FROM personas WHERE id = %s", (persona.id,)
     ).fetchone()[0]
     restored = stored.to_numpy()
     assert restored.shape == (DIM,)
@@ -49,19 +47,27 @@ def test_apply_schema_is_idempotent(conn):
     apply_schema(conn)
 
 
-def test_deleting_a_persona_cascades_to_its_interests(conn):
-    persist_persona(conn, make_assembled())
-    conn.execute("DELETE FROM personas WHERE id = %s", ("US-00000",))
+def test_apply_schema_refuses_a_table_missing_a_column_it_writes(conn):
+    # CREATE TABLE IF NOT EXISTS accepts a stale table, and the failure is
+    # otherwise invisible: a full old pool makes every id a resume-skip, so no
+    # insert ever names the missing column and the seed reports success.
+    # Restores the real schema afterwards — the container is module-scoped.
+    conn.execute("DROP TABLE personas CASCADE")
+    conn.execute("CREATE TABLE personas (id text PRIMARY KEY)")
     conn.commit()
+    try:
+        with pytest.raises(RuntimeError, match="missing a column"):
+            apply_schema(conn)
+    finally:
+        conn.execute("DROP TABLE personas")
+        conn.commit()
+        apply_schema(conn)
 
-    assert _count(conn, "interests") == 0
 
-
-def test_persona_and_interests_write_atomically(conn):
-    # a wrong-dimension vector fails the interests insert; the persona row must
-    # roll back with it, never left orphaned
-    persona = make_persona(interests=("hiking",))
-    bad = AssembledPersona(persona=persona, interest_vectors=[[0.1] * (DIM + 1)])
+def test_a_wrong_dimension_vector_writes_nothing(conn):
+    # the vector is now a column on the persona row rather than a child table, so
+    # a bad dimension must fail the whole insert instead of half-writing it
+    bad = AssembledPersona(persona=make_persona(), summary_embedding=[0.1] * (DIM + 1))
 
     with pytest.raises(psycopg.Error):
         persist_persona(conn, bad)

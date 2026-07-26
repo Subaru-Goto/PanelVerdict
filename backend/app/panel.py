@@ -44,13 +44,6 @@ _TRAIT_PHRASES: dict[str, dict[TraitLevel, str]] = {
 }
 
 
-def _join_with_and(items: list[str]) -> str:
-    """ "a" / "a and b" / "a, b and c" — a natural inline list."""
-    if len(items) == 1:
-        return items[0]
-    return f"{', '.join(items[:-1])} and {items[-1]}"
-
-
 # Past tense throughout, so the same clause works after "You" and after a noun.
 _EDUCATION_PHRASE: dict[EducationLevel, str] = {
     EducationLevel.BELOW_SECONDARY: "left school before finishing secondary education",
@@ -85,7 +78,6 @@ def render_persona_prompt(persona: Persona) -> str:
         f"You are a {persona.age}-year-old {persona.gender} living in "
         f"{COUNTRY_NAME[persona.country]}. You {_EDUCATION_PHRASE[persona.education]}, "
         f"and your income is in {_income_band(persona.income_quintile)} for your country. "
-        f"In your spare time you're into {_join_with_and(persona.interests)}. "
         f"By temperament, you're {_dispositions(persona.big_five)}."
     )
 
@@ -93,11 +85,9 @@ def render_persona_prompt(persona: Persona) -> str:
 def persona_summary(persona: Persona) -> str:
     """Render a persona as third-person prose, for the embedding 007 retrieves on.
 
-    Deliberately the same trait phrasing as the vote prompt: a target description
-    is matched against this text, so anything it claims that the prompt does not
-    say would promise a panel the panel does not deliver. Interests are the one
-    field it leaves out, because they are being removed (006j slice 2) — omitting
-    them errs toward promising less than the prompt delivers.
+    Shares the vote prompt's phrasing on purpose: a target description is matched
+    against this text, so anything it claims that the prompt does not say would
+    promise a panel the panel cannot deliver.
     """
     return (
         f"A {persona.age}-year-old {persona.gender} living in "
@@ -116,7 +106,6 @@ FIXED_PANEL: list[Persona] = [
         gender="female",
         income_quintile=3,
         education="tertiary",
-        interests=["trail running", "indie podcasts", "home cooking"],
         big_five=bigfive_from_levels(
             openness=TraitLevel.HIGH,
             conscientiousness=TraitLevel.HIGH,
@@ -135,7 +124,6 @@ FIXED_PANEL: list[Persona] = [
         gender="male",
         income_quintile=2,
         education="secondary",
-        interests=["weightlifting", "personal budgeting", "restoring old cars"],
         big_five=bigfive_from_levels(
             openness=TraitLevel.VERY_LOW,
             conscientiousness=TraitLevel.HIGH,
@@ -151,7 +139,6 @@ FIXED_PANEL: list[Persona] = [
         gender="female",
         income_quintile=4,
         education="tertiary",
-        interests=["contemporary art", "learning Italian", "birdwatching"],
         big_five=bigfive_from_levels(
             openness=TraitLevel.VERY_HIGH,
             conscientiousness=TraitLevel.MEDIUM,
@@ -167,7 +154,6 @@ FIXED_PANEL: list[Persona] = [
         gender="male",
         income_quintile=3,
         education="secondary",
-        interests=["fishing", "classic rock", "grilling"],
         big_five=bigfive_from_levels(
             openness=TraitLevel.MEDIUM,
             conscientiousness=TraitLevel.VERY_LOW,
@@ -183,7 +169,6 @@ FIXED_PANEL: list[Persona] = [
         gender="female",
         income_quintile=4,
         education="tertiary",
-        interests=["real estate", "home fitness", "true-crime podcasts"],
         big_five=bigfive_from_levels(
             openness=TraitLevel.MEDIUM,
             conscientiousness=TraitLevel.HIGH,

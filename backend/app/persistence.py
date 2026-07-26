@@ -16,11 +16,32 @@ from app.assembly import AssembledPersona
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
 
+# Columns added after the first schema shipped. `CREATE TABLE IF NOT EXISTS` will
+# not add them to an existing table, so `apply_schema` probes for them; extend this
+# whenever a column is added rather than writing a second probe.
+_REQUIRED_COLUMNS = ("summary_embedding",)
+
 
 def apply_schema(conn: psycopg.Connection) -> None:
-    """Create the pool schema if absent (idempotent — `CREATE … IF NOT EXISTS`)."""
+    """Create the pool schema if absent (idempotent), then refuse a stale one.
+
+    `CREATE … IF NOT EXISTS` silently accepts an out-of-date table, and the
+    resulting failure is invisible rather than loud: a full pre-006j pool makes
+    every id a resume-skip, so no insert ever names the missing column and the run
+    reports "0 written, 200 already present" over a pool with no embeddings.
+    """
     conn.execute(_SCHEMA_SQL)
     conn.commit()
+    try:
+        conn.execute(f"SELECT {', '.join(_REQUIRED_COLUMNS)} FROM personas LIMIT 0")
+    except psycopg.errors.UndefinedColumn as error:
+        conn.rollback()
+        raise RuntimeError(
+            "the personas table is missing a column this build writes "
+            f"({', '.join(_REQUIRED_COLUMNS)}). Drop the database and reseed: the "
+            "sampled columns are a pure function of the master seed, so no "
+            "information is lost."
+        ) from error
 
 
 def prepare_connection(conn: psycopg.Connection) -> None:
@@ -33,12 +54,10 @@ def prepare_connection(conn: psycopg.Connection) -> None:
 
 
 def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bool:
-    """Write one persona + its interests in a single transaction; return whether
-    it was newly written.
+    """Write one persona and its summary vector; return whether it was newly written.
 
     `ON CONFLICT (id) DO NOTHING` makes a re-run a no-op for personas already
-    present (returns False); when the persona is skipped its interests are
-    skipped too.
+    present (returns False).
     """
     persona = assembled.persona
     big_five = persona.big_five
@@ -47,8 +66,9 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bo
             """
             INSERT INTO personas (
                 id, country, age, gender, income_quintile, education,
-                openness, conscientiousness, extraversion, agreeableness, neuroticism
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                openness, conscientiousness, extraversion, agreeableness,
+                neuroticism, summary_embedding
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO NOTHING
             """,
             (
@@ -63,25 +83,10 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bo
                 big_five.extraversion,
                 big_five.agreeableness,
                 big_five.neuroticism,
+                np.array(assembled.summary_embedding),
             ),
         )
-        if result.rowcount == 0:
-            return False
-        with conn.cursor() as cur:
-            cur.executemany(
-                """
-                INSERT INTO interests (persona_id, interest, embedding)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (persona_id, interest) DO NOTHING
-                """,
-                [
-                    (persona.id, interest, np.array(vector))
-                    for interest, vector in zip(
-                        persona.interests, assembled.interest_vectors, strict=True
-                    )
-                ],
-            )
-    return True
+    return result.rowcount == 1
 
 
 def persist_pool(conn: psycopg.Connection, pool: Iterable[AssembledPersona]) -> int:

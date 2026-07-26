@@ -16,7 +16,6 @@ def _persona(pid: str) -> Persona:
         gender="male",
         income_quintile=3,
         education="secondary",
-        interests=["x"],
         big_five=bigfive_from_levels(
             openness=TraitLevel.LOW,
             conscientiousness=TraitLevel.LOW,

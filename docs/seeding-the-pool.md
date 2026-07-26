@@ -47,34 +47,47 @@ cd backend
 uv run python -m app.seed --size dev --seed 0
 ```
 
-Applies the schema, generates ~200 personas (real interests + embeddings),
-persists them, then prints the QC report. Cost ≈ a few cents.
+Applies the schema, samples ~200 personas, embeds each one's summary, persists
+them, then judges a sample and prints the QC report.
 
-### 3. Eyeball the actual interests (don't trust only the aggregate)
+No persona field is LLM-generated, so the personas themselves are identical on
+every run with the same seed. Two model calls remain and are worth knowing about:
+one embedding per persona (cheap, and not bit-reproducible — a remote model, so
+`summary_embedding` can differ slightly between runs even though the sampled
+columns cannot), and the plausibility judge over `--qc-sample` personas, which is
+a chat model and is most of the cost. `--qc-sample 0` skips it.
+
+### 3. Eyeball the personas
 
 ```bash
 docker compose exec db bash -c \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT p.age, p.gender, p.education, array_agg(i.interest) FROM personas p JOIN interests i ON i.persona_id = p.id GROUP BY p.id LIMIT 15;"'
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT id, age, gender, education, income_quintile, round(openness::numeric, 2) AS o, round(neuroticism::numeric, 2) AS n FROM personas LIMIT 15;"'
 ```
 
 ### 4. Judge reasonableness
 
-- **QC report:** `pass_rate` high (≈0.9+)? `mean_rating` ≥ ~4? Any demographic
-  group with a wildly low dispersion (a collapsed / caricatured group)?
-- **The 15 rows:** interests *specific* (not "sports"), *plausible* for the
-  age/education, and *not* obvious demographic stereotypes?
+- **QC report:** `pass_rate` high (≈0.9+)? `mean_rating` ≥ ~4?
+- **The 15 rows:** do the age/education/income combinations look like real people,
+  and do the trait scores spread rather than clustering at zero?
+
+To read a persona the way retrieval sees it, render the summary that gets
+embedded:
+
+```bash
+uv run python -c "from app.panel import persona_summary, FIXED_PANEL; print(persona_summary(FIXED_PANEL[0]))"
+```
 
 ### 5. Decide
 
 - **Good →** run the full pool: `uv run python -m app.seed --size full --seed 0`
-  (~25× the dev cost/time; resumable if interrupted).
-- **Off →** the fix is the prompt, not the pipeline. Tune
-  `app/interests.py:build_interest_prompt`, then regenerate:
+  (~25× the time; resumable if interrupted).
+- **Off →** the fix is in the sampled distributions or the rendering, not a
+  prompt. After changing either, regenerate:
 
   ```bash
-  docker compose exec db bash -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "TRUNCATE personas CASCADE;"'
+  docker compose exec db bash -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "TRUNCATE personas;"'
   uv run python -m app.seed --size dev --seed 0
   ```
 
   (Re-seeding without truncating skips the existing personas — idempotency — so
-  you must truncate to regenerate with a changed prompt.)
+  you must truncate to regenerate after a change.)

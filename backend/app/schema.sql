@@ -3,7 +3,11 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- One row per persona. Big Five are the continuous sampled scores; levels are
--- derived at render, never stored.
+-- derived at render, never stored. summary_embedding is the vector 007 retrieves
+-- on: one per persona, of the templated summary in app/panel.py.
+--
+-- IF NOT EXISTS cannot migrate an out-of-date table; app.persistence.apply_schema
+-- detects that case and says what to do.
 CREATE TABLE IF NOT EXISTS personas (
     id                text PRIMARY KEY,           -- "{country}-{ordinal}", e.g. US-00042
     country           text NOT NULL,              -- Locale: US | JP | DE
@@ -15,14 +19,6 @@ CREATE TABLE IF NOT EXISTS personas (
     conscientiousness double precision NOT NULL,
     extraversion      double precision NOT NULL,
     agreeableness     double precision NOT NULL,
-    neuroticism       double precision NOT NULL
-);
-
--- One row per (persona, interest): per-interest embeddings can't be an array
--- column (pgvector holds one vector per row).
-CREATE TABLE IF NOT EXISTS interests (
-    persona_id text        NOT NULL REFERENCES personas(id) ON DELETE CASCADE,
-    interest   text        NOT NULL,
-    embedding  vector(1536) NOT NULL,             -- text-embedding-3-small dims
-    PRIMARY KEY (persona_id, interest)
+    neuroticism       double precision NOT NULL,
+    summary_embedding vector(1536) NOT NULL       -- text-embedding-3-small dims
 );
