@@ -15,13 +15,28 @@ Natural-language target description → **structured SQL filters + embedding que
 - panel sampling: 100–300 personas, ~80–90% target-matched + 10–20% random **control group**,
 - **fixed seed** → reproducible panels.
 
-## Amended 2026-07-26 — `culture_tag` is not a column, and should not become one
+## Amended 2026-07-26 — `culture_tag` lives in code, and here is when that flips
 
 The ladder below assumes a stored `culture_tag`. There isn't one: 006b never added
-it, and `schema.sql` carries only country. Nor should it — the tag is a pure
-function of country (US/DE → Western, JP → Asian), so storing it would be a
-denormalised copy that can drift from the column it derives from. The middle rung
-is `WHERE country IN (…)` with the mapping held in code.
+it, and `schema.sql` carries only country. **For v1 it stays in code** — the tag is
+a pure function of country (US/DE → Western, JP → Asian), so a column would be a
+denormalised copy that can drift from what it derives from, and at three countries
+the mapping is three lines. The middle rung is `WHERE country IN (…)`.
+
+**The trigger for moving it into the database is not "many countries" —
+it is countries becoming *data* rather than *code*.** `Locale` is a Python enum, so
+today adding a country already requires a deploy and the tag can ride along in the
+same commit. The moment the country list comes from a table, so a country can be
+seeded without deploying, the tag has to follow it there or the two silently
+disagree. Note what is *not* a reason: `country IN (…)` does not degrade with more
+countries — the list is bounded by the country count and Postgres handles that
+trivially. Moving it for performance would be moving it for the wrong reason.
+
+Two things to get right whenever that day comes: the tag belongs on a `countries`
+table keyed by country, **not** repeated on every persona row (one row per country,
+not per person), and the coarse-tag vocabulary itself needs a source — "Asian /
+Western" is a v1 convenience that 001 already flagged as not a census category, and
+it will not survive a long country list without one.
 
 Unblocked 2026-07-26: 006 closed with 006g.
 
