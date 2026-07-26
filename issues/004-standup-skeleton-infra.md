@@ -4,7 +4,7 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
 assignee: subaru
-status: open
+status: done
 ---
 
 ## Goal

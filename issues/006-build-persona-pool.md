@@ -31,7 +31,7 @@ This is an **umbrella** — the build is split into small, independently reviewa
 - [ ] [006g](006g-pool-overview.md) — pool-overview QC artifact *(blocked by 006f — now unblocked)*
 - [~] [006h](006h-menu-mode-interests.md) — menu-mode interests — *rejected: required ~430 invented weights; superseded by 006i*
 - [~] [006i](006i-leisure-profiles.md) — leisure profiles from surveyed time-use — *data layer merged (PRs #31/#33/#34/#36/#37) and kept as reference data; leisure does not enter the persona. Closed 2026-07-26: no evidence it moves a vote, and it made each new country a bespoke extraction*
-- [ ] [006j](006j-persona-summary-embedding.md) — persona summary embedding; `interests` dropped *(replaces generated interests; blocks the production seed and 007's vector half)*
+- [x] [006j](006j-persona-summary-embedding.md) — persona summary embedding; `interests` dropped — *done, PRs #38/#39/#40/#41; its slice-4 ablation graduated to [014](014-targeting-manipulation-check.md)*
 
 ## Decided (from ticket 001)
 
