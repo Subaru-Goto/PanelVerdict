@@ -1,31 +1,45 @@
 from app.bigfive import bigfive_from_levels, bucketize
-from app.schemas import COUNTRY_NAME, EducationLevel, Persona, TraitLevel
+from app.schemas import BigFive, COUNTRY_NAME, EducationLevel, Persona, TraitLevel
 
+# Five intensities per trait, phrased without pronouns so the vote prompt (second
+# person) and the summary embedded for retrieval (third person) can share one
+# table — the persona a query matches has to be the persona that votes. Wording
+# is BFI-2-Expanded-style descriptions of the sampled level, never numbers (006).
 _TRAIT_PHRASES: dict[str, dict[TraitLevel, str]] = {
     "openness": {
+        TraitLevel.VERY_HIGH: "restlessly curious, forever chasing the new and the unconventional",
         TraitLevel.HIGH: "curious and imaginative, drawn to new ideas and experiences",
         TraitLevel.MEDIUM: "open to new ideas but still fond of the tried-and-true",
         TraitLevel.LOW: "practical and conventional, preferring the familiar to the novel",
+        TraitLevel.VERY_LOW: "firmly set in familiar ways, with little appetite for anything untried",
     },
     "conscientiousness": {
+        TraitLevel.VERY_HIGH: "meticulous and highly disciplined, planning everything down to the detail",
         TraitLevel.HIGH: "organized and self-disciplined, careful to think things through",
         TraitLevel.MEDIUM: "reasonably organized without being rigid about it",
         TraitLevel.LOW: "spontaneous and easygoing, not one to fuss over plans or details",
+        TraitLevel.VERY_LOW: "thoroughly unstructured, acting on impulse and leaving plans half-made",
     },
     "extraversion": {
+        TraitLevel.VERY_HIGH: "highly gregarious, energised by crowds and rarely quiet for long",
         TraitLevel.HIGH: "outgoing and energetic, at ease around other people",
-        TraitLevel.MEDIUM: "sociable enough but equally content with your own company",
+        TraitLevel.MEDIUM: "sociable enough but equally content alone",
         TraitLevel.LOW: "reserved, preferring quieter and low-key settings",
+        TraitLevel.VERY_LOW: "markedly withdrawn, avoiding company wherever possible",
     },
     "agreeableness": {
+        TraitLevel.VERY_HIGH: "exceptionally warm and accommodating, quick to trust and slow to judge",
         TraitLevel.HIGH: "warm and trusting, inclined to give people the benefit of the doubt",
         TraitLevel.MEDIUM: "considerate but willing to push back when it matters",
         TraitLevel.LOW: "skeptical and direct, weighing claims critically before buying in",
+        TraitLevel.VERY_LOW: "highly guarded and blunt, treating most claims as suspect",
     },
     "neuroticism": {
+        TraitLevel.VERY_HIGH: "highly strung, easily alarmed and quick to dwell on what might go wrong",
         TraitLevel.HIGH: "sensitive to stress and prone to worry about how things might go wrong",
         TraitLevel.MEDIUM: "subject to the usual ups and downs but mostly even-keeled",
         TraitLevel.LOW: "calm and emotionally steady, rarely rattled",
+        TraitLevel.VERY_LOW: "exceptionally unflappable, almost never anxious or upset",
     },
 }
 
@@ -37,10 +51,11 @@ def _join_with_and(items: list[str]) -> str:
     return f"{', '.join(items[:-1])} and {items[-1]}"
 
 
+# Past tense throughout, so the same clause works after "You" and after a noun.
 _EDUCATION_PHRASE: dict[EducationLevel, str] = {
     EducationLevel.BELOW_SECONDARY: "left school before finishing secondary education",
     EducationLevel.SECONDARY: "finished secondary school but didn't go to university",
-    EducationLevel.TERTIARY: "hold a university degree",
+    EducationLevel.TERTIARY: "completed a university degree",
 }
 
 
@@ -53,21 +68,43 @@ def _income_band(quintile: int) -> str:
     return "the upper income range"
 
 
+def _dispositions(big_five: BigFive) -> str:
+    """The five trait phrases for a persona's sampled levels, in domain order."""
+    return "; ".join(
+        _TRAIT_PHRASES[trait][bucketize(score)] for trait, score in big_five
+    )
+
+
 def render_persona_prompt(persona: Persona) -> str:
     """Render a persona into its natural-language system prompt.
 
     Describes the person only — nothing about the options or how to vote; that
     stays in the vote step so position handling lives in one place.
     """
-    dispositions = "; ".join(
-        _TRAIT_PHRASES[trait][bucketize(score)] for trait, score in persona.big_five
-    )
     return (
         f"You are a {persona.age}-year-old {persona.gender} living in "
         f"{COUNTRY_NAME[persona.country]}. You {_EDUCATION_PHRASE[persona.education]}, "
         f"and your income is in {_income_band(persona.income_quintile)} for your country. "
         f"In your spare time you're into {_join_with_and(persona.interests)}. "
-        f"By temperament, you're {dispositions}."
+        f"By temperament, you're {_dispositions(persona.big_five)}."
+    )
+
+
+def persona_summary(persona: Persona) -> str:
+    """Render a persona as third-person prose, for the embedding 007 retrieves on.
+
+    Deliberately the same trait phrasing as the vote prompt: a target description
+    is matched against this text, so anything it claims that the prompt does not
+    say would promise a panel the panel does not deliver. Interests are the one
+    field it leaves out, because they are being removed (006j slice 2) — omitting
+    them errs toward promising less than the prompt delivers.
+    """
+    return (
+        f"A {persona.age}-year-old {persona.gender} living in "
+        f"{COUNTRY_NAME[persona.country]}, who "
+        f"{_EDUCATION_PHRASE[persona.education]}, with an income in "
+        f"{_income_band(persona.income_quintile)} for that country. "
+        f"By temperament: {_dispositions(persona.big_five)}."
     )
 
 
@@ -100,10 +137,10 @@ FIXED_PANEL: list[Persona] = [
         education="secondary",
         interests=["weightlifting", "personal budgeting", "restoring old cars"],
         big_five=bigfive_from_levels(
-            openness=TraitLevel.LOW,
+            openness=TraitLevel.VERY_LOW,
             conscientiousness=TraitLevel.HIGH,
-            extraversion=TraitLevel.HIGH,
-            agreeableness=TraitLevel.LOW,
+            extraversion=TraitLevel.VERY_HIGH,
+            agreeableness=TraitLevel.VERY_LOW,
             neuroticism=TraitLevel.MEDIUM,
         ),
     ),
@@ -116,9 +153,9 @@ FIXED_PANEL: list[Persona] = [
         education="tertiary",
         interests=["contemporary art", "learning Italian", "birdwatching"],
         big_five=bigfive_from_levels(
-            openness=TraitLevel.HIGH,
+            openness=TraitLevel.VERY_HIGH,
             conscientiousness=TraitLevel.MEDIUM,
-            extraversion=TraitLevel.LOW,
+            extraversion=TraitLevel.VERY_LOW,
             agreeableness=TraitLevel.HIGH,
             neuroticism=TraitLevel.LOW,
         ),
@@ -133,10 +170,10 @@ FIXED_PANEL: list[Persona] = [
         interests=["fishing", "classic rock", "grilling"],
         big_five=bigfive_from_levels(
             openness=TraitLevel.MEDIUM,
-            conscientiousness=TraitLevel.LOW,
+            conscientiousness=TraitLevel.VERY_LOW,
             extraversion=TraitLevel.MEDIUM,
             agreeableness=TraitLevel.HIGH,
-            neuroticism=TraitLevel.HIGH,
+            neuroticism=TraitLevel.VERY_HIGH,
         ),
     ),
     Persona(

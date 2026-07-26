@@ -16,22 +16,43 @@ from pipeline.derive_bigfive_norms import AGE_BANDS
 @pytest.mark.parametrize(
     ("score", "level"),
     [
-        (-2.0, TraitLevel.LOW),
+        (-3.0, TraitLevel.VERY_LOW),
+        (-1.6, TraitLevel.VERY_LOW),
+        (-1.5, TraitLevel.LOW),  # boundaries belong to the inner band
         (-0.6, TraitLevel.LOW),
-        (-0.5, TraitLevel.MEDIUM),  # boundary is MEDIUM (low <= z <= high)
+        (-0.5, TraitLevel.MEDIUM),
         (0.0, TraitLevel.MEDIUM),
-        (0.5, TraitLevel.MEDIUM),  # boundary is MEDIUM
+        (0.5, TraitLevel.MEDIUM),
         (0.6, TraitLevel.HIGH),
-        (2.0, TraitLevel.HIGH),
+        (1.5, TraitLevel.HIGH),
+        (1.6, TraitLevel.VERY_HIGH),
+        (3.0, TraitLevel.VERY_HIGH),
     ],
 )
 def test_bucketize(score, level):
     assert bucketize(score) == level
 
 
+def test_bucketize_splits_a_normal_population_into_usable_levels():
+    # the cutoffs are round z-values; what justifies them is the split they
+    # produce on a normal population — 6.7 / 24.2 / 38.3 / 24.2 / 6.7, so no
+    # level is too rare to render. Asserted rather than commented, because a
+    # tweak to either cutoff silently changes how the whole pool reads.
+    draws = np.random.default_rng(0).normal(size=200_000)
+    shares = {level: 0.0 for level in TraitLevel}
+    for score in draws:
+        shares[bucketize(float(score))] += 1 / len(draws)
+
+    assert shares[TraitLevel.VERY_LOW] == pytest.approx(0.067, abs=0.005)
+    assert shares[TraitLevel.LOW] == pytest.approx(0.242, abs=0.005)
+    assert shares[TraitLevel.MEDIUM] == pytest.approx(0.383, abs=0.005)
+    assert shares[TraitLevel.HIGH] == pytest.approx(0.242, abs=0.005)
+    assert shares[TraitLevel.VERY_HIGH] == pytest.approx(0.067, abs=0.005)
+
+
 def test_bigfive_from_levels_round_trips_through_bucketize():
     # the representative score for each level must bucketize back to that level,
-    # i.e. _LEVEL_SCORE stays outside the ±0.5 cutoffs — locks that coupling
+    # i.e. every _LEVEL_SCORE sits inside its own band — locks that coupling
     for level in TraitLevel:
         bf = bigfive_from_levels(
             openness=level,

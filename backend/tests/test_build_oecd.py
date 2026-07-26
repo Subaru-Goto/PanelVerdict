@@ -254,7 +254,9 @@ def test_education_is_incomplete():
         ]
     )
     assert _education_is_incomplete(tertiary_only) is True
-    assert _education_is_incomplete(missing_below) is True  # any gap shape, not just JP's
+    assert (
+        _education_is_incomplete(missing_below) is True
+    )  # any gap shape, not just JP's
     assert _education_is_incomplete(complete) is False
 
 
@@ -388,8 +390,7 @@ def test_build_oecd_borrows_jp_split_from_peers():
         EducationLevel.TERTIARY,
     }
     assert any(
-        "peers" in note and "US" in note and "DE" in note
-        for note in result.imputations
+        "peers" in note and "US" in note and "DE" in note for note in result.imputations
     )
 
 

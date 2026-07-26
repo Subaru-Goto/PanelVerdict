@@ -5,9 +5,19 @@ from enum import Enum
 
 
 class TraitLevel(str, Enum):
+    """Rendered intensity of one sampled trait score, ordered low to high.
+
+    Five levels rather than three because three cannot express the continuous
+    score the sampler draws: a z of 0.51 and a z of 2.3 would render identically,
+    which both flattens the vote prompt and leaves retrieval unable to rank within
+    a bucket (006j D1b).
+    """
+
+    VERY_LOW = "very_low"
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
+    VERY_HIGH = "very_high"
 
 
 class BigFive(BaseModel):
