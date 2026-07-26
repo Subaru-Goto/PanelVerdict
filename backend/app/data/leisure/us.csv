@@ -1,0 +1,61 @@
+category,gender,age_band,participation_rate,source
+tv_media,male,15-24,0.7570,atus:2025:table-a1:Watching TV
+tv_media,male,25-34,0.7570,atus:2025:table-a1:Watching TV
+tv_media,male,35-44,0.7570,atus:2025:table-a1:Watching TV
+tv_media,male,45-54,0.7570,atus:2025:table-a1:Watching TV
+tv_media,male,55-64,0.7570,atus:2025:table-a1:Watching TV
+tv_media,male,65+,0.7570,atus:2025:table-a1:Watching TV
+tv_media,female,15-24,0.7310,atus:2025:table-a1:Watching TV
+tv_media,female,25-34,0.7310,atus:2025:table-a1:Watching TV
+tv_media,female,35-44,0.7310,atus:2025:table-a1:Watching TV
+tv_media,female,45-54,0.7310,atus:2025:table-a1:Watching TV
+tv_media,female,55-64,0.7310,atus:2025:table-a1:Watching TV
+tv_media,female,65+,0.7310,atus:2025:table-a1:Watching TV
+socializing,male,15-24,0.2820,atus:2025:table-a1:Socializing and communicating
+socializing,male,25-34,0.2820,atus:2025:table-a1:Socializing and communicating
+socializing,male,35-44,0.2820,atus:2025:table-a1:Socializing and communicating
+socializing,male,45-54,0.2820,atus:2025:table-a1:Socializing and communicating
+socializing,male,55-64,0.2820,atus:2025:table-a1:Socializing and communicating
+socializing,male,65+,0.2820,atus:2025:table-a1:Socializing and communicating
+socializing,female,15-24,0.3250,atus:2025:table-a1:Socializing and communicating
+socializing,female,25-34,0.3250,atus:2025:table-a1:Socializing and communicating
+socializing,female,35-44,0.3250,atus:2025:table-a1:Socializing and communicating
+socializing,female,45-54,0.3250,atus:2025:table-a1:Socializing and communicating
+socializing,female,55-64,0.3250,atus:2025:table-a1:Socializing and communicating
+socializing,female,65+,0.3250,atus:2025:table-a1:Socializing and communicating
+sports_exercise,male,15-24,0.2570,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,male,25-34,0.2570,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,male,35-44,0.2570,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,male,45-54,0.2570,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,male,55-64,0.2570,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,male,65+,0.2570,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,female,15-24,0.2110,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,female,25-34,0.2110,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,female,35-44,0.2110,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,female,45-54,0.2110,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,female,55-64,0.2110,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+sports_exercise,female,65+,0.2110,"atus:2025:table-a1:Participating in sports, exercise, and recreation"
+volunteering,male,15-24,0.0520,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,male,25-34,0.0520,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,male,35-44,0.0520,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,male,45-54,0.0520,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,male,55-64,0.0520,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,male,65+,0.0520,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,female,15-24,0.0540,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,female,25-34,0.0540,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,female,35-44,0.0540,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,female,45-54,0.0540,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,female,55-64,0.0540,atus:2025:table-a1:Volunteering (organizational and civic activities)
+volunteering,female,65+,0.0540,atus:2025:table-a1:Volunteering (organizational and civic activities)
+hobbies_and_games,male,15-24,0.4080,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,male,25-34,0.4080,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,male,35-44,0.4080,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,male,45-54,0.4080,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,male,55-64,0.4080,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,male,65+,0.4080,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,female,15-24,0.4103,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,female,25-34,0.4103,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,female,35-44,0.4103,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,female,45-54,0.4103,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,female,55-64,0.4103,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"
+hobbies_and_games,female,65+,0.4103,"atus:2025:table-a1:Playing games+Computer use for leisure, excluding games+Reading for personal interest+Arts and entertainment (other than sports)"

@@ -212,9 +212,32 @@ def test_build_leisure_cites_a_source_for_every_row() -> None:
             assert dataset in row.source
 
 
-def test_build_leisure_us_points_at_its_own_slice() -> None:
-    with pytest.raises(NotImplementedError, match="ATUS"):
-        build_leisure(Locale.US, fetch=de_fetch)
+def test_the_us_falls_back_to_its_gender_only_prior_for_every_band() -> None:
+    # ATUS publishes activity by sex but not by age, so the six bands must all
+    # carry the same rate — and the table must say so rather than look
+    # age-conditioned. This is the fallback ladder doing its job end to end.
+    rates = _rates(Locale.US, de_fetch)
+    by_band = {
+        band: rates[(LeisureCategory.TV_MEDIA, "male", band)] for band in _AGE_BANDS
+    }
+
+    assert len(set(by_band.values())) == 1  # one prior stretched over every band
+    assert by_band["15-24"] == pytest.approx(0.757)  # the published male figure
+    declared = " ".join(build_leisure(Locale.US, fetch=de_fetch).imputations)
+    assert "not conditioned on both gender and age" in declared
+    assert "gender only" in declared
+
+
+def test_us_hobbies_unions_the_four_rows_atus_publishes_separately() -> None:
+    # ATUS splits what Japan bundles: playing games 18.5%, computer use 14.5%,
+    # reading 13.4% and arts 1.9% for men. Union under independence:
+    # 1 - .815*.855*.866*.981 = 0.4080 — not the 48.3% those rates sum to.
+    row = _rates(Locale.US, de_fetch)[
+        (LeisureCategory.HOBBIES_AND_GAMES, "male", "35-44")
+    ]
+
+    assert row == pytest.approx(0.4080, abs=1e-4)
+    assert row < 0.185 + 0.145 + 0.134 + 0.019
 
 
 def test_write_leisure_round_trips_through_the_committed_csv(tmp_path) -> None:

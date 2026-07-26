@@ -155,6 +155,49 @@ _ESTAT_RATE_LABEL = "行動者率"
 _ESTAT_OTHER_BLOCKS = ("総平均時間", "行動者平均時間")
 _ESTAT_POPULATION_HEADER = "Population 10 years and over (1000)"
 
+# The US is transcribed rather than fetched: BLS publishes Table A-1 only as a
+# PDF and blocks scripted clients, so these are the manually extracted rows D5
+# allows — percentages exactly as printed, each traceable to one table row.
+# ATUS crosses activity with sex but not age; its age tables are unpublished and
+# released only on request, so every band falls back to the gender-only prior.
+_ATUS_CITATION = "atus:2025:table-a1"
+_ATUS_AGE_TOTAL = "TOTAL"
+_ATUS_RATES: dict[str, dict[str, float]] = {
+    "Watching TV": {"male": 75.7, "female": 73.1},
+    "Socializing and communicating": {"male": 28.2, "female": 32.5},
+    "Participating in sports, exercise, and recreation": {
+        "male": 25.7,
+        "female": 21.1,
+    },
+    "Volunteering (organizational and civic activities)": {"male": 5.2, "female": 5.4},
+    "Playing games": {"male": 18.5, "female": 12.3},
+    "Computer use for leisure, excluding games": {"male": 14.5, "female": 14.9},
+    "Reading for personal interest": {"male": 13.4, "female": 18.8},
+    "Arts and entertainment (other than sports)": {"male": 1.9, "female": 2.7},
+}
+
+_ATUS_ACTIVITIES: dict[LeisureCategory, tuple[str, ...]] = {
+    LeisureCategory.TV_MEDIA: ("Watching TV",),
+    LeisureCategory.SOCIALIZING: ("Socializing and communicating",),
+    LeisureCategory.SPORTS_EXERCISE: (
+        "Participating in sports, exercise, and recreation",
+    ),
+    LeisureCategory.VOLUNTEERING: (
+        "Volunteering (organizational and civic activities)",
+    ),
+    LeisureCategory.HOBBIES_AND_GAMES: (
+        "Playing games",
+        "Computer use for leisure, excluding games",
+        "Reading for personal interest",
+        "Arts and entertainment (other than sports)",
+    ),
+}
+
+# Deliberately names a label ATUS does not publish, so every band misses and
+# resolves through the ladder to the gender-only figure rather than pretending
+# to be age-conditioned.
+_ATUS_AGE: dict[_AgeBand, tuple[str, ...]] = {band: (band,) for band in _AGE_BANDS}
+
 _LEISURE_COLUMNS = ["category", "gender", "age_band", "participation_rate", "source"]
 
 
@@ -541,6 +584,44 @@ def _build_japan(fetch: Callable[[str], bytes]) -> LeisureBuildResult:
     )
 
 
+def _build_united_states() -> LeisureBuildResult:
+    """Build the US table from transcribed Table A-1 rows; takes no `fetch`
+    because BLS serves the table only as a PDF, behind bot filtering."""
+    cells = SurveyCells(
+        rates={
+            (gender, _ATUS_AGE_TOTAL, activity): percent / 100
+            for activity, by_gender in _ATUS_RATES.items()
+            for gender, percent in by_gender.items()
+        },
+        populations={},
+        totals=("total", _ATUS_AGE_TOTAL),
+    )
+    rows, levels = _leisure_rows(cells, _ATUS_ACTIVITIES, _ATUS_AGE, _ATUS_CITATION)
+    combined = [
+        category.value
+        for category, activities in _ATUS_ACTIVITIES.items()
+        if len(activities) > 1
+    ]
+    note = _conditioning_note(levels)
+    return LeisureBuildResult(
+        country=Locale.US,
+        rows=rows,
+        imputations=[
+            f"categories built from several ATUS rows ({', '.join(combined)}) take "
+            "the union under independence, 1-prod(1-r), since the same person is "
+            "counted under each row and published rates cannot be added",
+            "figures are transcribed from the published Table A-1 PDF rather than "
+            "fetched: BLS serves no machine-readable copy and blocks scripted "
+            "clients, so a refresh means re-reading the table by hand",
+            "tv_media is television only. Germany and Japan bundle newspapers and "
+            "magazines into it, but ATUS publishes one undifferentiated "
+            "'Reading for personal interest' row that cannot be split, so it is "
+            "counted under hobbies_and_games instead",
+            *([note] if note else []),
+        ],
+    )
+
+
 def build_leisure(
     country: Locale, *, fetch: Callable[[str], bytes]
 ) -> LeisureBuildResult:
@@ -550,10 +631,7 @@ def build_leisure(
         return _build_germany(fetch)
     if country is Locale.JP:
         return _build_japan(fetch)
-    raise NotImplementedError(
-        "US needs ATUS Table A-1, published only as PDF; bls.gov also serves no "
-        "participation rates by age — slice 1b, see issues/006i"
-    )
+    return _build_united_states()
 
 
 def write_leisure(result: LeisureBuildResult, dest_dir: Path) -> None:

@@ -1,0 +1,9 @@
+{
+  "country": "US",
+  "imputations": [
+    "categories built from several ATUS rows (hobbies_and_games) take the union under independence, 1-prod(1-r), since the same person is counted under each row and published rates cannot be added",
+    "figures are transcribed from the published Table A-1 PDF rather than fetched: BLS serves no machine-readable copy and blocks scripted clients, so a refresh means re-reading the table by hand",
+    "tv_media is television only. Germany and Japan bundle newspapers and magazines into it, but ATUS publishes one undifferentiated 'Reading for personal interest' row that cannot be split, so it is counted under hobbies_and_games instead",
+    "some cells are not conditioned on both gender and age (gender only): the survey publishes no finer breakdown, so the coarser published rate stands in as the prior for every band it covers"
+  ]
+}
