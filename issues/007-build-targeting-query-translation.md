@@ -12,8 +12,43 @@ status: open
 Natural-language target description → **structured SQL filters + embedding query** (self-query / query translation — this IS the "advanced RAG" requirement).
 
 - hybrid retrieval: SQL for hard attributes, vector for fuzzy attributes,
-- panel sampling: 100–300 personas, ~80–90% target-matched + 10–20% random **control group**,
+- panel sampling: 100–300 personas, **all target-matched** (see the control-group amendment below),
 - **fixed seed** → reproducible panels.
+
+## Amended 2026-07-26 — no control group in a production panel
+
+The panel was specified as ~80–90% target-matched plus a 10–20% random control.
+**Dropped: a production panel is one target group, and the Bayesian layer reads the
+preference off it.** Controls belong to the testing track — 014's harness — not to
+the product path.
+
+The reason is that the control changes no decision the customer makes. If B wins
+70/30 in the target and also 70/30 in a random panel, the recommendation is still
+"ship B"; the control only annotates the verdict, it never redirects it. Meanwhile
+it costs: those 20–40 votes come out of the target group and widen the credible
+interval on the number actually reported, and at 10–20% of a panel the control's own
+preference is pinned only to roughly ±22 points, so it is a blunt annotation at that.
+
+Two distinctions that were being conflated:
+
+- **Validation control vs. per-test control.** The grounding research endorses a
+  control group *for isolating targeting effects*, and [001](001-decide-persona-schema-and-seed.md)
+  cites it. That is a one-off experiment, already answered at the mechanism level by
+  [014](014-targeting-manipulation-check.md) (32.5% of votes move against an ~11%
+  noise floor), with the full version — the Upworthy study — out of scope on the map.
+  A control in *every* customer test is a weaker rerun of a check already done
+  properly.
+- **The useful comparison is segment vs. segment, not target vs. noise.** "Should I
+  write different copy per audience?" is answered by comparing two target segments,
+  which is a product feature worth building deliberately if wanted. Comparing a
+  target against random strangers answers almost nothing, imprecisely.
+
+Knock-on: [009](009-build-bayesian-layer.md) fits one posterior rather than two;
+[010](010-assemble-orchestrator-graph.md)'s report payload drops its "segment
+breakdown target vs. control"; [002](002-decide-vote-schema.md) is untouched, since
+`VoteRecord` needs no matched/control label. No `control_fraction` parameter either
+— an unused knob in product code is generality with prose for a justification, and
+`experiments/` is where controls live.
 
 ## Amended 2026-07-26 — `culture_tag` lives in code, and here is when that flips
 
