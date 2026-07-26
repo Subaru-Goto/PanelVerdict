@@ -1,7 +1,7 @@
 # Leisure time-use: primary sources (US / JP / DE)
 
 Research date: 2026-07-25. Purpose: ground the leisure profile tables at
-`backend/app/data/leisure/{us,jp,de}.csv` — participation rates and time spent per
+`docs/research/leisure/{us,jp,de}.csv` — participation rates and time spent per
 harmonized category, from national time-use surveys.
 
 The research was commissioned for a hobby-bank weighting scheme that 006i

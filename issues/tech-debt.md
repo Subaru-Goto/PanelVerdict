@@ -9,16 +9,10 @@ behaviour change, git-tracked renames) rather than mixing into feature work.
 
 ## Items
 
-- **Shared pipeline HTTP + CLI helper.** `pipeline/build_leisure._http_fetch` is a
-  near-verbatim copy of `build_oecd._http_fetch` (differing only in headers), and
-  the two `if __name__ == "__main__"` blocks share a shape (`Locale(sys.argv[1])`
-  -> dest dir -> build -> write -> print). `_SEX_CODE` also inverts
-  `build_oecd._sex_to_gender`. Extract a small `pipeline/_sources.py` once the
-  US/JP builders land and the real shape is known (flagged in the 006i slice-1
-  review; deliberately not done mid-slice to avoid churning a merged module).
-  **Downgraded 2026-07-26:** the US/JP builders landed and 006i then closed, so
-  `build_leisure` is frozen — the duplication is now between two modules that
-  nothing is going to extend. Worth doing only if a third builder ever appears.
+- ~~**Shared pipeline HTTP + CLI helper.**~~ Moot 2026-07-26: the duplication was
+  between `build_leisure` and `build_oecd`, and `build_leisure` was deleted when
+  006i closed. `build_oecd` is now the only builder, so there is nothing left to
+  extract into a shared `pipeline/_sources.py`.
 
 - **Module reorg (do after 006f closes).** `app/` is ~18 flat modules mixing two
   subsystems: the offline **pipeline** (`sampler`, `bigfive`, `interests`,
