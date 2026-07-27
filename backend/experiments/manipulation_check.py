@@ -194,7 +194,7 @@ def plan_cells(
 def _vote(llm: PanelLLM, cell: Cell) -> VoteRow:
     for attempt in range(_ATTEMPTS):
         try:
-            output = llm.vote(
+            response = llm.vote(
                 system_prompt=cell.prompt,
                 option_1=cell.options[0],
                 option_2=cell.options[1],
@@ -213,8 +213,8 @@ def _vote(llm: PanelLLM, cell: Cell) -> VoteRow:
         pair_id=cell.pair_id,
         replicate=cell.replicate,
         order=cell.order[0],
-        chosen=resolve_choice(output.chosen, list(cell.order)),
-        reason=output.reason,
+        chosen=resolve_choice(response.output.chosen, list(cell.order)),
+        reason=response.output.reason,
     )
 
 

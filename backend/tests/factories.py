@@ -1,9 +1,32 @@
 """Shared builders for pool-pipeline tests (personas + assembled personas)."""
 
+from typing import Literal
+
 from app.assembly import AssembledPersona
-from app.schemas import BigFive, EducationLevel, Gender, Locale, Persona
+from app.schemas import (
+    BigFive,
+    EducationLevel,
+    Gender,
+    Locale,
+    PanelVoteOutput,
+    Persona,
+)
+from app.vote import VoteResponse
 
 DIM = 1536
+
+
+def voted(
+    chosen: Literal["option_1", "option_2"] = "option_1", reason: str = "stub"
+) -> VoteResponse:
+    """A vote with no usage attached, for the doubles that stand in for a model.
+
+    `usage` is left None rather than filled with plausible token counts: a double that
+    invents numbers puts unsourced figures where a cost assertion might later read them.
+    """
+    return VoteResponse(
+        output=PanelVoteOutput(chosen=chosen, reason=reason), usage=None
+    )
 
 
 def big_five(**scores: float) -> BigFive:

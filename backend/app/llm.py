@@ -1,6 +1,7 @@
-from typing import get_args
+from time import perf_counter
+from typing import Literal, get_args
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
 from app.schemas import (
@@ -17,9 +18,17 @@ from app.schemas import (
     TraitLevel,
     TraitName,
 )
+from app.vote import VoteResponse, VoteUsage
 
 
 VOTE_QUESTION = "Which do you prefer?"
+
+# OpenRouter's documented vocabulary for the GPT-5 series. Named as a closed set because
+# an unrecognised effort is accepted by the request and then silently does nothing, which
+# would read as "this effort makes no difference" rather than as a typo.
+type ReasoningEffort = Literal[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max"
+]
 
 # Held apart from the question so that varying the question cannot reach the
 # positional and content-based-reason instructions. An experiment that reworded those
@@ -106,6 +115,72 @@ def build_target_messages(description: str) -> list[BaseMessage]:
     ]
 
 
+def _numeric(value: object) -> float | None:
+    """A value out of the provider's own JSON, narrowed to a number or refused.
+
+    `bool` is an `int` in Python, so it is excluded explicitly: a `true` where a cost was
+    expected would otherwise total as 1.0 credit.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _vote_usage(raw: AIMessage, seconds: float) -> VoteUsage | None:
+    """What one vote cost, read off the two places the numbers survive.
+
+    The token counts come from `usage_metadata`, which langchain normalizes. `cost` comes
+    from `response_metadata["token_usage"]`, the provider's dict passed through untouched
+    — `UsageMetadata` has no cost field, so the bill reaches us only there. Reading both
+    is deliberate, not redundancy.
+    """
+    usage = raw.usage_metadata
+    if usage is None:
+        return None
+    token_usage = raw.response_metadata.get("token_usage")
+    return VoteUsage(
+        input_tokens=usage["input_tokens"],
+        # Cached input bills at a reduced rate, so it is part of the cost and not only
+        # part of the caching question. `prompt-caching.md` concluded a cache cannot fire
+        # at our prompt size; a run where this is consistently 0 is that conclusion
+        # observed rather than derived from published thresholds.
+        cached_tokens=usage.get("input_token_details", {}).get("cache_read"),
+        output_tokens=usage["output_tokens"],
+        # A provider that did not report reasoning leaves the key out rather than
+        # writing a zero, and the difference is most of the bill.
+        reasoning_tokens=usage.get("output_token_details", {}).get("reasoning"),
+        cost=_numeric(token_usage.get("cost"))
+        if isinstance(token_usage, dict)
+        else None,
+        seconds=seconds,
+    )
+
+
+def _vote_response(result: dict[str, object], *, seconds: float) -> VoteResponse:
+    """Turn `include_raw`'s three-key dict into a vote, or raise.
+
+    `include_raw` stops a parse failure raising on its own — it arrives as
+    `parsing_error` beside a null `parsed`. A caller that read only `parsed` would file
+    the empty result as a real vote, so the raise `vote` already promised is restored
+    here. The message carries the failure's reason rather than the message body: this
+    string reaches `VoteFailure.error` and a log line, and the body can be the model's
+    entire output.
+    """
+    error = result.get("parsing_error")
+    if error is not None:
+        raise RuntimeError(f"panel model returned no structured vote: {error}")
+    parsed = result.get("parsed")
+    if not isinstance(parsed, PanelVoteOutput):
+        raise RuntimeError(
+            f"panel model returned no structured vote: {type(parsed).__name__}"
+        )
+    raw = result.get("raw")
+    return VoteResponse(
+        output=parsed,
+        usage=_vote_usage(raw, seconds) if isinstance(raw, AIMessage) else None,
+    )
+
+
 class OpenRouterPanelLLM:
     """PanelLLM backed by an OpenRouter chat model via LangChain.
 
@@ -120,10 +195,13 @@ class OpenRouterPanelLLM:
         base_url: str,
         model: str,
         question: str = VOTE_QUESTION,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> None:
         # One test asks one question of everybody, so the question is panel
         # configuration rather than vote data. Binding it here keeps it off the
         # PanelLLM protocol, which every caller but 015 would carry for nothing.
+        # Reasoning effort is the same kind of thing: one panel deliberates one way, and
+        # an experimental arm is a separate instance rather than a per-call argument.
         self._question = question
         # No temperature: gpt-5-mini (a reasoning model) rejects any non-default
         # temperature with a 400.
@@ -135,23 +213,39 @@ class OpenRouterPanelLLM:
         # there is a measured latency distribution to set it from — short enough to stop
         # a hung request holding a worker, long enough not to cut off a slow-but-valid
         # reasoning response, is not a guess worth making.
+        # `include_raw` keeps the AIMessage, which is the only way to reach what the
+        # vote cost: the parsed-object form discards it. It rewires the output plumbing
+        # and nothing else — the bound model is identical — so it cannot move a prompt
+        # token, and therefore cannot make 014's and 015's runs incomparable to later
+        # ones.
+        #
+        # `reasoning` and not `reasoning_effort`: langchain passes both through verbatim
+        # on the Chat Completions path, and only the Responses API path renames one into
+        # the other — so on our path the unified object OpenRouter documents is the one
+        # that arrives. Left unset by default because every measurement this project has
+        # was taken at the provider's default effort.
         self._model = ChatOpenAI(
             model=model,
             base_url=base_url,
             api_key=api_key,
             max_retries=2,
-        ).with_structured_output(PanelVoteOutput)
+            reasoning=None
+            if reasoning_effort is None
+            else {"effort": reasoning_effort},
+        ).with_structured_output(PanelVoteOutput, include_raw=True)
 
-    def vote(
-        self, *, system_prompt: str, option_1: str, option_2: str
-    ) -> PanelVoteOutput:
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
         messages = build_vote_messages(
             system_prompt, option_1, option_2, question=self._question
         )
+        started = perf_counter()
         result = self._model.invoke(messages)
-        if not isinstance(result, PanelVoteOutput):
-            raise RuntimeError(f"panel model returned no structured vote: {result!r}")
-        return result
+        seconds = perf_counter() - started
+        if not isinstance(result, dict):
+            raise RuntimeError(
+                f"expected include_raw's dict, got {type(result).__name__}"
+            )
+        return _vote_response(result, seconds=seconds)
 
 
 class OpenRouterTargetTranslator:

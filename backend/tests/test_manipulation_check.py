@@ -8,7 +8,7 @@ from app.bigfive import bigfive_from_levels, bucketize
 from app.config import settings
 from app.llm import VOTE_QUESTION
 from app.panel import render_persona_prompt
-from app.schemas import PanelVoteOutput, TraitLevel
+from app.schemas import TraitLevel
 from experiments.design import (
     ARMS,
     CONTROL_PAIR,
@@ -18,6 +18,7 @@ from experiments.design import (
     TRAITS,
     read_rows,
 )
+from tests.factories import voted
 from experiments.manipulation_check import (
     collect_rows,
     main,
@@ -252,7 +253,7 @@ class StubLLM:
     def vote(self, *, system_prompt: str, option_1: str, option_2: str):
         with self._lock:
             self.prompts.append(system_prompt)
-        return PanelVoteOutput(chosen="option_1", reason="stub")
+        return voted()
 
 
 class ContentVoter:
@@ -261,7 +262,7 @@ class ContentVoter:
 
     def vote(self, *, system_prompt: str, option_1: str, option_2: str):
         chosen = "option_1" if option_1 < option_2 else "option_2"
-        return PanelVoteOutput(chosen=chosen, reason=f"{len(system_prompt)}")
+        return voted(chosen, f"{len(system_prompt)}")
 
 
 class FlakyVoter:
@@ -276,7 +277,7 @@ class FlakyVoter:
             if self.remaining > 0:
                 self.remaining -= 1
                 raise RuntimeError("429 rate limited")
-        return PanelVoteOutput(chosen="option_1", reason="stub")
+        return voted()
 
 
 class TestPlanCells:

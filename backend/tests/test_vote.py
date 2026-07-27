@@ -6,7 +6,15 @@ import pytest
 from app.bigfive import bigfive_from_levels
 from app.panel import render_persona_prompt
 from app.schemas import PanelVoteOutput, Persona, TraitLevel
-from app.vote import collect_panel_votes, presentation_orders, resolve_choice
+from app.vote import (
+    VoteResponse,
+    VoteUsage,
+    collect_panel_votes,
+    presentation_orders,
+    resolve_choice,
+    total_usage,
+)
+from tests.factories import voted
 
 
 def _persona(pid: str, *, age: int = 30) -> Persona:
@@ -165,12 +173,10 @@ class FailingOnAge:
     def __init__(self, age: int) -> None:
         self._age = age
 
-    def vote(
-        self, *, system_prompt: str, option_1: str, option_2: str
-    ) -> PanelVoteOutput:
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
         if f"{self._age}-year-old" in system_prompt:
             raise RuntimeError("no structured vote")
-        return PanelVoteOutput(chosen="option_1", reason="stub")
+        return voted()
 
 
 def test_a_failed_vote_costs_that_panelist_and_no_other() -> None:
@@ -199,9 +205,9 @@ def test_the_votes_are_cast_concurrently() -> None:
     class Rendezvous:
         def vote(
             self, *, system_prompt: str, option_1: str, option_2: str
-        ) -> PanelVoteOutput:
+        ) -> VoteResponse:
             barrier.wait(timeout=5)
-            return PanelVoteOutput(chosen="option_1", reason="stub")
+            return voted()
 
     votes = collect_panel_votes(
         test_id="t1",
@@ -218,10 +224,8 @@ class EchoingThePrompt:
     """Answers with the prompt it was given, so a record can be checked against the
     panelist it belongs to."""
 
-    def vote(
-        self, *, system_prompt: str, option_1: str, option_2: str
-    ) -> PanelVoteOutput:
-        return PanelVoteOutput(chosen="option_1", reason=system_prompt)
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+        return voted(reason=system_prompt)
 
 
 def test_every_record_carries_the_vote_its_own_panelist_cast() -> None:
@@ -262,3 +266,115 @@ def test_collect_panel_votes_requires_exactly_two_variants(
             panel=[],
             llm=stub_llm(chosen="option_1"),
         )
+
+
+class ReportingItsOwnAge:
+    """Reports usage whose token count is the age in the prompt it was handed, so a
+    usage figure can be traced back to the panelist it was billed for."""
+
+    def __init__(self, refuse_age: int | None = None) -> None:
+        self._refuse_age = refuse_age
+
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+        age = int(system_prompt.split("-year-old")[0].split()[-1])
+        if age == self._refuse_age:
+            raise RuntimeError("no structured vote")
+        return VoteResponse(
+            output=PanelVoteOutput(chosen="option_1", reason="stub"),
+            usage=VoteUsage(
+                input_tokens=age,
+                cached_tokens=None,
+                output_tokens=1,
+                reasoning_tokens=None,
+                cost=None,
+                seconds=0.0,
+            ),
+        )
+
+
+def test_each_usage_figure_stays_with_the_vote_it_was_billed_for() -> None:
+    """The same defect the presentation order has: usage collected as it arrives and
+    zipped back onto the panel gives every record a real cost that belongs to someone
+    else. The totals would be identical, so nothing downstream could notice — only the
+    pairing can."""
+    panel = _aged_panel(6)
+
+    votes = collect_panel_votes(
+        test_id="t1",
+        variants={"vA": "a", "vB": "b"},
+        panel=panel,
+        llm=ReportingItsOwnAge(),
+        concurrency=len(panel),
+    )
+
+    ages = {p.id: p.age for p in panel}
+    assert [u.input_tokens for u in votes.usage] == [
+        ages[r.persona_id] for r in votes.records
+    ]
+
+
+def test_a_failed_vote_leaves_no_usage_hole_to_shift_the_rest() -> None:
+    """A refused panelist is absent from `records`, so it must be absent from `usage`
+    too. Keeping a placeholder would offset every figure after it by one and bill the
+    wrong panelist for the rest of the panel."""
+    panel = _aged_panel(5)
+
+    votes = collect_panel_votes(
+        test_id="t1",
+        variants={"vA": "a", "vB": "b"},
+        panel=panel,
+        llm=ReportingItsOwnAge(refuse_age=33),
+    )
+
+    assert len(votes.failures) == 1
+    assert len(votes.usage) == len(votes.records) == 4
+    assert [u.input_tokens for u in votes.usage] == [30, 31, 32, 34]
+
+
+def test_totals_report_how_many_votes_each_sum_covers() -> None:
+    """A sum over the votes that reported a field is a partial figure. Reporting it
+    without its count is how a run gets planned against a number that is quietly too
+    small — and reasoning is both the largest term and the one most likely to be
+    missing."""
+    usage = [
+        VoteUsage(
+            input_tokens=300,
+            cached_tokens=0,
+            output_tokens=80,
+            reasoning_tokens=192,
+            cost=0.001,
+            seconds=1.0,
+        ),
+        VoteUsage(
+            input_tokens=310,
+            cached_tokens=None,
+            output_tokens=90,
+            reasoning_tokens=None,
+            cost=None,
+            seconds=2.0,
+        ),
+        None,
+    ]
+
+    totals = total_usage(usage)
+
+    assert totals.votes == 3
+    assert totals.usage_reported == 2
+    assert totals.input_tokens == 610
+    # One vote reported no cache figure at all; the other reported a real zero. A total
+    # of 0 over one vote and a total of 0 over two are different claims.
+    assert (totals.cached_tokens, totals.cached_reported) == (0, 1)
+    assert totals.output_tokens == 170
+    assert totals.reasoning_tokens == 192
+    assert totals.reasoning_reported == 1
+    assert totals.cost == 0.001
+    assert totals.cost_reported == 1
+
+
+def test_totals_of_a_run_that_reported_nothing_are_zero_not_absent() -> None:
+    totals = total_usage([None, None])
+
+    assert totals.votes == 2
+    assert totals.usage_reported == 0
+    assert totals.reasoning_tokens == 0
+    assert totals.cost == 0.0
