@@ -128,5 +128,7 @@ measured is a guess, and this run is cheap.
 
 ## What this does not cover
 
-Whether the *retrieved panel* matches the target — that is
-[017](017-retrieval-relevance.md). This ticket stops at the struct.
+Whether the *retrieved panel* matches the target. After
+[017](017-representative-sampling.md) that is exact by construction — trait levels become
+`WHERE` clauses on the trait columns — so there is nothing probabilistic left to measure
+on that side. This ticket stops at the struct, which is where the judgement lives.
