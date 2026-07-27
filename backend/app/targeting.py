@@ -200,13 +200,16 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
             )
         )
     if countries:
-        # Stated unconditionally, and in code, so that whatever the translator did
-        # with the description the customer still learns which countries voted. The
-        # substitutions above are model-dependent; this is not. A target naming a
-        # place the pool cannot resolve finer than its country — a state, a city —
-        # would otherwise be told only that the place was dropped, never that it was
-        # answered with the whole country.
-        notices.append(_reading(f"Panel drawn from {_named(countries)}."))
+        # Stated in code, so that whatever the translator did with the description
+        # the customer still learns which countries were in scope. A place the pool
+        # cannot resolve below its country — a state, a city — would otherwise be
+        # reported only as dropped, never as answered with the whole country.
+        #
+        # Phrased as the scope searched rather than the panel drawn, because nothing
+        # here knows whether anyone matched: the age span may be empty and the
+        # remaining filters may exclude everybody. Claiming a panel would put a
+        # notice about something that did not happen next to the warning saying so.
+        notices.append(_reading(f"Matched against panelists in {_named(countries)}."))
     else:
         notices.append(_warn(_NO_MATCH))
 

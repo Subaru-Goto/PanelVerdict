@@ -76,9 +76,10 @@ A panelist carries exactly these attributes and nothing else:
 Rules:
 1. Record every place the description mentions in `regions`, using the country's \
 ISO 3166-1 alpha-2 code even when that country is not in the list above. Never \
-substitute a country we have for one we do not. Set `culture_tag` to the coarse \
-bucket the place belongs to ({_listed([tag.value for tag in CultureTag])}), or leave \
-it null if the place spans both or names no place at all.
+substitute a country we have for one we do not. Always set `culture_tag` to the \
+coarse bucket the place belongs to ({_listed([tag.value for tag in CultureTag])}) — \
+it is what lets an unlisted country be approximated at all, so leave it null only \
+when the place genuinely spans both buckets.
 2. A place narrower than a country — a state, province, city or neighbourhood — \
 goes in `regions` under its country AND in `unmapped`, because panelists carry no \
 geography finer than a country and a panel drawn for the whole country is not the \
