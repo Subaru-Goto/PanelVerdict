@@ -146,13 +146,47 @@ adaptive stopping may terminate a run. Keeping early stopping is therefore the r
 to take the HDI. It is a bounded numeric optimisation over a unimodal density, and it
 is testable against the property that defines it.
 
-### Stopping threshold: P >= 0.99
+### Adaptive stopping fires on the *verdict*, not on P
+
+Amended again 2026-07-27, before slice 4 was built. The natural reading of this
+ticket's "stop at the P-threshold" disagrees with its own ROPE verdict
+**systematically at every panel size**:
+
+| n | first k reaching P >= 0.99 | P | HDI | ROPE verdict |
+|---|---|---|---|---|
+| 200 | 117 | 0.9919 | [0.516, 0.652] | undecided |
+| 400 | 224 | 0.9918 | [0.511, 0.608] | undecided |
+| 800 | 433 | 0.9902 | [0.507, 0.576] | undecided |
+| 1600 | 847 | 0.9906 | [0.505, 0.554] | undecided |
+
+So a run stopping the moment P crosses the bar stops and then reports *inconclusive*.
+The votes are spent, the criterion is met, and the customer gets no answer.
+
+The two rules ask different questions. `P(p > 0.5) >= 0.99` asks whether B is ahead
+**at all**; the HDI against the ROPE asks whether B is ahead **by enough to matter**.
+The second is strictly stronger, so it needs more evidence, so stopping on the weaker
+one guarantees the stronger one is sometimes unmet.
+
+**Stop when the ROPE rule returns either definite answer — decisive *or* practical
+tie — or the budget cap is reached.** Both are actionable, which is the property a
+stopping rule should have: terminate when there is something useful to say.
+
+This also fixes the opposite failure. On a genuine tie, P hovers near 0.5 and never
+crosses, so a P-based rule can *never* stop early on exactly the tests whose answer
+was available soonest — it would spend the whole budget establishing a tie the ROPE
+could have declared at a fraction of it.
+
+`P >= 0.99` stays as a reported number and keeps the sign-off below. It is no longer
+the trigger.
+
+### Reported confidence threshold: P >= 0.99
 
 Signed off 2026-07-27 (not a sourced constant — a product decision, recorded here so
 it is not mistaken for one). 0.95 was rejected: [015](015-task-framing-sensitivity.md)
 put `P(B>A)` at 1.000000 on a lever that published field data says does nothing to
 readers, so a 95% bar buys little protection against a confidently biased panel.
-Given how fast P moves, 0.99 costs few extra votes.
+Given how fast P moves, 0.99 costs few extra votes. See the amendment above for why
+this threshold is reported rather than used to terminate a run.
 
 ### The payload names a probability, never a winner
 
@@ -173,3 +207,8 @@ It also costs nothing, since adaptive stopping already computes a posterior per 
 But it constrains this ticket's API: if the stopping function returns only a decision
 and a final summary, the stream has nothing to animate and it would be retrofitted.
 Return the sequence.
+
+
+Reading guide for all of the above, with worked numbers from the shipped
+implementation: [`docs/reading-the-posterior.md`](../docs/reading-the-posterior.md).
+[011](011-build-report-ui.md)'s copy should be written from it.
