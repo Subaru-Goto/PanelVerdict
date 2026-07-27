@@ -5,6 +5,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
 from app.llm import build_target_messages
+from app.panel import render_trait_phrases
+from app.targeting import TargetQuery, resolve_target
 from app.schemas import (
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
@@ -14,9 +16,11 @@ from app.schemas import (
     EducationLevel,
     IncomeBand,
     Locale,
+    RequestedRegion,
     TargetRequest,
     TraitLevel,
     TraitName,
+    TraitRequest,
 )
 
 
@@ -94,3 +98,220 @@ def test_an_inverted_age_range_is_rejected() -> None:
 
 def test_an_age_range_of_one_year_is_allowed() -> None:
     assert TargetRequest(min_age=40, max_age=40).max_age == 40
+
+
+def _warnings(query: TargetQuery) -> list[str]:
+    return [n.message for n in query.notices if n.severity == "warning"]
+
+
+def _readings(query: TargetQuery) -> list[str]:
+    return [n.message for n in query.notices if n.severity == "reading"]
+
+
+def test_a_seeded_country_resolves_with_no_warning() -> None:
+    query = resolve_target(
+        TargetRequest(regions=[RequestedRegion(label="Japan", country_code="JP")])
+    )
+
+    assert query.countries == (Locale.JP,)
+    assert _warnings(query) == []
+
+
+def test_a_lowercase_country_code_still_resolves() -> None:
+    query = resolve_target(
+        TargetRequest(regions=[RequestedRegion(label="Germany", country_code="de")])
+    )
+
+    assert query.countries == (Locale.DE,)
+
+
+def test_an_unseeded_country_falls_back_to_its_culture_tag_and_says_so() -> None:
+    """The ticket's own example. Japan is a weak proxy for China, so the
+    substitution has to reach the customer or the panel reads as China's."""
+    query = resolve_target(
+        TargetRequest(
+            regions=[
+                RequestedRegion(
+                    label="China", country_code="CN", culture_tag=CultureTag.ASIAN
+                )
+            ]
+        )
+    )
+
+    assert query.countries == (Locale.JP,)
+    (warning,) = _warnings(query)
+    assert "China" in warning
+    assert "Japan" in warning
+
+
+def test_a_multi_country_label_falls_back_on_its_tag_alone() -> None:
+    """ "Europe" names no single country, so the country rung cannot apply — but the
+    coarse rung still can, and that is the ladder's whole point."""
+    query = resolve_target(
+        TargetRequest(
+            regions=[RequestedRegion(label="Europe", culture_tag=CultureTag.WESTERN)]
+        )
+    )
+
+    assert query.countries == (Locale.US, Locale.DE)
+    assert len(_warnings(query)) == 1
+
+
+def test_a_region_off_the_ladder_entirely_yields_no_coverage() -> None:
+    """An empty panel is the honest outcome; a fabricated one is not."""
+    query = resolve_target(
+        TargetRequest(regions=[RequestedRegion(label="Nigeria", country_code="NG")])
+    )
+
+    assert query.countries == ()
+    assert "Nigeria" in _warnings(query)[0]
+
+
+def test_a_partly_covered_target_keeps_what_it_can_and_warns_about_the_rest() -> None:
+    query = resolve_target(
+        TargetRequest(
+            regions=[
+                RequestedRegion(label="the US", country_code="US"),
+                RequestedRegion(label="Nigeria", country_code="NG"),
+            ]
+        )
+    )
+
+    assert query.countries == (Locale.US,)
+    assert len(_warnings(query)) == 1
+
+
+def test_naming_no_region_draws_from_every_seeded_country() -> None:
+    """Empty `countries` has to mean "no coverage", so the global rung fills them in
+    explicitly rather than leaving the filter off — otherwise the two cases would be
+    the same value and retrieval could not tell them apart."""
+    query = resolve_target(TargetRequest())
+
+    assert set(query.countries) == set(Locale)
+    assert _warnings(query) == []
+    assert len(_readings(query)) == 1
+
+
+def test_one_country_reached_twice_appears_once() -> None:
+    query = resolve_target(
+        TargetRequest(
+            regions=[
+                RequestedRegion(label="Japan", country_code="JP"),
+                RequestedRegion(
+                    label="China", country_code="CN", culture_tag=CultureTag.ASIAN
+                ),
+            ]
+        )
+    )
+
+    assert query.countries == (Locale.JP,)
+
+
+def test_an_age_range_outside_the_pool_is_narrowed_and_flagged() -> None:
+    query = resolve_target(TargetRequest(min_age=13, max_age=30))
+
+    assert (query.min_age, query.max_age) == (MIN_PERSONA_AGE, 30)
+    assert len(_warnings(query)) == 1
+
+
+def test_an_age_range_the_pool_covers_passes_through_silently() -> None:
+    query = resolve_target(TargetRequest(min_age=40, max_age=49))
+
+    assert (query.min_age, query.max_age) == (40, 49)
+    assert _warnings(query) == []
+
+
+def test_an_unbounded_age_request_takes_the_pool_s_own_bounds() -> None:
+    query = resolve_target(TargetRequest())
+
+    assert (query.min_age, query.max_age) == (MIN_PERSONA_AGE, MAX_PERSONA_AGE)
+    assert _warnings(query) == []
+
+
+def test_an_age_range_the_pool_cannot_reach_at_all_is_left_empty() -> None:
+    """Clamping "under 18" leaves 18-17, which matches nobody. That is the right
+    answer, and it must not be widened into "everybody" by dropping the filter."""
+    query = resolve_target(TargetRequest(min_age=13, max_age=17))
+
+    assert query.min_age > query.max_age
+    assert len(_warnings(query)) == 1
+
+
+def test_income_bands_expand_into_the_quintiles_they_cover() -> None:
+    query = resolve_target(TargetRequest(income_bands=["lower", "upper"]))
+
+    assert query.income_quintiles == (1, 2, 4, 5)
+
+
+def test_no_income_band_means_no_income_filter() -> None:
+    assert resolve_target(TargetRequest()).income_quintiles == ()
+
+
+def test_traits_render_into_the_summary_s_own_words() -> None:
+    query = resolve_target(
+        TargetRequest(
+            traits=[
+                TraitRequest(
+                    trait="neuroticism",
+                    level=TraitLevel.HIGH,
+                    source_phrase="cautious",
+                )
+            ]
+        )
+    )
+
+    assert query.disposition == render_trait_phrases({"neuroticism": TraitLevel.HIGH})
+
+
+def test_a_target_with_no_traits_has_no_vector_half() -> None:
+    assert resolve_target(TargetRequest()).disposition == ""
+
+
+def test_the_trait_reading_is_shown_back_with_the_words_it_came_from() -> None:
+    query = resolve_target(
+        TargetRequest(
+            traits=[
+                TraitRequest(
+                    trait="conscientiousness",
+                    level=TraitLevel.HIGH,
+                    source_phrase="budget-conscious",
+                )
+            ]
+        )
+    )
+
+    (reading,) = [m for m in _readings(query) if "conscientiousness" in m]
+    assert "budget-conscious" in reading
+    assert "high" in reading
+
+
+def test_one_trait_named_twice_keeps_the_first_and_warns() -> None:
+    """A contradictory target is exactly where a silent last-wins would mislead."""
+    query = resolve_target(
+        TargetRequest(
+            traits=[
+                TraitRequest(
+                    trait="extraversion",
+                    level=TraitLevel.HIGH,
+                    source_phrase="outgoing",
+                ),
+                TraitRequest(
+                    trait="extraversion", level=TraitLevel.LOW, source_phrase="private"
+                ),
+            ]
+        )
+    )
+
+    assert query.disposition == render_trait_phrases({"extraversion": TraitLevel.HIGH})
+    assert "extraversion" in _warnings(query)[0]
+
+
+def test_an_unmappable_attribute_is_warned_about_not_dropped() -> None:
+    """The ticket's rule: an out-of-coverage attribute is surfaced exactly like an
+    out-of-coverage region, because a panel matched on the remaining words looks
+    targeted and is not."""
+    query = resolve_target(TargetRequest(unmapped=["gamers", "vegan"]))
+
+    (warning,) = _warnings(query)
+    assert "gamers" in warning
+    assert "vegan" in warning
