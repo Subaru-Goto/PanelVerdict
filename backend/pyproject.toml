@@ -1,7 +1,7 @@
 [project]
 name = "panelverdict-backend"
 version = "0.1.0"
-description = "PanelVerdict backend — FastAPI API + (later) LangGraph orchestrator and panel pipeline."
+description = "PanelVerdict backend — FastAPI API + (later) the orchestrator and panel pipeline."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

@@ -1,6 +1,6 @@
 # PanelVerdict — backend
 
-FastAPI service (later: LangGraph orchestrator + panel pipeline).
+FastAPI service (later: the orchestrator + panel pipeline).
 
 ## Local dev
 
