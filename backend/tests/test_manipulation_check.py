@@ -1,13 +1,26 @@
+import json
+import sys
 from threading import Lock
 
 import pytest
 
 from app.bigfive import bigfive_from_levels, bucketize
+from app.config import settings
+from app.llm import VOTE_QUESTION
 from app.panel import render_persona_prompt
 from app.schemas import PanelVoteOutput, TraitLevel
-from experiments.design import ARMS, PAIRS, TRAITS
+from experiments.design import (
+    ARMS,
+    CONTROL_PAIR,
+    DEFAULT_FRAMING,
+    FRAMINGS,
+    PAIRS,
+    TRAITS,
+    read_rows,
+)
 from experiments.manipulation_check import (
     collect_rows,
+    main,
     plan_cells,
     render_arm,
     sweep_personas,
@@ -105,12 +118,128 @@ class TestPairs:
     def test_every_swept_trait_has_a_loaded_pair(self):
         assert {pair.trait for pair in PAIRS if pair.trait} == set(TRAITS)
 
-    def test_exactly_one_positive_control(self):
-        assert sum(1 for pair in PAIRS if pair.trait is None) == 1
+    def test_the_comprehension_control_is_found_by_role_not_by_absent_trait(self):
+        """015's four published-lever pairs also carry no trait.
+
+        CONTROL_PAIR used to resolve as "the pair without a trait", which with more
+        than one untraited pair returns whichever happens to be listed first. The
+        comprehension check and the noise-floor exclusion would then both read off
+        the wrong stimulus, and nothing would raise.
+        """
+        assert sum(1 for pair in PAIRS if pair.role == "comprehension") == 1
+        assert CONTROL_PAIR == "control"
+
+    def test_the_trait_role_is_exactly_the_set_of_pairs_carrying_a_trait(self):
+        for pair in PAIRS:
+            assert (pair.role == "trait") == (pair.trait is not None)
+
+    def test_a_published_direction_carries_its_source_and_an_authored_one_does_not(
+        self,
+    ):
+        """`grounding` is None exactly where we authored the direction ourselves, so
+        which predictions are unsourced is visible in the data, not just a docstring."""
+        for pair in PAIRS:
+            sourced = pair.role in ("published", "published_null")
+            assert bool(pair.grounding) == sourced, pair.id
 
     def test_options_are_distinct_and_ids_unique(self):
         assert len({pair.id for pair in PAIRS}) == len(PAIRS)
         assert all(pair.predicted_high != pair.predicted_low for pair in PAIRS)
+
+
+class TestDryRun:
+    """`plan_cells` is pure so a design can be judged before it is paid for, but
+    until now there was no way to see it without starting the run."""
+
+    def _argv(self, *extra: str) -> list[str]:
+        return [
+            "manipulation_check",
+            "--replicates",
+            "1",
+            "--traits",
+            "openness",
+            "--arms",
+            "traits_5",
+            "--pairs",
+            "control",
+            *extra,
+        ]
+
+    def test_it_prints_the_vote_count_and_calls_nothing(self, monkeypatch, capsys):
+        def fail(*args, **kwargs):
+            raise AssertionError("a dry run must not construct a client")
+
+        monkeypatch.setattr(sys, "argv", self._argv("--dry-run"))
+        monkeypatch.setattr("experiments.manipulation_check.OpenRouterPanelLLM", fail)
+        main()
+
+        # 3 framings x 5 levels x 1 pair x 1 replicate x 2 orders
+        assert "30 votes" in capsys.readouterr().out
+
+    def test_it_does_not_need_an_api_key(self, monkeypatch):
+        """The whole point is to size a run for free, including before the panel
+        is configured at all."""
+        monkeypatch.setattr(sys, "argv", self._argv("--dry-run"))
+        monkeypatch.setattr(settings, "openrouter_api_key", None)
+        main()
+
+    def test_without_the_flag_a_missing_key_still_stops_the_run(
+        self, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(sys, "argv", self._argv())
+        monkeypatch.setattr(settings, "openrouter_api_key", None)
+        with pytest.raises(SystemExit):
+            main()
+        assert "30 votes" in capsys.readouterr().out
+
+
+class TestVoteRowCompatibility:
+    def test_a_row_collected_before_015_still_parses(self, tmp_path):
+        """014's 5,400 votes are on disk without a `framing` field and cost real
+        money. They read back as the shipped framing, which is what they were
+        actually cast under."""
+        path = tmp_path / "old.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "arm": "traits_5",
+                    "trait": "openness",
+                    "level": "medium",
+                    "persona_id": "openness-medium",
+                    "pair_id": "openness",
+                    "replicate": 0,
+                    "order": "predicted_high",
+                    "chosen": "predicted_high",
+                    "reason": "",
+                }
+            )
+            + "\n"
+        )
+        assert read_rows(path)[0].framing == DEFAULT_FRAMING.id
+
+
+class TestFramings:
+    def test_the_baseline_framing_is_the_shipped_question(self):
+        """design.py must stay free of langchain — analysis.py imports it and is
+        pure — so the question is duplicated here rather than imported from app.llm.
+        This is the tripwire that stops the duplicate drifting into a silent fourth
+        framing, which would make the baseline arm measure nothing.
+        """
+        assert DEFAULT_FRAMING.question == VOTE_QUESTION
+        assert DEFAULT_FRAMING in FRAMINGS
+
+    def test_ids_and_questions_are_unique(self):
+        assert len({framing.id for framing in FRAMINGS}) == len(FRAMINGS)
+        assert len({framing.question for framing in FRAMINGS}) == len(FRAMINGS)
+
+
+def _rows(*, llm, **kwargs):
+    """Collect with one client serving every framing.
+
+    Framing is not the subject of most of these tests, and routing it per client
+    is what `TestFraming` covers on its own.
+    """
+    return collect_rows(llms={framing.id: llm for framing in FRAMINGS}, **kwargs)
 
 
 class StubLLM:
@@ -153,7 +282,16 @@ class FlakyVoter:
 class TestPlanCells:
     def test_the_plan_covers_every_cell_before_a_single_call_is_paid_for(self):
         cells = plan_cells(traits=["openness"], replicates=2)
-        assert len(cells) == len(ARMS) * len(TraitLevel) * len(PAIRS) * 2 * 2
+        expected = len(FRAMINGS) * len(ARMS) * len(TraitLevel) * len(PAIRS) * 2 * 2
+        assert len(cells) == expected
+
+    def test_framing_changes_the_question_and_nothing_about_the_persona(self):
+        cells = plan_cells(traits=["openness"], replicates=1, arms=("traits_5",))
+        by_framing: dict[str, set[str]] = {}
+        for cell in cells:
+            by_framing.setdefault(cell.framing, set()).add(cell.prompt)
+        assert set(by_framing) == {framing.id for framing in FRAMINGS}
+        assert len(set(map(frozenset, by_framing.values()))) == 1
 
     def test_options_are_carried_in_presentation_order(self):
         for cell in plan_cells(traits=["openness"], replicates=1):
@@ -174,14 +312,14 @@ class TestPlanCells:
 class TestCollectRows:
     def test_one_row_per_arm_persona_pair_replicate_and_order(self):
         llm = StubLLM()
-        rows = collect_rows(llm=llm, traits=["openness"], replicates=2)
-        expected = len(ARMS) * len(TraitLevel) * len(PAIRS) * 2 * 2
+        rows = _rows(llm=llm, traits=["openness"], replicates=2)
+        expected = len(FRAMINGS) * len(ARMS) * len(TraitLevel) * len(PAIRS) * 2 * 2
         assert len(rows) == expected
         assert len(llm.prompts) == expected
 
     def test_every_persona_sees_both_orders_in_every_cell(self):
         """Position bias must not be able to masquerade as a trait effect."""
-        rows = collect_rows(llm=StubLLM(), traits=["openness"], replicates=1)
+        rows = _rows(llm=StubLLM(), traits=["openness"], replicates=1)
         cells: dict[tuple[str, str, str, int], set[str]] = {}
         for row in rows:
             key = (row.arm, row.persona_id, row.pair_id, row.replicate)
@@ -191,7 +329,7 @@ class TestCollectRows:
         )
 
     def test_rows_carry_the_cell_they_came_from(self):
-        rows = collect_rows(llm=StubLLM(), traits=["openness"], replicates=1)
+        rows = _rows(llm=StubLLM(), traits=["openness"], replicates=1)
         row = rows[0]
         assert row.arm in ARMS
         assert row.trait == "openness"
@@ -201,39 +339,71 @@ class TestCollectRows:
 
     def test_a_position_fixed_voter_splits_evenly_because_order_alternates(self):
         """Counterbalancing is the reason a positional bias can't fake an effect."""
-        rows = collect_rows(llm=StubLLM(), traits=["openness"], replicates=2)
+        rows = _rows(llm=StubLLM(), traits=["openness"], replicates=2)
         chosen = [row.chosen for row in rows]
         assert chosen.count("predicted_high") == chosen.count("predicted_low")
 
     def test_the_prompt_actually_varies_by_arm(self):
         llm = StubLLM()
-        collect_rows(llm=llm, traits=["openness"], replicates=1)
+        _rows(llm=llm, traits=["openness"], replicates=1)
         assert len(set(llm.prompts)) > len(TraitLevel)
+
+
+class TestFraming:
+    def test_each_framing_votes_through_its_own_client(self):
+        """The question is bound per client, so routing is the whole mechanism.
+
+        A cell sent to the wrong client is labelled with one framing and asked
+        another's question — an undetectable mislabelling in the collected file.
+        """
+        llms = {framing.id: StubLLM() for framing in FRAMINGS}
+        rows = collect_rows(
+            llms=llms, traits=["openness"], replicates=1, arms=("traits_5",)
+        )
+
+        per_framing = len(rows) // len(FRAMINGS)
+        assert {name: len(stub.prompts) for name, stub in llms.items()} == {
+            framing.id: per_framing for framing in FRAMINGS
+        }
+        assert {row.framing for row in rows} == set(llms)
+
+    def test_a_framing_with_no_client_fails_before_anything_is_paid_for(self):
+        with pytest.raises(KeyError):
+            collect_rows(
+                llms={DEFAULT_FRAMING.id: StubLLM()},
+                traits=["openness"],
+                replicates=1,
+                arms=("traits_5",),
+                pairs=(PAIRS[0],),
+            )
 
 
 class TestConcurrency:
     def test_workers_change_the_wall_clock_and_nothing_else(self):
         """Row order must not depend on completion order, or two runs of the same
         design would produce different files and be hard to diff."""
-        sequential = collect_rows(llm=ContentVoter(), traits=["openness"], replicates=2)
-        concurrent = collect_rows(
+        sequential = _rows(llm=ContentVoter(), traits=["openness"], replicates=2)
+        concurrent = _rows(
             llm=ContentVoter(), traits=["openness"], replicates=2, workers=4
         )
         assert concurrent == sequential
 
     def test_every_cell_is_still_voted_on_exactly_once(self):
         llm = StubLLM()
-        rows = collect_rows(llm=llm, traits=["openness"], replicates=1, workers=4)
+        rows = _rows(llm=llm, traits=["openness"], replicates=1, workers=4)
         assert len(llm.prompts) == len(rows)
         assert len(
-            {(r.arm, r.persona_id, r.pair_id, r.replicate, r.order) for r in rows}
+            {
+                (r.framing, r.arm, r.persona_id, r.pair_id, r.replicate, r.order)
+                for r in rows
+            }
         ) == len(rows)
 
     def test_a_transient_failure_is_retried_rather_than_losing_the_run(
         self, monkeypatch
     ):
         monkeypatch.setattr("experiments.manipulation_check.sleep", lambda _: None)
-        rows = collect_rows(
+        rows = _rows(
             llm=FlakyVoter(failures=2),
             traits=["openness"],
             replicates=1,
@@ -241,12 +411,12 @@ class TestConcurrency:
             pairs=(PAIRS[0],),
             workers=2,
         )
-        assert len(rows) == len(TraitLevel) * 2
+        assert len(rows) == len(FRAMINGS) * len(TraitLevel) * 2
 
     def test_a_persistent_failure_still_surfaces(self, monkeypatch):
         monkeypatch.setattr("experiments.manipulation_check.sleep", lambda _: None)
         with pytest.raises(RuntimeError, match="429"):
-            collect_rows(
+            _rows(
                 llm=FlakyVoter(failures=1000),
                 traits=["openness"],
                 replicates=1,

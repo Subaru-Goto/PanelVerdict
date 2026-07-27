@@ -6,7 +6,9 @@ from app.schemas import TraitLevel
 from experiments.analysis import (
     control_share,
     flip_rate,
+    format_report,
     gradient,
+    lever_results,
     noise_floor,
     position_bias,
 )
@@ -31,12 +33,17 @@ def row(**overrides) -> VoteRow:
 
 
 def sweep_rows(
-    shares: dict[TraitLevel, int], *, n: int, arm: str = "traits_5"
+    shares: dict[TraitLevel, int],
+    *,
+    n: int,
+    arm: str = "traits_5",
+    framing: str = "preference",
 ) -> list[VoteRow]:
     """n votes per level, `shares[level]` of them for predicted_high."""
     return [
         row(
             arm=arm,
+            framing=framing,
             level=level.value,
             persona_id=f"openness-{level.value}",
             replicate=index,
@@ -90,7 +97,7 @@ class TestFlipRate:
         rows = sweep_rows({TraitLevel.MEDIUM: 2}, n=2) + sweep_rows(
             {TraitLevel.MEDIUM: 2}, n=2, arm="demographics"
         )
-        assert flip_rate(rows, "demographics", "traits_5") == 0.0
+        assert flip_rate(rows, dimension="arm", a="demographics", b="traits_5") == 0.0
 
     def test_flips_are_counted_per_matched_vote_not_per_margin(self):
         """The point of pairing: identical margins, every vote flipped."""
@@ -100,7 +107,7 @@ class TestFlipRate:
             row(arm="demographics", replicate=0, chosen=LOW),
             row(arm="demographics", replicate=1, chosen=HIGH),
         ]
-        assert flip_rate(rows, "demographics", "traits_5") == 1.0
+        assert flip_rate(rows, dimension="arm", a="demographics", b="traits_5") == 1.0
 
     def test_unmatched_cells_are_rejected_rather_than_silently_dropped(self):
         rows = [
@@ -108,7 +115,7 @@ class TestFlipRate:
             row(arm="demographics", persona_id="openness-high"),
         ]
         with pytest.raises(ValueError, match="do not line up"):
-            flip_rate(rows, "demographics", "traits_5")
+            flip_rate(rows, dimension="arm", a="demographics", b="traits_5")
 
     def test_the_control_pair_cannot_dilute_the_flip_rate(self):
         rows = [
@@ -117,7 +124,7 @@ class TestFlipRate:
             row(arm="traits_5", pair_id="control", chosen=HIGH),
             row(arm="demographics", pair_id="control", chosen=HIGH),
         ]
-        assert flip_rate(rows, "demographics", "traits_5") == 1.0
+        assert flip_rate(rows, dimension="arm", a="demographics", b="traits_5") == 1.0
 
     def test_restricting_to_the_extremes_undilutes_the_granularity_comparison(self):
         """traits_3 and traits_5 render identically unless an extreme was drawn, so
@@ -140,9 +147,17 @@ class TestFlipRate:
                 ),
             )
         ]
-        assert flip_rate(rows, "traits_3", "traits_5") == pytest.approx(2 / 5)
+        assert flip_rate(
+            rows, dimension="arm", a="traits_3", b="traits_5"
+        ) == pytest.approx(2 / 5)
         assert (
-            flip_rate(rows, "traits_3", "traits_5", levels=("very_low", "very_high"))
+            flip_rate(
+                rows,
+                dimension="arm",
+                a="traits_3",
+                b="traits_5",
+                levels=("very_low", "very_high"),
+            )
             == 1.0
         )
 
@@ -257,6 +272,115 @@ class TestGradient:
         rows = sweep_rows({TraitLevel.VERY_LOW: 1, TraitLevel.VERY_HIGH: 1}, n=2)
         with pytest.raises(ValueError, match="no votes"):
             gradient(rows, trait="openness", arm="traits_5")
+
+
+class TestFramingIsPartOfTheCell:
+    def test_framings_that_always_disagree_are_not_a_noise_floor(self):
+        """A cell is one prompt run twice, and a framing changes the prompt.
+
+        Without framing in the cell key, replicates of *different* framings group as
+        identical re-runs: the floor absorbs the entire framing effect, every flip
+        rate then sits at the floor, and 015 reports "framings are interchangeable"
+        no matter what the model actually did.
+        """
+        rows = [
+            row(framing="preference", replicate=index, chosen=HIGH)
+            for index in range(2)
+        ] + [row(framing="click", replicate=index, chosen=LOW) for index in range(2)]
+        assert noise_floor(rows) == 0.0
+
+    def test_a_gradient_reads_one_framing_at_a_time(self):
+        rows = sweep_rows(
+            {level: 4 for level in TraitLevel}, n=4, framing="preference"
+        ) + sweep_rows({level: 0 for level in TraitLevel}, n=4, framing="click")
+
+        assert set(
+            gradient(
+                rows, trait="openness", arm="traits_5", framing="preference"
+            ).shares.values()
+        ) == {1.0}
+        assert set(
+            gradient(
+                rows, trait="openness", arm="traits_5", framing="click"
+            ).shares.values()
+        ) == {0.0}
+
+    def test_flips_can_be_counted_between_framings_as_well_as_arms(self):
+        """The same pairing logic, over a different dimension — matched on
+        everything the two arms hold in common."""
+        rows = [
+            row(framing="preference", replicate=index, chosen=HIGH)
+            for index in range(2)
+        ] + [row(framing="click", replicate=index, chosen=LOW) for index in range(2)]
+        assert flip_rate(rows, dimension="framing", a="preference", b="click") == 1.0
+
+
+class TestLeverResults:
+    def _pair_rows(self, pair_id: str, *, high: int, n: int) -> list[VoteRow]:
+        return [
+            row(
+                pair_id=pair_id,
+                trait="openness",
+                replicate=index,
+                chosen=HIGH if index < high else LOW,
+            )
+            for index in range(n)
+        ]
+
+    def test_only_population_level_pairs_are_reported(self):
+        rows = (
+            self._pair_rows("pronoun_person", high=8, n=8)
+            + self._pair_rows("second_person", high=4, n=8)
+            + self._pair_rows("openness", high=8, n=8)
+            + self._pair_rows("control", high=8, n=8)
+        )
+        assert {result.pair_id for result in lever_results(rows)} == {
+            "pronoun_person",
+            "second_person",
+        }
+
+    def test_a_published_null_at_chance_scores_zero_and_a_signal_does_not(self):
+        """Both read on one scale because predicted_high is always the variant
+        carrying the lever — that is what makes the null a usable control."""
+        rows = self._pair_rows("pronoun_person", high=8, n=8) + self._pair_rows(
+            "second_person", high=4, n=8
+        )
+        by_id = {result.pair_id: result for result in lever_results(rows)}
+
+        assert by_id["second_person"].share_high == 0.5
+        assert by_id["second_person"].z == 0.0
+        assert by_id["pronoun_person"].share_high == 1.0
+        assert by_id["pronoun_person"].z == pytest.approx(0.5 / math.sqrt(0.25 / 8))
+
+    def test_every_reported_lever_carries_its_citation(self):
+        rows = self._pair_rows("article", high=6, n=8)
+        assert all(result.grounding for result in lever_results(rows))
+
+
+class TestFormatReport:
+    # 014 collected three arms under one framing and 015 collects three framings
+    # under one arm, so reading both leaves most of the grid empty.
+    _DISJOINT = sweep_rows(
+        {level: 2 for level in TraitLevel},
+        n=4,
+        arm="demographics",
+        framing="preference",
+    ) + sweep_rows(
+        {level: 2 for level in TraitLevel}, n=4, arm="traits_5", framing="click"
+    )
+
+    def test_a_framing_and_arm_that_never_ran_together_is_skipped(self):
+        """An absent cell has nothing to summarise, and asking it for a position
+        bias divides by zero."""
+        report = format_report(self._DISJOINT)
+        assert "preference/demographics" in report
+        assert "click/traits_5" in report
+        assert "preference/traits_5" not in report
+
+    def test_arms_are_never_compared_across_framings(self):
+        """A flip between two arms asked different questions would credit the
+        question's effect to the arm."""
+        assert "demographics ->" not in format_report(self._DISJOINT)
 
 
 class TestControlsOnTheRun:

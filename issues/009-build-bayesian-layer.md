@@ -46,3 +46,57 @@ is a naming and labelling requirement on the API payload, not only on the UI
 
 Not addressed here, and not this ticket's to fix: whether panel preference *predicts*
 field behaviour at all. That is the Upworthy validation study, out of scope on the map.
+
+## Amended 2026-07-27 — the reported quantity is framing-bound
+
+[015](015-task-framing-sensitivity.md) measured that changing the question sentence
+flips 38–43% of matched votes, well past the ~0.21 noise floor. `preference` stays
+the shipped framing — nothing in that run gives grounds to switch — but the pairing
+of question to reported name is now load-bearing rather than tidy.
+
+The panel is asked *"Which do you prefer?"*, so the payload reports a **preference
+share**. It may not be named or documented as click intent, and switching the
+shipped question later means renaming the field, not just changing a prompt.
+
+### What the posterior protects against, and what it does not
+
+Run this layer's own model over 015's negative control — the lever Gligorić's
+24,333-pair field study found does *nothing* — flat Beta prior, `k` of `n` votes:
+
+| cell | E[p] | 95% CrI | P(B>A) | ROPE mass |
+|---|---|---|---|---|
+| `second_person` / click | 0.892 | [0.825, 0.944] | 1.000000 | 9×10⁻¹⁶ |
+| `second_person` / attention | 0.931 | [0.875, 0.972] | 1.000000 | 9×10⁻²⁰ |
+
+Nothing is malfunctioning there. The model is doing exactly what this ticket
+specifies, and it reports near-total certainty about a difference that does not
+exist in the field.
+
+State the reason precisely, because it reads like a flaw in the statistics and is
+not one: **the credible interval quantifies uncertainty about the *panel's*
+preference share.** Whether that share tracks readers is a different question, and
+not a sampling one. Bayesian updating propagates noise correctly and cannot see
+bias — the panel genuinely does prefer the "you" variant 90% of the time. Collect
+more votes and the interval narrows around the same wrong value.
+
+The noise floor does not catch it either, and fails in the worst direction: a
+consistently biased model rarely flips, so the run's own reliability statistic
+makes this the most trustworthy-*looking* cell in the file.
+
+What the posterior *does* handle well is genuine indecision — a panel with no real
+preference lands near 0.5 with a wide interval, and the ROPE returns "practical
+tie". That is honest and it is why the design is right. The gap is narrower than
+"Bayes doesn't help": it handles indecision well and confident bias not at all.
+
+### Adaptive stopping: keep it, and record what it does not mean
+
+Early stopping is what makes a panel affordable — paying for sixty personas instead
+of two hundred when the answer is already clear. At this project's budget that is
+decisive, and it is a genuine advantage of the Bayesian formulation over a
+fixed-n frequentist test. Keep it.
+
+The caveat is only about interpretation. P crossed 1.000000 by n = 100 on the
+control above, so **stopping time is driven by how consistent the panel is, not by
+how right it is** — a run terminates early because the panel agreed with itself.
+Neither a short run nor a high P may be presented as evidence that the result is
+reliable.
