@@ -125,35 +125,40 @@ def _resolve_ages(request: TargetRequest) -> tuple[int, int, list[TargetNotice]]
     inverted and matches nobody. That is the honest answer — widening it back to the
     pool's own span would answer "under 18" with the whole panel.
     """
-    low = max(
-        request.min_age if request.min_age is not None else MIN_PERSONA_AGE,
-        MIN_PERSONA_AGE,
+    low = (
+        MIN_PERSONA_AGE
+        if request.min_age is None
+        else max(request.min_age, MIN_PERSONA_AGE)
     )
-    high = min(
-        request.max_age if request.max_age is not None else MAX_PERSONA_AGE,
-        MAX_PERSONA_AGE,
+    high = (
+        MAX_PERSONA_AGE
+        if request.max_age is None
+        else min(request.max_age, MAX_PERSONA_AGE)
     )
-    if (request.min_age, request.max_age) == (None, None) or (low, high) == (
-        request.min_age,
-        request.max_age,
-    ):
-        return low, high, []
 
+    # An unstated bound filled in with the pool's own is not a narrowing: "over 50"
+    # asks for nothing above, so answering 51-100 is exactly what was asked.
+    narrowed = (request.min_age is not None and low != request.min_age) or (
+        request.max_age is not None and high != request.max_age
+    )
+    span = f"ages {MIN_PERSONA_AGE}-{MAX_PERSONA_AGE}"
     asked = (
-        f"{request.min_age if request.min_age is not None else 'any'}"
-        f"-{request.max_age if request.max_age is not None else 'any'}"
+        f"{'any' if request.min_age is None else request.min_age}"
+        f"-{'any' if request.max_age is None else request.max_age}"
     )
-    served = "nobody" if low > high else f"{low}-{high}"
-    return (
-        low,
-        high,
-        [
-            _warn(
-                f"The pool covers ages {MIN_PERSONA_AGE}-{MAX_PERSONA_AGE}, so the "
-                f"requested {asked} was narrowed to {served}."
-            )
-        ],
-    )
+    if low > high:
+        return low, high, [_warn(f"The pool covers {span}; nobody in it is {asked}.")]
+    if narrowed:
+        return (
+            low,
+            high,
+            [
+                _warn(
+                    f"The pool covers {span}, so the requested {asked} became {low}-{high}."
+                )
+            ],
+        )
+    return low, high, []
 
 
 def _resolve_traits(

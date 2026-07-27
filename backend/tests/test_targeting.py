@@ -232,6 +232,38 @@ def test_an_unbounded_age_request_takes_the_pool_s_own_bounds() -> None:
     assert _warnings(query) == []
 
 
+def test_an_open_upper_bound_is_not_a_narrowing() -> None:
+    """Caught live: "over 50" asks for nothing above, so answering 51-100 is exactly
+    what was asked. Warning about it trains the customer to ignore the warnings."""
+    query = resolve_target(TargetRequest(min_age=51))
+
+    assert (query.min_age, query.max_age) == (51, MAX_PERSONA_AGE)
+    assert _warnings(query) == []
+
+
+def test_an_open_lower_bound_is_not_a_narrowing() -> None:
+    query = resolve_target(TargetRequest(max_age=30))
+
+    assert (query.min_age, query.max_age) == (MIN_PERSONA_AGE, 30)
+    assert _warnings(query) == []
+
+
+def test_an_open_lower_bound_below_the_pool_is_still_flagged() -> None:
+    """ "under 18" states no floor, so nothing is clamped — but the span it leaves
+    matches nobody, and that has to be said."""
+    query = resolve_target(TargetRequest(max_age=17))
+
+    assert query.min_age > query.max_age
+    assert len(_warnings(query)) == 1
+
+
+def test_an_upper_bound_above_the_pool_is_flagged() -> None:
+    query = resolve_target(TargetRequest(min_age=40, max_age=120))
+
+    assert (query.min_age, query.max_age) == (40, MAX_PERSONA_AGE)
+    assert len(_warnings(query)) == 1
+
+
 def test_an_age_range_the_pool_cannot_reach_at_all_is_left_empty() -> None:
     """Clamping "under 18" leaves 18-17, which matches nobody. That is the right
     answer, and it must not be widened into "everybody" by dropping the filter."""

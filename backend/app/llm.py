@@ -79,13 +79,17 @@ ISO 3166-1 alpha-2 code even when that country is not in the list above. Never \
 substitute a country we have for one we do not. Set `culture_tag` to the coarse \
 bucket the place belongs to ({_listed([tag.value for tag in CultureTag])}), or leave \
 it null if the place spans both or names no place at all.
-2. Read personality only from words about temperament or disposition, and put the \
+2. A place narrower than a country — a state, province, city or neighbourhood — \
+goes in `regions` under its country AND in `unmapped`, because panelists carry no \
+geography finer than a country and a panel drawn for the whole country is not the \
+one that was asked for.
+3. Read personality only from words about temperament or disposition, and put the \
 words you read it from in `source_phrase`.
-3. List in `unmapped`, verbatim, every part of the description that none of the \
+4. List in `unmapped`, verbatim, every part of the description that none of the \
 attributes above can express — interests, hobbies, activities, occupations, brands, \
 household composition, city, anything else. Do not approximate it with a personality \
 trait or a demographic.
-4. Leave a field empty rather than guessing.\
+5. Leave a field empty rather than guessing.\
 """
 
 
