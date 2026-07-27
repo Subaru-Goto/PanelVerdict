@@ -7,10 +7,14 @@ from app.schemas import Verdict, VoteRecord
 
 RopeVerdict = Literal["decisive", "practical_tie", "undecided"]
 
-# ±3 preference-share points around even: within it, a difference is too small to
-# act on. Authored, signed off 2026-07-27 — provenance, why it cannot be derived
-# from the posterior, and the v2 per-test flow are in the 009 amendment.
-_ROPE = (0.47, 0.53)
+# ±7 preference-share points around even: within it, a difference is too small to
+# act on. Two reasons for the width, both measured (009): a ±3 band cannot contain
+# the HDI until ~1,100 votes, so `practical_tie` would never have been reachable at
+# an affordable panel size; and 7 points sits inside the panel's own 11-20% flip
+# rate (015), so calling it a tie is honesty rather than laxity. It cannot be
+# derived from the posterior — it encodes what difference is worth acting on, which
+# is a domain judgment. Signed off 2026-07-27; v2 makes it per-test.
+_ROPE = (0.43, 0.57)
 
 
 @dataclass(frozen=True)
@@ -126,7 +130,7 @@ def rope_verdict(
     Three outcomes, and the third is the point of the method: `undecided` is a
     statement about the data, where `practical_tie` is a *positive* finding — the
     difference is credibly too small to matter, which "not significant" can never
-    say. The band is closed: a share of exactly 0.53 is negligible by the band's
+    say. The band is closed: a share of exactly 0.57 is negligible by the band's
     own definition, so an interval touching the edge still has mass on negligible
     values and may not claim `decisive`.
 

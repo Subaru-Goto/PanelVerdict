@@ -18,7 +18,7 @@ the reference is pure convention — A's share is `1 - p`.
 | `share_preferring_b` | E[p] | *about 62% of the panel prefer B* |
 | `probability_majority_prefers_b` | P(p > 0.5) | *we are 97% sure more than half do* |
 | `interval` | 95% HDI | *the plausible range for that share* |
-| ROPE verdict | HDI vs [0.47, 0.53] | *decisive / practical tie / undecided* |
+| ROPE verdict | HDI vs [0.43, 0.57] | *decisive / practical tie / undecided* |
 
 **The first two are the pair to be careful with.** One is the estimate; the other is
 confidence in its direction. They move independently:
@@ -99,8 +99,8 @@ returns the prior, [0.025, 0.975], which is the honest answer before anyone has 
 
 ## The ROPE, and the third answer
 
-The **region of practical equivalence** is [0.47, 0.53] — a preference share within
-three points of even is treated as not worth acting on. Compare the HDI to it:
+The **region of practical equivalence** is [0.43, 0.57] — a preference share within
+**seven** points of even is treated as not worth acting on. Compare the HDI to it:
 
 | relationship | verdict |
 |---|---|
@@ -117,38 +117,93 @@ That is the difference between useless and actionable. "No significant differenc
 tells a marketer nothing. "These two are a practical tie — pick either, or test a
 bolder variant" tells them what to do next.
 
-**Boundary sensitivity is worth respecting.** 120 of 200 gives an HDI of
-[0.531, 0.666] against a ROPE ceiling of 0.530. It is decisive by **one
-thousandth** — a single vote either way flips it to undecided. Do not let the word
-"decisive" imply robustness in the copy.
+### Why ±7 and not ±3
 
-## Why stopping on P is the wrong trigger
+Because a tie has to be *expressible*. For the HDI to sit inside the band it must be
+narrower than the band, and at an affordable panel size it is not:
 
-The natural stopping rule is "stop when `P(p > 0.5)` crosses a threshold". It
-disagrees with the verdict rule **systematically at every panel size**:
+| n | HDI width at an even split | tie at ±3? | tie at ±7? |
+|---|---|---|---|
+| 150 | 15.8 pts | no | no |
+| **200** | **13.7 pts** | no | **yes** |
+| 800 | 6.9 pts | no | yes |
+| 1,100 | 5.9 pts | yes | yes |
 
-| n | first k reaching P ≥ 0.99 | P | HDI | verdict |
+At ±3 the `practical_tie` verdict is unreachable until roughly **1,100 votes**, so the
+whole third answer would have been dead on arrival and every genuine tie would have
+reported `undecided`. ±7 is the narrowest band that works at n = 200; the exact
+requirement is ±6.9.
+
+It is also defensible on its own terms: identical prompts flip 11–20% of the time
+([015](research/task-framing.md)), so a 7-point gap sits inside the instrument's own
+wobble. And a wider band makes `decisive` **harder** — 64% of votes required rather
+than 60% at n = 200 — which is protective against exactly the overclaiming 015 found.
+
+**The band cannot be derived from the posterior**, and this is worth being firm about.
+It encodes what difference is worth acting on, which is a domain judgment. No amount
+of data computes it: with enough votes the HDI shrinks toward a point, so without a
+ROPE every test eventually reads "decisive", including on differences nobody would
+notice. The band is what stops *statistically detectable* being read as *worth acting
+on*.
+
+For the same reason it must not follow the sample size. The coherent dynamic form is
+the reverse — **declare the margin, then size the panel to resolve it** — which is the
+power calculation this project already commits to. The table above is that function
+read backwards: ±7 wants n≈200, ±5.6 wants n≈300.
+
+**Boundary sensitivity is worth respecting.** At n = 200, 128 votes for B is decisive
+and 127 is undecided. One vote. Do not let "decisive" imply robustness in the copy.
+
+## Why adaptive stopping is off by default
+
+Two independent reasons, both measured.
+
+**A P-threshold is the wrong trigger.** `P(p > 0.5) >= 0.99` disagrees with the
+verdict at every panel size below ~1,600:
+
+| n | first k reaching P >= 0.99 | P | HDI | verdict |
 |---|---|---|---|---|
 | 200 | 117 | 0.9919 | [0.516, 0.652] | undecided |
 | 400 | 224 | 0.9918 | [0.511, 0.608] | undecided |
 | 800 | 433 | 0.9902 | [0.507, 0.576] | undecided |
-| 1600 | 847 | 0.9906 | [0.505, 0.554] | undecided |
 
-A run stopping the moment `P ≥ 0.99` therefore stops and then reports
-*inconclusive* — the votes are spent, the criterion is met, and there is no answer.
+The two rules ask different questions: `P` asks whether B is ahead **at all**, the
+HDI-against-ROPE asks whether B is ahead **by enough to matter**. The second is
+strictly stronger, so stopping on the weaker one stops before there is an answer.
 
-The reason is that the two rules ask different questions:
+**Stopping on the verdict has a worse problem: peeking.** The verdict wobbles as
+batches arrive — the HDI narrows but its position also drifts — so every extra look is
+another chance to cross a ROPE edge by luck. Simulated over 600 panels, batches of 20
+to a cap of 200:
 
-- `P(p > 0.5) ≥ 0.99` — *are we sure B is ahead at all?*
-- HDI against the ROPE — *are we sure B is ahead by enough to matter?*
+| rule | false `decisive` at a true tie | catches a real 60/40 | avg votes |
+|---|---|---|---|
+| first definite verdict | ~8–10% | 63.8% | 90 |
+| 2 in a row | 3.2% | 48.7% | 113 |
+| 3 in a row | 1.2% | 45.3% | 126 |
+| **fixed n = 200** | **0.3%** | 52.8% | 200 |
 
-The second is strictly stronger, so it needs more evidence, so stopping on the weaker
-one guarantees the stronger one is sometimes unmet.
+Peeking inflates false `decisive` on genuinely tied variants roughly **25-fold**.
 
-**Hence: stop on the verdict.** Terminate when the ROPE rule returns either definite
-answer, or the budget cap is reached. A `P`-based rule also has the opposite failure —
-on a genuine tie `P` hovers near 0.5 forever, so it can never stop early on exactly
-the tests whose answer was available soonest, and would burn the whole budget on them.
+Be precise about what is broken: **not** Bayesian inference. The posterior given the
+votes collected is valid however the run stopped — that is the likelihood principle,
+and a genuine advantage over p-values. What breaks is the *decision rule* laid on top.
+"Stop at the first crossing" is a selection procedure, and it selects for favourable
+wobbles.
+
+Confirmation streaks repair most of it but cost detection power: three-in-a-row
+catches *fewer* real differences than the full panel, 45% against 53%, because a run
+can be decisive at n = 200 without having been decisive at 160 and 180.
+
+**And the trade is not worth making, because the feature exists to save money.** At
+$0.0022/vote a full 200-panel costs **$0.44**; stopping early saves about **$0.20 per
+test**. Twenty cents against a 25-fold false-positive inflation is a bad deal at any
+budget, and an indefensible one for a product whose pitch is not overclaiming.
+
+So **fixed n = 200 is the default**. The machinery still exists and still emits the
+per-batch posterior sequence — the animation needs it, and stopping earns its place at
+the ~1,100-vote panels tie detection wants, where it saves dollars rather than cents.
+It ships disabled.
 
 ## The expected preference shortfall, and why it is not called a loss
 

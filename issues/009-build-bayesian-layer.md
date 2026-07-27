@@ -188,7 +188,70 @@ readers, so a 95% bar buys little protection against a confidently biased panel.
 Given how fast P moves, 0.99 costs few extra votes. See the amendment above for why
 this threshold is reported rather than used to terminate a run.
 
-### ROPE = ±3 preference-share points — signed off, provenance stated
+### ROPE = ±7 points, fixed n = 200, adaptive stopping off by default
+
+Superseded the ±3 sign-off below on 2026-07-27, after simulating what the band and
+the stopping rule actually do. Three findings, each measured:
+
+**±3 makes `practical_tie` unreachable at any affordable panel size.** For the HDI to
+sit *inside* the band it must be narrower than the band. It is not until ~1,100 votes:
+
+| n | HDI at an even split | width | tie expressible? |
+|---|---|---|---|
+| 100 | [0.404, 0.596] | 19.3 pts | no |
+| 200 | [0.431, 0.569] | 13.7 pts | no at ±3, **yes at ±7** |
+| 800 | [0.465, 0.535] | 6.9 pts | no at ±3 |
+| 1,100 | [0.470, 0.530] | 5.9 pts | yes |
+
+So the "third answer" that justifies the whole ROPE method was dead on arrival at
+±3 — every genuine tie would have reported `undecided`, and this ticket's claim that
+the ROPE "fixes the adaptive-stopping edge case where near-tied variants run to the
+budget cap" was false. They still run to the cap; they just get a more honest label.
+
+**±7 is also independently defensible.** It sits just inside the ~±6.9 needed at
+n = 200, and it lines up with the measured noise floor: identical prompts flip
+11–20% of the time ([015](015-task-framing-sensitivity.md)), so a 7-point preference
+gap is inside the instrument's own wobble. Calling that a tie is honesty, not
+laxity. It also makes `decisive` *harder* — 64% of votes required rather than 60% at
+n = 200 — which is protective against exactly the overclaiming 015 exposed, and that
+benefit holds at every panel size.
+
+**Adaptive stopping costs 25x its worth, so it ships off.** Simulated over 600
+panels, batches of 20 to a cap of 200:
+
+| rule | false `decisive` at a true tie | catches a real 60/40 | avg votes |
+|---|---|---|---|
+| first definite verdict | ~8–10% | 63.8% | 90 |
+| 2 in a row | 3.2% | 48.7% | 113 |
+| 3 in a row | 1.2% | 45.3% | 126 |
+| **fixed n = 200** | **0.3%** | 52.8% | 200 |
+
+Peeking inflates false `decisive` on genuinely tied variants roughly 25-fold. This is
+*not* optional stopping breaking Bayesian inference — the posterior given the votes
+collected is valid however you stopped. What breaks is the decision rule laid on top:
+"stop at the first crossing" selects for favourable wobbles. Confirmation streaks fix
+most of it but cost detection power, catching fewer real differences than the full
+panel because a run can be decisive at n = 200 without having been decisive at 160
+and 180.
+
+And the trade is worse than it looks, because the feature exists to save money. At
+015's measured $0.0022/vote a full 200-panel is **$0.44**; stopping early saves about
+**$0.20 per test**. Twenty cents against a 25x false-positive inflation is a bad deal
+at any budget, and an indefensible one for a product whose pitch is not overclaiming.
+
+**So: fixed n = 200 is the default.** The stopping machinery is still built — it is in
+scope, it is ~20 lines over the functions already written, and it earns its place at
+the ~1,100-vote panels tie-detection wants, where it saves dollars rather than cents.
+It ships **disabled**, with the measured cost recorded beside it so nobody enables it
+believing it is free. The per-batch posterior sequence is still produced, because
+[011](011-build-report-ui.md)'s animation needs it and that is unaffected.
+
+**Demo panel size is 200**, signed off 2026-07-27 under a tight budget. Development
+runs against the stub → nano → mini ladder cost nothing, so only genuine end-to-end
+runs are billed: 3–4 of them is ~$1.75, and n = 200 is what keeps `practical_tie`
+expressible at all.
+
+### Superseded 2026-07-27 — the original ±3 sign-off
 
 The band [0.47, 0.53] is an **authored** number: it first appeared in the
 2026-07-16 planning grill (`docs/project-idea.md`), was interrogated on 2026-07-27
@@ -202,6 +265,15 @@ Rules that came with the sign-off:
   and it is what keeps every future "change it later" honest instead of silent.
 - **`rope_verdict` takes the band as a parameter with ±3 as the default** — the
   same shape as `credible_mass` — so the constant lives in exactly one place.
+- **The dynamic version is sample size derived from the band, not the reverse.** A
+  band that moved with n would be incoherent: the ROPE encodes what difference
+  matters to the business, which has nothing to do with how many personas were
+  sampled, so letting it follow n would let the instrument define the business
+  threshold. The coherent form is the power calculation this project already commits
+  to (`project-idea.md`: declare the MDE before running) — declare the margin, then
+  collect enough votes to resolve it. The table above *is* that function read
+  backwards: ±7 needs n≈200, ±5.6 needs n≈300. v2 feature: the user states their
+  margin and the system sizes the panel.
 - **Post-v1, the ROPE becomes user-settable per test** — a real need (different
   domains price a "meaningful difference" differently), deliberately deferred. The
   flow is already decided to prevent verdict-shopping: the band is set when the

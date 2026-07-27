@@ -128,39 +128,39 @@ class TestPosterior:
 
 class TestRopeVerdict:
     def test_an_interval_clear_of_the_band_is_decisive(self) -> None:
-        assert rope_verdict((0.531, 0.666)) == "decisive"
+        assert rope_verdict((0.580, 0.700)) == "decisive"
 
     def test_an_interval_entirely_below_the_band_is_decisive_for_a(self) -> None:
         """A winning is a verdict too — a rule keyed only off the upper edge
         would call every A-victory undecided."""
-        assert rope_verdict((0.334, 0.469)) == "decisive"
+        assert rope_verdict((0.300, 0.420)) == "decisive"
 
     def test_an_interval_inside_the_band_is_a_practical_tie(self) -> None:
         assert rope_verdict((0.485, 0.520)) == "practical_tie"
 
     def test_an_interval_straddling_an_edge_is_undecided(self) -> None:
-        assert rope_verdict((0.495, 0.560)) == "undecided"
+        assert rope_verdict((0.550, 0.620)) == "undecided"
 
     def test_touching_the_edge_is_undecided(self) -> None:
-        """Deliberate: 0.53 is *in* the band (a share of exactly 0.53 is a
+        """Deliberate: 0.57 is *in* the band (a share of exactly 0.57 is a
         negligible difference by the band's own definition), so an interval
         reaching it has mass on a negligible value and may not claim decisive."""
-        assert rope_verdict((0.530, 0.666)) == "undecided"
-        assert rope_verdict((0.485, 0.530)) == "practical_tie"
+        assert rope_verdict((0.570, 0.666)) == "undecided"
+        assert rope_verdict((0.485, 0.570)) == "practical_tie"
 
     def test_the_band_is_a_parameter_not_a_constant(self) -> None:
         """The signed-off default lives in one place; a v2 per-test band reuses
         this function unchanged."""
-        assert rope_verdict((0.531, 0.666), rope=(0.45, 0.55)) == "undecided"
+        assert rope_verdict((0.580, 0.700), rope=(0.45, 0.55)) == "decisive"
         assert rope_verdict((0.46, 0.54), rope=(0.45, 0.55)) == "practical_tie"
 
     def test_one_vote_separates_decisive_from_undecided_at_n_200(self) -> None:
         """The boundary sensitivity documented in reading-the-posterior.md,
         asserted end-to-end so the doc's claim cannot drift from the code."""
-        assert rope_verdict(posterior(preferring_b=120, total=200).interval) == (
+        assert rope_verdict(posterior(preferring_b=128, total=200).interval) == (
             "decisive"
         )
-        assert rope_verdict(posterior(preferring_b=119, total=200).interval) == (
+        assert rope_verdict(posterior(preferring_b=127, total=200).interval) == (
             "undecided"
         )
 
