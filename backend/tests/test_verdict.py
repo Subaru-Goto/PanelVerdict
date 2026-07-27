@@ -5,7 +5,9 @@ from scipy import integrate, stats
 
 from app.schemas import VoteRecord
 from app.verdict import (
+    _confirmed,
     expected_preference_shortfall,
+    panel_progress,
     posterior,
     rope_verdict,
     tally_votes,
@@ -235,3 +237,90 @@ class TestExpectedPreferenceShortfall:
     def test_impossible_counts_are_refused(self) -> None:
         with pytest.raises(ValueError):
             expected_preference_shortfall(preferring_b=11, total=10)
+
+
+class TestPanelProgress:
+    def test_it_accumulates_across_batches(self) -> None:
+        """Batches report what they alone did; accumulating is this function's job,
+        because a conjugate update is just addition and a caller doing it by hand is
+        a place to get it wrong."""
+        result = panel_progress([(12, 20), (11, 20), (14, 20)])
+        assert [(b.preferring_b, b.total) for b in result.batches] == [
+            (12, 20),
+            (23, 40),
+            (37, 60),
+        ]
+
+    def test_every_batch_carries_what_it_implied_at_the_time(self) -> None:
+        """The animation needs the interval per batch, not only at the end."""
+        result = panel_progress([(15, 20), (15, 20)])
+        first, second = result.batches
+        assert first.posterior.total == 20
+        assert second.posterior.total == 40
+        first_width = first.posterior.interval[1] - first.posterior.interval[0]
+        second_width = second.posterior.interval[1] - second.posterior.interval[0]
+        assert second_width < first_width
+
+    def test_by_default_it_never_stops_early(self) -> None:
+        """The measured default: peeking inflates false decisive ~25-fold and saves
+        about twenty cents, so the whole panel is always spent."""
+        result = panel_progress([(20, 20)] * 5)
+        assert len(result.batches) == 5
+        assert result.stopped_early is False
+        assert result.batches[0].verdict == "decisive"
+
+    def test_stopping_needs_the_verdict_confirmed_not_merely_reached(self) -> None:
+        result = panel_progress([(20, 20)] * 5, stop_early=True, confirmations=3)
+        assert len(result.batches) == 3
+        assert result.stopped_early is True
+
+    def test_one_confirmation_reproduces_the_naive_rule(self) -> None:
+        result = panel_progress([(20, 20)] * 5, stop_early=True, confirmations=1)
+        assert len(result.batches) == 1
+        assert result.stopped_early is True
+
+    def test_a_flip_flopping_verdict_never_confirms(self) -> None:
+        """The failure the streak exists to catch: a run that crosses a ROPE edge and
+        falls back has not settled anything."""
+        assert _confirmed(["decisive", "undecided", "decisive"], 3) is False
+        assert _confirmed(["decisive", "decisive", "undecided"], 3) is False
+        assert _confirmed(["undecided", "decisive", "decisive", "decisive"], 3) is True
+
+    def test_a_run_of_undecided_is_not_a_confirmation(self) -> None:
+        assert _confirmed(["undecided"] * 5, 3) is False
+
+    def test_the_two_definite_verdicts_do_not_confirm_each_other(self) -> None:
+        """Both are actionable but they are not the same answer, so a streak mixing
+        them has settled nothing."""
+        assert _confirmed(["decisive", "practical_tie", "decisive"], 3) is False
+        assert _confirmed(["practical_tie"] * 3, 3) is True
+
+    def test_reaching_the_last_batch_is_not_stopping_early(self) -> None:
+        result = panel_progress([(20, 20)] * 3, stop_early=True, confirmations=3)
+        assert len(result.batches) == 3
+        assert result.stopped_early is False
+
+    def test_the_final_batch_is_the_reportable_one(self) -> None:
+        result = panel_progress([(12, 20), (11, 20)])
+        assert result.final is result.batches[-1]
+        assert result.final.total == 40
+
+    def test_a_panel_with_no_batches_is_a_caller_error(self) -> None:
+        with pytest.raises(ValueError, match="at least one batch"):
+            panel_progress([])
+
+    def test_an_impossible_batch_is_refused(self) -> None:
+        with pytest.raises(ValueError):
+            panel_progress([(21, 20)])
+
+    def test_the_band_flows_through_to_every_batch(self) -> None:
+        """Asserted by the band changing an outcome, not merely being accepted: a
+        26/40 split is a tie inside a wide band and undecided inside the default."""
+        per_batch = [(13, 20), (13, 20)]
+        assert [b.verdict for b in panel_progress(per_batch).batches] == [
+            "undecided",
+            "undecided",
+        ]
+        assert [
+            b.verdict for b in panel_progress(per_batch, rope=(0.2, 0.8)).batches
+        ] == ["undecided", "practical_tie"]

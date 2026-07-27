@@ -183,6 +183,122 @@ def posterior(
     )
 
 
+@dataclass(frozen=True)
+class Batch:
+    """Cumulative state after one batch, and what it implied at that moment."""
+
+    index: int
+    preferring_b: int
+    total: int
+    posterior: Posterior
+    verdict: RopeVerdict
+    shortfall: PreferenceShortfall
+
+
+@dataclass(frozen=True)
+class PanelProgress:
+    """Every batch of a panel run, for the report's narrowing animation.
+
+    `stopped_early` distinguishes a run that reached a confirmed verdict from one
+    that spent its whole panel — the report may not present them alike, since an
+    early stop is a selected sample and the full panel is not.
+    """
+
+    batches: list[Batch]
+    stopped_early: bool
+
+    @property
+    def final(self) -> Batch:
+        return self.batches[-1]
+
+
+def _confirmed(verdicts: list[RopeVerdict], confirmations: int) -> bool:
+    """Whether one definite verdict has held for the last `confirmations` batches.
+
+    A definite verdict reached once is not settled: the HDI narrows as batches
+    arrive but its position also drifts, so each look is a fresh chance to cross a
+    ROPE edge by luck. `decisive` and `practical_tie` are both actionable but they
+    are different answers, so a streak mixing them has confirmed nothing.
+    """
+    window = verdicts[-confirmations:]
+    return (
+        len(window) == confirmations
+        and window[0] != "undecided"
+        and len(set(window)) == 1
+    )
+
+
+# Three consecutive agreeing batches, measured as the least-bad streak: it holds
+# false `decisive` on a genuinely tied panel to 1.2% against 0.3% for a full panel,
+# where stopping at the first crossing gives ~8-10% (009).
+_CONFIRMATIONS = 3
+
+
+def panel_progress(
+    batches: list[tuple[int, int]],
+    *,
+    rope: tuple[float, float] = _ROPE,
+    credible_mass: float = 0.95,
+    stop_early: bool = False,
+    confirmations: int = _CONFIRMATIONS,
+) -> PanelProgress:
+    """Replay a panel batch by batch, accumulating the posterior as votes arrive.
+
+    Each entry of `batches` is `(preferring_b, total)` for that batch alone;
+    accumulation happens here, because a conjugate update is addition and a caller
+    doing it by hand is somewhere to get it wrong.
+
+    **`stop_early` defaults off, and that is a measured decision, not caution.**
+    Stopping when a verdict first appears inflates false `decisive` verdicts on
+    genuinely tied variants roughly 25-fold — and it is not Bayesian inference that
+    breaks, since the posterior given the collected votes is valid however the run
+    stopped. What breaks is the decision rule on top: stop-at-first-crossing selects
+    for favourable wobbles. Confirmation streaks repair most of it but catch fewer
+    real differences than a full panel, because a run can be decisive at the cap
+    without having been decisive two batches earlier. And the feature exists to save
+    money: a 200-vote panel costs about $0.44 and stopping early saves about $0.20,
+    which does not buy a 4-fold false-positive rate even at three confirmations.
+
+    Enable it where a panel is large enough for the saving to be real — tie
+    detection wants ~1,100 votes — never to make a 200-persona run cheaper.
+
+    The full sequence is returned either way: [011] animates the interval narrowing,
+    which is worth more than decoration, since watching uncertainty shrink shows what
+    an interval means far better than a sentence explaining it.
+    """
+    if not batches:
+        raise ValueError("a panel needs at least one batch")
+    if confirmations < 1:
+        raise ValueError(f"confirmations must be at least 1, got {confirmations}")
+
+    steps: list[Batch] = []
+    verdicts: list[RopeVerdict] = []
+    preferring_b = total = 0
+    for index, (batch_preferring_b, batch_total) in enumerate(batches):
+        preferring_b += batch_preferring_b
+        total += batch_total
+        current = posterior(
+            preferring_b=preferring_b, total=total, credible_mass=credible_mass
+        )
+        verdicts.append(rope_verdict(current.interval, rope=rope))
+        steps.append(
+            Batch(
+                index=index,
+                preferring_b=preferring_b,
+                total=total,
+                posterior=current,
+                verdict=verdicts[-1],
+                shortfall=expected_preference_shortfall(
+                    preferring_b=preferring_b, total=total
+                ),
+            )
+        )
+        if stop_early and _confirmed(verdicts, confirmations):
+            break
+
+    return PanelProgress(batches=steps, stopped_early=len(steps) < len(batches))
+
+
 def tally_votes(records: list[VoteRecord], variant_ids: list[str]) -> Verdict:
     """Count votes per variant.
 
