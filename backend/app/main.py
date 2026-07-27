@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,6 +10,8 @@ from app.panel import FIXED_PANEL
 from app.schemas import EvaluateRequest, EvaluateResponse
 from app.vote import PanelLLM, collect_panel_votes
 from app.verdict import panel_verdict, tally_votes
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="PanelVerdict API")
 
@@ -43,10 +47,27 @@ def evaluate(
     votes = collect_panel_votes(
         test_id="tracer", variants=variants, panel=FIXED_PANEL, llm=llm
     )
-    tally = tally_votes(votes, variant_ids=list(variants))
+    # Any failure is refused rather than reported, because this endpoint votes the
+    # 5-persona FIXED_PANEL: one missing vote is a fifth of it, and a verdict on four
+    # personas presented as a verdict on five is a half-panel. A 200-persona panel can
+    # absorb a few and wants a partial-run policy instead — which is also why
+    # `EvaluateResponse` has nowhere to put a shortfall.
+    #
+    # The detail names the exception types only. A failure message can carry provider
+    # response text and the model's own output, which do not belong in an HTTP body.
+    if votes.failures:
+        logger.error("panel votes failed: %s", votes.failures)
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"{len(votes.failures)} of {len(FIXED_PANEL)} panelists did not vote "
+                f"({', '.join(sorted({f.error.split(':')[0] for f in votes.failures}))})"
+            ),
+        )
+    tally = tally_votes(votes.records, variant_ids=list(variants))
     return EvaluateResponse(
         verdict=panel_verdict(preferring_b=tally.counts["b"], total=tally.total),
         tally=tally,
         variants=variants,
-        votes=votes,
+        votes=votes.records,
     )

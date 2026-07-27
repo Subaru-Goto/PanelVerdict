@@ -86,6 +86,6 @@ The v1 panel model `openai/gpt-5-mini` ([003](003-decide-panel-model-and-provide
 Determinism instead rests on:
 1. the **seeded, reproducible population** — already the *primary* variance source, unchanged;
 2. best-effort **`seed`** (if supported by the model/provider); and
-3. **per-vote caching** keyed on `(persona, test, order)` (008) for exact replay.
+3. **per-vote caching** keyed on `(persona, test, order)` ~~(008)~~ **→ [010](010-assemble-orchestrator-graph.md), moved 2026-07-27** for exact replay. It needs a `votes` table and a ruling on whether `test_id` is a persisted entity, and 010 is what creates the run. Since 003 found `temperature≈0` unavailable on `gpt-5-mini`, this is now the *only* exact-replay mechanism, so the test-retest metric above waits on it.
 
 Test-retest agreement remains a **QA metric** (as already noted — "almost, not bit-identical"), just with a wider band. If exact per-vote reproducibility ever becomes a hard requirement, that converts into a model-selection constraint (prefer a model that supports `temperature`/`seed`) → feeds [003](003-decide-panel-model-and-provider.md).

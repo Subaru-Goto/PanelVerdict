@@ -127,10 +127,19 @@ class OpenRouterPanelLLM:
         self._question = question
         # No temperature: gpt-5-mini (a reasoning model) rejects any non-default
         # temperature with a 400.
+        #
+        # `max_retries` is the SDK's own default, stated rather than inherited: a panel
+        # fans 25 requests out at once, so 429s are expected traffic and this is the line
+        # that decides whether one costs a vote. The SDK backs off and honours
+        # `retry-after`. A read timeout is deliberately left at the SDK's 600s until
+        # there is a measured latency distribution to set it from — short enough to stop
+        # a hung request holding a worker, long enough not to cut off a slow-but-valid
+        # reasoning response, is not a guess worth making.
         self._model = ChatOpenAI(
             model=model,
             base_url=base_url,
             api_key=api_key,
+            max_retries=2,
         ).with_structured_output(PanelVoteOutput)
 
     def vote(

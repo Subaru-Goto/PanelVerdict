@@ -149,6 +149,21 @@ def test_summary_and_vote_prompt_state_the_same_facts() -> None:
         assert fact in prompt
 
 
+def test_no_trait_score_reaches_either_rendering() -> None:
+    """Traits are described in sentences, never as numbers or scale points: BFI-2-E
+    style descriptions of the sampled level are what enacts a trait most like a human
+    (Huang, Zhang, Soto & Evans 2026), and a persona handed "openness: 1.75" is being
+    asked to reason about a questionnaire item about itself instead. Age is the only
+    number that belongs in either voice, so the digits are pinned exactly — a score
+    leaking in through a reworded template shows up as a digit that is not the age."""
+    persona = make_persona().model_copy(
+        update={"big_five": _with_traits(openness=1.75, neuroticism=-2.25)}
+    )
+
+    for rendering in (render_persona_prompt(persona), persona_summary(persona)):
+        assert "".join(c for c in rendering if c.isdigit()) == "34"
+
+
 def test_a_stronger_trait_score_reads_differently() -> None:
     # the whole point of five levels: at three, 0.6 and 2.0 rendered identically,
     # so cosine could not tell these two personas apart
