@@ -96,8 +96,14 @@ stop policy is 010's to set from measured cost rather than 008's to guess.
 
 `PanelVotes` carries `records` and `failures` together. A vote that fails after the
 client's retries (the OpenAI SDK's default 2, with backoff, now stated explicitly because
-25-way fan-out makes 429s expected traffic) costs that panelist and no other — 200
-requested personas can return 194 votes.
+25-way fan-out makes 429s expected traffic) costs that panelist and no other, so a run can
+return fewer votes than the panel it was drawn for.
+
+**The failure rate is unmeasured and this design does not rest on one.** It rests on
+arithmetic: whatever the per-request failure probability is, the chance that *at least one*
+of 200 requests hits it is ~200× higher than for a single request, and the old code threw
+away every other vote when that happened. Even a path reliable enough to fail one request
+in a thousand loses a vote in roughly a fifth of 200-vote runs.
 
 This is the same division retrieval already draws: the mechanism reports what happened,
 the caller decides whether a thinner panel still deserves a verdict. It also means the

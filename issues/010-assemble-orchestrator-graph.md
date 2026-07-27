@@ -43,9 +43,11 @@ than the one requested, and they compound:
 
 1. **Retrieval** matched fewer personas than asked for ([007](007-build-targeting-query-translation.md)/[017](017-representative-sampling.md)) — carried by `PanelSelection.notices`.
 2. **Votes failed.** `collect_panel_votes` returns `PanelVotes(records, failures)`: a
-   vote that fails after the client's retries costs that panelist and no other, so 200
-   requested personas can return 194 votes. `failures` carries the persona id and the
-   error for each.
+   vote that fails after the client's retries costs that panelist and no other, so a
+   run can return fewer votes than the panel it was drawn for. `failures` carries the
+   persona id and the error for each. **How often, and how many, is unmeasured** — no
+   real 200-vote run has happened yet, which is one more reason this ticket cannot set
+   the partial-run threshold from anything but its own first run.
 
 So the number the verdict rests on is `len(votes.records)`, not the requested size, and
 **this ticket owns reconciling the two** — including 003's *"mark run partial, never emit
