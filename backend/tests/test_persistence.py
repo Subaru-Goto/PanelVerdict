@@ -3,7 +3,7 @@ from typing import get_args
 import numpy as np
 import psycopg
 import pytest
-from factories import DIM, make_assembled, make_persona
+from factories import DIM, big_five, make_assembled, make_persona
 
 from app.assembly import AssembledPersona
 from app.persistence import (
@@ -14,7 +14,6 @@ from app.persistence import (
     retrieve_panel,
 )
 from app.schemas import (
-    BigFive,
     EducationLevel,
     Locale,
     TargetQuery,
@@ -24,9 +23,6 @@ from app.schemas import (
     TraitRequest,
 )
 from app.targeting import resolve_target
-
-# Every trait at the middle, so a test that names one trait is only about that trait.
-_FLAT = dict.fromkeys(BigFive.model_fields, 0.0)
 
 
 def _count(conn: psycopg.Connection, table: str) -> int:
@@ -235,25 +231,21 @@ def test_retrieval_filters_on_gender_income_and_education(conn):
 
 
 def _with_trait(trait: TraitName, score: float, id_: str) -> AssembledPersona:
-    return make_assembled(
-        make_persona(id_=id_, big_five=BigFive(**{**_FLAT, trait: score}))
-    )
+    return make_assembled(make_persona(id_=id_, big_five=big_five(**{trait: score})))
 
 
 def _requesting(trait: TraitName, level: TraitLevel) -> TargetQuery:
     return _EVERYONE.model_copy(
         update={
-            "traits": (
-                TraitRequest(trait=trait, level=level, source_phrase="stub"),
-            )
+            "traits": (TraitRequest(trait=trait, level=level, source_phrase="stub"),)
         }
     )
 
 
 def test_a_requested_trait_level_filters_rather_than_ranks(conn):
-    """The whole of 017: a target asking for anxious people gets only anxious people,
-    not the pool sorted by how anxious it is. Ranking would return the extreme tail
-    and skew the panel on the four traits nobody asked about."""
+    """A target asking for anxious people gets only anxious people, not the pool sorted
+    by how anxious it is. Ranking would return the extreme tail, and skew the panel on
+    the four traits nobody asked about."""
     persist_pool(
         conn,
         [
@@ -271,8 +263,8 @@ def test_a_requested_trait_level_filters_rather_than_ranks(conn):
 
 
 def test_a_requested_level_admits_the_levels_beyond_it(conn):
-    """Directional, signed off 2026-07-27: asking for cautious people must not exclude
-    the most cautious. `very_high` scores are inside `high`'s bound, not past it."""
+    """Asking for cautious people must not exclude the most cautious of them, so a
+    `very_high` score is inside `high`'s bound rather than past it."""
     persist_pool(
         conn,
         [
@@ -281,7 +273,9 @@ def test_a_requested_level_admits_the_levels_beyond_it(conn):
         ],
     )
 
-    panel = retrieve_panel(conn, _requesting("openness", TraitLevel.HIGH), size=10, seed=0)
+    panel = retrieve_panel(
+        conn, _requesting("openness", TraitLevel.HIGH), size=10, seed=0
+    )
 
     assert [p.id for p in panel] == ["US-00000", "US-00001"]
 
@@ -305,16 +299,39 @@ def test_a_requested_middle_level_excludes_both_tails(conn):
     assert [p.id for p in panel] == ["US-00001"]
 
 
+@pytest.mark.parametrize(
+    ("score", "admits", "refuses"),
+    [
+        (0.5, TraitLevel.MEDIUM, TraitLevel.HIGH),
+        (1.5, TraitLevel.HIGH, TraitLevel.VERY_HIGH),
+        (-0.5, TraitLevel.MEDIUM, TraitLevel.LOW),
+        (-1.5, TraitLevel.LOW, TraitLevel.VERY_LOW),
+    ],
+)
+def test_a_score_on_a_boundary_matches_the_level_it_renders_as(
+    conn, score, admits, refuses
+):
+    """The one thing a Python check of the bounds cannot establish: that Postgres
+    compares them the way the table means. Every boundary belongs to the inner band, so
+    the level a score renders as must admit it and the level beyond must refuse it —
+    and these four scores are where a `>` written as `>=` on either side would show.
+    """
+    persist_pool(conn, [_with_trait("openness", score, "US-00000")])
+
+    assert retrieve_panel(conn, _requesting("openness", admits), size=10, seed=0)
+    assert retrieve_panel(conn, _requesting("openness", refuses), size=10, seed=0) == []
+
+
 def test_two_requested_traits_both_have_to_match(conn):
-    """Where the shortfall comes from: each trait multiplies the filter, so a panel
-    can thin out fast. 010 owns reporting that; retrieval just has to be exact."""
+    """Each trait multiplies the filter, which is where a thin panel comes from —
+    reporting that is the caller's job, so retrieval only has to be exact."""
     persist_pool(
         conn,
         [
             make_assembled(
                 make_persona(
                     id_="US-00000",
-                    big_five=BigFive(**{**_FLAT, "openness": 1.0, "neuroticism": -1.0}),
+                    big_five=big_five(openness=1.0, neuroticism=-1.0),
                 )
             ),
             _with_trait("openness", 1.0, "US-00001"),
@@ -324,8 +341,12 @@ def test_two_requested_traits_both_have_to_match(conn):
     query = _EVERYONE.model_copy(
         update={
             "traits": (
-                TraitRequest(trait="openness", level=TraitLevel.HIGH, source_phrase="a"),
-                TraitRequest(trait="neuroticism", level=TraitLevel.LOW, source_phrase="b"),
+                TraitRequest(
+                    trait="openness", level=TraitLevel.HIGH, source_phrase="a"
+                ),
+                TraitRequest(
+                    trait="neuroticism", level=TraitLevel.LOW, source_phrase="b"
+                ),
             )
         }
     )
@@ -334,9 +355,9 @@ def test_two_requested_traits_both_have_to_match(conn):
 
 
 def test_a_trait_filter_still_draws_a_sample_rather_than_a_ranking(conn):
-    """The seed reaches a dispositional target too, now that nothing is ranked — which
-    is what makes two independent draws of one target possible, and sample stability
-    measurable. Under the vector this was not true."""
+    """Nothing is ranked, so the seed reaches a target that names a temperament too.
+    That is what makes two independent draws of one target possible, and with them the
+    sample-stability check."""
     persist_pool(
         conn,
         [_with_trait("openness", 1.0, f"US-{i:05d}") for i in range(10)],

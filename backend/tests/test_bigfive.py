@@ -76,7 +76,13 @@ _COMPARISONS = {
 
 
 def _admits(level: TraitLevel, score: float) -> bool:
-    """Apply a requested level's bounds the way the SQL does — one comparison each."""
+    """Apply a requested level's bounds — one comparison each, as the SQL does.
+
+    A second interpreter of the same table, which is what lets the properties below be
+    swept over hundreds of scores without a database. It cannot show that Postgres
+    compares the bounds the same way, so the boundaries — the only scores where the two
+    could disagree — are checked against the real query in test_persistence.
+    """
     return all(_COMPARISONS[op](score, value) for op, value in LEVEL_BOUNDS[level])
 
 
@@ -120,18 +126,6 @@ def test_the_outer_levels_nest_inside_the_inner_ones():
 )
 def test_a_threshold_is_exactly_bucketize_s_own_boundary(score, admitted_by):
     assert {level for level in TraitLevel if _admits(level, score)} == admitted_by
-
-
-def test_only_the_middle_is_a_band():
-    # "average" means the middle, so `medium` is the one level bounded both ways.
-    # Every other level is a single open-ended comparison, which is what the SQL
-    # builder has to be able to handle.
-    assert len(LEVEL_BOUNDS[TraitLevel.MEDIUM]) == 2
-    assert all(
-        len(LEVEL_BOUNDS[level]) == 1
-        for level in TraitLevel
-        if level is not TraitLevel.MEDIUM
-    )
 
 
 @pytest.mark.parametrize(

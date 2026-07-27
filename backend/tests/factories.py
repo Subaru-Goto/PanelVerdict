@@ -6,6 +6,12 @@ from app.schemas import BigFive, EducationLevel, Gender, Locale, Persona
 DIM = 1536
 
 
+def big_five(**scores: float) -> BigFive:
+    """Every trait at the middle bar the ones named, so a test that varies one trait
+    is only about that trait — the other four cannot land in a filter by accident."""
+    return BigFive(**(dict.fromkeys(BigFive.model_fields, 0.0) | scores))
+
+
 def make_persona(
     id_: str = "US-00000",
     *,

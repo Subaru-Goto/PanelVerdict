@@ -4,7 +4,7 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
-from factories import make_assembled, make_persona
+from factories import big_five, make_assembled, make_persona
 
 from app.llm import build_target_messages
 from app.persistence import persist_pool
@@ -104,12 +104,8 @@ def test_an_age_range_of_one_year_is_allowed() -> None:
     assert TargetRequest(min_age=40, max_age=40).max_age == 40
 
 
-def _at(**scores: float) -> BigFive:
-    return BigFive(**(dict.fromkeys(BigFive.model_fields, 0.0) | scores))
-
-
-_anxious = _at(neuroticism=2.0)
-_calm = _at(neuroticism=-2.0)
+_anxious = big_five(neuroticism=2.0)
+_calm = big_five(neuroticism=-2.0)
 
 
 def _warnings(query: TargetQuery) -> list[str]:
@@ -467,7 +463,7 @@ def test_select_panel_retrieves_only_matching_personas(conn) -> None:
 
 
 def test_a_temperament_target_reaches_the_pool_as_a_trait_filter(conn) -> None:
-    """The end of the path 017 rebuilt: the description's temperament decides who is
+    """The whole path in one call: the description's temperament decides who is
     eligible, so a persona at the wrong level is not in the panel at any rank."""
     persist_pool(
         conn,

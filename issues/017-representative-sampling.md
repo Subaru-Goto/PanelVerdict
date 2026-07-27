@@ -179,6 +179,14 @@ by `BigFive`'s own field order. The prompt and summary text are byte-identical �
 pool does not need re-embedding — and the domain-order claim is now pinned on
 `persona_summary` itself, which is where it actually matters.
 
+**Where the boundary is actually pinned.** The sweep and nesting properties are checked
+in Python, against a second interpreter of `LEVEL_BOUNDS` written in the test — which can
+say the table is self-consistent but not that *Postgres* compares it the way the table
+means. So the four boundary scores (±0.5, ±1.5) are checked against the real query
+instead: the level a score renders as must return it, and the level beyond must not.
+Verified by mutation — writing `high` as `>=` turns that test red and leaves the Python
+ones green, which is the drift this ticket was written to prevent.
+
 ## Requirement check
 
 Dropping this does **not** weaken the advanced-RAG requirement, because the vector half
