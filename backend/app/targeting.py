@@ -66,6 +66,12 @@ def _named(countries: tuple[Locale, ...]) -> str:
     return ", ".join(COUNTRY_NAME[country] for country in countries)
 
 
+# Only for the dead end. `_NO_MATCH` alone is right where a country *did* resolve and
+# the remaining filters excluded everybody — naming the coverage there would blame the
+# countries for something they did not cause.
+_NO_COVERAGE = f"{_NO_MATCH} The pool currently covers {_named(tuple(Locale))}."
+
+
 def _seeded(country_code: str | None) -> Locale | None:
     """The seeded locale a country code names, if we seeded that country."""
     try:
@@ -211,7 +217,7 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
         # notice about something that did not happen next to the warning saying so.
         notices.append(_reading(f"Matched against panelists in {_named(countries)}."))
     else:
-        notices.append(_warn(_NO_MATCH))
+        notices.append(_warn(_NO_COVERAGE))
 
     return TargetQuery(
         countries=countries,

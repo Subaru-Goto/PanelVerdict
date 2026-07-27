@@ -10,6 +10,7 @@ from app.llm import build_target_messages
 from app.persistence import persist_pool
 from app.targeting import resolve_target, select_panel
 from app.schemas import (
+    COUNTRY_NAME,
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
     MIN_PERSONA_AGE,
@@ -595,3 +596,17 @@ def test_an_uncovered_target_states_no_panel_rather_than_where_from() -> None:
 
     assert _readings(query) == []
     assert len(_warnings(query)) == 2
+
+
+def test_an_uncovered_target_is_told_what_the_pool_does_cover() -> None:
+    """A dead end with no way forward is worse than a dead end. Every other outcome
+    names the countries in play — an approximation names its stand-in, a partial match
+    names what survived — so the one case that offers nothing is the one that most
+    needs to say what would have worked."""
+    query = resolve_target(
+        TargetRequest(regions=[RequestedRegion(label="Nigeria", country_code="NG")])
+    )
+
+    (no_panel,) = [m for m in _warnings(query) if "no panel was drawn" in m]
+    for country in COUNTRY_NAME.values():
+        assert country in no_panel
