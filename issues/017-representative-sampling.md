@@ -66,9 +66,10 @@ band (an exact `-1.5` is `low`, an exact `-0.5` is `medium`).
 query parameters, keeps one source of truth. Two cutoffs written twice with different
 inclusive sides is the drift this repo has been bitten by before (`_CELL`, `CONTROL_PAIR`).
 
-Pin it with a round-trip test: for every level, scores sampled inside the returned bounds
-must `bucketize` back to that level, and scores just outside must not. That tests the
-inverse relationship rather than restating either implementation.
+Pin it with a test, but **not** the obvious round-trip one — see the directional decision
+below. `bucketize(2.0)` is `very_high`, yet `2.0` satisfies `high`'s bound, so "every
+score inside the bounds bucketizes back to this level" is false by design for the outer
+four. What to assert instead is in that section.
 
 **Then order by `md5(id || seed)`** — the sampling path that already exists and is
 already tested. Uniform within the filtered set, reproducible per seed, independent of
@@ -91,17 +92,28 @@ from a threshold**, except at the middle where "average" genuinely means the mid
 Note the consequence, which is the point of choosing this: `high` admits everyone
 `very_high` admits, so the outer levels are nested rather than disjoint. That roughly
 quadruples the candidate pool for a `high` request against an exact reading, which is
-what keeps the shortfall problem below manageable.
+keeps the shortfall problem manageable.
 
 The shares are the normal-distribution split the cutoffs already imply and which
 [006c](006c-bigfive-sampler.md) records — not new constants. They shift per cell, since μ
 moves with age and gender.
 
-Two things follow for the bounds helper. It returns an **open bound** on the outer four
-levels (one side `None`), so the SQL condition is built from whichever bounds are present
-rather than always emitting `BETWEEN`. And the round-trip test has to assert **nesting**
-for the outer levels — every score satisfying `very_high` must also satisfy `high` —
-rather than the disjointness a level-partition test would naturally check.
+Two things follow for the bounds helper, both easy to get wrong.
+
+It returns an **open bound** on the outer four levels (one side `None`), so the SQL
+condition must be built from whichever bounds are present rather than always emitting
+`BETWEEN`.
+
+And the test asserts **nesting, not round-tripping**:
+
+- every score satisfying `very_high` also satisfies `high` (and the mirror for the low
+  side) — the property directionality exists to create;
+- the threshold is exactly `bucketize`'s own boundary, so a score `bucketize` calls
+  `medium` must fail `high`'s bound and vice versa. That is what ties the two to one
+  source of truth without asserting a round-trip that directionality deliberately breaks.
+
+A level-partition test would assert disjointness, pass on the wrong property, and hide a
+`high` bound that had silently become exact.
 
 ## Consequence to handle, not discover
 
