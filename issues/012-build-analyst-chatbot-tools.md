@@ -16,6 +16,19 @@ The chatbot + tool-calling requirement, embedded in the report and **scoped to t
 
 The exact chip set is fog until this ticket is worked (see map Notes).
 
+## Amended 2026-07-27 (010) — the tool loop is LangChain in v1
+
+[010](010-assemble-orchestrator-graph.md) dropped LangGraph from v1, so this ticket does
+not get to reach for it either: v1 builds the tool loop on LangChain's tool calling with the
+message list held by the request.
+
+This is also the ticket where the decision gets revisited. A multi-turn chat with a tool
+loop, message history across turns, and possibly confirmation interrupts is the *idiomatic*
+LangGraph case — unlike the linear panel pipeline, where it was not. So if v2 adopts it,
+adopt it here, and let this ticket's own experience of hand-rolling the loop be the
+evidence for whether it is worth the dependency. Note what the graded requirement actually
+names: **tool calling**, which is this ticket's content and is framework-independent.
+
 ## Notes
 
 - **Vector index (deferred here from 006f).** `search_personas` needs the pgvector similarity index (HNSW/IVFFlat) on ~~`interests.embedding`~~ **`personas.summary_embedding`** — 006f persists vectors but builds no index. **Amended 2026-07-26 ([006j](006j-persona-summary-embedding.md)):** the index target moves to one vector per persona, and the open question of "per-persona mean-pooled embedding vs. querying per-interest rows" is moot — the `interests` table is dropped, so there is exactly one vector to search.

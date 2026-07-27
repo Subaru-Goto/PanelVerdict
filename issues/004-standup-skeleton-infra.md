@@ -21,7 +21,7 @@ Done when a hello-world request flows through the whole stack: frontend → API 
 
 ## Consciously deferred (recorded 2026-07-16, from code review)
 
-- **LangGraph dependency** — not installed in the skeleton; it belongs with the first ticket that actually uses it (**010 — orchestrator graph**). "FastAPI + LangGraph backend" in the Goal reads as the target architecture, not a skeleton requirement.
+- **LangGraph dependency** — not installed in the skeleton; it belongs with the first ticket that actually uses it (**010 — orchestrator graph**). "FastAPI + LangGraph backend" in the Goal reads as the target architecture, not a skeleton requirement. **Resolved 2026-07-27:** 010 decided against it for v1, so the dependency is never installed — deferring it turned out to be what kept the choice open long enough to make it on evidence.
 - **OpenRouter + LangSmith env wiring** — deferred to the first ticket that makes an LLM call (**003/005-era**); the pydantic-settings pattern in `config.py` is the template to extend.
 
 ## Delivered so far
