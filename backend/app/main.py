@@ -43,10 +43,14 @@ def evaluate(
     votes = collect_panel_votes(
         test_id="tracer", variants=variants, panel=FIXED_PANEL, llm=llm
     )
-    tally = tally_votes(votes, variant_ids=list(variants))
+    # The tracer endpoint still votes the 5-persona FIXED_PANEL, where a failed vote is
+    # a fifth of the panel. Reporting the shortfall is 010's, along with the real panel.
+    if not votes.records:
+        raise HTTPException(status_code=502, detail="the panel returned no votes")
+    tally = tally_votes(votes.records, variant_ids=list(variants))
     return EvaluateResponse(
         verdict=panel_verdict(preferring_b=tally.counts["b"], total=tally.total),
         tally=tally,
         variants=variants,
-        votes=votes,
+        votes=votes.records,
     )

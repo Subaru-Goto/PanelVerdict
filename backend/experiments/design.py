@@ -21,11 +21,12 @@ LOW: Choice = "predicted_low"
 TRAITS: tuple[str, ...] = tuple(BigFive.model_fields)
 
 # Both presentation orders, run for every persona in every cell. Panel-level
-# counterbalancing (`collect_panel_votes`, which alternates on index parity) is
-# the wrong policy here: a five-level sweep is odd-sized, so it would show three
-# personas one order and two the other, and — worse — the imbalance is locked to
-# the trait level, since VERY_LOW is always index 0. A position-biased model would
-# then manufacture a gradient that looks exactly like the effect under test.
+# counterbalancing (`collect_panel_votes`, one order per panelist) is still the wrong
+# policy here even now that the assignment is shuffled rather than index-parity: a
+# five-level sweep is odd-sized, so three personas would see one order and two the
+# other, and which levels take the surplus would then vary with the seed. Running
+# both orders per persona removes position as a variable instead of balancing it,
+# which is what a within-persona comparison needs.
 ORDERS: tuple[tuple[Choice, Choice], ...] = ((HIGH, LOW), (LOW, HIGH))
 
 
