@@ -185,10 +185,59 @@ The general lesson, which generalises past geography: an attribute the pool *nea
 has is more dangerous than one it plainly lacks, because the model will find a
 plausible coarser field to put it in.
 
+## Amended 2026-07-27 — the ladder's third rung, made explicit
+
+The ladder above reads `country → culture_tag → (global)`. As built, a region that
+reaches neither of the first two rungs yields **nothing**, not a global panel. Stating
+why, since it looks like a dropped rung:
+
+The global rung is implemented — it is what an unnamed region gets. *"Cautious
+homeowners"* with no place mentioned draws from every seeded country, which is exactly
+what was asked for. But *"Nigeria"* is a place we cannot serve, and answering it with
+a US/JP/DE panel is the thing this ticket's last bullet forbids: **"Empty result is an
+honest outcome when even the coarse tag has no seeded coverage — report it, don't
+fabricate a panel."** A global panel there is a fabricated one.
+
+So the rungs are conditioned on what was asked, not walked blindly:
+
+| the target | rung | panel |
+|---|---|---|
+| names a seeded country | `country` | that country |
+| names a place we can bucket | `culture_tag` | the seeded countries in that bucket, with a warning |
+| names no place at all | `global` | every seeded country |
+| names a place we cannot bucket | — | empty, with a warning |
+
+## Amended 2026-07-27 — where the 100–300 bound lives
+
+The Goal says *"panel sampling: 100–300 personas"*. `select_panel` takes `size` with
+no range check, and `retrieve_panel` only rejects `size < 1`.
+
+Deliberate: the bound is a product policy and belongs with whoever decides the panel
+size, which is [010](010-assemble-orchestrator-graph.md). Enforcing it inside a
+retrieval function would make the mechanism refuse legitimate small draws — tests take
+3, and a future segment-vs-segment comparison may want fewer. **010 owns the check**,
+against the signed-off n=200 default.
+
+## Amended 2026-07-27 — how far the seed actually reaches
+
+`seed` reaches only a target with **no** disposition. Ranking by cosine similarity is
+already determined, so every seed returns the same top-n for a dispositional target,
+and that covers most of what this ticket exists to serve.
+
+The consequence: *reproducibility* holds everywhere (one target, one panel, run after
+run), but *two independent draws of one target* — the thing sample-stability wants —
+is only available where nothing is being ranked. Getting it under a disposition needs a
+match-then-sample step: take the top-k, then sample `size` from it. That needs a `k`,
+which needs evidence, so it belongs with the map's panel-sampling fog item rather than
+here. Pinned by a test so the limit is documented rather than accidental.
+
 ## What is left for [010](010-assemble-orchestrator-graph.md)
 
 `select_panel` is not wired into `/evaluate`, which still votes `FIXED_PANEL` (5
-hand-authored personas). Swapping the panel source is 010's stated content — "parse
+hand-authored personas). `settings.targeting_model` is therefore unread — matching
+`analyst_model`, which has been declared and unread since [012](012-build-analyst-chatbot-tools.md)
+was specced. The model stays config either way (003), and the alternative is 010
+adding the line back. Swapping the panel source is 010's stated content — "parse
 target → retrieve + sample personas" — and it needs a DB dependency the endpoint does
 not have yet. 010 also chooses the panel size; n=200 is the signed-off default.
 

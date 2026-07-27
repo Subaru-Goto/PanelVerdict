@@ -5,7 +5,7 @@ a throwaway container without live credentials. Idempotent: re-running the seed
 skips personas already present.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -147,6 +147,18 @@ def _persona_from_row(row: PersonaRow) -> Persona:
 # a string is only safe until someone forwards a request parameter into it.
 _ORDERINGS = {"id": "ORDER BY id", "random": "ORDER BY random()"}
 
+# Everything a persona query binds: scalars for equality and range, lists for the
+# ANY(...) filters, and one vector for the similarity ordering.
+type SqlParam = str | int | list[str] | list[int] | np.ndarray
+
+
+def _fetch_personas(
+    conn: psycopg.Connection, sql: str, params: Sequence[SqlParam]
+) -> list[Persona]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(sql, params).fetchall()
+    return [_persona_from_row(cast(PersonaRow, row)) for row in rows]
+
 
 def _read_personas(
     conn: psycopg.Connection,
@@ -155,12 +167,11 @@ def _read_personas(
     limit: int | None = None,
 ) -> list[Persona]:
     clause = _ORDERINGS[order] + (" LIMIT %s" if limit is not None else "")
-    params = () if limit is None else (limit,)
-    with conn.cursor(row_factory=dict_row) as cur:
-        rows = cur.execute(
-            f"SELECT {_PERSONA_COLUMNS} FROM personas {clause}", params
-        ).fetchall()
-    return [_persona_from_row(cast(PersonaRow, row)) for row in rows]
+    return _fetch_personas(
+        conn,
+        f"SELECT {_PERSONA_COLUMNS} FROM personas {clause}",
+        [] if limit is None else [limit],
+    )
 
 
 def load_pool(conn: psycopg.Connection) -> list[Persona]:
@@ -182,7 +193,7 @@ def retrieve_panel(
     seed: int,
     disposition_embedding: list[float] | None = None,
 ) -> list[Persona]:
-    """The hybrid half of 007: hard attributes in SQL, temperament in the vector.
+    """Retrieve a panel: hard attributes filtered in SQL, temperament ranked by vector.
 
     The two halves do different jobs. Filters decide *who is eligible* — a target
     asking for Germans must not be served Americans at any similarity. The vector
@@ -203,7 +214,7 @@ def retrieve_panel(
     # Every fragment below is a literal; only values reach the database as
     # parameters, and `%s` placeholders stay positional with `params`.
     conditions = ["country = ANY(%s)", "age BETWEEN %s AND %s"]
-    params: list[object] = [
+    params: list[SqlParam] = [
         [country.value for country in query.countries],
         query.min_age,
         query.max_age,
@@ -230,11 +241,10 @@ def retrieve_panel(
     # Ties break on id: duplicate summaries embed identically (two 34-year-olds at
     # the same rendered levels are the same text), and an unstable order would vary
     # the panel run to run for no reason the customer could see.
-    sql = (
+    return _fetch_personas(
+        conn,
         f"SELECT {_PERSONA_COLUMNS} FROM personas "
         f"WHERE {' AND '.join(conditions)} "
-        f"ORDER BY {ordering}, id LIMIT %s"
+        f"ORDER BY {ordering}, id LIMIT %s",
+        params,
     )
-    with conn.cursor(row_factory=dict_row) as cur:
-        rows = cur.execute(sql, params).fetchall()
-    return [_persona_from_row(cast(PersonaRow, row)) for row in rows]

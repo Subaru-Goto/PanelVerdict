@@ -56,3 +56,15 @@ repo today, so it would be documentation rather than enforcement.
 
 And `app/main.py` reads `tally.counts["b"]` — fine while `/evaluate` hardcodes variants
 `"a"`/`"b"`, a `KeyError` the moment 010 names them anything else.
+
+## `TargetQuery.disposition` keeps the prose, not the traits (noted 2026-07-27)
+
+`disposition` is the rendered sentence the vector is built from, so which traits were
+read at which level is recoverable only from the notice prose beside it. Fine while the
+report shows sentences; the moment [011](011-build-report-ui.md) wants "neuroticism:
+high" as a chip it needs the mapping as data.
+
+Not added now because it would be a second representation of one fact with no consumer
+— and the first thing to get wrong about this module was letting two values mean the
+same thing. 011 is the ticket that will know whether it needs the structured form; add
+it there, and derive the sentence from it rather than storing both.

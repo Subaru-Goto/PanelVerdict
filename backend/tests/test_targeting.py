@@ -7,7 +7,6 @@ from pydantic import ValidationError
 from factories import DIM, make_assembled, make_persona
 
 from app.llm import build_target_messages
-from app.panel import render_trait_phrases
 from app.persistence import persist_pool
 from app.targeting import resolve_target, select_panel
 from app.schemas import (
@@ -102,6 +101,15 @@ def test_an_inverted_age_range_is_rejected() -> None:
 
 def test_an_age_range_of_one_year_is_allowed() -> None:
     assert TargetRequest(min_age=40, max_age=40).max_age == 40
+
+
+# The high-neuroticism phrase, written out rather than looked up: an expected value
+# taken from the renderer is one the renderer cannot disagree with. It is also the
+# text the pool's summaries were embedded from, so a change here is a re-embedding
+# bill and should be loud.
+_HIGH_NEUROTICISM = (
+    "sensitive to stress and prone to worry about how things might go wrong"
+)
 
 
 def _warnings(query: TargetQuery) -> list[str]:
@@ -296,7 +304,7 @@ def test_traits_render_into_the_summary_s_own_words() -> None:
         )
     )
 
-    assert query.disposition == render_trait_phrases({"neuroticism": TraitLevel.HIGH})
+    assert query.disposition == _HIGH_NEUROTICISM
 
 
 def test_a_target_with_no_traits_has_no_vector_half() -> None:
@@ -338,7 +346,7 @@ def test_one_trait_named_twice_keeps_the_first_and_warns() -> None:
         )
     )
 
-    assert query.disposition == render_trait_phrases({"extraversion": TraitLevel.HIGH})
+    assert query.disposition == "outgoing and energetic, at ease around other people"
     assert "extraversion" in _warnings(query)[0]
 
 
@@ -445,7 +453,7 @@ def test_a_target_with_temperament_embeds_the_rendered_phrases(conn) -> None:
         embedder=embedder,
     )
 
-    assert embedder.texts == [render_trait_phrases({"neuroticism": TraitLevel.HIGH})]
+    assert embedder.texts == [_HIGH_NEUROTICISM]
 
 
 def test_an_uncovered_target_costs_no_embedding_and_draws_nobody(conn) -> None:
@@ -561,3 +569,30 @@ def test_the_same_target_draws_the_same_panel_twice(conn) -> None:
         ]
 
     assert draw() == draw()
+
+
+def test_the_countries_the_panel_came_from_are_always_stated() -> None:
+    """A place the pool cannot resolve finer than its country — a state, a city — is
+    answered with the whole country. Saying only that the place was dropped leaves the
+    customer not knowing who did vote, and the translator cannot be relied on to say
+    it, so this notice is emitted in code for every panel."""
+    query = resolve_target(
+        TargetRequest(
+            regions=[RequestedRegion(label="Ohio", country_code="US")],
+            unmapped=["Ohio"],
+        )
+    )
+
+    assert query.countries == (Locale.US,)
+    (drawn_from,) = [m for m in _readings(query) if "United States" in m]
+    assert "Ohio" in _warnings(query)[0]
+    assert drawn_from
+
+
+def test_an_uncovered_target_states_no_panel_rather_than_where_from() -> None:
+    query = resolve_target(
+        TargetRequest(regions=[RequestedRegion(label="Nigeria", country_code="NG")])
+    )
+
+    assert _readings(query) == []
+    assert len(_warnings(query)) == 2

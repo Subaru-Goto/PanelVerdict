@@ -121,15 +121,13 @@ def _vector(*head: float) -> list[float]:
 _EVERYONE = resolve_target(TargetRequest())
 
 
-def _seed_pool(conn: psycopg.Connection, *assembled: AssembledPersona) -> None:
-    persist_pool(conn, assembled)
-
-
 def test_retrieval_filters_on_country(conn):
-    _seed_pool(
+    persist_pool(
         conn,
-        make_assembled(make_persona(id_="US-00000", country="US")),
-        make_assembled(make_persona(id_="JP-00000", country="JP")),
+        [
+            make_assembled(make_persona(id_="US-00000", country="US")),
+            make_assembled(make_persona(id_="JP-00000", country="JP")),
+        ],
     )
 
     panel = retrieve_panel(
@@ -143,7 +141,7 @@ def test_no_coverage_retrieves_nobody(conn):
     """An empty `countries` is the ladder's bottom rung, not a missing filter. The
     dangerous failure would be reading it as "no country constraint" and returning a
     random panel that looks like a matched one."""
-    _seed_pool(conn, make_assembled(make_persona(id_="US-00000")))
+    persist_pool(conn, [make_assembled(make_persona(id_="US-00000"))])
 
     assert (
         retrieve_panel(
@@ -154,12 +152,14 @@ def test_no_coverage_retrieves_nobody(conn):
 
 
 def test_retrieval_filters_on_the_age_span(conn):
-    _seed_pool(
+    persist_pool(
         conn,
-        make_assembled(make_persona(id_="US-00000", age=29)),
-        make_assembled(make_persona(id_="US-00001", age=30)),
-        make_assembled(make_persona(id_="US-00002", age=39)),
-        make_assembled(make_persona(id_="US-00003", age=40)),
+        [
+            make_assembled(make_persona(id_="US-00000", age=29)),
+            make_assembled(make_persona(id_="US-00001", age=30)),
+            make_assembled(make_persona(id_="US-00002", age=39)),
+            make_assembled(make_persona(id_="US-00003", age=40)),
+        ],
     )
 
     panel = retrieve_panel(
@@ -174,7 +174,7 @@ def test_retrieval_filters_on_the_age_span(conn):
 
 def test_an_inverted_age_span_retrieves_nobody(conn):
     """What "under 18" clamps to. It has to match nobody rather than everybody."""
-    _seed_pool(conn, make_assembled(make_persona(id_="US-00000", age=34)))
+    persist_pool(conn, [make_assembled(make_persona(id_="US-00000", age=34))])
 
     panel = retrieve_panel(
         conn,
@@ -190,19 +190,23 @@ def test_retrieval_filters_on_gender_income_and_education(conn):
     wanted = make_persona(
         id_="US-00000", gender="male", income_quintile=5, education="secondary"
     )
-    _seed_pool(
+    persist_pool(
         conn,
-        make_assembled(wanted),
-        make_assembled(make_persona(id_="US-00001", gender="female")),
-        make_assembled(make_persona(id_="US-00002", gender="male", income_quintile=1)),
-        make_assembled(
-            make_persona(
-                id_="US-00003",
-                gender="male",
-                income_quintile=5,
-                education="tertiary",
-            )
-        ),
+        [
+            make_assembled(wanted),
+            make_assembled(make_persona(id_="US-00001", gender="female")),
+            make_assembled(
+                make_persona(id_="US-00002", gender="male", income_quintile=1)
+            ),
+            make_assembled(
+                make_persona(
+                    id_="US-00003",
+                    gender="male",
+                    income_quintile=5,
+                    education="tertiary",
+                )
+            ),
+        ],
     )
 
     panel = retrieve_panel(
@@ -224,11 +228,13 @@ def test_retrieval_filters_on_gender_income_and_education(conn):
 def test_a_disposition_orders_the_panel_by_similarity(conn):
     """The vector half. Ordering, not filtering — every persona in the filtered set
     is a candidate, and the query decides who is closest."""
-    _seed_pool(
+    persist_pool(
         conn,
-        make_assembled(make_persona(id_="US-00000"), embedding=_vector(0.0, 1.0)),
-        make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0, 1.0)),
-        make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0, 0.0)),
+        [
+            make_assembled(make_persona(id_="US-00000"), embedding=_vector(0.0, 1.0)),
+            make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0, 1.0)),
+            make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0, 0.0)),
+        ],
     )
 
     panel = retrieve_panel(
@@ -239,11 +245,13 @@ def test_a_disposition_orders_the_panel_by_similarity(conn):
 
 
 def test_size_caps_the_panel_at_the_closest_matches(conn):
-    _seed_pool(
+    persist_pool(
         conn,
-        make_assembled(make_persona(id_="US-00000"), embedding=_vector(0.0, 1.0)),
-        make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0, 1.0)),
-        make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0, 0.0)),
+        [
+            make_assembled(make_persona(id_="US-00000"), embedding=_vector(0.0, 1.0)),
+            make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0, 1.0)),
+            make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0, 0.0)),
+        ],
     )
 
     panel = retrieve_panel(
@@ -257,11 +265,13 @@ def test_equal_distances_break_ties_deterministically(conn):
     """The pool holds duplicate summaries — two 34-year-olds with the same rendered
     levels embed identically. Without a tiebreak the panel would vary run to run for
     no reason the customer could see."""
-    _seed_pool(
+    persist_pool(
         conn,
-        make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0)),
-        make_assembled(make_persona(id_="US-00000"), embedding=_vector(1.0)),
-        make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0)),
+        [
+            make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0)),
+            make_assembled(make_persona(id_="US-00000"), embedding=_vector(1.0)),
+            make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0)),
+        ],
     )
 
     ids = [
@@ -278,9 +288,9 @@ def test_equal_distances_break_ties_deterministically(conn):
 
 
 def _numbered_pool(conn: psycopg.Connection, count: int) -> None:
-    _seed_pool(
+    persist_pool(
         conn,
-        *(make_assembled(make_persona(id_=f"US-{i:05d}")) for i in range(count)),
+        list(make_assembled(make_persona(id_=f"US-{i:05d}")) for i in range(count)),
     )
 
 
@@ -319,3 +329,28 @@ def test_a_panel_larger_than_the_pool_returns_what_exists(conn):
 def test_a_panel_size_below_one_is_rejected(conn):
     with pytest.raises(ValueError):
         retrieve_panel(conn, _EVERYONE, size=0, seed=0)
+
+
+def test_a_disposition_makes_the_seed_irrelevant(conn):
+    """Worth pinning because it bounds what "reproducible per seed" means. Ranking by
+    similarity is already determined, so the seed reaches only the disposition-free
+    draw. Anything wanting two independent draws of a dispositional target needs a
+    match-then-sample step, which is not this."""
+    _numbered_pool(conn, 10)
+    query = _EVERYONE.model_copy(update={"disposition": "cautious"})
+
+    drawn = {
+        tuple(
+            p.id
+            for p in retrieve_panel(
+                conn,
+                query,
+                size=4,
+                seed=seed,
+                disposition_embedding=_vector(1.0),
+            )
+        )
+        for seed in range(5)
+    }
+
+    assert len(drawn) == 1

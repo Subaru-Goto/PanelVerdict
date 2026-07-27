@@ -4,11 +4,10 @@ Two steps, kept apart because only the first one costs money: a model reads the
 description into a `TargetRequest` (what was asked for), and `resolve_target` maps
 that onto what the pool can actually serve (`TargetQuery`).
 
-The split is what makes the ticket's "never silent" rule enforceable. A request
-records the country as named, so the substitution needed to serve it happens here,
-in code, with a notice attached — rather than inside a model call where a panel
-matched on the remaining words of the query would be indistinguishable from a
-targeted one.
+Splitting them is what keeps a substitution visible. A request records the country
+as named, so the approximating happens here, in code, with a notice attached — rather
+than inside a model call, where a panel matched on the remaining words of the query
+would be indistinguishable from a targeted one.
 """
 
 from dataclasses import dataclass
@@ -33,6 +32,7 @@ from app.schemas import (
     TargetQuery,
     TargetRequest,
     TraitLevel,
+    TraitRequest,
     TraitName,
 )
 
@@ -100,13 +100,7 @@ def _resolve_regions(
     regions: list[RequestedRegion],
 ) -> tuple[tuple[Locale, ...], list[TargetNotice]]:
     if not regions:
-        every = tuple(Locale)
-        return every, [
-            _reading(
-                "No country named, so the panel spans every country in the pool "
-                f"({_named(every)})."
-            )
-        ]
+        return tuple(Locale), []
 
     countries: list[Locale] = []
     notices: list[TargetNotice] = []
@@ -118,33 +112,27 @@ def _resolve_regions(
     return tuple(countries), notices
 
 
-def _resolve_ages(request: TargetRequest) -> tuple[int, int, list[TargetNotice]]:
+def _resolve_ages(
+    min_age: int | None, max_age: int | None
+) -> tuple[int, int, list[TargetNotice]]:
     """Clamp the requested span onto the pool's, and say so when that bites.
 
     Each bound is clamped independently, so a span entirely outside the pool ends up
     inverted and matches nobody. That is the honest answer — widening it back to the
     pool's own span would answer "under 18" with the whole panel.
     """
-    low = (
-        MIN_PERSONA_AGE
-        if request.min_age is None
-        else max(request.min_age, MIN_PERSONA_AGE)
-    )
-    high = (
-        MAX_PERSONA_AGE
-        if request.max_age is None
-        else min(request.max_age, MAX_PERSONA_AGE)
-    )
+    low = MIN_PERSONA_AGE if min_age is None else max(min_age, MIN_PERSONA_AGE)
+    high = MAX_PERSONA_AGE if max_age is None else min(max_age, MAX_PERSONA_AGE)
 
     # An unstated bound filled in with the pool's own is not a narrowing: "over 50"
     # asks for nothing above, so answering 51-100 is exactly what was asked.
-    narrowed = (request.min_age is not None and low != request.min_age) or (
-        request.max_age is not None and high != request.max_age
+    narrowed = (min_age is not None and low != min_age) or (
+        max_age is not None and high != max_age
     )
     span = f"ages {MIN_PERSONA_AGE}-{MAX_PERSONA_AGE}"
     asked = (
-        f"{'any' if request.min_age is None else request.min_age}"
-        f"-{'any' if request.max_age is None else request.max_age}"
+        f"{'any' if min_age is None else min_age}"
+        f"-{'any' if max_age is None else max_age}"
     )
     if low > high:
         return low, high, [_warn(f"The pool covers {span}; nobody in it is {asked}.")]
@@ -162,12 +150,12 @@ def _resolve_ages(request: TargetRequest) -> tuple[int, int, list[TargetNotice]]
 
 
 def _resolve_traits(
-    request: TargetRequest,
+    requested: list[TraitRequest],
 ) -> tuple[dict[TraitName, TraitLevel], list[TargetNotice]]:
     levels: dict[TraitName, TraitLevel] = {}
     sources: list[str] = []
     conflicts: list[str] = []
-    for trait in request.traits:
+    for trait in requested:
         if trait.trait in levels:
             conflicts.append(trait.trait)
             continue
@@ -200,8 +188,8 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
     described, and only the notices distinguish those from a panel that matched.
     """
     countries, notices = _resolve_regions(request.regions)
-    min_age, max_age, age_notices = _resolve_ages(request)
-    levels, trait_notices = _resolve_traits(request)
+    min_age, max_age, age_notices = _resolve_ages(request.min_age, request.max_age)
+    levels, trait_notices = _resolve_traits(request.traits)
     notices += age_notices + trait_notices
 
     if request.unmapped:
@@ -211,7 +199,15 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
                 f"{', '.join(request.unmapped)} — the panel is not matched on that."
             )
         )
-    if not countries:
+    if countries:
+        # Stated unconditionally, and in code, so that whatever the translator did
+        # with the description the customer still learns which countries voted. The
+        # substitutions above are model-dependent; this is not. A target naming a
+        # place the pool cannot resolve finer than its country — a state, a city —
+        # would otherwise be told only that the place was dropped, never that it was
+        # answered with the whole country.
+        notices.append(_reading(f"Panel drawn from {_named(countries)}."))
+    else:
         notices.append(_warn(_NO_MATCH))
 
     return TargetQuery(
@@ -249,8 +245,9 @@ class PanelSelection:
 
 
 # Fixed by default, so the same target description draws the same panel run after
-# run — the reproducibility the ticket asks for. A caller wanting two independent
-# draws of one target (to measure sample stability) passes its own.
+# run. A caller wanting two independent draws of one target passes its own — though
+# only a target with no disposition varies, since ranking by similarity is already
+# determined.
 PANEL_SEED = 0
 
 
@@ -278,10 +275,9 @@ def select_panel(
 ) -> PanelSelection:
     """Natural-language target description → the panel that will vote on it.
 
-    The whole of 007 in call order: translate, resolve onto the pool's coverage,
-    then retrieve. Two model calls at most — one to read the description, one to
-    embed the temperament it asked for — and the second is skipped when there is
-    nothing to rank or nobody to rank.
+    Translate, resolve onto the pool's coverage, then retrieve. Two model calls at
+    most — one to read the description, one to embed the temperament it asked for —
+    and the second is skipped when there is nothing to rank or nobody to rank.
     """
     query = resolve_target(translator.translate(description=description))
     if not query.countries:
