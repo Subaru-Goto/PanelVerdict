@@ -1,10 +1,10 @@
 import threading
-import time
 from typing import Literal
 
 import pytest
 
 from app.bigfive import bigfive_from_levels
+from app.panel import render_persona_prompt
 from app.schemas import PanelVoteOutput, Persona, TraitLevel
 from app.vote import collect_panel_votes, presentation_orders, resolve_choice
 
@@ -79,6 +79,23 @@ def test_an_odd_panel_is_off_by_exactly_one(count: int) -> None:
     assert abs(forward - (count - forward)) == 1
 
 
+def test_the_odd_panelist_out_does_not_always_favour_the_same_variant() -> None:
+    """An odd panel cannot split evenly, so somebody breaks the tie. Handing the surplus
+    to a fixed side would tilt every odd-sized panel toward the same variant, and at a
+    0.66 first-position rate that is a repeatable bias rather than a rounding artefact —
+    the same defect as index parity, one vote wide."""
+    surplus = {
+        (
+            "forward"
+            if presentation_orders(_VARIANTS, 7, seed=seed).count(_FORWARD) == 4
+            else "reverse"
+        )
+        for seed in range(20)
+    }
+
+    assert surplus == {"forward", "reverse"}
+
+
 def test_the_same_seed_assigns_the_same_orders() -> None:
     """`presentation_order` is stored per vote and the panel is reproducible, so the
     pairing has to be too — otherwise a re-run is not the same test."""
@@ -94,10 +111,8 @@ def test_a_different_seed_pairs_panelists_with_different_positions() -> None:
 
 
 def test_the_assignment_does_not_track_the_panel_s_own_order() -> None:
-    """Alternating on index is exactly balanced and still wrong: it ties who-sees-what
-    to however the panel arrived, and callers control that — `load_pool` returns id
-    order, which groups by country. Shuffling breaks the coupling, and adjacent
-    panelists sharing an order is the visible sign that it is broken."""
+    """Adjacent panelists sharing an order is the observable difference from index
+    parity, which alternates by construction however the panel was sorted."""
     orders = presentation_orders(_VARIANTS, 200, seed=0)
 
     assert any(first == second for first, second in zip(orders, orders[1:]))
@@ -116,8 +131,10 @@ def test_collect_panel_votes_single_persona_builds_record(stub_llm) -> None:
     record = votes.records[0]
     assert record.persona_id == "p1"
     assert record.test_id == "t1"
-    assert record.presentation_order == ["vA", "vB"]
-    assert record.chosen_variant_id == "vA"  # option_1 -> first shown = vA
+    # Which order a lone panelist sees is the seed's to choose, so what is pinned is
+    # that the positional vote was resolved against the order actually shown.
+    assert record.presentation_order in (_FORWARD, _REVERSED)
+    assert record.chosen_variant_id == record.presentation_order[0]
     assert record.reason == "stub"
 
 
@@ -174,13 +191,15 @@ def test_a_failed_vote_costs_that_panelist_and_no_other() -> None:
 
 def test_the_votes_are_cast_concurrently() -> None:
     """200 serial round trips at a few seconds each is ten minutes of waiting. The
-    barrier is the assertion: every vote has to be in flight at once for any of them to
-    return, so a serial implementation cannot reach the end of this test."""
+    barrier is the assertion: no vote returns until every vote is in flight, so under a
+    serial implementation each one times out and the panel comes back empty."""
     panel = [_persona(f"p{i}") for i in range(4)]
     barrier = threading.Barrier(len(panel))
 
     class Rendezvous:
-        def vote(self, *, system_prompt, option_1, option_2):
+        def vote(
+            self, *, system_prompt: str, option_1: str, option_2: str
+        ) -> PanelVoteOutput:
             barrier.wait(timeout=5)
             return PanelVoteOutput(chosen="option_1", reason="stub")
 
@@ -195,32 +214,34 @@ def test_the_votes_are_cast_concurrently() -> None:
     assert len(votes.records) == len(panel)
 
 
-class AnsweringYoungestLast:
-    """Finishes in reverse panel order, so the records cannot have been appended as
-    the votes arrived."""
+class EchoingThePrompt:
+    """Answers with the prompt it was given, so a record can be checked against the
+    panelist it belongs to."""
 
     def vote(
         self, *, system_prompt: str, option_1: str, option_2: str
     ) -> PanelVoteOutput:
-        age = int(system_prompt.split("-year-old")[0].rsplit(" ", 1)[1])
-        time.sleep(0.02 * (40 - age))
-        return PanelVoteOutput(chosen="option_1", reason="stub")
+        return PanelVoteOutput(chosen="option_1", reason=system_prompt)
 
 
-def test_the_records_follow_the_panel_not_the_finishing_order() -> None:
-    """Concurrency must not reach the output. Whoever answers first, the records come
-    back in panel order, so two runs of one test produce comparable lists."""
+def test_every_record_carries_the_vote_its_own_panelist_cast() -> None:
+    """The failure concurrency invites: results collected as they arrive, then zipped
+    back onto the panel, so every record is real and some belong to the wrong person.
+    Nothing downstream could detect it — the reasons would be plausible and the tally
+    unchanged — so the pairing is checked rather than the ordering it comes from."""
     panel = _aged_panel(6)
 
     votes = collect_panel_votes(
         test_id="t1",
         variants={"vA": "a", "vB": "b"},
         panel=panel,
-        llm=AnsweringYoungestLast(),
+        llm=EchoingThePrompt(),
         concurrency=len(panel),
     )
 
     assert [r.persona_id for r in votes.records] == [f"p{i}" for i in range(6)]
+    for record, persona in zip(votes.records, panel):
+        assert record.reason == render_persona_prompt(persona)
 
 
 @pytest.mark.parametrize(

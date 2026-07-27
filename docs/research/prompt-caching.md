@@ -14,19 +14,20 @@ the token counts below were measured locally.
 ## Bottom line
 
 **No. Prompt caching cannot fire on the current vote prompt, for either model, and
-it is not the main cost lever.** Two independent reasons, either of which alone is
-fatal:
+it is not the main cost lever.** Two reasons. The first is a hard provider constraint
+and settles it on its own; the second is a property of our code, which we could change
+but which means caching would not fire *even if* the prompt were long enough:
 
 1. **Too short.** OpenAI caches only prompts of **1,024 tokens or more**; Claude
    Haiku 4.5 needs **4,096**. The vote request is ~171 tokens of messages plus
    ~130–200 tokens of JSON schema — roughly **300–370 tokens**, a third of the
    OpenAI minimum and under a tenth of Haiku's.
-2. **Wrong order.** Caching matches the *longest common prefix*, and
-   `build_vote_messages` puts the **persona** (the part that differs per request)
-   in the *system* message, ahead of the shared options and instructions in the
-   *human* message. Across the ~200 requests of a run the common prefix is only the
-   structured-output schema. Even at 10× the length, the prefix the decision doc
-   wants to cache would not be a prefix.
+2. **Wrong order** — fixable in principle, but not worth fixing. Caching matches the
+   *longest common prefix*, and `build_vote_messages` puts the **persona** (the part
+   that differs per request) in the *system* message, ahead of the shared options and
+   instructions in the *human* message. Across the ~200 requests of a run the common
+   prefix is only the structured-output schema. Reordering is a code change, not a
+   constraint — but on its own it buys nothing, because reason 1 still applies.
 
 **What size would be needed** (for gpt-5-mini): a **shared, identical, request-leading
 prefix of ≥1,024 tokens** — i.e. the two variants and instructions would have to be
@@ -34,12 +35,20 @@ moved *ahead* of the persona *and* grow past 1,024 tokens. For
 `anthropic/claude-haiku-4.5` the same prefix would need **≥4,096 tokens** plus an
 explicit `cache_control` breakpoint. Neither is a natural shape for this prompt.
 
-**Computed** from the sourced prices below: 200 votes × ~171 input tokens ≈ 34K
-input tokens ≈ **$0.0086** per run at gpt-5-mini's $0.25/M. Even a *perfect* 0.1×
-cache read would save under a cent per run. Output tokens (~$2/M, and gpt-5-mini is
-a reasoning model, so reasoning tokens bill as output) dominate the bill by roughly
-4:1 before any caching. **The cost lever is output/reasoning tokens and the number
-of requests, not input caching.**
+**Computed** from the sourced prices below: 200 votes × ~300–370 input tokens
+(messages *plus* the schema, which §4 confirms is billed per request) ≈ 60–74K tokens
+≈ **$0.015–0.019** per run at gpt-5-mini's $0.25/M. Even a *perfect* 0.1× cache read
+would therefore save **under 2¢ per run**, which is the number that settles whether
+this is worth chasing.
+
+**The output side is not computed here, because it cannot be.** gpt-5-mini is a
+reasoning model, so reasoning tokens bill at the output rate ($2/M) and never appear
+in the response. Any output figure would have to come from `usage`, and nothing in
+this repo has ever logged it — 014 and 015 ran ~7,000 votes between them and recorded
+no spend. So: input is small and now known; output is unknown and is the term that
+decides the bill. **The cost lever is output/reasoning tokens and the number of
+requests, not input caching** — that direction follows from the $2/M vs $0.25/M rates
+alone, without needing a ratio.
 
 ## 1. OpenRouter prompt caching, OpenAI models
 

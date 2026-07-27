@@ -62,4 +62,23 @@ Two related things 008 deliberately left here, both because they are run-level:
 - **The pre-flight budget check.** 003 asks for `GET /api/v1/key` before a run plus a
   graceful mid-run stop on 402. A rejected request is not charged, so a mid-run 402
   costs latency rather than money, which is why 008 has no circuit breaker: it would be
-  guessing a policy this ticket can set from the real per-run cost.
+  guessing a policy this ticket can set from the real per-run cost. Note that 008 fans
+  out with a concurrency cap rather than discrete batches, so there is no batch boundary
+  for a stop to land on — the natural checkpoint is between panel *chunks* if this ticket
+  wants one.
+- **Per-vote caching**, keyed on `(persona, test, order)`. [002](002-decide-vote-schema.md)
+  assigns it to 008 and 003 leans on it for resume-after-top-up, but it is not in 008's
+  Goal and it cannot be built without deciding whether `test_id` is a persisted entity —
+  which is this ticket's, because this ticket creates the run. It matters more than a
+  cost saving: 003 removed `temperature≈0` (gpt-5-mini rejects it), so **this cache is now
+  the only exact-replay mechanism the project has**, and 002's test-retest QA metric
+  depends on it. `VoteRecord` already carries every column the table needs.
+
+## Instrument the first real run (008, 2026-07-27)
+
+Log `prompt_tokens`, `completion_tokens` and
+`usage.completion_tokens_details.reasoning_tokens` on the first 200-vote run. Reasoning
+tokens bill at the output rate and never appear in the response, so the per-test cost is
+currently unmeasured and the retracted `$0.055` estimate could be several times low — see
+the [003](003-decide-panel-model-and-provider.md) amendment. One run settles it, and the
+same numbers are what the pre-flight check needs to be more than a guess.

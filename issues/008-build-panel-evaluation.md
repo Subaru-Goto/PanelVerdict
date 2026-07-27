@@ -34,7 +34,12 @@ as such rather than built.
   `with_structured_output` sends by default, not a forced tool call — this settles the
   "confirmed at build time" note in [003](003-decide-panel-model-and-provider.md)).
 - **Batches (~25)** — a `ThreadPoolExecutor` capped at 25, returning `PanelVotes`
-  (records with reasons and order labels, plus failures).
+  (records with reasons and order labels, plus failures). Read "batches" as **a cap on
+  requests in flight**, not discrete groups of 25: a group that waits for its slowest
+  member idles the rest, and a reasoning model's latency varies enough for that to cost
+  real time. The deviation has one consequence worth naming — there is no batch boundary
+  for 003's mid-run 402 stop to land on, which is recorded in
+  [010](010-assemble-orchestrator-graph.md) along with the stop policy itself.
 - **Shared prefix for prompt caching** — **not built. It cannot work here.** See the 003
   amendment and [`docs/research/prompt-caching.md`](../docs/research/prompt-caching.md):
   the request is ~300–370 tokens against a 1,024-token minimum, and the saving is bounded
@@ -74,6 +79,13 @@ plus a decision about whether `test_id` is a persisted entity — which is
 [010](010-assemble-orchestrator-graph.md)'s, since 010 creates the run. Building the table
 here would pre-empt that. `VoteRecord` already carries every column such a table needs, so
 this is deferred, not blocked.
+
+Deferred **with the trail moved**, because the first draft of this section left 002 and 003
+still pointing at 008 and 010 not mentioning it — which is how a requirement disappears
+while every document looks consistent. 002's list now points at 010, and 010 records it
+along with why it matters more than a cost saving: 003 found `temperature≈0` unavailable
+on this model, so this cache is the **only** exact-replay mechanism left, and 002's
+test-retest QA metric is waiting on it.
 
 **A read timeout and the pre-flight budget check** — both need numbers only a real
 200-vote run produces, and both are recorded in 010. No circuit breaker on 402 either: a

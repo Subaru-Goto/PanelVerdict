@@ -39,13 +39,23 @@ def presentation_orders(
     `load_pool` returns id order, which groups by country. Nothing in the pipeline
     guarantees the panel is not sorted by something that matters.
 
+    An odd panel cannot be split evenly, so the seed decides which order gets the
+    surplus. Handing it to a fixed side would tilt every odd-sized panel the same way,
+    which at a 0.66 first-position rate is a repeatable bias toward one variant — the
+    same defect as index parity, just smaller.
+
     Seeded, because `presentation_order` is stored per vote and a re-run of one test
     has to pair the same panelist with the same position to be the same test.
     """
     forward, reverse = list(variant_ids), list(reversed(variant_ids))
-    first_half = count // 2 + count % 2
-    orders = [forward] * first_half + [reverse] * (count - first_half)
-    random.Random(seed).shuffle(orders)
+    rng = random.Random(seed)
+    # A fresh list per panelist: these end up on a VoteRecord each, and repeating one
+    # object `count` times would share it across every vote that saw that order.
+    orders = [list(forward) for _ in range(count // 2)]
+    orders += [list(reverse) for _ in range(count // 2)]
+    if count % 2:
+        orders.append(list(rng.choice((forward, reverse))))
+    rng.shuffle(orders)
     return orders
 
 
@@ -63,7 +73,12 @@ def resolve_choice(
 
 @dataclass(frozen=True)
 class VoteFailure:
-    """One panelist whose vote never arrived, and what stopped it."""
+    """One panelist whose vote never arrived, and what stopped it.
+
+    `error` is the exception's type and message, for diagnosis. It can carry provider
+    response text and the model's own output, so it belongs in a log rather than in a
+    response body.
+    """
 
     persona_id: str
     error: str
@@ -78,6 +93,9 @@ class PanelVotes:
     shortfall rather than raising is the same division as retrieval's: the mechanism
     says what happened, and the caller decides whether a thinner panel still deserves
     a verdict.
+
+    A caller that reads `records` and never looks at `failures` has made that decision
+    by omission — which is the one reading this shape exists to prevent.
     """
 
     records: list[VoteRecord]
@@ -132,11 +150,9 @@ def collect_panel_votes(
         raise ValueError(
             f"collect_panel_votes requires exactly 2 variants, got {len(variants)}"
         )
-    if concurrency < 1:
-        raise ValueError(f"a panel needs at least one worker, got {concurrency}")
 
-    first_variant, second_variant = variants
-    orders = presentation_orders((first_variant, second_variant), len(panel), seed=seed)
+    first_id, second_id = variants
+    orders = presentation_orders((first_id, second_id), len(panel), seed=seed)
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures: list[Future[VoteRecord]] = [
@@ -157,11 +173,13 @@ def collect_panel_votes(
         error = future.exception()
         if error is None:
             records.append(future.result())
-        else:
-            failures.append(
-                VoteFailure(
-                    persona_id=persona.id,
-                    error=f"{type(error).__name__}: {error}",
-                )
-            )
+            continue
+        # A worker captures BaseException, so an interrupt raised inside one would
+        # otherwise be filed as a panelist who declined to vote and the panel would
+        # report success minus one.
+        if not isinstance(error, Exception):
+            raise error
+        failures.append(
+            VoteFailure(persona_id=persona.id, error=f"{type(error).__name__}: {error}")
+        )
     return PanelVotes(records=records, failures=tuple(failures))
