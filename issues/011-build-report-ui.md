@@ -89,3 +89,9 @@ the interpretation. Both belong in the report — the readings are how a custome
 a mis-read target, e.g. "cautious" taken as conscientiousness rather than neuroticism.
 Write from [`docs/reading-the-posterior.md`](../docs/reading-the-posterior.md) for the
 verdict numbers themselves.
+
+**Amended 2026-07-27 ([017](017-representative-sampling.md)):** the trait reading is
+available as **data**, not only as notice prose. `TargetQuery.traits` is a tuple of
+`TraitRequest` — `trait`, `level`, and the `source_phrase` it was read from — so a chip
+reading *"conscientiousness: high — from "cautious""* needs no string parsing. Show the
+source phrase, not just the trait: it is the only part a customer can check.

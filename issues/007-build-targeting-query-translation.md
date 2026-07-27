@@ -280,6 +280,33 @@ match-then-sample step: take the top-k, then sample `size` from it. That needs a
 which needs evidence, so it belongs with the map's panel-sampling fog item rather than
 here. Pinned by a test so the limit is documented rather than accidental.
 
+## Superseded 2026-07-27 — the vector half is gone ([017](017-representative-sampling.md))
+
+Read every "ranks" above as "filters". The parts of this ticket that no longer describe
+the code, so a reader does not have to work out which:
+
+- **"`retrieve_panel` filters on hard attributes and *ranks* on the vector."** It
+  filters on all of them. A requested trait level is a **score bound on that trait's
+  column**, read directionally, and the panel is a uniform `md5(id, seed)` draw inside
+  the whole filter. There is no `<=>` and no query embedding.
+- **"The query is written in the persona summary's own words."** No longer relevant:
+  nothing renders the query into prose, because nothing embeds it.
+  `TargetQuery.disposition` is now `TargetQuery.traits`, the levels themselves.
+- **"How far the seed actually reaches"** (amendment above) is **void**. It reached only
+  a disposition-free target because a similarity ranking is already determined; nothing
+  is ranked now, so the seed varies every draw and two independent draws of any target
+  are available. The match-then-sample step that amendment called for is unnecessary —
+  it existed to recover a sample from a ranking we no longer take.
+- **"Representativeness within a target"** in *Not in scope*: now in scope and done,
+  which is what 017 is. A uniform draw inside the filter is representative by
+  construction, because [006b](006b-demographics-sampler.md)/[006c](006c-bigfive-sampler.md)
+  ground the pool's distribution.
+
+What survives untouched is the part this ticket is actually named for: description →
+`TargetRequest` (one model call) → `TargetQuery` (code), with the coverage ladder and
+the notices. `personas.summary_embedding` is still written at seed time, for
+[012](012-build-analyst-chatbot-tools.md)'s `search_personas`.
+
 ## What is left for [010](010-assemble-orchestrator-graph.md)
 
 `select_panel` is not wired into `/evaluate`, which still votes `FIXED_PANEL` (5

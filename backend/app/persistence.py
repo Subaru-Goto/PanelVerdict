@@ -15,6 +15,7 @@ from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
 
 from app.assembly import AssembledPersona
+from app.bigfive import LEVEL_BOUNDS
 from app.schemas import BigFive, Persona, TargetQuery
 
 
@@ -147,9 +148,9 @@ def _persona_from_row(row: PersonaRow) -> Persona:
 # a string is only safe until someone forwards a request parameter into it.
 _ORDERINGS = {"id": "ORDER BY id", "random": "ORDER BY random()"}
 
-# Everything a persona query binds: scalars for equality and range, lists for the
-# ANY(...) filters, and one vector for the similarity ordering.
-type SqlParam = str | int | list[str] | list[int] | np.ndarray
+# Everything a persona query binds: scalars for equality and range, trait scores for
+# the level bounds, and lists for the ANY(...) filters.
+type SqlParam = str | int | float | list[str] | list[int]
 
 
 def _fetch_personas(
@@ -191,19 +192,20 @@ def retrieve_panel(
     *,
     size: int,
     seed: int,
-    disposition_embedding: list[float] | None = None,
 ) -> list[Persona]:
-    """Retrieve a panel: hard attributes filtered in SQL, temperament ranked by vector.
+    """Retrieve a panel: every requested attribute filters, then a uniform sample.
 
-    The two halves do different jobs. Filters decide *who is eligible* — a target
-    asking for Germans must not be served Americans at any similarity. The vector
-    only *ranks* the eligible, because "cautious" is a matter of degree and the pool
-    holds no cautious/not-cautious line to filter on.
+    Filtering rather than ranking is what makes the panel an audience instead of a
+    tail (017). The pool is distributionally grounded by construction — demographics
+    from the OECD joint tables, Big Five from age- and gender-conditioned norms — so a
+    uniform draw inside the filter already carries a realistic spread, where taking
+    the top `size` by any score returns the extremes of it.
 
-    Without a disposition there is nothing to rank by, so the panel is a sample
-    keyed on `seed`: hashing it with the persona id gives an ordering that is
-    reproducible per seed, independent of insertion order, and needs no server-side
-    random state that a second query could disturb.
+    The sample is keyed on `seed`: hashing it with the persona id gives an ordering
+    that is reproducible per seed, independent of insertion order, and needs no
+    server-side random state a second query could disturb. Two seeds are two
+    independent draws of the same target, which is what makes sample stability
+    measurable.
 
     Returns fewer than `size` when the target matches fewer — a shortfall is the
     caller's to report, and raising here would turn a thin panel into no panel.
@@ -228,23 +230,23 @@ def retrieve_panel(
     if query.education:
         conditions.append("education = ANY(%s)")
         params.append([level.value for level in query.education])
+    for requested in query.traits:
+        # The column name is the trait name, both taken from `TraitName`; the
+        # comparison comes from `LEVEL_BOUNDS`. Neither is caller-supplied text, and
+        # the score itself is bound as a parameter.
+        for comparison, bound in LEVEL_BOUNDS[requested.level]:
+            conditions.append(f"{requested.trait} {comparison} %s")
+            params.append(bound)
 
-    if disposition_embedding is None:
-        ordering = "md5(id || %s::text)"
-        params.append(str(seed))
-    else:
-        # <=> is cosine distance, so ascending is most-similar-first.
-        ordering = "summary_embedding <=> %s"
-        params.append(np.array(disposition_embedding))
-    params.append(size)
+    params += [str(seed), size]
 
-    # Ties break on id: duplicate summaries embed identically (two 34-year-olds at
-    # the same rendered levels are the same text), and an unstable order would vary
-    # the panel run to run for no reason the customer could see.
+    # Ties break on id, so the panel cannot vary run to run for a reason the customer
+    # could not see. Only an md5 collision could reach it, but the ordering has to be
+    # total for `LIMIT` to mean anything.
     return _fetch_personas(
         conn,
         f"SELECT {_PERSONA_COLUMNS} FROM personas "
         f"WHERE {' AND '.join(conditions)} "
-        f"ORDER BY {ordering}, id LIMIT %s",
+        "ORDER BY md5(id || %s::text), id LIMIT %s",
         params,
     )

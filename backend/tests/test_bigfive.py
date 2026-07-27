@@ -1,3 +1,5 @@
+import operator
+
 import numpy as np
 import pytest
 
@@ -5,6 +7,7 @@ from app.bigfive import (
     _mu_band,
     bigfive_from_levels,
     bucketize,
+    LEVEL_BOUNDS,
     MU,
     sample_big_five,
     SIGMA,
@@ -62,6 +65,67 @@ def test_bigfive_from_levels_round_trips_through_bucketize():
             neuroticism=level,
         )
         assert all(bucketize(score) == level for _, score in bf)
+
+
+_COMPARISONS = {
+    ">": operator.gt,
+    ">=": operator.ge,
+    "<": operator.lt,
+    "<=": operator.le,
+}
+
+
+def _admits(level: TraitLevel, score: float) -> bool:
+    """Apply a requested level's bounds — one comparison each, as the SQL does.
+
+    A second interpreter of the same table, which is what lets the properties below be
+    swept over hundreds of scores without a database. It cannot show that Postgres
+    compares the bounds the same way, so the boundaries — the only scores where the two
+    could disagree — are checked against the real query in test_persistence.
+    """
+    return all(_COMPARISONS[op](score, value) for op, value in LEVEL_BOUNDS[level])
+
+
+_SWEEP = [round(score, 2) for score in np.arange(-3.0, 3.01, 0.05)]
+
+
+def test_a_requested_level_admits_every_score_that_renders_as_it():
+    # the safe direction of the round trip, and the one a target depends on: whoever
+    # the pool *renders* as high must be reachable by a request for high. The other
+    # direction is false by design — see the nesting test below.
+    for score in _SWEEP:
+        assert _admits(bucketize(score), score), score
+
+
+def test_the_outer_levels_nest_inside_the_inner_ones():
+    # what directionality exists to create: asking for cautious people must not
+    # exclude the *most* cautious. So `high` admits everyone `very_high` admits, and
+    # the levels are nested rather than a partition — a test asserting disjointness
+    # would pass on the wrong property and hide a bound that had drifted back to exact.
+    for score in _SWEEP:
+        if _admits(TraitLevel.VERY_HIGH, score):
+            assert _admits(TraitLevel.HIGH, score), score
+        if _admits(TraitLevel.VERY_LOW, score):
+            assert _admits(TraitLevel.LOW, score), score
+
+
+@pytest.mark.parametrize(
+    ("score", "admitted_by"),
+    [
+        # the boundaries, which is where the two cutoffs could drift apart: each
+        # belongs to the inner band in bucketize, so the bound has to exclude it
+        (0.5, {TraitLevel.MEDIUM}),  # bucketize says MEDIUM, so `high` must refuse it
+        (0.51, {TraitLevel.HIGH}),
+        (1.5, {TraitLevel.HIGH}),  # bucketize says HIGH, so `very_high` must refuse it
+        (1.51, {TraitLevel.HIGH, TraitLevel.VERY_HIGH}),
+        (-0.5, {TraitLevel.MEDIUM}),
+        (-0.51, {TraitLevel.LOW}),
+        (-1.5, {TraitLevel.LOW}),
+        (-1.51, {TraitLevel.LOW, TraitLevel.VERY_LOW}),
+    ],
+)
+def test_a_threshold_is_exactly_bucketize_s_own_boundary(score, admitted_by):
+    assert {level for level in TraitLevel if _admits(level, score)} == admitted_by
 
 
 @pytest.mark.parametrize(

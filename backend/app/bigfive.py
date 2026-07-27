@@ -91,6 +91,28 @@ def bucketize(score: float) -> TraitLevel:
     return TraitLevel.VERY_HIGH
 
 
+# What a *requested* level admits, which is not the band `bucketize` renders. A target
+# asking for cautious people means at least cautious, so a level is a direction from a
+# threshold — except at the middle, where "average" genuinely means the middle. The
+# consequence is deliberate: `high` admits everyone `very_high` does, so the outer
+# levels nest rather than partition (017).
+#
+# The comparison travels with the number because `bucketize`'s boundaries belong to the
+# inner band, which makes every threshold exclusive on its outer side while the middle's
+# own bounds are inclusive. Bare numbers would leave that asymmetry to whoever writes
+# the SQL, and two copies of one cutoff with different inclusive sides is drift this
+# repo has already paid for.
+type ScoreBound = tuple[Literal[">", ">=", "<", "<="], float]
+
+LEVEL_BOUNDS: dict[TraitLevel, tuple[ScoreBound, ...]] = {
+    TraitLevel.VERY_LOW: (("<", -_OUTER_CUTOFF),),
+    TraitLevel.LOW: (("<", -_INNER_CUTOFF),),
+    TraitLevel.MEDIUM: ((">=", -_INNER_CUTOFF), ("<=", _INNER_CUTOFF)),
+    TraitLevel.HIGH: ((">", _INNER_CUTOFF),),
+    TraitLevel.VERY_HIGH: ((">", _OUTER_CUTOFF),),
+}
+
+
 # Representative z-score per level — a clearly-in-bucket value (bucketize inverts
 # it). For hand-authored panels that think in levels, not sampled personas.
 _LEVEL_SCORE: dict[TraitLevel, float] = {
