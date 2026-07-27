@@ -3,9 +3,17 @@ from threading import Lock
 import pytest
 
 from app.bigfive import bigfive_from_levels, bucketize
+from app.llm import VOTE_QUESTION
 from app.panel import render_persona_prompt
 from app.schemas import PanelVoteOutput, TraitLevel
-from experiments.design import ARMS, PAIRS, TRAITS
+from experiments.design import (
+    ARMS,
+    CONTROL_PAIR,
+    DEFAULT_FRAMING,
+    FRAMINGS,
+    PAIRS,
+    TRAITS,
+)
 from experiments.manipulation_check import (
     collect_rows,
     plan_cells,
@@ -105,12 +113,48 @@ class TestPairs:
     def test_every_swept_trait_has_a_loaded_pair(self):
         assert {pair.trait for pair in PAIRS if pair.trait} == set(TRAITS)
 
-    def test_exactly_one_positive_control(self):
-        assert sum(1 for pair in PAIRS if pair.trait is None) == 1
+    def test_the_comprehension_control_is_found_by_role_not_by_absent_trait(self):
+        """015's four published-lever pairs also carry no trait.
+
+        CONTROL_PAIR used to resolve as "the pair without a trait", which with more
+        than one untraited pair returns whichever happens to be listed first. The
+        comprehension check and the noise-floor exclusion would then both read off
+        the wrong stimulus, and nothing would raise.
+        """
+        assert sum(1 for pair in PAIRS if pair.role == "comprehension") == 1
+        assert CONTROL_PAIR == "control"
+
+    def test_the_trait_role_is_exactly_the_set_of_pairs_carrying_a_trait(self):
+        for pair in PAIRS:
+            assert (pair.role == "trait") == (pair.trait is not None)
+
+    def test_a_published_direction_carries_its_source_and_an_authored_one_does_not(
+        self,
+    ):
+        """`grounding` is None exactly where we authored the direction ourselves, so
+        which predictions are unsourced is visible in the data, not just a docstring."""
+        for pair in PAIRS:
+            sourced = pair.role in ("published", "published_null")
+            assert bool(pair.grounding) == sourced, pair.id
 
     def test_options_are_distinct_and_ids_unique(self):
         assert len({pair.id for pair in PAIRS}) == len(PAIRS)
         assert all(pair.predicted_high != pair.predicted_low for pair in PAIRS)
+
+
+class TestFramings:
+    def test_the_baseline_framing_is_the_shipped_question(self):
+        """design.py must stay free of langchain — analysis.py imports it and is
+        pure — so the question is duplicated here rather than imported from app.llm.
+        This is the tripwire that stops the duplicate drifting into a silent fourth
+        framing, which would make the baseline arm measure nothing.
+        """
+        assert DEFAULT_FRAMING.question == VOTE_QUESTION
+        assert DEFAULT_FRAMING in FRAMINGS
+
+    def test_ids_and_questions_are_unique(self):
+        assert len({framing.id for framing in FRAMINGS}) == len(FRAMINGS)
+        assert len({framing.question for framing in FRAMINGS}) == len(FRAMINGS)
 
 
 class StubLLM:
