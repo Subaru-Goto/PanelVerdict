@@ -15,8 +15,7 @@ from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
 
 from app.assembly import AssembledPersona
-from app.schemas import BigFive, Persona
-from app.targeting import TargetQuery
+from app.schemas import BigFive, Persona, TargetQuery
 
 
 class PersonaRow(TypedDict):

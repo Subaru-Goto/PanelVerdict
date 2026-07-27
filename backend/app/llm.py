@@ -13,6 +13,7 @@ from app.schemas import (
     Locale,
     PanelVoteOutput,
     PlausibilityScore,
+    TargetRequest,
     TraitLevel,
     TraitName,
 )
@@ -136,6 +137,29 @@ class OpenRouterPanelLLM:
         result = self._model.invoke(messages)
         if not isinstance(result, PanelVoteOutput):
             raise RuntimeError(f"panel model returned no structured vote: {result!r}")
+        return result
+
+
+class OpenRouterTargetTranslator:
+    """TargetTranslator backed by an OpenRouter chat model via LangChain.
+
+    A `TargetRequest` and not a `TargetQuery`: the model reads the description, and
+    code alone decides what the pool can serve for it. Handing the model the
+    coverage ladder would put the substitutions where nothing can attach a notice
+    to them.
+    """
+
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
+        self._model = ChatOpenAI(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+        ).with_structured_output(TargetRequest)
+
+    def translate(self, *, description: str) -> TargetRequest:
+        result = self._model.invoke(build_target_messages(description))
+        if not isinstance(result, TargetRequest):
+            raise RuntimeError(f"translator returned no structured target: {result!r}")
         return result
 
 

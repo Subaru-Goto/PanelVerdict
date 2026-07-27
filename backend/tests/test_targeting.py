@@ -4,9 +4,12 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
+from factories import DIM, make_assembled, make_persona
+
 from app.llm import build_target_messages
 from app.panel import render_trait_phrases
-from app.targeting import TargetQuery, resolve_target
+from app.persistence import persist_pool
+from app.targeting import resolve_target, select_panel
 from app.schemas import (
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
@@ -17,6 +20,7 @@ from app.schemas import (
     IncomeBand,
     Locale,
     RequestedRegion,
+    TargetQuery,
     TargetRequest,
     TraitLevel,
     TraitName,
@@ -315,3 +319,213 @@ def test_an_unmappable_attribute_is_warned_about_not_dropped() -> None:
     (warning,) = _warnings(query)
     assert "gamers" in warning
     assert "vegan" in warning
+
+
+class StubTranslator:
+    """A TargetTranslator double — no network, and it records what it was asked."""
+
+    def __init__(self, request: TargetRequest) -> None:
+        self._request = request
+        self.descriptions: list[str] = []
+
+    def translate(self, *, description: str) -> TargetRequest:
+        self.descriptions.append(description)
+        return self._request
+
+
+class CountingEmbedder:
+    """An Embedder double that counts calls, since each one is a paid request."""
+
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.texts.extend(texts)
+        return [[1.0] + [0.0] * (DIM - 1) for _ in texts]
+
+
+_JAPAN = TargetRequest(regions=[RequestedRegion(label="Japan", country_code="JP")])
+
+
+def test_select_panel_passes_the_description_to_the_translator(conn) -> None:
+    translator = StubTranslator(_JAPAN)
+
+    select_panel(
+        conn,
+        "Japanese homeowners",
+        size=5,
+        translator=translator,
+        embedder=CountingEmbedder(),
+    )
+
+    assert translator.descriptions == ["Japanese homeowners"]
+
+
+def test_select_panel_retrieves_only_matching_personas(conn) -> None:
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_="JP-00000", country="JP")),
+            make_assembled(make_persona(id_="US-00000", country="US")),
+        ],
+    )
+
+    selection = select_panel(
+        conn,
+        "Japan",
+        size=5,
+        translator=StubTranslator(_JAPAN),
+        embedder=CountingEmbedder(),
+    )
+
+    assert [p.id for p in selection.panel] == ["JP-00000"]
+
+
+def test_a_target_with_no_temperament_is_never_embedded(conn) -> None:
+    """The embedding is a paid call, and there is nothing to rank by."""
+    embedder = CountingEmbedder()
+
+    select_panel(
+        conn, "Japan", size=5, translator=StubTranslator(_JAPAN), embedder=embedder
+    )
+
+    assert embedder.texts == []
+
+
+def test_a_target_with_temperament_embeds_the_rendered_phrases(conn) -> None:
+    """What is embedded has to be the summary's own wording, not the customer's —
+    the query is compared against text written in that vocabulary."""
+    embedder = CountingEmbedder()
+    request = TargetRequest(
+        regions=[RequestedRegion(label="Japan", country_code="JP")],
+        traits=[
+            TraitRequest(
+                trait="neuroticism", level=TraitLevel.HIGH, source_phrase="anxious"
+            )
+        ],
+    )
+
+    select_panel(
+        conn,
+        "anxious Japanese",
+        size=5,
+        translator=StubTranslator(request),
+        embedder=embedder,
+    )
+
+    assert embedder.texts == [render_trait_phrases({"neuroticism": TraitLevel.HIGH})]
+
+
+def test_an_uncovered_target_costs_no_embedding_and_draws_nobody(conn) -> None:
+    """No seeded country survived the ladder, so no persona can match whatever the
+    disposition says — sorting an empty set is not worth paying for."""
+    embedder = CountingEmbedder()
+    request = TargetRequest(
+        regions=[RequestedRegion(label="Nigeria", country_code="NG")],
+        traits=[
+            TraitRequest(
+                trait="openness", level=TraitLevel.HIGH, source_phrase="curious"
+            )
+        ],
+    )
+
+    selection = select_panel(
+        conn,
+        "curious Nigerians",
+        size=5,
+        translator=StubTranslator(request),
+        embedder=embedder,
+    )
+
+    assert selection.panel == []
+    assert embedder.texts == []
+    assert any(n.severity == "warning" for n in selection.notices)
+
+
+def test_the_selection_carries_the_query_s_own_notices(conn) -> None:
+    """One place to read notices from, so a caller cannot show the retrieval's and
+    forget the translation's."""
+    persist_pool(conn, [make_assembled(make_persona(id_="JP-00000", country="JP"))])
+    request = TargetRequest(
+        regions=[RequestedRegion(label="Japan", country_code="JP")],
+        unmapped=["gamers"],
+    )
+
+    selection = select_panel(
+        conn,
+        "Japanese gamers",
+        size=1,
+        translator=StubTranslator(request),
+        embedder=CountingEmbedder(),
+    )
+
+    assert selection.query.notices
+    assert selection.notices[: len(selection.query.notices)] == selection.query.notices
+
+
+def test_a_thin_panel_is_reported_as_a_shortfall(conn) -> None:
+    """At n=200 this changes what the verdict can say, so it cannot be silent."""
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_=f"JP-{i:05d}", country="JP"))
+            for i in range(3)
+        ],
+    )
+
+    selection = select_panel(
+        conn,
+        "Japan",
+        size=200,
+        translator=StubTranslator(_JAPAN),
+        embedder=CountingEmbedder(),
+    )
+
+    assert len(selection.panel) == 3
+    (shortfall,) = [n.message for n in selection.notices if "3" in n.message]
+    assert "200" in shortfall
+
+
+def test_a_full_panel_reports_no_shortfall(conn) -> None:
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_=f"JP-{i:05d}", country="JP"))
+            for i in range(3)
+        ],
+    )
+
+    selection = select_panel(
+        conn,
+        "Japan",
+        size=3,
+        translator=StubTranslator(_JAPAN),
+        embedder=CountingEmbedder(),
+    )
+
+    assert selection.notices == selection.query.notices
+
+
+def test_the_same_target_draws_the_same_panel_twice(conn) -> None:
+    """The ticket's reproducibility requirement, at the level a customer sees it."""
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_=f"JP-{i:05d}", country="JP"))
+            for i in range(20)
+        ],
+    )
+
+    def draw() -> list[str]:
+        return [
+            p.id
+            for p in select_panel(
+                conn,
+                "Japan",
+                size=5,
+                translator=StubTranslator(_JAPAN),
+                embedder=CountingEmbedder(),
+            ).panel
+        ]
+
+    assert draw() == draw()

@@ -281,6 +281,34 @@ class TargetNotice(BaseModel):
     message: str
 
 
+class TargetQuery(BaseModel):
+    """A target description as the pool can serve it, plus what that cost.
+
+    Lives here rather than beside `targeting.resolve_target` because it is the
+    contract between that resolution and the SQL that executes it — and because the
+    report has to show which filters a verdict was drawn under.
+
+    `countries` is always explicit: the coarsest rung of the coverage ladder fills in
+    every seeded country rather than leaving the filter off, so an **empty tuple
+    means no coverage at all** — a panel of nobody. Every other collection here is a
+    filter, where empty means "don't filter on this".
+
+    `disposition` is the vector half, rendered in the persona summary's own words and
+    empty when the target named no temperament.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    countries: tuple[Locale, ...]
+    min_age: int
+    max_age: int
+    gender: Gender | None
+    income_quintiles: tuple[int, ...]
+    education: tuple[EducationLevel, ...]
+    disposition: str
+    notices: tuple[TargetNotice, ...]
+
+
 class EvaluateRequest(BaseModel):
     headline_a: str
     headline_b: str

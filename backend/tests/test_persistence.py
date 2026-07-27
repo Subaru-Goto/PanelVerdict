@@ -1,5 +1,3 @@
-from dataclasses import replace
-
 import numpy as np
 import psycopg
 import pytest
@@ -135,7 +133,7 @@ def test_retrieval_filters_on_country(conn):
     )
 
     panel = retrieve_panel(
-        conn, replace(_EVERYONE, countries=(Locale.JP,)), size=10, seed=0
+        conn, _EVERYONE.model_copy(update={"countries": (Locale.JP,)}), size=10, seed=0
     )
 
     assert [p.id for p in panel] == ["JP-00000"]
@@ -147,7 +145,12 @@ def test_no_coverage_retrieves_nobody(conn):
     random panel that looks like a matched one."""
     _seed_pool(conn, make_assembled(make_persona(id_="US-00000")))
 
-    assert retrieve_panel(conn, replace(_EVERYONE, countries=()), size=10, seed=0) == []
+    assert (
+        retrieve_panel(
+            conn, _EVERYONE.model_copy(update={"countries": ()}), size=10, seed=0
+        )
+        == []
+    )
 
 
 def test_retrieval_filters_on_the_age_span(conn):
@@ -160,7 +163,10 @@ def test_retrieval_filters_on_the_age_span(conn):
     )
 
     panel = retrieve_panel(
-        conn, replace(_EVERYONE, min_age=30, max_age=39), size=10, seed=0
+        conn,
+        _EVERYONE.model_copy(update={"min_age": 30, "max_age": 39}),
+        size=10,
+        seed=0,
     )
 
     assert sorted(p.age for p in panel) == [30, 39]
@@ -171,7 +177,10 @@ def test_an_inverted_age_span_retrieves_nobody(conn):
     _seed_pool(conn, make_assembled(make_persona(id_="US-00000", age=34)))
 
     panel = retrieve_panel(
-        conn, replace(_EVERYONE, min_age=18, max_age=17), size=10, seed=0
+        conn,
+        _EVERYONE.model_copy(update={"min_age": 18, "max_age": 17}),
+        size=10,
+        seed=0,
     )
 
     assert panel == []
@@ -198,11 +207,12 @@ def test_retrieval_filters_on_gender_income_and_education(conn):
 
     panel = retrieve_panel(
         conn,
-        replace(
-            _EVERYONE,
-            gender="male",
-            income_quintiles=(4, 5),
-            education=(EducationLevel.SECONDARY,),
+        _EVERYONE.model_copy(
+            update={
+                "gender": "male",
+                "income_quintiles": (4, 5),
+                "education": (EducationLevel.SECONDARY,),
+            }
         ),
         size=10,
         seed=0,

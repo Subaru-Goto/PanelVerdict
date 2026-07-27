@@ -12,8 +12,13 @@ targeted one.
 """
 
 from dataclasses import dataclass
+from typing import Protocol
 
+import psycopg
+
+from app.assembly import Embedder
 from app.panel import render_trait_phrases
+from app.persistence import retrieve_panel
 from app.schemas import (
     COUNTRY_CULTURE_TAG,
     COUNTRY_NAME,
@@ -21,11 +26,11 @@ from app.schemas import (
     MAX_PERSONA_AGE,
     MIN_PERSONA_AGE,
     CultureTag,
-    EducationLevel,
-    Gender,
     Locale,
+    Persona,
     RequestedRegion,
     TargetNotice,
+    TargetQuery,
     TargetRequest,
     TraitLevel,
     TraitName,
@@ -40,30 +45,13 @@ _SEEDED_BY_TAG: dict[CultureTag, tuple[Locale, ...]] = {
     for tag in CultureTag
 }
 
+_NO_MATCH = "No panelists match this target, so no panel was drawn."
 
-@dataclass(frozen=True)
-class TargetQuery:
-    """A target description as the pool can serve it, plus what that cost.
 
-    `countries` is always explicit: the coarsest rung of the coverage ladder fills
-    in every seeded country rather than leaving the filter off, so an **empty tuple
-    means no coverage at all** — a panel of nobody. Every other collection here is a
-    filter, where empty means "don't filter on this".
+class TargetTranslator(Protocol):
+    """Reads a target description into a `TargetRequest`. One model call."""
 
-    `disposition` is the vector half, rendered in the persona summary's own words
-    and empty when the target named no temperament. `notices` carries everything the
-    customer has to know to read the result: a `warning` for each place the panel is
-    not what they asked for, a `reading` for each interpretation it rests on.
-    """
-
-    countries: tuple[Locale, ...]
-    min_age: int
-    max_age: int
-    gender: Gender | None
-    income_quintiles: tuple[int, ...]
-    education: tuple[EducationLevel, ...]
-    disposition: str
-    notices: tuple[TargetNotice, ...]
+    def translate(self, *, description: str) -> TargetRequest: ...
 
 
 def _warn(message: str) -> TargetNotice:
@@ -219,7 +207,7 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
             )
         )
     if not countries:
-        notices.append(_warn("No panelists match this target, so no panel was drawn."))
+        notices.append(_warn(_NO_MATCH))
 
     return TargetQuery(
         countries=countries,
@@ -238,4 +226,75 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
         education=tuple(dict.fromkeys(request.education)),
         disposition=render_trait_phrases(levels),
         notices=tuple(notices),
+    )
+
+
+@dataclass(frozen=True)
+class PanelSelection:
+    """The panel a target description drew, and everything needed to read it.
+
+    `notices` is the complete set — it opens with the query's own and adds anything
+    the retrieval itself revealed, so a caller has one place to look rather than two
+    lists to remember to concatenate.
+    """
+
+    panel: list[Persona]
+    query: TargetQuery
+    notices: tuple[TargetNotice, ...]
+
+
+# Fixed by default, so the same target description draws the same panel run after
+# run — the reproducibility the ticket asks for. A caller wanting two independent
+# draws of one target (to measure sample stability) passes its own.
+PANEL_SEED = 0
+
+
+def _shortfall_notices(panel: list[Persona], size: int) -> tuple[TargetNotice, ...]:
+    if len(panel) >= size:
+        return ()
+    if not panel:
+        return (_warn(_NO_MATCH),)
+    return (
+        _warn(
+            f"Only {len(panel)} of the {size} panelists asked for match this target, "
+            "so the verdict rests on fewer votes and a wider interval."
+        ),
+    )
+
+
+def select_panel(
+    conn: psycopg.Connection,
+    description: str,
+    *,
+    size: int,
+    translator: TargetTranslator,
+    embedder: Embedder,
+    seed: int = PANEL_SEED,
+) -> PanelSelection:
+    """Natural-language target description → the panel that will vote on it.
+
+    The whole of 007 in call order: translate, resolve onto the pool's coverage,
+    then retrieve. Two model calls at most — one to read the description, one to
+    embed the temperament it asked for — and the second is skipped when there is
+    nothing to rank or nobody to rank.
+    """
+    query = resolve_target(translator.translate(description=description))
+    if not query.countries:
+        # No seeded country survived the ladder, so no persona can match whatever
+        # the disposition says. Embedding it would be paying to sort an empty set.
+        return PanelSelection(panel=[], query=query, notices=query.notices)
+
+    panel = retrieve_panel(
+        conn,
+        query,
+        size=size,
+        seed=seed,
+        disposition_embedding=(
+            embedder.embed([query.disposition])[0] if query.disposition else None
+        ),
+    )
+    return PanelSelection(
+        panel=panel,
+        query=query,
+        notices=query.notices + _shortfall_notices(panel, size),
     )
