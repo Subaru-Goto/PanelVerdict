@@ -74,24 +74,42 @@ inverse relationship rather than restating either implementation.
 already tested. Uniform within the filtered set, reproducible per seed, independent of
 insertion order.
 
-## Decision this ticket must make: exact level, or directional?
+## Decided: directional, not exact (signed off 2026-07-27)
 
-A target asking for cautious people plausibly means *at least* cautious.
+A target asking for cautious people means *at least* cautious — excluding the most
+cautious personas in the pool would be perverse. So a requested level is a **direction
+from a threshold**, except at the middle where "average" genuinely means the middle:
 
-| reading | `neuroticism: high` becomes | cost |
+| requested level | `WHERE` on that trait's column | share of a normal population |
 |---|---|---|
-| exact | `score > 0.5 AND score <= 1.5` | rejects the *most* cautious personas, which nobody asking for cautious people wants |
-| **directional** (recommended) | `score > 0.5` | matches how the phrase is meant, and roughly doubles the candidate pool |
+| `very_high` | `score > 1.5` | ~6.7% |
+| `high` | `score > 0.5` | ~30.9% |
+| `medium` | `score BETWEEN -0.5 AND 0.5` | ~38.3% |
+| `low` | `score < -0.5` | ~30.9% |
+| `very_low` | `score < -1.5` | ~6.7% |
 
-Recommend **directional for the outer four levels** (`high`/`very_high` → `≥`,
-`low`/`very_low` → `≤`) and **exact for `medium`**, since "average" genuinely means the
-middle rather than "at least average".
+Note the consequence, which is the point of choosing this: `high` admits everyone
+`very_high` admits, so the outer levels are nested rather than disjoint. That roughly
+quadruples the candidate pool for a `high` request against an exact reading, which is
+what keeps the shortfall problem below manageable.
+
+The shares are the normal-distribution split the cutoffs already imply and which
+[006c](006c-bigfive-sampler.md) records — not new constants. They shift per cell, since μ
+moves with age and gender.
+
+Two things follow for the bounds helper. It returns an **open bound** on the outer four
+levels (one side `None`), so the SQL condition is built from whichever bounds are present
+rather than always emitting `BETWEEN`. And the round-trip test has to assert **nesting**
+for the outer levels — every score satisfying `very_high` must also satisfy `high` —
+rather than the disjointness a level-partition test would naturally check.
 
 ## Consequence to handle, not discover
 
-**Trait filters multiply.** `very_high` is ~6.7% of the population by the cutoffs' own
-normal split, so two such traits is ~0.4% and a 5,000-pool yields ~22 personas — well
-under n=200. Combined with a demographic filter it can reach zero.
+**Trait filters multiply**, even directional ones. `very_high` is ~6.7% of the
+population, so two such traits is ~0.4% and a 5,000-pool yields ~22 personas — well under
+n=200. Combined with a demographic filter it can reach zero. The directional reading helps
+at `high` (~30.9%, so two of them is still ~9.5%) and barely helps at `very_high`, which
+is where the risk actually lives.
 
 v1 answer: **hard filter, and report the shortfall** — `PanelSelection` already emits a
 warning when fewer personas match than were asked for, and 010 owns the consequence that
