@@ -162,6 +162,14 @@ panel that also differs on the others.
   p-values. There is no multiple-comparison correction across the 15 gradients.
 - **Four of six pairs have baselines above 0.85 or below 0.10**, which compresses
   the range available to any manipulation.
+- **All six pairs are semantically opposed propositions, not rephrasings of one
+  proposition** — the regime the product actually ships into, where a real A/B test
+  holds the meaning and changes the wording. Opposition was the right instrument for
+  *this* question, since a trait can only steer a vote on a pair where it predicts a
+  direction. But nothing here shows a persona moves a vote between two wordings of the
+  same offer, which is the case a customer will bring.
+  [015](../../issues/015-task-framing-sensitivity.md) carries pairs in that regime,
+  grounded in Gligorić et al. 2023.
 
 ## What this settles
 
