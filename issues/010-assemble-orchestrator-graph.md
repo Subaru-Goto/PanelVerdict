@@ -13,6 +13,12 @@ Wire the real pieces into one LangGraph graph, replacing the tracer bullet's stu
 
 parse target (007) → retrieve + sample personas → fan out panel batches (008) → update posterior (009) → **adaptive-stopping conditional edge** back to fan-out → aggregate & build the report payload (winner, posterior).
 
+**Token logging ships with the first run, not after it** (signed off 2026-07-27) — see
+[Instrument the first real run](#instrument-the-first-real-run-008-2026-07-27) below. It is
+a handful of lines, and skipping it means the first real 200-vote run happens and teaches
+us nothing about what it cost. The project currently has **no** per-test cost estimate; the
+old one was retracted, not replaced.
+
 **Amended 2026-07-26 ([007](007-build-targeting-query-translation.md)):** the payload's "segment breakdown target vs. control" is dropped — a production panel is one target group and the posterior is read off it. Controls live in the testing track, not the product path.
 
 Gap-fill persona generation is **fog** (see map Notes) — do not build it here unless the frontier has graduated it.
@@ -78,9 +84,30 @@ Two related things 008 deliberately left here, both because they are run-level:
 
 ## Instrument the first real run (008, 2026-07-27)
 
-Log `prompt_tokens`, `completion_tokens` and
-`usage.completion_tokens_details.reasoning_tokens` on the first 200-vote run. Reasoning
-tokens bill at the output rate and never appear in the response, so the per-test cost is
-currently unmeasured and the retracted `$0.055` estimate could be several times low — see
-the [003](003-decide-panel-model-and-provider.md) amendment. One run settles it, and the
-same numbers are what the pre-flight check needs to be more than a guess.
+**Signed off as part of this ticket, not a follow-up.** Three numbers per vote, off the
+response's own `usage`:
+
+| field | why |
+|---|---|
+| `prompt_tokens` | confirms the ~300–370 input figure computed in [`prompt-caching.md`](../docs/research/prompt-caching.md) against a real request, schema included |
+| `completion_tokens` | the visible vote — the only part the retracted estimate ever modelled |
+| `completion_tokens_details.reasoning_tokens` | **the unknown.** Bills at the output rate ($2/M) and never appears in the response, so this single field is what makes the per-test cost knowable |
+
+Aggregate them per run, not per vote, and record the totals wherever the run is recorded.
+
+Why it cannot wait. The `$0.055`/200-persona figure is **retracted, not corrected**
+([003](003-decide-panel-model-and-provider.md) amendment): it assumed a prompt cache that
+cannot exist *and* ~80 output tokens with no reasoning allowance, so the true cost is
+unmeasured and more likely above it than below. Consequences that are live right now:
+
+- *"$10 cap ≈ ~180 full tests"* is not plannable, and the cap is a hard 402.
+- The **pre-flight budget check** this ticket owns needs a per-run cost to compare against
+  `limit_remaining`. Without these numbers that check is a guess wearing a decimal point.
+- 014 and 015 ran ~7,000 votes between them and logged nothing, so there is no historical
+  data to mine — the information only exists while a run is happening.
+
+One 200-vote run settles it exactly. A 10-persona run settles it approximately for well
+under a cent, which is worth doing first if the graph is not yet end-to-end.
+
+The reason this is stated as a deliverable rather than a note: a run that completes without
+these three fields is a run whose cost is gone. There is no way to recover it afterwards.
