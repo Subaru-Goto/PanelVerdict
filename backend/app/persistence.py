@@ -16,6 +16,7 @@ from psycopg.rows import dict_row
 
 from app.assembly import AssembledPersona
 from app.schemas import BigFive, Persona
+from app.targeting import TargetQuery
 
 
 class PersonaRow(TypedDict):
@@ -172,3 +173,69 @@ def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona
     """A random sample, for the plausibility judge — which pays per persona, so it
     reads a sample rather than the pool."""
     return _read_personas(conn, order="random", limit=limit)
+
+
+def retrieve_panel(
+    conn: psycopg.Connection,
+    query: TargetQuery,
+    *,
+    size: int,
+    seed: int,
+    disposition_embedding: list[float] | None = None,
+) -> list[Persona]:
+    """The hybrid half of 007: hard attributes in SQL, temperament in the vector.
+
+    The two halves do different jobs. Filters decide *who is eligible* — a target
+    asking for Germans must not be served Americans at any similarity. The vector
+    only *ranks* the eligible, because "cautious" is a matter of degree and the pool
+    holds no cautious/not-cautious line to filter on.
+
+    Without a disposition there is nothing to rank by, so the panel is a sample
+    keyed on `seed`: hashing it with the persona id gives an ordering that is
+    reproducible per seed, independent of insertion order, and needs no server-side
+    random state that a second query could disturb.
+
+    Returns fewer than `size` when the target matches fewer — a shortfall is the
+    caller's to report, and raising here would turn a thin panel into no panel.
+    """
+    if size < 1:
+        raise ValueError(f"a panel needs at least one persona, got {size}")
+
+    # Every fragment below is a literal; only values reach the database as
+    # parameters, and `%s` placeholders stay positional with `params`.
+    conditions = ["country = ANY(%s)", "age BETWEEN %s AND %s"]
+    params: list[object] = [
+        [country.value for country in query.countries],
+        query.min_age,
+        query.max_age,
+    ]
+    if query.gender is not None:
+        conditions.append("gender = %s")
+        params.append(query.gender)
+    if query.income_quintiles:
+        conditions.append("income_quintile = ANY(%s)")
+        params.append(list(query.income_quintiles))
+    if query.education:
+        conditions.append("education = ANY(%s)")
+        params.append([level.value for level in query.education])
+
+    if disposition_embedding is None:
+        ordering = "md5(id || %s::text)"
+        params.append(str(seed))
+    else:
+        # <=> is cosine distance, so ascending is most-similar-first.
+        ordering = "summary_embedding <=> %s"
+        params.append(np.array(disposition_embedding))
+    params.append(size)
+
+    # Ties break on id: duplicate summaries embed identically (two 34-year-olds at
+    # the same rendered levels are the same text), and an unstable order would vary
+    # the panel run to run for no reason the customer could see.
+    sql = (
+        f"SELECT {_PERSONA_COLUMNS} FROM personas "
+        f"WHERE {' AND '.join(conditions)} "
+        f"ORDER BY {ordering}, id LIMIT %s"
+    )
+    with conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(sql, params).fetchall()
+    return [_persona_from_row(cast(PersonaRow, row)) for row in rows]
