@@ -85,26 +85,32 @@ def add_pool_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--countries", type=_parse_countries, default=list(Locale))
 
 
+def _pool_size(conn: psycopg.Connection) -> int:
+    """Personas already stored, tolerating a pool that has never been seeded.
+
+    A dry run must not apply the schema — reporting what something would cost
+    should not be able to change the database — so it cannot assume the table is
+    there. Safe on the autocommit connection used here, where a failed statement
+    leaves no aborted transaction behind.
+    """
+    try:
+        return conn.execute("SELECT count(*) FROM personas").fetchone()[0]
+    except psycopg.errors.UndefinedTable:
+        return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed the persona pool.")
     add_pool_args(parser)
     parser.add_argument("--qc-sample", type=int, default=50)
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what a run would generate and exit; needs no API key, "
+        "writes nothing, and calls nothing paid",
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-
-    if settings.openrouter_api_key is None:
-        raise SystemExit("openrouter_api_key is not set; cannot generate the pool.")
-    api_key = settings.openrouter_api_key.get_secret_value()
-    embedder = OpenRouterEmbedder(
-        api_key=api_key,
-        base_url=settings.openrouter_base_url,
-        model=settings.embedding_model,
-    )
-    judge = OpenRouterJudge(
-        api_key=api_key,
-        base_url=settings.openrouter_base_url,
-        model=settings.judge_model,
-    )
 
     quotas = build_quotas(args.size, args.countries)
     requested = sum(quotas.values())
@@ -113,12 +119,37 @@ def main() -> None:
     # then roll back every persona (and its paid LLM work) instead of just the
     # one in flight
     with psycopg.connect(settings.database_url, autocommit=True) as conn:
-        prepare_connection(conn)
-        already = len(_existing_ids(conn))
+        # Counted before the schema is touched and before any client is built, so
+        # the price of a run is knowable for free. Seeding resumes, so the spend
+        # is the shortfall against the pool rather than the whole quota.
+        already = _pool_size(conn)
+        outstanding = max(0, requested - already)
         print(
-            f"Seeding '{args.size}' pool (seed={args.seed}): ~{max(0, requested - already)} "
+            f"Seeding '{args.size}' pool (seed={args.seed}): ~{outstanding} "
             f"personas to generate, {already} already in the pool."
         )
+        if args.dry_run:
+            print(
+                f"Dry run: nothing written. A full run would generate and embed "
+                f"{outstanding} persona(s), then judge a sample of {args.qc_sample}."
+            )
+            return
+
+        if settings.openrouter_api_key is None:
+            raise SystemExit("openrouter_api_key is not set; cannot generate the pool.")
+        api_key = settings.openrouter_api_key.get_secret_value()
+        embedder = OpenRouterEmbedder(
+            api_key=api_key,
+            base_url=settings.openrouter_base_url,
+            model=settings.embedding_model,
+        )
+        judge = OpenRouterJudge(
+            api_key=api_key,
+            base_url=settings.openrouter_base_url,
+            model=settings.judge_model,
+        )
+
+        prepare_connection(conn)
         result = seed_pool(conn, quotas, master_seed=args.seed, embedder=embedder)
         print(f"Done: {result.written} written, {result.skipped} already present.")
         report = run_plausibility_qc(conn, judge=judge, sample_size=args.qc_sample)
