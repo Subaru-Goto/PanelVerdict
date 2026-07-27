@@ -9,7 +9,10 @@ from app.persistence import (
     persist_persona,
     persist_pool,
     prepare_connection,
+    retrieve_panel,
 )
+from app.schemas import EducationLevel, Locale, TargetRequest
+from app.targeting import resolve_target
 
 
 def _count(conn: psycopg.Connection, table: str) -> int:
@@ -106,3 +109,247 @@ def test_persist_pool_counts_only_new_writes_on_rerun(conn):
     assert persist_pool(conn, pool) == 2
     assert persist_pool(conn, pool) == 0
     assert _count(conn, "personas") == 2
+
+
+def _vector(*head: float) -> list[float]:
+    """A DIM-length vector with the given leading components, zeroes after."""
+    return list(head) + [0.0] * (DIM - len(head))
+
+
+# The whole pool, unfiltered — every retrieval test narrows this rather than
+# assembling eight fields, so what each one is actually about stays visible.
+_EVERYONE = resolve_target(TargetRequest())
+
+
+def test_retrieval_filters_on_country(conn):
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_="US-00000", country="US")),
+            make_assembled(make_persona(id_="JP-00000", country="JP")),
+        ],
+    )
+
+    panel = retrieve_panel(
+        conn, _EVERYONE.model_copy(update={"countries": (Locale.JP,)}), size=10, seed=0
+    )
+
+    assert [p.id for p in panel] == ["JP-00000"]
+
+
+def test_no_coverage_retrieves_nobody(conn):
+    """An empty `countries` is the ladder's bottom rung, not a missing filter. The
+    dangerous failure would be reading it as "no country constraint" and returning a
+    random panel that looks like a matched one."""
+    persist_pool(conn, [make_assembled(make_persona(id_="US-00000"))])
+
+    assert (
+        retrieve_panel(
+            conn, _EVERYONE.model_copy(update={"countries": ()}), size=10, seed=0
+        )
+        == []
+    )
+
+
+def test_retrieval_filters_on_the_age_span(conn):
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_="US-00000", age=29)),
+            make_assembled(make_persona(id_="US-00001", age=30)),
+            make_assembled(make_persona(id_="US-00002", age=39)),
+            make_assembled(make_persona(id_="US-00003", age=40)),
+        ],
+    )
+
+    panel = retrieve_panel(
+        conn,
+        _EVERYONE.model_copy(update={"min_age": 30, "max_age": 39}),
+        size=10,
+        seed=0,
+    )
+
+    assert sorted(p.age for p in panel) == [30, 39]
+
+
+def test_an_inverted_age_span_retrieves_nobody(conn):
+    """What "under 18" clamps to. It has to match nobody rather than everybody."""
+    persist_pool(conn, [make_assembled(make_persona(id_="US-00000", age=34))])
+
+    panel = retrieve_panel(
+        conn,
+        _EVERYONE.model_copy(update={"min_age": 18, "max_age": 17}),
+        size=10,
+        seed=0,
+    )
+
+    assert panel == []
+
+
+def test_retrieval_filters_on_gender_income_and_education(conn):
+    wanted = make_persona(
+        id_="US-00000", gender="male", income_quintile=5, education="secondary"
+    )
+    persist_pool(
+        conn,
+        [
+            make_assembled(wanted),
+            make_assembled(make_persona(id_="US-00001", gender="female")),
+            make_assembled(
+                make_persona(id_="US-00002", gender="male", income_quintile=1)
+            ),
+            make_assembled(
+                make_persona(
+                    id_="US-00003",
+                    gender="male",
+                    income_quintile=5,
+                    education="tertiary",
+                )
+            ),
+        ],
+    )
+
+    panel = retrieve_panel(
+        conn,
+        _EVERYONE.model_copy(
+            update={
+                "gender": "male",
+                "income_quintiles": (4, 5),
+                "education": (EducationLevel.SECONDARY,),
+            }
+        ),
+        size=10,
+        seed=0,
+    )
+
+    assert [p.id for p in panel] == ["US-00000"]
+
+
+def test_a_disposition_orders_the_panel_by_similarity(conn):
+    """The vector half. Ordering, not filtering — every persona in the filtered set
+    is a candidate, and the query decides who is closest."""
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_="US-00000"), embedding=_vector(0.0, 1.0)),
+            make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0, 1.0)),
+            make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0, 0.0)),
+        ],
+    )
+
+    panel = retrieve_panel(
+        conn, _EVERYONE, size=3, seed=0, disposition_embedding=_vector(1.0, 0.0)
+    )
+
+    assert [p.id for p in panel] == ["US-00002", "US-00001", "US-00000"]
+
+
+def test_size_caps_the_panel_at_the_closest_matches(conn):
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_="US-00000"), embedding=_vector(0.0, 1.0)),
+            make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0, 1.0)),
+            make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0, 0.0)),
+        ],
+    )
+
+    panel = retrieve_panel(
+        conn, _EVERYONE, size=2, seed=0, disposition_embedding=_vector(1.0, 0.0)
+    )
+
+    assert [p.id for p in panel] == ["US-00002", "US-00001"]
+
+
+def test_equal_distances_break_ties_deterministically(conn):
+    """The pool holds duplicate summaries — two 34-year-olds with the same rendered
+    levels embed identically. Without a tiebreak the panel would vary run to run for
+    no reason the customer could see."""
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0)),
+            make_assembled(make_persona(id_="US-00000"), embedding=_vector(1.0)),
+            make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0)),
+        ],
+    )
+
+    ids = [
+        [
+            p.id
+            for p in retrieve_panel(
+                conn, _EVERYONE, size=2, seed=0, disposition_embedding=_vector(1.0)
+            )
+        ]
+        for _ in range(3)
+    ]
+
+    assert ids == [["US-00000", "US-00001"]] * 3
+
+
+def _numbered_pool(conn: psycopg.Connection, count: int) -> None:
+    persist_pool(
+        conn,
+        list(make_assembled(make_persona(id_=f"US-{i:05d}")) for i in range(count)),
+    )
+
+
+def test_a_target_with_no_disposition_draws_a_reproducible_sample(conn):
+    _numbered_pool(conn, 10)
+
+    first = [p.id for p in retrieve_panel(conn, _EVERYONE, size=4, seed=7)]
+    again = [p.id for p in retrieve_panel(conn, _EVERYONE, size=4, seed=7)]
+
+    assert first == again
+    assert len(first) == 4
+
+
+def test_the_seed_chooses_who_is_sampled(conn):
+    """Reproducible must not mean fixed: two tests of the same target should be able
+    to draw different panels, which is what makes sample-stability measurable."""
+    _numbered_pool(conn, 10)
+
+    drawn = {
+        tuple(p.id for p in retrieve_panel(conn, _EVERYONE, size=4, seed=seed))
+        for seed in range(5)
+    }
+
+    assert len(drawn) > 1
+    # and it is a sample, not the first four ids in a different order
+    assert drawn != {tuple(f"US-{i:05d}" for i in range(4))}
+
+
+def test_a_panel_larger_than_the_pool_returns_what_exists(conn):
+    """Which is what makes the shortfall reportable rather than an error."""
+    _numbered_pool(conn, 3)
+
+    assert len(retrieve_panel(conn, _EVERYONE, size=200, seed=0)) == 3
+
+
+def test_a_panel_size_below_one_is_rejected(conn):
+    with pytest.raises(ValueError):
+        retrieve_panel(conn, _EVERYONE, size=0, seed=0)
+
+
+def test_a_disposition_makes_the_seed_irrelevant(conn):
+    """Worth pinning because it bounds what "reproducible per seed" means. Ranking by
+    similarity is already determined, so the seed reaches only the disposition-free
+    draw. Anything wanting two independent draws of a dispositional target needs a
+    match-then-sample step, which is not this."""
+    _numbered_pool(conn, 10)
+
+    drawn = {
+        tuple(
+            p.id
+            for p in retrieve_panel(
+                conn,
+                _EVERYONE,
+                size=4,
+                seed=seed,
+                disposition_embedding=_vector(1.0),
+            )
+        )
+        for seed in range(5)
+    }
+
+    assert len(drawn) == 1

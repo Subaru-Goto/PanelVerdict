@@ -4,7 +4,7 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: [006-build-persona-pool]
 assignee: null
-status: open
+status: closed
 ---
 
 ## Goal
@@ -101,3 +101,210 @@ An out-of-coverage *attribute* must be surfaced the same way an out-of-coverage
 words of the query, which would look like a targeted panel and be a random one.
 - **Never silent.** Every fallback must be **surfaced to the user** — e.g. *"No China data; approximating with Asian-region personas (currently Japan only). Treat as indicative."* Silent substitution risks false confidence, and Japan is a weak proxy for China (different demographics/interests/language).
 - Empty result is an honest outcome when even the coarse tag has no seeded coverage — report it, don't fabricate a panel.
+
+## Closed 2026-07-27 — what shipped
+
+`app/targeting.py` (`resolve_target`, `select_panel`, `TargetTranslator`),
+`retrieve_panel` in `app/persistence.py`, the request/query schemas in
+`app/schemas.py`, and `OpenRouterTargetTranslator` + `build_target_messages` in
+`app/llm.py`.
+
+The shape is **request → query → panel**, and the split is what makes "never
+silent" enforceable rather than remembered:
+
+- A **`TargetRequest`** is what the model read out of the description, recording the
+  country *as named* plus its coarse tag. Note the asymmetry this buys and the one it
+  does not: a **region** gap is surfaced by construction, since code compares the
+  named country against the seeded set. An **attribute** gap is not, and cannot be —
+  `resolve_target` never sees the description, so nothing but the translator can
+  notice that "gamers" went unanswered. `unmapped` rests on prompt rule 4. A translator emitting `Locale` would have
+  had to answer "China" with Japan inside the model call, where nothing can attach a
+  notice to the substitution.
+- **`resolve_target`** walks the ladder in code — country → culture tag → nothing —
+  per region, so "the US and Nigeria" keeps the US, warns about Nigeria, and still
+  returns a panel.
+- **`retrieve_panel`** filters on hard attributes and *ranks* on the vector. Filters
+  decide eligibility (a target asking for Germans is never served Americans at any
+  similarity); the disposition only orders the eligible, because "cautious" is a
+  matter of degree with no cautious/not-cautious line in the pool to filter on.
+
+Two design points worth carrying forward:
+
+- **`TargetQuery.countries` is always explicit**, never empty-means-unfiltered — a
+  value should not need to be read together with something else to know what it means.
+  The same principle is why `coverage` exists: after the fallback amendment below, two
+  opposite targets resolve to the same country tuple, and only `coverage` separates
+  "you asked for everywhere" from "we could not serve where you asked".
+- **The query is written in the persona summary's own words.** Requested trait levels
+  render through `panel.render_trait_phrases`, the same 25-phrase table the embedded
+  summary was built from. A paraphrase would compare two vocabularies. Partial by
+  design: a target naming two traits does not get the other three filled in at
+  medium, which would put words in the query the customer never asked for.
+
+Reproducibility is a `seed` parameter defaulting to `PANEL_SEED = 0`, so one target
+draws one panel run after run; a caller measuring sample stability passes its own.
+No disposition means nothing to rank by, so the panel is ordered by `md5(id, seed)` —
+independent of insertion order and free of the server-side random state a second
+query in the same session could disturb. Ties break on `id`, because duplicate
+summaries embed identically (two 34-year-olds at the same rendered levels are the
+same text) and an unstable order would vary the panel for no visible reason.
+
+## Amended 2026-07-27 — the vector half covers less than this ticket claimed
+
+Verified against five live `gpt-5-mini` translations. The "In coverage" example above
+is *"cautious, budget-conscious homeowners in their 40s"* mapping onto neuroticism,
+conscientiousness, income quintile and age. What actually happened:
+
+| phrase | claimed | observed |
+|---|---|---|
+| "in their 40s" | age | ages 40-49 ✅ |
+| "cautious" | neuroticism | **conscientiousness: high** |
+| "budget-conscious" | income quintile | **`unmapped`** |
+| "homeowners" | — | `unmapped` ✅ |
+
+So one of the four attributes the example promised arrived, one arrived read as a
+different trait, and one the ticket counted as in-coverage was reported as
+unmappable. **This is not a defect** — the notice is honest, and the panel is not
+falsely labelled. But the dispositional half is thinner in practice than the
+amendment implies, and a report that leans on it should say what was read rather than
+what was asked. `TraitRequest.source_phrase` exists for exactly that.
+
+The trait reading is also a genuine judgment call rather than an error: "cautious"
+plausibly reads as either high conscientiousness or high neuroticism, and nothing in
+the pool disambiguates them. Which is why the reading is shown back.
+
+## Amended 2026-07-27 — sub-national places are now surfaced
+
+The live run caught the ticket's own rule being broken. *"outdoorsy gamers in Ohio"*
+resolved to the whole United States with **no notice**: the model mapped Ohio onto
+`US` and left it out of `unmapped`, so a panel drawn for 340 million people was
+labelled as Ohio's.
+
+Within-country region is out of scope for v1 by the map's own decision, which makes
+it precisely a coverage gap to surface rather than absorb. The prompt now requires any
+place narrower than a country to appear in **both** `regions` (under its country) and
+`unmapped`. Confirmed on re-run.
+
+The general lesson, which generalises past geography: an attribute the pool *nearly*
+has is more dangerous than one it plainly lacks, because the model will find a
+plausible coarser field to put it in.
+
+## Amended 2026-07-27 — the third rung is a real fallback (signed off)
+
+**Decided by the product owner, overruling an earlier reading of this ticket.** An
+unservable region degrades to the **whole pool** with a loud warning, rather than
+returning nothing.
+
+The earlier reading leaned on this ticket's last bullet — *"Empty result is an honest
+outcome when even the coarse tag has no seeded coverage — report it, don't fabricate a
+panel"* — to argue that a US/JP/DE panel answering "Nigeria" is a fabricated one. The
+sign-off is that a dead end helps nobody: the customer gets zero value and no idea what
+would have worked, and the copy question is not wholly geographic — a whole-pool panel
+still reads the *wording*, which is most of what they came for. The honesty requirement
+is met by the warning, not by the refusal.
+
+| the target | `coverage` | panel |
+|---|---|---|
+| names a seeded country | `requested` | that country |
+| names a place we can bucket | `approximated` | the seeded countries in that bucket, with a warning |
+| names no place at all | `requested` | every seeded country |
+| names a place we cannot bucket | `unmatched` | **every seeded country**, with a warning saying it is not that audience |
+
+Two consequences that are not cosmetic.
+
+**`TargetQuery.coverage` had to be added, and this change is what earned it.** Two
+opposite targets now resolve to the identical country tuple: one that named no country
+(served exactly) and one whose country we could not serve at all (substituted
+wholesale). The tuple cannot tell them apart, so a report reading `countries` alone
+would present a whole-pool fallback as a deliberate global panel. `coverage` is the only
+thing that distinguishes them.
+
+**The fallback is per query, not per region.** *"The US and Nigeria"* resolves to the US
+alone, `requested`, with a Nigeria warning. Falling back for the unservable half would
+add Japan and Germany to a panel the servable half could have filled on its own —
+taking requested personas out to make room for unrequested ones.
+
+`TargetQuery.countries` is therefore **never empty**, which retires the earlier
+invariant that an empty tuple meant no coverage. The no-panel outcomes that remain are
+filter-driven — an age span the pool cannot reach, or filters that jointly exclude
+everybody — and `PanelSelection`'s shortfall notice reports those.
+
+## Amended 2026-07-27 — the middle rung is model-supplied, and why
+
+The ladder's `culture_tag` rung is what serves an unseeded country, and **the tag for
+such a country comes from the translator, not from code.** `COUNTRY_CULTURE_TAG` maps
+only the three seeded locales, so nothing here can classify `CN` on its own. If the
+model returns a null tag, China takes the bottom rung and draws nobody — with a
+warning, but not the Japan panel this ticket's own worked example describes.
+
+That is a deliberate choice, and the alternative is worse. Classifying every country
+on earth needs a committed country → tag table, and the coarse vocabulary itself has
+no source: [001](001-decide-persona-schema-and-seed.md) already flagged "Asian /
+Western" as not a census category. A hand-authored world table would be a large
+unsourced constant sitting under every fallback decision. Asking the model to bucket a
+country it plainly knows, and then *showing the customer the substitution*, keeps the
+judgement visible instead of burying it in a table nobody can check.
+
+What this costs, stated plainly: the middle rung's reliability is the translator's,
+not the code's. The prompt now requires a tag whenever the place is a single country,
+and the live run returned `asian` for China unprompted — but one sample is not a
+guarantee, and the test that exercises this rung injects the tag through a stub, so it
+cannot catch a model that stops supplying one. **The bottom rung is the safe failure**:
+no tag means no panel and a warning, never a wrong panel.
+
+Worth revisiting if the country list ever becomes data rather than code — the same
+trigger the `culture_tag` amendment above already identifies, since a `countries` table
+would be the natural home for a sourced tag.
+
+## Amended 2026-07-27 — where the 100–300 bound lives
+
+The Goal says *"panel sampling: 100–300 personas"*. `select_panel` takes `size` with
+no range check, and `retrieve_panel` only rejects `size < 1`.
+
+Deliberate: the bound is a product policy and belongs with whoever decides the panel
+size, which is [010](010-assemble-orchestrator-graph.md). Enforcing it inside a
+retrieval function would make the mechanism refuse legitimate small draws — tests take
+3, and a future segment-vs-segment comparison may want fewer. **010 owns the check**,
+against the signed-off n=200 default.
+
+## Amended 2026-07-27 — how far the seed actually reaches
+
+`seed` reaches only a target with **no** disposition. Ranking by cosine similarity is
+already determined, so every seed returns the same top-n for a dispositional target,
+and that covers most of what this ticket exists to serve.
+
+The consequence: *reproducibility* holds everywhere (one target, one panel, run after
+run), but *two independent draws of one target* — the thing sample-stability wants —
+is only available where nothing is being ranked. Getting it under a disposition needs a
+match-then-sample step: take the top-k, then sample `size` from it. That needs a `k`,
+which needs evidence, so it belongs with the map's panel-sampling fog item rather than
+here. Pinned by a test so the limit is documented rather than accidental.
+
+## What is left for [010](010-assemble-orchestrator-graph.md)
+
+`select_panel` is not wired into `/evaluate`, which still votes `FIXED_PANEL` (5
+hand-authored personas). `settings.targeting_model` is therefore unread — matching
+`analyst_model`, which has been declared and unread since [012](012-build-analyst-chatbot-tools.md)
+was specced. The model stays config either way (003), and the alternative is 010
+adding the line back. Swapping the panel source is 010's stated content — "parse
+target → retrieve + sample personas" — and it needs a DB dependency the endpoint does
+not have yet. 010 also chooses the panel size; n=200 is the signed-off default.
+
+One thing for 010 to decide rather than discover: a shortfall notice fires when fewer
+personas match than were asked for, and at n=200 a thin panel changes **what the
+verdict can say** — `practical_tie` needs roughly 1,100 votes at ±7 to be expressible
+at all. The report must not present a 40-persona panel's verdict as a 200-persona
+one's.
+
+## Not in scope here, deliberately
+
+- **Representativeness within a target.** With a disposition, the panel is the top-n
+  by similarity, which is the *most extreme* matching personas rather than a
+  representative sample of them. That is arguably right — the customer asked for
+  cautious people — but it also skews the panel on attributes nobody asked about,
+  since one vector carries all five traits plus demographics. The map's "panel
+  sampling procedure" fog item is where this graduates; a match-then-sample variant
+  needs a ratio, and a ratio needs evidence.
+- **A vector index.** No HNSW/IVFFlat: at 5k rows a sequential scan over a
+  hard-filtered subset is not the bottleneck. Deferred to
+  [012](012-build-analyst-chatbot-tools.md), which already owns the note.

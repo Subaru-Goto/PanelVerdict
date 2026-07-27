@@ -178,6 +178,14 @@ anything about wording. Testing framing on them would have measured framing
 sensitivity in the regime where it is smallest and returned a comfortable null. Ask
 what regime the *product* operates in before choosing stimuli.
 
+**An attribute the pool nearly has is more dangerous than one it plainly lacks.**
+Asked for *"gamers in Ohio"*, the translator reported "gamers" as unmappable and
+silently turned Ohio into the whole United States — because a plausible coarser field
+existed to put it in. Nothing was missing, so nothing raised; a panel of 340 million
+people was labelled as one state's. The pool holds no interests at all, and that gap
+was reported correctly the first time. **Check the fields adjacent to a gap, not the
+gap.**
+
 **Ablate one thing.** Collapsing trait levels through the same phrase table isolates
 granularity; rewording the table would have ablated wording and granularity together.
 Same discipline made the vote question a parameter separate from the answer
@@ -268,6 +276,13 @@ to change.
 intervals with HDIs I *typed* one bound instead of computing it — off by two
 thousandths, in a spec someone could later cite. Small, and exactly the habit the
 no-unsourced-constants rule exists to catch.
+
+**A warning that fires when nothing happened is worse than no warning.** A target
+of "over 50" was told its age range "was narrowed to 51-100" — nothing had been
+narrowed; an unstated bound had been filled in with the pool's own. Every honest
+warning in that report then arrives alongside a spurious one, and the reader learns to
+skip the category. The check has to distinguish *a bound was moved* from *a bound was
+supplied*.
 
 **Check the whole blast radius, not the language you were editing.** Renaming an API
 field, I grepped Python, declared the impact small, and left the frontend reading a

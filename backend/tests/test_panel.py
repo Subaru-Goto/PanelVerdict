@@ -6,6 +6,7 @@ from app.panel import (
     _income_band,
     persona_summary,
     render_persona_prompt,
+    render_trait_phrases,
 )
 from app.schemas import COUNTRY_NAME, BigFive, TraitLevel
 from tests.factories import make_persona
@@ -32,6 +33,40 @@ def test_every_trait_has_a_phrase_for_every_level() -> None:
     # keyed by BigFive's own field names, so a renamed trait fails here rather
     # than as a KeyError at render for whoever draws that trait first
     assert set(_TRAIT_PHRASES) == set(BigFive.model_fields)
+
+
+def test_a_partial_trait_request_renders_only_the_traits_it_names() -> None:
+    """A target usually names one or two traits. Filling the rest in with `medium`
+    would put words into the query the customer never asked for, and they would
+    compete for similarity against the traits they did ask for."""
+    rendered = render_trait_phrases(
+        {"neuroticism": TraitLevel.HIGH, "openness": TraitLevel.LOW}
+    )
+
+    # Written out rather than looked up: an expected value taken from the table the
+    # renderer reads is one it cannot disagree with, leaving only the ordering claim
+    # real. Domain order, so openness leads despite being named second.
+    assert rendered == (
+        "practical and conventional, preferring the familiar to the novel; "
+        "sensitive to stress and prone to worry about how things might go wrong"
+    )
+
+
+def test_an_empty_trait_request_renders_nothing() -> None:
+    assert render_trait_phrases({}) == ""
+
+
+def test_the_rendered_income_bands_are_unchanged() -> None:
+    """The pool's summaries are already embedded, and re-embedding 5,000 of them
+    costs money. Deriving this prose from the shared band mapping must not have
+    moved a single word of it."""
+    assert [_income_band(quintile) for quintile in range(1, 6)] == [
+        "the lower income range",
+        "the lower income range",
+        "the middle income range",
+        "the upper income range",
+        "the upper income range",
+    ]
 
 
 def test_no_two_levels_share_a_phrase() -> None:

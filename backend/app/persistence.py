@@ -5,7 +5,7 @@ a throwaway container without live credentials. Idempotent: re-running the seed
 skips personas already present.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -15,7 +15,7 @@ from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
 
 from app.assembly import AssembledPersona
-from app.schemas import BigFive, Persona
+from app.schemas import BigFive, Persona, TargetQuery
 
 
 class PersonaRow(TypedDict):
@@ -147,6 +147,18 @@ def _persona_from_row(row: PersonaRow) -> Persona:
 # a string is only safe until someone forwards a request parameter into it.
 _ORDERINGS = {"id": "ORDER BY id", "random": "ORDER BY random()"}
 
+# Everything a persona query binds: scalars for equality and range, lists for the
+# ANY(...) filters, and one vector for the similarity ordering.
+type SqlParam = str | int | list[str] | list[int] | np.ndarray
+
+
+def _fetch_personas(
+    conn: psycopg.Connection, sql: str, params: Sequence[SqlParam]
+) -> list[Persona]:
+    with conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(sql, params).fetchall()
+    return [_persona_from_row(cast(PersonaRow, row)) for row in rows]
+
 
 def _read_personas(
     conn: psycopg.Connection,
@@ -155,12 +167,11 @@ def _read_personas(
     limit: int | None = None,
 ) -> list[Persona]:
     clause = _ORDERINGS[order] + (" LIMIT %s" if limit is not None else "")
-    params = () if limit is None else (limit,)
-    with conn.cursor(row_factory=dict_row) as cur:
-        rows = cur.execute(
-            f"SELECT {_PERSONA_COLUMNS} FROM personas {clause}", params
-        ).fetchall()
-    return [_persona_from_row(cast(PersonaRow, row)) for row in rows]
+    return _fetch_personas(
+        conn,
+        f"SELECT {_PERSONA_COLUMNS} FROM personas {clause}",
+        [] if limit is None else [limit],
+    )
 
 
 def load_pool(conn: psycopg.Connection) -> list[Persona]:
@@ -172,3 +183,68 @@ def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona
     """A random sample, for the plausibility judge — which pays per persona, so it
     reads a sample rather than the pool."""
     return _read_personas(conn, order="random", limit=limit)
+
+
+def retrieve_panel(
+    conn: psycopg.Connection,
+    query: TargetQuery,
+    *,
+    size: int,
+    seed: int,
+    disposition_embedding: list[float] | None = None,
+) -> list[Persona]:
+    """Retrieve a panel: hard attributes filtered in SQL, temperament ranked by vector.
+
+    The two halves do different jobs. Filters decide *who is eligible* — a target
+    asking for Germans must not be served Americans at any similarity. The vector
+    only *ranks* the eligible, because "cautious" is a matter of degree and the pool
+    holds no cautious/not-cautious line to filter on.
+
+    Without a disposition there is nothing to rank by, so the panel is a sample
+    keyed on `seed`: hashing it with the persona id gives an ordering that is
+    reproducible per seed, independent of insertion order, and needs no server-side
+    random state that a second query could disturb.
+
+    Returns fewer than `size` when the target matches fewer — a shortfall is the
+    caller's to report, and raising here would turn a thin panel into no panel.
+    """
+    if size < 1:
+        raise ValueError(f"a panel needs at least one persona, got {size}")
+
+    # Every fragment below is a literal; only values reach the database as
+    # parameters, and `%s` placeholders stay positional with `params`.
+    conditions = ["country = ANY(%s)", "age BETWEEN %s AND %s"]
+    params: list[SqlParam] = [
+        [country.value for country in query.countries],
+        query.min_age,
+        query.max_age,
+    ]
+    if query.gender is not None:
+        conditions.append("gender = %s")
+        params.append(query.gender)
+    if query.income_quintiles:
+        conditions.append("income_quintile = ANY(%s)")
+        params.append(list(query.income_quintiles))
+    if query.education:
+        conditions.append("education = ANY(%s)")
+        params.append([level.value for level in query.education])
+
+    if disposition_embedding is None:
+        ordering = "md5(id || %s::text)"
+        params.append(str(seed))
+    else:
+        # <=> is cosine distance, so ascending is most-similar-first.
+        ordering = "summary_embedding <=> %s"
+        params.append(np.array(disposition_embedding))
+    params.append(size)
+
+    # Ties break on id: duplicate summaries embed identically (two 34-year-olds at
+    # the same rendered levels are the same text), and an unstable order would vary
+    # the panel run to run for no reason the customer could see.
+    return _fetch_personas(
+        conn,
+        f"SELECT {_PERSONA_COLUMNS} FROM personas "
+        f"WHERE {' AND '.join(conditions)} "
+        f"ORDER BY {ordering}, id LIMIT %s",
+        params,
+    )

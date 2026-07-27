@@ -1,20 +1,30 @@
 """Shared builders for pool-pipeline tests (personas + assembled personas)."""
 
 from app.assembly import AssembledPersona
-from app.schemas import BigFive, Persona
+from app.schemas import BigFive, EducationLevel, Gender, Locale, Persona
 
 DIM = 1536
 
 
-def make_persona(id_: str = "US-00000") -> Persona:
+def make_persona(
+    id_: str = "US-00000",
+    *,
+    country: Locale | str = "US",
+    age: int = 34,
+    gender: Gender = "female",
+    income_quintile: int = 3,
+    education: EducationLevel | str = "tertiary",
+    big_five: BigFive | None = None,
+) -> Persona:
     return Persona(
         id=id_,
-        country="US",
-        age=34,
-        gender="female",
-        income_quintile=3,
-        education="tertiary",
-        big_five=BigFive(
+        country=country,
+        age=age,
+        gender=gender,
+        income_quintile=income_quintile,
+        education=education,
+        big_five=big_five
+        or BigFive(
             openness=0.1,
             conscientiousness=0.2,
             extraversion=-0.3,
@@ -24,6 +34,8 @@ def make_persona(id_: str = "US-00000") -> Persona:
     )
 
 
-def make_assembled(persona: Persona | None = None) -> AssembledPersona:
+def make_assembled(
+    persona: Persona | None = None, *, embedding: list[float] | None = None
+) -> AssembledPersona:
     persona = persona or make_persona()
-    return AssembledPersona(persona=persona, summary_embedding=[0.5] * DIM)
+    return AssembledPersona(persona=persona, summary_embedding=embedding or [0.5] * DIM)

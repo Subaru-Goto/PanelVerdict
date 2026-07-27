@@ -1,7 +1,22 @@
+from typing import get_args
+
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 
-from app.schemas import PanelVoteOutput, PlausibilityScore
+from app.schemas import (
+    INCOME_BAND_QUINTILES,
+    MAX_PERSONA_AGE,
+    MIN_PERSONA_AGE,
+    CultureTag,
+    EducationLevel,
+    Gender,
+    Locale,
+    PanelVoteOutput,
+    PlausibilityScore,
+    TargetRequest,
+    TraitLevel,
+    TraitName,
+)
 
 
 VOTE_QUESTION = "Which do you prefer?"
@@ -35,6 +50,60 @@ def build_vote_messages(
         f"{question} {_ANSWER_INSTRUCTION}"
     )
     return [SystemMessage(content=system_prompt), HumanMessage(content=task)]
+
+
+def _listed(values: tuple[str, ...] | list[str]) -> str:
+    return ", ".join(values)
+
+
+# The vocabulary is read off the schema rather than typed out, so a country or trait
+# level added there reaches the prompt with no edit here. A value the prompt omits is
+# one the model cannot emit, which quietly makes that slice of the pool unreachable
+# by any target description.
+_TARGET_SYSTEM_PROMPT = f"""\
+You translate a description of a target audience into a structured query over a \
+pool of synthetic survey panelists.
+
+A panelist carries exactly these attributes and nothing else:
+- country: {_listed([locale.value for locale in Locale])}
+- age: {MIN_PERSONA_AGE} to {MAX_PERSONA_AGE}
+- gender: {_listed(get_args(Gender))}
+- income, ranked within their own country: {_listed(tuple(INCOME_BAND_QUINTILES))}
+- education: {_listed([level.value for level in EducationLevel])}
+- Big Five personality — {_listed(get_args(TraitName))} — each at one of \
+{_listed([level.value for level in TraitLevel])}
+
+Rules:
+1. Record every place the description mentions in `regions`, using the country's \
+ISO 3166-1 alpha-2 code even when that country is not in the list above. Never \
+substitute a country we have for one we do not. Always set `culture_tag` to the \
+coarse bucket the place belongs to ({_listed([tag.value for tag in CultureTag])}) — \
+it is what lets an unlisted country be approximated at all, so leave it null only \
+when the place genuinely spans both buckets.
+2. A place narrower than a country — a state, province, city or neighbourhood — \
+goes in `regions` under its country AND in `unmapped`, because panelists carry no \
+geography finer than a country and a panel drawn for the whole country is not the \
+one that was asked for.
+3. Read personality only from words about temperament or disposition, and put the \
+words you read it from in `source_phrase`.
+4. List in `unmapped`, verbatim, every part of the description that none of the \
+attributes above can express — interests, hobbies, activities, occupations, brands, \
+household composition, city, anything else. Do not approximate it with a personality \
+trait or a demographic.
+5. Leave a field empty rather than guessing.\
+"""
+
+
+def build_target_messages(description: str) -> list[BaseMessage]:
+    """Build the chat messages that translate a target description into a query.
+
+    The description is the human turn and nothing else, so target text cannot reach
+    the instructions that constrain how it is read.
+    """
+    return [
+        SystemMessage(content=_TARGET_SYSTEM_PROMPT),
+        HumanMessage(content=description),
+    ]
 
 
 class OpenRouterPanelLLM:
@@ -73,6 +142,29 @@ class OpenRouterPanelLLM:
         result = self._model.invoke(messages)
         if not isinstance(result, PanelVoteOutput):
             raise RuntimeError(f"panel model returned no structured vote: {result!r}")
+        return result
+
+
+class OpenRouterTargetTranslator:
+    """TargetTranslator backed by an OpenRouter chat model via LangChain.
+
+    A `TargetRequest` and not a `TargetQuery`: the model reads the description, and
+    code alone decides what the pool can serve for it. Handing the model the
+    coverage ladder would put the substitutions where nothing can attach a notice
+    to them.
+    """
+
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
+        self._model = ChatOpenAI(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+        ).with_structured_output(TargetRequest)
+
+    def translate(self, *, description: str) -> TargetRequest:
+        result = self._model.invoke(build_target_messages(description))
+        if not isinstance(result, TargetRequest):
+            raise RuntimeError(f"translator returned no structured target: {result!r}")
         return result
 
 
