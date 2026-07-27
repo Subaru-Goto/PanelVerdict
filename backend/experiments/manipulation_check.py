@@ -15,6 +15,14 @@ paying for the rest:
     python -m experiments.manipulation_check --arms traits_5 --replicates 6 --out out/floor.jsonl
     python -m experiments.analysis out/floor.jsonl
     python -m experiments.manipulation_check --replicates <sized by the floor> --out out/votes.jsonl
+
+015 sweeps the same harness over the *task* half instead, holding the arm and
+selecting the same-meaning pairs; every default here is 014's, so both selections
+have to be named:
+
+    python -m experiments.manipulation_check --replicates 2 --arms traits_5 \
+      --pairs pronoun_person,person_number,article,second_person,control,openness \
+      --out out/framing.jsonl
 """
 
 import argparse

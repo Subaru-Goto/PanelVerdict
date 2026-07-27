@@ -134,10 +134,9 @@ PAIRS: tuple[HeadlinePair, ...] = (
         predicted_high="Free delivery on every order",
         predicted_low="A $14.99 handling fee applies to every order",
     ),
-    # 015: one proposition worded two ways. Where the pairs above are opposed
-    # propositions — the right probe for "does a trait steer a vote", the wrong one
-    # for anything about real copy — these hold the meaning and move a single
-    # published lever, which is what a customer's A/B test actually looks like.
+    # Below: one proposition worded two ways, differing on a single lever. The
+    # pairs above are opposed propositions instead, so they cannot answer anything
+    # about wording — which is the regime a customer's A/B test lives in.
     HeadlinePair(
         id="pronoun_person",
         role="published",
@@ -171,8 +170,6 @@ PAIRS: tuple[HeadlinePair, ...] = (
     ),
 )
 
-PAIR_BY_ID: dict[str, HeadlinePair] = {pair.id: pair for pair in PAIRS}
-
 CONTROL_PAIR: str = next(pair.id for pair in PAIRS if pair.role == "comprehension")
 
 
@@ -189,9 +186,9 @@ class VoteRow:
     `order` survives to the row so position bias stays separable from the trait
     effect, and measurable in its own right (002 asks the same of the same data).
 
-    `framing` trails the others only because a defaulted field has to come last.
-    The default lets 014's collected rows parse unchanged, which is a record rather
-    than a backfill — those votes really were cast under the shipped question.
+    `framing` carries a default so 014's collected rows parse unchanged. That is a
+    record rather than a backfill: those votes really were cast under the shipped
+    question.
     """
 
     arm: str

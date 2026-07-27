@@ -1,3 +1,4 @@
+import json
 from threading import Lock
 
 import pytest
@@ -13,6 +14,7 @@ from experiments.design import (
     FRAMINGS,
     PAIRS,
     TRAITS,
+    read_rows,
 )
 from experiments.manipulation_check import (
     collect_rows,
@@ -140,6 +142,31 @@ class TestPairs:
     def test_options_are_distinct_and_ids_unique(self):
         assert len({pair.id for pair in PAIRS}) == len(PAIRS)
         assert all(pair.predicted_high != pair.predicted_low for pair in PAIRS)
+
+
+class TestVoteRowCompatibility:
+    def test_a_row_collected_before_015_still_parses(self, tmp_path):
+        """014's 5,400 votes are on disk without a `framing` field and cost real
+        money. They read back as the shipped framing, which is what they were
+        actually cast under."""
+        path = tmp_path / "old.jsonl"
+        path.write_text(
+            json.dumps(
+                {
+                    "arm": "traits_5",
+                    "trait": "openness",
+                    "level": "medium",
+                    "persona_id": "openness-medium",
+                    "pair_id": "openness",
+                    "replicate": 0,
+                    "order": "predicted_high",
+                    "chosen": "predicted_high",
+                    "reason": "",
+                }
+            )
+            + "\n"
+        )
+        assert read_rows(path)[0].framing == DEFAULT_FRAMING.id
 
 
 class TestFramings:

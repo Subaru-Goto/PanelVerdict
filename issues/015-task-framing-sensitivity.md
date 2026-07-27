@@ -199,8 +199,19 @@ there — so only the comprehension pair stays excluded.
 **In:** three framings, the six pairs above, the existing sweep personas, both
 presentation orders, position bias per framing, and the write-up.
 3 framings × 25 sweep personas × 6 pairs × 2 replicates × 2 orders = **1,800 votes,
-~17 minutes** at 014's measured 0.551 s/vote. Run with `--arms traits_5`: the default
-is all three arms, which would triple this to answer nothing 014 has not.
+~17 minutes** at 014's measured 0.551 s/vote.
+
+Both selections have to be passed. `--arms` defaults to all three, and `--pairs`
+defaults to all ten — the other four 014 pairs stay in the registry so that run's
+collected votes still analyse, but re-running them here would cost 3,000 votes to
+answer nothing 014 has not:
+
+```
+uv run python -m experiments.manipulation_check --replicates 2 --arms traits_5 \
+  --pairs pronoun_person,person_number,article,second_person,control,openness \
+  --out experiments/out/framing.jsonl
+uv run python -m experiments.analysis experiments/out/framing.jsonl
+```
 
 **Out:** whether any framing predicts real click-through. That is validation against
 field outcomes and is out of scope on the map.

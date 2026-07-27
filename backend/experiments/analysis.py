@@ -22,6 +22,7 @@ import math
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal, get_args
 
 from app.schemas import TraitLevel
 from experiments.design import (
@@ -31,6 +32,7 @@ from experiments.design import (
     HIGH,
     PAIRS,
     Arm,
+    Role,
     VoteRow,
     loaded_pair_id,
     read_rows,
@@ -42,7 +44,8 @@ from experiments.design import (
 # different questions as identical re-runs: the floor would absorb the whole framing
 # effect, every flip rate would then sit at the floor, and 015 would report framings
 # as interchangeable whatever the model did.
-_CELL = ("framing", "arm", "trait", "persona_id", "pair_id", "order")
+Dimension = Literal["framing", "arm", "trait", "persona_id", "pair_id", "order"]
+_CELL: tuple[Dimension, ...] = get_args(Dimension)
 
 _EXTREMES = (TraitLevel.VERY_LOW.value, TraitLevel.VERY_HIGH.value)
 
@@ -89,7 +92,7 @@ def noise_floor(rows: list[VoteRow]) -> float:
 def flip_rate(
     rows: list[VoteRow],
     *,
-    dimension: str,
+    dimension: Dimension,
     a: str,
     b: str,
     levels: tuple[str, ...] | None = None,
@@ -210,7 +213,7 @@ class LeverResult:
     """One population-level pair's split, against the null of no preference."""
 
     pair_id: str
-    role: str
+    role: Role
     grounding: str | None
     share_high: float
     votes: int
@@ -276,25 +279,83 @@ def position_bias(rows: list[VoteRow]) -> float:
     return sum(row.chosen == row.order for row in rows) / len(rows)
 
 
-def _flip_lines(rows: list[VoteRow], arms: list[str], framings: list[str]) -> list[str]:
+def _values(rows: list[VoteRow], field: str, ordered: list[str]) -> list[str]:
+    present = {getattr(row, field) for row in rows}
+    return [value for value in ordered if value in present]
+
+
+def _cell_lines(rows: list[VoteRow], arms: list[str], framings: list[str]) -> list[str]:
     lines = []
-    for other in arms:
-        if other != "demographics" and "demographics" in arms:
-            rate = flip_rate(rows, dimension="arm", a="demographics", b=other)
+    for framing in framings:
+        for arm in arms:
+            cell = [r for r in rows if r.framing == framing and r.arm == arm]
+            # 014 ran three arms under one framing and 015 runs one arm under
+            # three, so most of this grid is empty whenever both files are read.
+            if not cell:
+                continue
             lines.append(
-                f"  arm      demographics -> {other:<12} {rate:.3f}  (all levels)"
+                f"  {framing + '/' + arm:<28} control {control_share(cell):.2f}"
+                f"   floor {noise_floor(cell):.3f}"
+                f"   position {position_bias(cell):.2f}"
             )
-    if {"traits_3", "traits_5"} <= set(arms):
-        rate = flip_rate(
-            rows, dimension="arm", a="traits_3", b="traits_5", levels=_EXTREMES
-        )
-        lines.append(
-            f"  arm      traits_3     -> traits_5     {rate:.3f}  (extremes only)"
-        )
-    baseline, *others = framings
-    for other in others:
-        rate = flip_rate(rows, dimension="framing", a=baseline, b=other)
-        lines.append(f"  framing  {baseline:<12} -> {other:<12} {rate:.3f}")
+    return lines
+
+
+def _flip_lines(rows: list[VoteRow], arms: list[str], framings: list[str]) -> list[str]:
+    """Arms compared within one framing, framings within one arm — never across.
+
+    A flip between two arms that were asked different questions would credit the
+    question's effect to the arm, and vice versa.
+    """
+    lines = []
+    for framing in framings:
+        within = [row for row in rows if row.framing == framing]
+        here = _values(within, "arm", arms)
+        for other in here:
+            if other != "demographics" and "demographics" in here:
+                rate = flip_rate(within, dimension="arm", a="demographics", b=other)
+                lines.append(
+                    f"  {framing:<11} arm      demographics -> {other:<12}"
+                    f" {rate:.3f}  (all levels)"
+                )
+        if {"traits_3", "traits_5"} <= set(here):
+            rate = flip_rate(
+                within, dimension="arm", a="traits_3", b="traits_5", levels=_EXTREMES
+            )
+            lines.append(
+                f"  {framing:<11} arm      traits_3     -> traits_5    "
+                f" {rate:.3f}  (extremes only)"
+            )
+    for arm in arms:
+        within = [row for row in rows if row.arm == arm]
+        baseline, *others = _values(within, "framing", framings)
+        for other in others:
+            rate = flip_rate(within, dimension="framing", a=baseline, b=other)
+            lines.append(
+                f"  {arm:<11} framing  {baseline:<12} -> {other:<12} {rate:.3f}"
+            )
+    return lines
+
+
+def _gradient_lines(
+    rows: list[VoteRow], arms: list[str], framings: list[str], traits: list[str]
+) -> list[str]:
+    lines = []
+    for framing in framings:
+        for arm in arms:
+            cell = [r for r in rows if r.framing == framing and r.arm == arm]
+            if not cell:
+                continue
+            for trait in traits:
+                result = gradient(rows, trait=trait, arm=arm, framing=framing)
+                shares = "".join(f"{share:>10.2f}" for share in result.shares.values())
+                label = f"{trait}/{arm}/{framing}"
+                lines.append(
+                    f"  {label:<44}{shares}{result.span:>7.2f}"
+                    f"{result.span_z:>6.2f}{result.target_lift:>7.2f}"
+                    f"{result.opposite_lift:>7.2f}"
+                    f"  {'yes' if result.monotone else 'no'}"
+                )
     return lines
 
 
@@ -314,12 +375,8 @@ def _lever_lines(rows: list[VoteRow], framings: list[str]) -> list[str]:
 
 
 def format_report(rows: list[VoteRow]) -> str:
-    arms = [arm for arm in ARMS if arm in {row.arm for row in rows}]
-    framings = [
-        framing.id
-        for framing in FRAMINGS
-        if framing.id in {row.framing for row in rows}
-    ]
+    arms = _values(rows, "arm", list(ARMS))
+    framings = _values(rows, "framing", [framing.id for framing in FRAMINGS])
     # A run selects its pairs, so a trait whose pair was not run has no gradient to
     # report — asking for one raises rather than printing an empty row.
     present = {row.pair_id for row in rows}
@@ -331,26 +388,19 @@ def format_report(rows: list[VoteRow]) -> str:
 
     lines = [
         "=== Manipulation check (014 / 015) ===",
-        f"{len(rows)} votes | arms: {', '.join(arms)} | "
-        f"framings: {', '.join(framings)}",
+        f"{len(rows)} votes | position bias {position_bias(rows):.2f} | "
+        f"arms: {', '.join(arms)} | framings: {', '.join(framings)}",
         "",
         "Per framing and arm — control pair (~1.00), noise floor, position bias:",
+        *_cell_lines(rows, arms, framings),
     ]
-    for framing in framings:
-        for arm in arms:
-            cell = [r for r in rows if r.framing == framing and r.arm == arm]
-            lines.append(
-                f"  {framing + '/' + arm:<28} control {control_share(cell):.2f}"
-                f"   floor {noise_floor(cell):.3f}"
-                f"   position {position_bias(cell):.2f}"
-            )
 
-    header, *levers = _lever_lines(rows, framings)
+    lever_header, *levers = _lever_lines(rows, framings)
     if levers:
         lines += [
             "",
             "Published levers — share choosing the lever-carrying variant:",
-            header,
+            lever_header,
             *levers,
         ]
 
@@ -361,27 +411,14 @@ def format_report(rows: list[VoteRow]) -> str:
     ]
 
     if traits:
-        header = "".join(f"{level.value:>10}" for level in TraitLevel)
+        levels = "".join(f"{level.value:>10}" for level in TraitLevel)
         lines += [
             "",
             "Gradients — share choosing the predicted-high option, by level:",
-            f"  {'trait/arm/framing':<44}{header}{'span':>7}{'z':>6}"
+            f"  {'trait/arm/framing':<44}{levels}{'span':>7}{'z':>6}"
             f"{'tgt':>7}{'opp':>7}  mono",
+            *_gradient_lines(rows, arms, framings, traits),
         ]
-        for framing in framings:
-            for arm in arms:
-                for trait in traits:
-                    result = gradient(rows, trait=trait, arm=arm, framing=framing)
-                    shares = "".join(
-                        f"{share:>10.2f}" for share in result.shares.values()
-                    )
-                    label = f"{trait}/{arm}/{framing}"
-                    lines.append(
-                        f"  {label:<44}{shares}{result.span:>7.2f}"
-                        f"{result.span_z:>6.2f}{result.target_lift:>7.2f}"
-                        f"{result.opposite_lift:>7.2f}"
-                        f"  {'yes' if result.monotone else 'no'}"
-                    )
     return "\n".join(lines)
 
 

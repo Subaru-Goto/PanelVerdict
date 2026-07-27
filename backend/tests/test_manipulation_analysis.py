@@ -6,6 +6,7 @@ from app.schemas import TraitLevel
 from experiments.analysis import (
     control_share,
     flip_rate,
+    format_report,
     gradient,
     lever_results,
     noise_floor,
@@ -354,6 +355,32 @@ class TestLeverResults:
     def test_every_reported_lever_carries_its_citation(self):
         rows = self._pair_rows("article", high=6, n=8)
         assert all(result.grounding for result in lever_results(rows))
+
+
+class TestFormatReport:
+    # 014 collected three arms under one framing and 015 collects three framings
+    # under one arm, so reading both leaves most of the grid empty.
+    _DISJOINT = sweep_rows(
+        {level: 2 for level in TraitLevel},
+        n=4,
+        arm="demographics",
+        framing="preference",
+    ) + sweep_rows(
+        {level: 2 for level in TraitLevel}, n=4, arm="traits_5", framing="click"
+    )
+
+    def test_a_framing_and_arm_that_never_ran_together_is_skipped(self):
+        """An absent cell has nothing to summarise, and asking it for a position
+        bias divides by zero."""
+        report = format_report(self._DISJOINT)
+        assert "preference/demographics" in report
+        assert "click/traits_5" in report
+        assert "preference/traits_5" not in report
+
+    def test_arms_are_never_compared_across_framings(self):
+        """A flip between two arms asked different questions would credit the
+        question's effect to the arm."""
+        assert "demographics ->" not in format_report(self._DISJOINT)
 
 
 class TestControlsOnTheRun:

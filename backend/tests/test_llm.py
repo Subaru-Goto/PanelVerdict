@@ -5,16 +5,13 @@ from app.llm import build_vote_messages
 # 014's 5,400 collected votes were cast under exactly this task text. Pinning it as
 # a literal is what makes a later edit visible rather than quietly making that run
 # incomparable to everything after it.
-_DEFAULT_TASK = (
-    "Here are two options.\n"
-    "Option 1: A\n"
-    "Option 2: B\n\n"
-    "Which do you prefer? Pick option_1 or option_2, and give a one-line "
-    "reason based on the content — not its position."
-)
 _ANSWER_INSTRUCTION = (
     "Pick option_1 or option_2, and give a one-line "
     "reason based on the content — not its position."
+)
+_DEFAULT_TASK = (
+    "Here are two options.\nOption 1: A\nOption 2: B\n\n"
+    f"Which do you prefer? {_ANSWER_INSTRUCTION}"
 )
 
 
