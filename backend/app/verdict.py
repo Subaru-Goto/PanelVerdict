@@ -1,8 +1,16 @@
 from dataclasses import dataclass
+from typing import Literal
 
 from scipy import optimize, stats
 
 from app.schemas import Verdict, VoteRecord
+
+RopeVerdict = Literal["decisive", "practical_tie", "undecided"]
+
+# ±3 preference-share points around even: within it, a difference is too small to
+# act on. Authored, signed off 2026-07-27 — provenance, why it cannot be derived
+# from the posterior, and the v2 per-test flow are in the 009 amendment.
+_ROPE = (0.47, 0.53)
 
 
 @dataclass(frozen=True)
@@ -55,6 +63,36 @@ def _highest_density_interval(a: float, b: float, mass: float) -> tuple[float, f
         width, bounds=(0.0, 1.0 - mass), method="bounded"
     ).x
     return float(dist.ppf(lower_tail)), float(dist.ppf(lower_tail + mass))
+
+
+def rope_verdict(
+    interval: tuple[float, float], *, rope: tuple[float, float] = _ROPE
+) -> RopeVerdict:
+    """Compare a credible interval against the region of practical equivalence.
+
+    Three outcomes, and the third is the point of the method: `undecided` is a
+    statement about the data, where `practical_tie` is a *positive* finding — the
+    difference is credibly too small to matter, which "not significant" can never
+    say. The band is closed: a share of exactly 0.53 is negligible by the band's
+    own definition, so an interval touching the edge still has mass on negligible
+    values and may not claim `decisive`.
+
+    Assumes the interval is an HDI — for a skewed posterior the equal-tailed
+    interval can include values less plausible than ones it excludes, which is
+    exactly the property this comparison cannot tolerate.
+    """
+    lo, hi = interval
+    rope_lo, rope_hi = rope
+    if not (0 <= rope_lo < rope_hi <= 1):
+        raise ValueError(f"not a band: {rope}")
+    if lo > hi:
+        raise ValueError(f"not an interval: {interval}")
+
+    if hi < rope_lo or lo > rope_hi:
+        return "decisive"
+    if rope_lo <= lo and hi <= rope_hi:
+        return "practical_tie"
+    return "undecided"
 
 
 def posterior(
