@@ -1,9 +1,11 @@
 import json
+import sys
 from threading import Lock
 
 import pytest
 
 from app.bigfive import bigfive_from_levels, bucketize
+from app.config import settings
 from app.llm import VOTE_QUESTION
 from app.panel import render_persona_prompt
 from app.schemas import PanelVoteOutput, TraitLevel
@@ -18,6 +20,7 @@ from experiments.design import (
 )
 from experiments.manipulation_check import (
     collect_rows,
+    main,
     plan_cells,
     render_arm,
     sweep_personas,
@@ -142,6 +145,52 @@ class TestPairs:
     def test_options_are_distinct_and_ids_unique(self):
         assert len({pair.id for pair in PAIRS}) == len(PAIRS)
         assert all(pair.predicted_high != pair.predicted_low for pair in PAIRS)
+
+
+class TestDryRun:
+    """`plan_cells` is pure so a design can be judged before it is paid for, but
+    until now there was no way to see it without starting the run."""
+
+    def _argv(self, *extra: str) -> list[str]:
+        return [
+            "manipulation_check",
+            "--replicates",
+            "1",
+            "--traits",
+            "openness",
+            "--arms",
+            "traits_5",
+            "--pairs",
+            "control",
+            *extra,
+        ]
+
+    def test_it_prints_the_vote_count_and_calls_nothing(self, monkeypatch, capsys):
+        def fail(*args, **kwargs):
+            raise AssertionError("a dry run must not construct a client")
+
+        monkeypatch.setattr(sys, "argv", self._argv("--dry-run"))
+        monkeypatch.setattr("experiments.manipulation_check.OpenRouterPanelLLM", fail)
+        main()
+
+        # 3 framings x 5 levels x 1 pair x 1 replicate x 2 orders
+        assert "30 votes" in capsys.readouterr().out
+
+    def test_it_does_not_need_an_api_key(self, monkeypatch):
+        """The whole point is to size a run for free, including before the panel
+        is configured at all."""
+        monkeypatch.setattr(sys, "argv", self._argv("--dry-run"))
+        monkeypatch.setattr(settings, "openrouter_api_key", None)
+        main()
+
+    def test_without_the_flag_a_missing_key_still_stops_the_run(
+        self, monkeypatch, capsys
+    ):
+        monkeypatch.setattr(sys, "argv", self._argv())
+        monkeypatch.setattr(settings, "openrouter_api_key", None)
+        with pytest.raises(SystemExit):
+            main()
+        assert "30 votes" in capsys.readouterr().out
 
 
 class TestVoteRowCompatibility:

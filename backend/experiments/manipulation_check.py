@@ -297,6 +297,11 @@ def main() -> None:
     parser.add_argument("--model", default=settings.panel_model)
     parser.add_argument("--workers", type=int, default=_DEFAULT_WORKERS)
     parser.add_argument("--out", type=Path, default=Path("experiments/out/votes.jsonl"))
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the plan and exit; calls nothing and needs no API key",
+    )
     args = parser.parse_args()
 
     traits = [trait.strip() for trait in args.traits.split(",")]
@@ -307,14 +312,19 @@ def main() -> None:
         pairs=args.pairs,
         framings=args.framings,
     )
-    if settings.openrouter_api_key is None:
-        raise SystemExit("openrouter_api_key is not set; cannot run the panel.")
-
+    # Printed before anything is checked or built, so the size of a run is
+    # knowable for free — these votes are billed per call and the plan is the only
+    # honest estimate of what one costs.
     print(
         f"{len(cells)} votes on {args.model}: {len(args.arms)} arm(s), "
         f"{len(args.framings)} framing(s), {len(traits)} trait(s), "
         f"{len(args.pairs)} pair(s), {args.workers} worker(s)."
     )
+    if args.dry_run:
+        return
+    if settings.openrouter_api_key is None:
+        raise SystemExit("openrouter_api_key is not set; cannot run the panel.")
+
     llms = {
         framing.id: OpenRouterPanelLLM(
             api_key=settings.openrouter_api_key.get_secret_value(),
