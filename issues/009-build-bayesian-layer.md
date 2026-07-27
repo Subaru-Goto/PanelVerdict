@@ -66,7 +66,7 @@ Run this layer's own model over 015's negative control — the lever Gligorić's
 | cell | E[p] | 95% CrI | P(B>A) | ROPE mass |
 |---|---|---|---|---|
 | `second_person` / click | 0.892 | [0.831, 0.949] | 1.000000 | 9×10⁻¹⁶ |
-| `second_person` / attention | 0.931 | [0.880, 0.976] | 1.000000 | 9×10⁻²⁰ |
+| `second_person` / attention | 0.931 | [0.882, 0.976] | 1.000000 | 9×10⁻²⁰ |
 
 (Intervals are HDIs, as shipped. An earlier draft of this table quoted equal-tailed
 ones, which the HDI amendment below rejects.)

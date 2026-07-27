@@ -6,9 +6,9 @@ from app.schemas import PanelVoteOutput, PlausibilityScore
 
 VOTE_QUESTION = "Which do you prefer?"
 
-# Held apart from the question so that varying the question (015) cannot reach the
-# positional and content-based-reason instructions. A framing arm that reworded
-# those would ablate framing and instruction-following together.
+# Held apart from the question so that varying the question cannot reach the
+# positional and content-based-reason instructions. An experiment that reworded those
+# would ablate the question and instruction-following together.
 _ANSWER_INSTRUCTION = (
     "Pick option_1 or option_2, and give a one-line "
     "reason based on the content — not its position."

@@ -165,7 +165,7 @@ def posterior(
 
     A flat Beta(1, 1) prior makes this conjugate: the posterior is
     Beta(1 + k, 1 + n - k), exact and closed-form, which is why no sampler appears
-    here and why a batch update is just an addition (009).
+    here, and why a batch update is just an addition.
 
     An empty panel is not an error — it returns the prior, which is the honest
     answer to "what do we know before anyone has voted".
