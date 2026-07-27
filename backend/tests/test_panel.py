@@ -43,13 +43,13 @@ def test_a_partial_trait_request_renders_only_the_traits_it_names() -> None:
         {"neuroticism": TraitLevel.HIGH, "openness": TraitLevel.LOW}
     )
 
-    assert rendered == "; ".join(
-        (
-            _TRAIT_PHRASES["openness"][TraitLevel.LOW],
-            _TRAIT_PHRASES["neuroticism"][TraitLevel.HIGH],
-        )
+    # Written out rather than looked up: an expected value taken from the table the
+    # renderer reads is one it cannot disagree with, leaving only the ordering claim
+    # real. Domain order, so openness leads despite being named second.
+    assert rendered == (
+        "practical and conventional, preferring the familiar to the novel; "
+        "sensitive to stress and prone to worry about how things might go wrong"
     )
-    assert "conscientiousness" not in rendered
 
 
 def test_an_empty_trait_request_renders_nothing() -> None:

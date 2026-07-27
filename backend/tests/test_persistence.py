@@ -337,14 +337,13 @@ def test_a_disposition_makes_the_seed_irrelevant(conn):
     draw. Anything wanting two independent draws of a dispositional target needs a
     match-then-sample step, which is not this."""
     _numbered_pool(conn, 10)
-    query = _EVERYONE.model_copy(update={"disposition": "cautious"})
 
     drawn = {
         tuple(
             p.id
             for p in retrieve_panel(
                 conn,
-                query,
+                _EVERYONE,
                 size=4,
                 seed=seed,
                 disposition_embedding=_vector(1.0),

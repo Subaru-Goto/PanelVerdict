@@ -107,13 +107,17 @@ words of the query, which would look like a targeted panel and be a random one.
 `app/targeting.py` (`resolve_target`, `select_panel`, `TargetTranslator`),
 `retrieve_panel` in `app/persistence.py`, the request/query schemas in
 `app/schemas.py`, and `OpenRouterTargetTranslator` + `build_target_messages` in
-`app/llm.py`. 319 tests green.
+`app/llm.py`.
 
 The shape is **request → query → panel**, and the split is what makes "never
 silent" enforceable rather than remembered:
 
 - A **`TargetRequest`** is what the model read out of the description, recording the
-  country *as named* plus its coarse tag. A translator emitting `Locale` would have
+  country *as named* plus its coarse tag. Note the asymmetry this buys and the one it
+  does not: a **region** gap is surfaced by construction, since code compares the
+  named country against the seeded set. An **attribute** gap is not, and cannot be —
+  `resolve_target` never sees the description, so nothing but the translator can
+  notice that "gamers" went unanswered. `unmapped` rests on prompt rule 4. A translator emitting `Locale` would have
   had to answer "China" with Japan inside the model call, where nothing can attach a
   notice to the substitution.
 - **`resolve_target`** walks the ladder in code — country → culture tag → nothing —
@@ -206,6 +210,33 @@ So the rungs are conditioned on what was asked, not walked blindly:
 | names a place we can bucket | `culture_tag` | the seeded countries in that bucket, with a warning |
 | names no place at all | `global` | every seeded country |
 | names a place we cannot bucket | — | empty, with a warning |
+
+## Amended 2026-07-27 — the middle rung is model-supplied, and why
+
+The ladder's `culture_tag` rung is what serves an unseeded country, and **the tag for
+such a country comes from the translator, not from code.** `COUNTRY_CULTURE_TAG` maps
+only the three seeded locales, so nothing here can classify `CN` on its own. If the
+model returns a null tag, China takes the bottom rung and draws nobody — with a
+warning, but not the Japan panel this ticket's own worked example describes.
+
+That is a deliberate choice, and the alternative is worse. Classifying every country
+on earth needs a committed country → tag table, and the coarse vocabulary itself has
+no source: [001](001-decide-persona-schema-and-seed.md) already flagged "Asian /
+Western" as not a census category. A hand-authored world table would be a large
+unsourced constant sitting under every fallback decision. Asking the model to bucket a
+country it plainly knows, and then *showing the customer the substitution*, keeps the
+judgement visible instead of burying it in a table nobody can check.
+
+What this costs, stated plainly: the middle rung's reliability is the translator's,
+not the code's. The prompt now requires a tag whenever the place is a single country,
+and the live run returned `asian` for China unprompted — but one sample is not a
+guarantee, and the test that exercises this rung injects the tag through a stub, so it
+cannot catch a model that stops supplying one. **The bottom rung is the safe failure**:
+no tag means no panel and a warning, never a wrong panel.
+
+Worth revisiting if the country list ever becomes data rather than code — the same
+trigger the `culture_tag` amendment above already identifies, since a `countries` table
+would be the natural home for a sourced tag.
 
 ## Amended 2026-07-27 — where the 100–300 bound lives
 

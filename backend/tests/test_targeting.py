@@ -138,8 +138,8 @@ def test_a_lowercase_country_code_still_resolves() -> None:
 
 
 def test_an_unseeded_country_falls_back_to_its_culture_tag_and_says_so() -> None:
-    """The ticket's own example. Japan is a weak proxy for China, so the
-    substitution has to reach the customer or the panel reads as China's."""
+    """Japan is a weak proxy for China, so the substitution has to reach the
+    customer or the panel reads as China's."""
     query = resolve_target(
         TargetRequest(
             regions=[
@@ -351,9 +351,9 @@ def test_one_trait_named_twice_keeps_the_first_and_warns() -> None:
 
 
 def test_an_unmappable_attribute_is_warned_about_not_dropped() -> None:
-    """The ticket's rule: an out-of-coverage attribute is surfaced exactly like an
-    out-of-coverage region, because a panel matched on the remaining words looks
-    targeted and is not."""
+    """An out-of-coverage attribute is surfaced exactly like an out-of-coverage
+    region, because a panel matched on the remaining words looks targeted and is
+    not."""
     query = resolve_target(TargetRequest(unmapped=["gamers", "vegan"]))
 
     (warning,) = _warnings(query)
@@ -547,7 +547,7 @@ def test_a_full_panel_reports_no_shortfall(conn) -> None:
 
 
 def test_the_same_target_draws_the_same_panel_twice(conn) -> None:
-    """The ticket's reproducibility requirement, at the level a customer sees it."""
+    """Reproducibility at the level a customer sees it: one target, one panel."""
     persist_pool(
         conn,
         [
@@ -584,9 +584,8 @@ def test_the_countries_the_panel_came_from_are_always_stated() -> None:
     )
 
     assert query.countries == (Locale.US,)
-    (drawn_from,) = [m for m in _readings(query) if "United States" in m]
     assert "Ohio" in _warnings(query)[0]
-    assert drawn_from
+    assert [m for m in _readings(query) if "United States" in m]
 
 
 def test_an_uncovered_target_states_no_panel_rather_than_where_from() -> None:
