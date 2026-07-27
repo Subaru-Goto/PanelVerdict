@@ -104,6 +104,20 @@ def test_an_age_range_of_one_year_is_allowed() -> None:
     assert TargetRequest(min_age=40, max_age=40).max_age == 40
 
 
+def test_a_trait_name_outside_the_vocabulary_is_rejected() -> None:
+    """The one control the retrieval SQL rests on. A trait name is interpolated into
+    the WHERE clause as a column name, so this validation is what makes that text
+    unreachable by anything the model emits — and it is the model that fills the field,
+    from a description a customer wrote. Loosening `TraitName` to `str`, or skipping
+    validation for speed, would open it silently; this fails first."""
+    with pytest.raises(ValidationError):
+        TraitRequest(
+            trait="openness; DROP TABLE personas--",
+            level=TraitLevel.HIGH,
+            source_phrase="curious",
+        )
+
+
 _anxious = big_five(neuroticism=2.0)
 _calm = big_five(neuroticism=-2.0)
 
