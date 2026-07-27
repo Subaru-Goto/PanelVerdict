@@ -188,6 +188,30 @@ readers, so a 95% bar buys little protection against a confidently biased panel.
 Given how fast P moves, 0.99 costs few extra votes. See the amendment above for why
 this threshold is reported rather than used to terminate a run.
 
+### ROPE = ±3 preference-share points — signed off, provenance stated
+
+The band [0.47, 0.53] is an **authored** number: it first appeared in the
+2026-07-16 planning grill (`docs/project-idea.md`), was interrogated on 2026-07-27
+— including whether it can come from the posterior at all (it cannot: the ROPE
+encodes what difference is worth acting on, which is a domain judgment no amount of
+data computes) — and was confirmed as the v1 default the same day.
+
+Rules that came with the sign-off:
+
+- **The verdict records the band that produced it.** One field, costs nothing now,
+  and it is what keeps every future "change it later" honest instead of silent.
+- **`rope_verdict` takes the band as a parameter with ±3 as the default** — the
+  same shape as `credible_mass` — so the constant lives in exactly one place.
+- **Post-v1, the ROPE becomes user-settable per test** — a real need (different
+  domains price a "meaningful difference" differently), deliberately deferred. The
+  flow is already decided to prevent verdict-shopping: the band is set when the
+  test is *created*, shown in the report, and immutable for that test; re-analysis
+  under another band is an explicitly-labeled what-if, never a silent replacement.
+  Same principle as project-idea.md's MDE rule: declare before running, not after
+  seeing the result. Because the band drives adaptive stopping, a post-hoc band can
+  demand data that was never collected — widening after the fact turns "decisive"
+  into "undecided" resolvable only by resuming collection.
+
 ### The payload names a probability, never a winner
 
 `Verdict.winner` goes. It picks a leader from a raw count with an admittedly arbitrary
