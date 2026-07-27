@@ -4,7 +4,7 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
 assignee: null
-status: open
+status: closed
 ---
 
 ## Goal
@@ -147,6 +147,37 @@ ahead of that evidence.
   Do not drop the column or the seed-time embedding.
 - **`panel.render_trait_phrases` stays** — the vote prompt and the persona summary both
   use it. Only the *query* rendering goes away.
+
+## Closed 2026-07-27 — what the build decided differently
+
+Three things the ticket specified one way and the code does another. Each is a
+deviation, so it is recorded rather than quietly absorbed.
+
+**The bounds carry their comparison, not just their number.** `level_bounds(level) ->
+tuple[float | None, float | None]` cannot express this domain: `medium`'s bounds are
+**inclusive** (an exact `-0.5` renders as `medium`, so a request for it must admit that
+persona) while every outer threshold is **exclusive** (an exact `1.5` renders as `high`,
+so `very_high` must refuse it). A pair of bare floats leaves the inclusive side to
+whoever writes the SQL, which is exactly the drift this ticket set out to avoid. So
+`bigfive.LEVEL_BOUNDS` maps a level to a tuple of `(comparison, score)` pairs — one for
+the four directional levels, two for `medium` — and the SQL builder emits one condition
+per pair with the score bound as a parameter. It is a dict rather than a function
+because a function wrapping a dict lookup is pure delegation.
+
+**`TargetQuery.traits` is `tuple[TraitRequest, ...]`**, not `(TraitName, TraitLevel)`
+pairs. `TraitRequest` is already the translator's output type, so nothing has to be
+converted, and it carries `source_phrase` — which is the words the reading came from and
+therefore the thing [011](011-build-report-ui.md) needs to show a reading the customer
+can correct. `TraitRequest` became frozen so `TargetQuery` stays hashable.
+
+**`render_trait_phrases` did not stay** — the knock-on list was wrong about this. The
+*query* rendering was its only caller outside `panel.py`, and its partial-mapping
+support existed only because a target names one or two traits, so once the query stopped
+rendering, both the public name and the partial branch had zero production consumers.
+It folded back into `_dispositions`, which now reads the phrase table directly, ordered
+by `BigFive`'s own field order. The prompt and summary text are byte-identical — the
+pool does not need re-embedding — and the domain-order claim is now pinned on
+`persona_summary` itself, which is where it actually matters.
 
 ## Requirement check
 

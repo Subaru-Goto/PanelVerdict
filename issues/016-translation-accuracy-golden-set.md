@@ -95,9 +95,9 @@ already separates paid measurement from the test suite. Add `--dry-run` (see
 Surfaced 2026-07-27 while tracing how *"woman"* becomes a `WHERE` clause. **Recorded
 here rather than decided, because it needs a product call.**
 
-`gender` is treated as a *hard* attribute: the model fills the slot, `resolve_target`
-copies it through untouched (`targeting.py:252`), and it becomes `gender = %s`
-(`persistence.py:222`). **No notice is emitted.** Trait readings get one — mapping
+`gender` is treated as a *hard* attribute: the model fills the slot,
+`targeting.resolve_target` copies it through untouched, and
+`persistence.retrieve_panel` turns it into `gender = %s`. **No notice is emitted.** Trait readings get one — mapping
 "cautious" onto conscientiousness is a judgement — but "woman" → `female` was assumed
 not to be.
 

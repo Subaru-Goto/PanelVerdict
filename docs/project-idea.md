@@ -155,9 +155,9 @@ Research questions worth reporting even with negative results: does persona dive
 The course requires a domain-specialised *chatbot* with advanced RAG + tool calling. The requirement demands the conversational capability — not that chat be the whole UX. Execution: **an app with an analyst embedded in it**, not a chatbot with an app hidden behind it.
 
 1. **Advanced RAG:**
-   - *Knowledge base:* audience-research corpus (Pew surveys, platform behavior studies, marketing findings) — chunked, embedded, similarity-searched; retrieved snippets ground agent votes and the analyst's explanations.
-   - *Query translation:* the target-description parsing IS query translation — natural language → structured SQL filters + embedding query (self-query / structured retrieval over the persona pool). Call it that in the writeup.
-   - *Structured retrieval:* hybrid SQL + vector persona search.
+   - *Knowledge base:* audience-research corpus (Pew surveys, platform behavior studies, marketing findings) — chunked, embedded, similarity-searched; retrieved snippets ground the analyst's explanations. **Not the votes** — injecting research into the vote prompt changes what the panel is and invalidates every number 014/015 measured against the current prompt, so vote grounding is its own before/after experiment ([018](../issues/018-audience-research-knowledge-base.md)).
+   - *Query translation:* the target-description parsing IS query translation — natural language → a typed request → structured SQL filters (self-query over the persona pool). Call it that in the writeup. Built in [007](../issues/007-build-targeting-query-translation.md).
+   - *Structured retrieval:* SQL over the persona pool — demographics as equality and range filters, Big Five as score bounds. **Not hybrid, deliberately:** [017](../issues/017-representative-sampling.md) dropped the persona vector, because every attribute a v1 target can name is already a column, and top-*n* by cosine returns the extreme tail where a panel needs a representative sample. Embeddings stay where nothing else can do the job — the free-text corpus above, and `search_personas`.
 2. **Tool calling (≥3):** the chat LLM gets tools; each tool is deterministic code inside (LLM decides *when*, code decides *how*):
    - `run_panel_test(variant_a, variant_b, target)` — the full panel pipeline
    - `search_personas(query)` — inspect who's in the sampled audience
