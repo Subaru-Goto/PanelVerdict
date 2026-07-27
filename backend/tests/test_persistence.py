@@ -1,3 +1,5 @@
+from typing import get_args
+
 import numpy as np
 import psycopg
 import pytest
@@ -11,8 +13,20 @@ from app.persistence import (
     prepare_connection,
     retrieve_panel,
 )
-from app.schemas import EducationLevel, Locale, TargetRequest
+from app.schemas import (
+    BigFive,
+    EducationLevel,
+    Locale,
+    TargetQuery,
+    TargetRequest,
+    TraitLevel,
+    TraitName,
+    TraitRequest,
+)
 from app.targeting import resolve_target
+
+# Every trait at the middle, so a test that names one trait is only about that trait.
+_FLAT = dict.fromkeys(BigFive.model_fields, 0.0)
 
 
 def _count(conn: psycopg.Connection, table: str) -> int:
@@ -109,11 +123,6 @@ def test_persist_pool_counts_only_new_writes_on_rerun(conn):
     assert persist_pool(conn, pool) == 2
     assert persist_pool(conn, pool) == 0
     assert _count(conn, "personas") == 2
-
-
-def _vector(*head: float) -> list[float]:
-    """A DIM-length vector with the given leading components, zeroes after."""
-    return list(head) + [0.0] * (DIM - len(head))
 
 
 # The whole pool, unfiltered — every retrieval test narrows this rather than
@@ -225,66 +234,121 @@ def test_retrieval_filters_on_gender_income_and_education(conn):
     assert [p.id for p in panel] == ["US-00000"]
 
 
-def test_a_disposition_orders_the_panel_by_similarity(conn):
-    """The vector half. Ordering, not filtering — every persona in the filtered set
-    is a candidate, and the query decides who is closest."""
-    persist_pool(
-        conn,
-        [
-            make_assembled(make_persona(id_="US-00000"), embedding=_vector(0.0, 1.0)),
-            make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0, 1.0)),
-            make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0, 0.0)),
-        ],
+def _with_trait(trait: TraitName, score: float, id_: str) -> AssembledPersona:
+    return make_assembled(
+        make_persona(id_=id_, big_five=BigFive(**{**_FLAT, trait: score}))
     )
 
-    panel = retrieve_panel(
-        conn, _EVERYONE, size=3, seed=0, disposition_embedding=_vector(1.0, 0.0)
-    )
 
-    assert [p.id for p in panel] == ["US-00002", "US-00001", "US-00000"]
-
-
-def test_size_caps_the_panel_at_the_closest_matches(conn):
-    persist_pool(
-        conn,
-        [
-            make_assembled(make_persona(id_="US-00000"), embedding=_vector(0.0, 1.0)),
-            make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0, 1.0)),
-            make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0, 0.0)),
-        ],
-    )
-
-    panel = retrieve_panel(
-        conn, _EVERYONE, size=2, seed=0, disposition_embedding=_vector(1.0, 0.0)
-    )
-
-    assert [p.id for p in panel] == ["US-00002", "US-00001"]
-
-
-def test_equal_distances_break_ties_deterministically(conn):
-    """The pool holds duplicate summaries — two 34-year-olds with the same rendered
-    levels embed identically. Without a tiebreak the panel would vary run to run for
-    no reason the customer could see."""
-    persist_pool(
-        conn,
-        [
-            make_assembled(make_persona(id_="US-00002"), embedding=_vector(1.0)),
-            make_assembled(make_persona(id_="US-00000"), embedding=_vector(1.0)),
-            make_assembled(make_persona(id_="US-00001"), embedding=_vector(1.0)),
-        ],
-    )
-
-    ids = [
-        [
-            p.id
-            for p in retrieve_panel(
-                conn, _EVERYONE, size=2, seed=0, disposition_embedding=_vector(1.0)
+def _requesting(trait: TraitName, level: TraitLevel) -> TargetQuery:
+    return _EVERYONE.model_copy(
+        update={
+            "traits": (
+                TraitRequest(trait=trait, level=level, source_phrase="stub"),
             )
-        ]
-        for _ in range(3)
-    ]
+        }
+    )
 
-    assert ids == [["US-00000", "US-00001"]] * 3
+
+def test_a_requested_trait_level_filters_rather_than_ranks(conn):
+    """The whole of 017: a target asking for anxious people gets only anxious people,
+    not the pool sorted by how anxious it is. Ranking would return the extreme tail
+    and skew the panel on the four traits nobody asked about."""
+    persist_pool(
+        conn,
+        [
+            _with_trait("neuroticism", 1.0, "US-00000"),
+            _with_trait("neuroticism", 0.0, "US-00001"),
+            _with_trait("neuroticism", -2.0, "US-00002"),
+        ],
+    )
+
+    panel = retrieve_panel(
+        conn, _requesting("neuroticism", TraitLevel.HIGH), size=10, seed=0
+    )
+
+    assert [p.id for p in panel] == ["US-00000"]
+
+
+def test_a_requested_level_admits_the_levels_beyond_it(conn):
+    """Directional, signed off 2026-07-27: asking for cautious people must not exclude
+    the most cautious. `very_high` scores are inside `high`'s bound, not past it."""
+    persist_pool(
+        conn,
+        [
+            _with_trait("openness", 1.0, "US-00000"),  # high
+            _with_trait("openness", 2.5, "US-00001"),  # very_high
+        ],
+    )
+
+    panel = retrieve_panel(conn, _requesting("openness", TraitLevel.HIGH), size=10, seed=0)
+
+    assert [p.id for p in panel] == ["US-00000", "US-00001"]
+
+
+def test_a_requested_middle_level_excludes_both_tails(conn):
+    """`medium` is the one level that is a band rather than a direction, so it needs
+    two bounds — one of them alone would admit half the pool."""
+    persist_pool(
+        conn,
+        [
+            _with_trait("extraversion", -2.0, "US-00000"),
+            _with_trait("extraversion", 0.0, "US-00001"),
+            _with_trait("extraversion", 2.0, "US-00002"),
+        ],
+    )
+
+    panel = retrieve_panel(
+        conn, _requesting("extraversion", TraitLevel.MEDIUM), size=10, seed=0
+    )
+
+    assert [p.id for p in panel] == ["US-00001"]
+
+
+def test_two_requested_traits_both_have_to_match(conn):
+    """Where the shortfall comes from: each trait multiplies the filter, so a panel
+    can thin out fast. 010 owns reporting that; retrieval just has to be exact."""
+    persist_pool(
+        conn,
+        [
+            make_assembled(
+                make_persona(
+                    id_="US-00000",
+                    big_five=BigFive(**{**_FLAT, "openness": 1.0, "neuroticism": -1.0}),
+                )
+            ),
+            _with_trait("openness", 1.0, "US-00001"),
+        ],
+    )
+
+    query = _EVERYONE.model_copy(
+        update={
+            "traits": (
+                TraitRequest(trait="openness", level=TraitLevel.HIGH, source_phrase="a"),
+                TraitRequest(trait="neuroticism", level=TraitLevel.LOW, source_phrase="b"),
+            )
+        }
+    )
+
+    assert [p.id for p in retrieve_panel(conn, query, size=10, seed=0)] == ["US-00000"]
+
+
+def test_a_trait_filter_still_draws_a_sample_rather_than_a_ranking(conn):
+    """The seed reaches a dispositional target too, now that nothing is ranked — which
+    is what makes two independent draws of one target possible, and sample stability
+    measurable. Under the vector this was not true."""
+    persist_pool(
+        conn,
+        [_with_trait("openness", 1.0, f"US-{i:05d}") for i in range(10)],
+    )
+    query = _requesting("openness", TraitLevel.HIGH)
+
+    drawn = {
+        tuple(p.id for p in retrieve_panel(conn, query, size=4, seed=seed))
+        for seed in range(5)
+    }
+
+    assert len(drawn) > 1
 
 
 def _numbered_pool(conn: psycopg.Connection, count: int) -> None:
@@ -331,25 +395,22 @@ def test_a_panel_size_below_one_is_rejected(conn):
         retrieve_panel(conn, _EVERYONE, size=0, seed=0)
 
 
-def test_a_disposition_makes_the_seed_irrelevant(conn):
-    """Worth pinning because it bounds what "reproducible per seed" means. Ranking by
-    similarity is already determined, so the seed reaches only the disposition-free
-    draw. Anything wanting two independent draws of a dispositional target needs a
-    match-then-sample step, which is not this."""
+def test_size_caps_the_panel(conn):
     _numbered_pool(conn, 10)
 
-    drawn = {
-        tuple(
-            p.id
-            for p in retrieve_panel(
-                conn,
-                _EVERYONE,
-                size=4,
-                seed=seed,
-                disposition_embedding=_vector(1.0),
-            )
-        )
-        for seed in range(5)
+    assert len(retrieve_panel(conn, _EVERYONE, size=4, seed=0)) == 4
+
+
+def test_every_trait_a_target_can_name_is_a_column(conn):
+    """The trait name is interpolated into the WHERE clause as the column name. It is
+    a closed Literal, so no caller can reach the SQL text — but a trait renamed on one
+    side only would be an UndefinedColumn at the first real target."""
+    columns = {
+        row[0]
+        for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'personas'"
+        ).fetchall()
     }
 
-    assert len(drawn) == 1
+    assert set(get_args(TraitName)) <= columns

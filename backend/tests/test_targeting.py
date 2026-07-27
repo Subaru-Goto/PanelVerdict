@@ -4,7 +4,7 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
-from factories import DIM, make_assembled, make_persona
+from factories import make_assembled, make_persona
 
 from app.llm import build_target_messages
 from app.persistence import persist_pool
@@ -104,13 +104,12 @@ def test_an_age_range_of_one_year_is_allowed() -> None:
     assert TargetRequest(min_age=40, max_age=40).max_age == 40
 
 
-# The high-neuroticism phrase, written out rather than looked up: an expected value
-# taken from the renderer is one the renderer cannot disagree with. It is also the
-# text the pool's summaries were embedded from, so a change here is a re-embedding
-# bill and should be loud.
-_HIGH_NEUROTICISM = (
-    "sensitive to stress and prone to worry about how things might go wrong"
-)
+def _at(**scores: float) -> BigFive:
+    return BigFive(**(dict.fromkeys(BigFive.model_fields, 0.0) | scores))
+
+
+_anxious = _at(neuroticism=2.0)
+_calm = _at(neuroticism=-2.0)
 
 
 def _warnings(query: TargetQuery) -> list[str]:
@@ -354,24 +353,18 @@ def test_no_income_band_means_no_income_filter() -> None:
     assert resolve_target(TargetRequest()).income_quintiles == ()
 
 
-def test_traits_render_into_the_summary_s_own_words() -> None:
-    query = resolve_target(
-        TargetRequest(
-            traits=[
-                TraitRequest(
-                    trait="neuroticism",
-                    level=TraitLevel.HIGH,
-                    source_phrase="cautious",
-                )
-            ]
-        )
+def test_the_requested_traits_are_carried_as_data() -> None:
+    """The query holds the trait and level themselves, not prose about them: they
+    become SQL bounds, and the report has to show which reading a verdict rests on."""
+    requested = TraitRequest(
+        trait="neuroticism", level=TraitLevel.HIGH, source_phrase="cautious"
     )
 
-    assert query.disposition == _HIGH_NEUROTICISM
+    assert resolve_target(TargetRequest(traits=[requested])).traits == (requested,)
 
 
-def test_a_target_with_no_traits_has_no_vector_half() -> None:
-    assert resolve_target(TargetRequest()).disposition == ""
+def test_a_target_naming_no_temperament_filters_on_no_trait() -> None:
+    assert resolve_target(TargetRequest()).traits == ()
 
 
 def test_the_trait_reading_is_shown_back_with_the_words_it_came_from() -> None:
@@ -409,7 +402,9 @@ def test_one_trait_named_twice_keeps_the_first_and_warns() -> None:
         )
     )
 
-    assert query.disposition == "outgoing and energetic, at ease around other people"
+    assert [(t.trait, t.level) for t in query.traits] == [
+        ("extraversion", TraitLevel.HIGH)
+    ]
     assert "extraversion" in _warnings(query)[0]
 
 
@@ -436,17 +431,6 @@ class StubTranslator:
         return self._request
 
 
-class CountingEmbedder:
-    """An Embedder double that counts calls, since each one is a paid request."""
-
-    def __init__(self) -> None:
-        self.texts: list[str] = []
-
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        self.texts.extend(texts)
-        return [[1.0] + [0.0] * (DIM - 1) for _ in texts]
-
-
 _JAPAN = TargetRequest(regions=[RequestedRegion(label="Japan", country_code="JP")])
 
 
@@ -458,7 +442,6 @@ def test_select_panel_passes_the_description_to_the_translator(conn) -> None:
         "Japanese homeowners",
         size=5,
         translator=translator,
-        embedder=CountingEmbedder(),
     )
 
     assert translator.descriptions == ["Japanese homeowners"]
@@ -478,27 +461,23 @@ def test_select_panel_retrieves_only_matching_personas(conn) -> None:
         "Japan",
         size=5,
         translator=StubTranslator(_JAPAN),
-        embedder=CountingEmbedder(),
     )
 
     assert [p.id for p in selection.panel] == ["JP-00000"]
 
 
-def test_a_target_with_no_temperament_is_never_embedded(conn) -> None:
-    """The embedding is a paid call, and there is nothing to rank by."""
-    embedder = CountingEmbedder()
-
-    select_panel(
-        conn, "Japan", size=5, translator=StubTranslator(_JAPAN), embedder=embedder
+def test_a_temperament_target_reaches_the_pool_as_a_trait_filter(conn) -> None:
+    """The end of the path 017 rebuilt: the description's temperament decides who is
+    eligible, so a persona at the wrong level is not in the panel at any rank."""
+    persist_pool(
+        conn,
+        [
+            make_assembled(
+                make_persona(id_="JP-00000", country="JP", big_five=_anxious)
+            ),
+            make_assembled(make_persona(id_="JP-00001", country="JP", big_five=_calm)),
+        ],
     )
-
-    assert embedder.texts == []
-
-
-def test_a_target_with_temperament_embeds_the_rendered_phrases(conn) -> None:
-    """What is embedded has to be the summary's own wording, not the customer's —
-    the query is compared against text written in that vocabulary."""
-    embedder = CountingEmbedder()
     request = TargetRequest(
         regions=[RequestedRegion(label="Japan", country_code="JP")],
         traits=[
@@ -508,42 +487,40 @@ def test_a_target_with_temperament_embeds_the_rendered_phrases(conn) -> None:
         ],
     )
 
-    select_panel(
+    selection = select_panel(
         conn,
         "anxious Japanese",
         size=5,
         translator=StubTranslator(request),
-        embedder=embedder,
     )
 
-    assert embedder.texts == [_HIGH_NEUROTICISM]
+    assert [p.id for p in selection.panel] == ["JP-00000"]
 
 
 def test_an_unservable_region_still_draws_a_panel_from_the_whole_pool(conn) -> None:
-    """The fallback means there is a real panel to rank, so the disposition is worth
-    embedding after all — the temperament half of the target is still servable even
-    when the geography is not."""
-    persist_pool(conn, [make_assembled(make_persona(id_="JP-00000", country="JP"))])
-    embedder = CountingEmbedder()
+    """The temperament half of a target is servable even when the geography is not, so
+    the fallback has a real panel to filter rather than an empty one."""
+    persist_pool(
+        conn,
+        [make_assembled(make_persona(id_="JP-00000", country="JP", big_five=_anxious))],
+    )
     request = TargetRequest(
         regions=[RequestedRegion(label="Nigeria", country_code="NG")],
         traits=[
             TraitRequest(
-                trait="openness", level=TraitLevel.HIGH, source_phrase="curious"
+                trait="neuroticism", level=TraitLevel.HIGH, source_phrase="anxious"
             )
         ],
     )
 
     selection = select_panel(
         conn,
-        "curious Nigerians",
+        "anxious Nigerians",
         size=5,
         translator=StubTranslator(request),
-        embedder=embedder,
     )
 
     assert [p.id for p in selection.panel] == ["JP-00000"]
-    assert len(embedder.texts) == 1
     assert any(n.severity == "warning" for n in selection.notices)
 
 
@@ -561,7 +538,6 @@ def test_the_selection_carries_the_query_s_own_notices(conn) -> None:
         "Japanese gamers",
         size=1,
         translator=StubTranslator(request),
-        embedder=CountingEmbedder(),
     )
 
     assert selection.query.notices
@@ -583,7 +559,6 @@ def test_a_thin_panel_is_reported_as_a_shortfall(conn) -> None:
         "Japan",
         size=200,
         translator=StubTranslator(_JAPAN),
-        embedder=CountingEmbedder(),
     )
 
     assert len(selection.panel) == 3
@@ -605,7 +580,6 @@ def test_a_full_panel_reports_no_shortfall(conn) -> None:
         "Japan",
         size=3,
         translator=StubTranslator(_JAPAN),
-        embedder=CountingEmbedder(),
     )
 
     assert selection.notices == selection.query.notices
@@ -629,7 +603,6 @@ def test_the_same_target_draws_the_same_panel_twice(conn) -> None:
                 "Japan",
                 size=5,
                 translator=StubTranslator(_JAPAN),
-                embedder=CountingEmbedder(),
             ).panel
         ]
 

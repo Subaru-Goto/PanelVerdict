@@ -228,7 +228,12 @@ class TraitRequest(BaseModel):
     `source_phrase` exists so the reading can be shown back. Mapping "cautious" onto
     a trait is an interpretation, and an interpretation the customer cannot see is
     one they cannot correct.
+
+    Frozen because `TargetQuery` carries these through unchanged and is itself frozen:
+    a hashable query needs hashable fields.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     trait: TraitName
     level: TraitLevel
@@ -302,8 +307,9 @@ class TargetQuery(BaseModel):
     culture-tag neighbours; `unmatched` means none could be served and the panel is
     the whole pool, carrying no geographic targeting at all.
 
-    `disposition` is the vector half, rendered in the persona summary's own words and
-    empty when the target named no temperament.
+    `traits` carries the levels themselves rather than prose about them, because they
+    become score bounds in SQL and because the report has to be able to show the
+    reading a verdict rests on. At most one entry per trait.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -315,7 +321,7 @@ class TargetQuery(BaseModel):
     gender: Gender | None
     income_quintiles: tuple[int, ...]
     education: tuple[EducationLevel, ...]
-    disposition: str
+    traits: tuple[TraitRequest, ...]
     notices: tuple[TargetNotice, ...]
 
 

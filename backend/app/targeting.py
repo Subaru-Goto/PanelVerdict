@@ -15,8 +15,6 @@ from typing import Protocol
 
 import psycopg
 
-from app.assembly import Embedder
-from app.panel import render_trait_phrases
 from app.persistence import retrieve_panel
 from app.schemas import (
     COUNTRY_CULTURE_TAG,
@@ -32,9 +30,8 @@ from app.schemas import (
     TargetNotice,
     TargetQuery,
     TargetRequest,
-    TraitLevel,
-    TraitRequest,
     TraitName,
+    TraitRequest,
 )
 
 _SEEDED_BY_TAG: dict[CultureTag, tuple[Locale, ...]] = {
@@ -185,19 +182,24 @@ def _resolve_ages(
 
 def _resolve_traits(
     requested: list[TraitRequest],
-) -> tuple[dict[TraitName, TraitLevel], list[TargetNotice]]:
-    levels: dict[TraitName, TraitLevel] = {}
-    sources: list[str] = []
+) -> tuple[tuple[TraitRequest, ...], list[TargetNotice]]:
+    """One reading per trait, since each becomes a bound on that trait's column.
+
+    Two levels of one trait would filter for both at once and match nobody, so the
+    first is kept and the contradiction reported rather than intersected.
+    """
+    kept: dict[TraitName, TraitRequest] = {}
     conflicts: list[str] = []
     for trait in requested:
-        if trait.trait in levels:
+        if trait.trait in kept:
             conflicts.append(trait.trait)
             continue
-        levels[trait.trait] = trait.level
-        sources.append(
-            f'{trait.trait}: {trait.level.value} (from "{trait.source_phrase}")'
-        )
+        kept[trait.trait] = trait
 
+    sources = [
+        f'{trait.trait}: {trait.level.value} (from "{trait.source_phrase}")'
+        for trait in kept.values()
+    ]
     notices = (
         []
         if not sources
@@ -211,7 +213,7 @@ def _resolve_traits(
                 "and the rest ignored."
             )
         )
-    return levels, notices
+    return tuple(kept.values()), notices
 
 
 def resolve_target(request: TargetRequest) -> TargetQuery:
@@ -223,7 +225,7 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
     """
     countries, coverage, notices = _resolve_regions(request.regions)
     min_age, max_age, age_notices = _resolve_ages(request.min_age, request.max_age)
-    levels, trait_notices = _resolve_traits(request.traits)
+    traits, trait_notices = _resolve_traits(request.traits)
     notices += age_notices + trait_notices
 
     if request.unmapped:
@@ -260,7 +262,7 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
             )
         ),
         education=tuple(dict.fromkeys(request.education)),
-        disposition=render_trait_phrases(levels),
+        traits=traits,
         notices=tuple(notices),
     )
 
@@ -280,9 +282,7 @@ class PanelSelection:
 
 
 # Fixed by default, so the same target description draws the same panel run after
-# run. A caller wanting two independent draws of one target passes its own — though
-# only a target with no disposition varies, since ranking by similarity is already
-# determined.
+# run. A caller wanting two independent draws of one target passes its own.
 PANEL_SEED = 0
 
 
@@ -305,25 +305,16 @@ def select_panel(
     *,
     size: int,
     translator: TargetTranslator,
-    embedder: Embedder,
     seed: int = PANEL_SEED,
 ) -> PanelSelection:
     """Natural-language target description → the panel that will vote on it.
 
-    Translate, resolve onto the pool's coverage, then retrieve. Two model calls at
-    most — one to read the description, and one to embed the temperament it asked
-    for, skipped when no temperament was named.
+    Translate, resolve onto the pool's coverage, then retrieve. One model call, and
+    it is the only paid step: everything the description asked for is served by the
+    pool's own columns.
     """
     query = resolve_target(translator.translate(description=description))
-    panel = retrieve_panel(
-        conn,
-        query,
-        size=size,
-        seed=seed,
-        disposition_embedding=(
-            embedder.embed([query.disposition])[0] if query.disposition else None
-        ),
-    )
+    panel = retrieve_panel(conn, query, size=size, seed=seed)
     return PanelSelection(
         panel=panel,
         query=query,
