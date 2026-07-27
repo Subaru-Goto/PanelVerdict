@@ -100,3 +100,76 @@ control above, so **stopping time is driven by how consistent the panel is, not 
 how right it is** — a run terminates early because the panel agreed with itself.
 Neither a short run nor a high P may be presented as evidence that the result is
 reliable.
+
+
+## Amended 2026-07-27 — four decisions taken before implementation
+
+### SciPy, not PyMC — for now
+
+PyMC belongs to the **hierarchical** model `docs/project-idea.md` schedules for later,
+where partial pooling has no conjugate solution and a sampler is genuinely required.
+For the flat Beta-Binomial it would mean running MCMC to approximate a quantity that
+can be written down exactly, and that costs four things:
+
+- **Sampling error where there is none.** With a flat prior and integer counts the
+  posterior is `Beta(1+k, 1+n-k)` and `P(p > 0.5)` is exact; MCMC would add noise to
+  the one number that has none.
+- **Reproducibility.** [002](002-decide-vote-schema.md) requires test-retest
+  determinism. Sampling is reproducible only with a pinned seed *and* a pinned
+  sampler version.
+- **Dependency weight.** PyTensor and a compiler toolchain, against a project rule of
+  adding only what is directly needed.
+- **It would undercut adaptive stopping.** Conjugacy makes a batch update `a += k;
+  b += n - k`, O(1). A sampler re-fits the whole posterior every batch, which is
+  exactly the cost early stopping exists to avoid.
+
+Revisit when the hierarchy arrives — that is the problem PyMC is for.
+
+### HDI, not the equal-tailed interval
+
+A 95% credible interval is any interval holding 95% of the posterior. The equal-tailed
+one chops 2.5% from each end; the HDI is the shortest such interval, so no point
+outside it is more plausible than a point inside. They coincide when the posterior is
+symmetric and diverge when it is skewed:
+
+| posterior | equal-tailed | HDI |
+|---|---|---|
+| `Beta(9,3)` — 8 of 10 votes | [0.482, 0.940] | [0.516, 0.959] |
+| `Beta(121,81)` — 120 of 200 | [0.5307, 0.6654] | [0.5314, 0.6661] |
+
+In the skewed row the two give **opposite answers** to "does the interval exclude a
+tie?" — equal-tailed dips below 0.5, HDI does not. At n = 200 near 0.5 they agree to
+three decimals.
+
+So the choice only matters at small n or extreme splits — which is precisely where
+adaptive stopping may terminate a run. Keeping early stopping is therefore the reason
+to take the HDI. It is a bounded numeric optimisation over a unimodal density, and it
+is testable against the property that defines it.
+
+### Stopping threshold: P >= 0.99
+
+Signed off 2026-07-27 (not a sourced constant — a product decision, recorded here so
+it is not mistaken for one). 0.95 was rejected: [015](015-task-framing-sensitivity.md)
+put `P(B>A)` at 1.000000 on a lever that published field data says does nothing to
+readers, so a 95% bar buys little protection against a confidently biased panel.
+Given how fast P moves, 0.99 costs few extra votes.
+
+### The payload names a probability, never a winner
+
+`Verdict.winner` goes. It picks a leader from a raw count with an admittedly arbitrary
+tiebreak and no uncertainty at all, and a field called `winner` beside a preference
+share is the exact misreading [011](011-build-report-ui.md) is written to prevent. The
+response carries `P(B preferred)`, the preference share with its interval, and the
+ROPE verdict.
+
+### The posterior is exposed per batch, not only at the end
+
+[011](011-build-report-ui.md) will animate the posterior narrowing as batches arrive.
+That is worth more than decoration: a static point estimate invites reading the number
+as truth, whereas watching the interval shrink shows uncertainty as something evidence
+buys down — the intuition this project most needs its readers to have.
+
+It also costs nothing, since adaptive stopping already computes a posterior per batch.
+But it constrains this ticket's API: if the stopping function returns only a decision
+and a final summary, the stream has nothing to animate and it would be retrofitted.
+Return the sequence.
