@@ -18,16 +18,71 @@ is config rather than a constant precisely so that stays possible.
 
 ---
 
+## The two findings that matter most
+
+They are the two poles of what we know, and neither means much without the other.
+
+### 1. Big Five moves votes between opposed propositions
+
+Adding temperament to the prompt changes **32.5%** of votes against a same-prompt
+flip rate of **9.9–13.3%**. Openness, conscientiousness and extraversion each carry a
+headline pair from 0.00 to 1.00 across the trait's range, monotonically, with the
+trait-free arm flat and no trait moving the comprehension control anywhere in a 5×6
+matrix.
+
+So the persona apparatus is not decoration. When two texts say genuinely different
+things, *who the persona is* determines which one it picks.
+
+### 2. But on same-meaning rephrasings, its preferences do not track people
+
+The lever: adding **"you"** to a headline. *"Three ways you can lower a heating
+bill"* against *"Three ways to lower a heating bill"* — the same offer, one word of
+difference.
+
+| | second-person pronouns |
+|---|---|
+| **Real clicks**, 24,333 Upworthy A/B tests | **no detectable effect** (β +0.051, hypothesis rejected) |
+| **Our panel**, three framings | **0.82 / 0.90 / 0.94** preference for the "you" variant |
+
+And on the three levers that *do* move real clicks, the panel landed in the predicted
+direction in **3 of 9** cells — against 4.5 by coin flip.
+
+**Read the two findings together and they are the whole picture.** The persona
+machinery works, and it works in the regime where two texts mean different things —
+which is not the regime the product ships into. A customer brings one offer worded two
+ways, and there the panel produces confident preferences that published field data
+says humans do not have.
+
+### What the "you" comparison does and does not control
+
+Worth stating precisely, because it is easy to overclaim in either direction.
+
+**It is not demographically matched.** Gligorić's design holds the *article* constant
+and compares competing headlines; the readers are whoever saw them — Upworthy's whole
+audience, with no stratification by age, gender or anything else. Our panel is 25
+constructed personas, all 42-year-old US women with one trait swept. So this is not
+"no effect in people of age X, but an effect in our personas of age X".
+
+**What it is:** a lever that produced no detectable effect across a large, real,
+heterogeneous audience, on which our panel has a near-total preference. The gap is too
+large to be explained by the demographic mismatch, but the mismatch is real and a
+demographically-matched replication would be a stronger test.
+
+**And one sentence pair per lever** means "the lever" and "that particular sentence"
+are perfectly confounded. The panel may dislike something about heating bills. Several
+pairs per lever is what separates them, and that is a ticket rather than a conclusion.
+
+---
+
 # Part 1 — What we know about the panel
 
 ## It enacts traits, not just reports them
 
-Adding temperament to the prompt changes **32.5%** of votes against a same-prompt
-flip rate of **9.9–13.3%**, so roughly 20 points of that is real signal. Openness,
-conscientiousness and extraversion each carry a headline pair from 0.00 to 1.00
-across the trait's range, monotonically.
+Numbers above. Roughly 20 of those 32.5 points are signal rather than the model's own
+wobble.
 
-This is the specific failure Han et al. 2025 documented — persona injection moving
+The reason this matters beyond "the feature works": it is the specific failure Han et
+al. 2025 documented — persona injection moving
 *self-reported* traits (β=3.95, p<.001) while leaving *behaviour* untouched (β=0.03,
 p=.67) — and for this model on this task it does not occur. That is why the flagship
 benchmark comparison was dropped: fidelity is established, only relative fidelity
@@ -68,18 +123,14 @@ diagnosis than high position bias.
 
 ## On same-meaning copy it is confidently wrong
 
-The finding that most constrains the product. Against Gligorić et al. 2023 — twelve
-pre-registered hypotheses on 24,333 real Upworthy A/B pairs:
+Headline numbers above. Two details worth keeping:
 
-- On the **published null** (second-person pronouns, which do *not* move real
-  clicks), the panel prefers the "you" variant **0.82 / 0.90 / 0.94** across the
-  three framings. Mean distance from no-preference: **0.387**.
-- On the three levers that *do* move real clicks, it lands in the predicted direction
-  in **3 of 9** cells, against 4.5 by coin flip.
+**Mean distance from no-preference on the published null: 0.387.** Not a marginal
+lean — the panel is nearly unanimous about a difference that does not move readers.
 
-Magnitudes of 0.04 and 0.99 mean this is not indecision. It is confident, and it
-reverses depending on which question is asked. **The panel is unvalidated on
-same-meaning variants — which is the regime real A/B tests live in.**
+**Magnitudes of 0.04 and 0.99 across the signal levers** mean this is not indecision
+either. The panel holds strong opinions that *reverse* depending on which question it
+is asked, which is a different and worse failure than having no opinion.
 
 ## Framing moves votes but not verdicts
 
