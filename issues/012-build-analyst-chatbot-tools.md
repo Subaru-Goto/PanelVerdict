@@ -29,6 +29,13 @@ adopt it here, and let this ticket's own experience of hand-rolling the loop be 
 evidence for whether it is worth the dependency. Note what the graded requirement actually
 names: **tool calling**, which is this ticket's content and is framework-independent.
 
+**Agent middleware belongs to this ticket if it belongs anywhere.** It ships in the same
+`langchain` umbrella package as the graph, so it sits on the same side of the v1/v2 line.
+[010a](010a-vote-usage-instrumentation.md) considered it for the reasoning-effort knob and
+records why it was rejected there; the residue for this ticket is that a tool loop is the case
+middleware was built for — escalating effort after a failed step, swapping model per turn — so
+the question is live here and nowhere else in v1.
+
 ## Notes
 
 - **Vector index (deferred here from 006f).** `search_personas` needs the pgvector similarity index (HNSW/IVFFlat) on ~~`interests.embedding`~~ **`personas.summary_embedding`** — 006f persists vectors but builds no index. **Amended 2026-07-26 ([006j](006j-persona-summary-embedding.md)):** the index target moves to one vector per persona, and the open question of "per-persona mean-pooled embedding vs. querying per-interest rows" is moot — the `interests` table is dropped, so there is exactly one vector to search.
