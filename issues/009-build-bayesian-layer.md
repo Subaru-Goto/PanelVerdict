@@ -46,3 +46,20 @@ is a naming and labelling requirement on the API payload, not only on the UI
 
 Not addressed here, and not this ticket's to fix: whether panel preference *predicts*
 field behaviour at all. That is the Upworthy validation study, out of scope on the map.
+
+## Amended 2026-07-27 — the reported quantity is framing-bound
+
+[015](015-task-framing-sensitivity.md) measured that changing the question sentence
+flips 38–43% of matched votes, well past the ~0.21 noise floor. `preference` stays
+the shipped framing — nothing in that run gives grounds to switch — but the pairing
+of question to reported name is now load-bearing rather than tidy.
+
+The panel is asked *"Which do you prefer?"*, so the payload reports a **preference
+share**. It may not be named or documented as click intent, and switching the
+shipped question later means renaming the field, not just changing a prompt.
+
+Also relevant to how much this layer's precision is worth: on same-meaning variants
+the panel's preferences do not track published field effects at all
+([011](011-build-report-ui.md) amendment). A tight credible interval around a
+number that is not measuring reader behaviour is precision without accuracy, so the
+ROPE verdict wording should not imply the latter.

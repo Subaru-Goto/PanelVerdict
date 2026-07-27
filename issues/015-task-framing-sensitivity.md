@@ -4,8 +4,10 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
 assignee: null
-status: open
+status: closed
 ---
+
+Resolved 2026-07-27 — [write-up](../docs/research/task-framing.md).
 
 ## Goal
 
