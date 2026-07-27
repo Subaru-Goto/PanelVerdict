@@ -23,6 +23,18 @@ behaviour change, git-tracked renames) rather than mixing into feature work.
   assuming it is runtime-only. Group by subsystem — lean toward
   `app/pipeline/` (the sharper boundary) over a smaller `app/db/`. Pure move: keep
   `schema.sql` next to its reader, rewrite imports, change no logic.
+
+  **Amended 2026-07-27 (007).** Two things the split now has to place, both of them
+  straddling the boundary rather than sitting on one side:
+
+  - `persistence.retrieve_panel` is a **runtime** reader in a module the list above
+    calls pipeline. `load_pool` and `load_persona_sample` are pipeline readers, so the
+    module genuinely serves both — like `panel`.
+  - The `Embedder` protocol lives in `assembly` (pipeline) and is now imported by
+    `targeting` (runtime). Two consumers, one home, and the convention elsewhere
+    (`PanelLLM` in `vote`) is protocol-beside-consumer. Duplicating a two-line
+    Protocol would satisfy structural typing and is the wrong answer; the reorg should
+    give it a home both halves can import.
 - ~~**`persist_persona` single cursor.**~~ Done 2026-07-26: dropping the
   `interests` table left one INSERT, so there is no second cursor to unify.
 
