@@ -69,3 +69,23 @@ not a hedge.
 Open question for this ticket, not decided here: whether that caveat is always-on
 copy or triggered by an automatic same-meaning check on the submitted variants. The
 second is better and needs a mechanism that does not exist yet.
+
+## Amended 2026-07-27 ([007](007-build-targeting-query-translation.md)) — the report must read `coverage`, not just `countries`
+
+`TargetQuery.coverage` is `requested` | `approximated` | `unmatched`, and **a report
+that shows the country list alone will present a fallback as a deliberate choice.** A
+target for Nigeria resolves to the United States, Japan and Germany — byte-identical to
+a target that named no country at all — so the panel cannot be distinguished from a
+genuine global one by its members.
+
+- `unmatched` → the panel carries **no geographic targeting**. Say so where the verdict
+  is, not in a footnote; it is a read on the wording only.
+- `approximated` → a stand-in region was used. The warning already names it.
+- `requested` → nothing to flag.
+
+`PanelSelection.notices` carries the prose for all of this, split by severity:
+`warning` means the panel is not what was asked for, `reading` means it is and here is
+the interpretation. Both belong in the report — the readings are how a customer catches
+a mis-read target, e.g. "cautious" taken as conscientiousness rather than neuroticism.
+Write from [`docs/reading-the-posterior.md`](../docs/reading-the-posterior.md) for the
+verdict numbers themselves.

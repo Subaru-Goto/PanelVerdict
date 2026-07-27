@@ -130,11 +130,11 @@ silent" enforceable rather than remembered:
 
 Two design points worth carrying forward:
 
-- **`TargetQuery.countries` is always explicit.** The global rung lists every seeded
-  country rather than leaving the filter off, so an empty tuple means *no coverage*
-  and not *no filter*. Had the two shared one value, retrieval could not tell
-  "everyone" from "nobody" — the one confusion that turns an honest empty result into
-  a random panel.
+- **`TargetQuery.countries` is always explicit**, never empty-means-unfiltered — a
+  value should not need to be read together with something else to know what it means.
+  The same principle is why `coverage` exists: after the fallback amendment below, two
+  opposite targets resolve to the same country tuple, and only `coverage` separates
+  "you asked for everywhere" from "we could not serve where you asked".
 - **The query is written in the persona summary's own words.** Requested trait levels
   render through `panel.render_trait_phrases`, the same 25-phrase table the embedded
   summary was built from. A paraphrase would compare two vocabularies. Partial by
@@ -189,27 +189,45 @@ The general lesson, which generalises past geography: an attribute the pool *nea
 has is more dangerous than one it plainly lacks, because the model will find a
 plausible coarser field to put it in.
 
-## Amended 2026-07-27 — the ladder's third rung, made explicit
+## Amended 2026-07-27 — the third rung is a real fallback (signed off)
 
-The ladder above reads `country → culture_tag → (global)`. As built, a region that
-reaches neither of the first two rungs yields **nothing**, not a global panel. Stating
-why, since it looks like a dropped rung:
+**Decided by the product owner, overruling an earlier reading of this ticket.** An
+unservable region degrades to the **whole pool** with a loud warning, rather than
+returning nothing.
 
-The global rung is implemented — it is what an unnamed region gets. *"Cautious
-homeowners"* with no place mentioned draws from every seeded country, which is exactly
-what was asked for. But *"Nigeria"* is a place we cannot serve, and answering it with
-a US/JP/DE panel is the thing this ticket's last bullet forbids: **"Empty result is an
-honest outcome when even the coarse tag has no seeded coverage — report it, don't
-fabricate a panel."** A global panel there is a fabricated one.
+The earlier reading leaned on this ticket's last bullet — *"Empty result is an honest
+outcome when even the coarse tag has no seeded coverage — report it, don't fabricate a
+panel"* — to argue that a US/JP/DE panel answering "Nigeria" is a fabricated one. The
+sign-off is that a dead end helps nobody: the customer gets zero value and no idea what
+would have worked, and the copy question is not wholly geographic — a whole-pool panel
+still reads the *wording*, which is most of what they came for. The honesty requirement
+is met by the warning, not by the refusal.
 
-So the rungs are conditioned on what was asked, not walked blindly:
-
-| the target | rung | panel |
+| the target | `coverage` | panel |
 |---|---|---|
-| names a seeded country | `country` | that country |
-| names a place we can bucket | `culture_tag` | the seeded countries in that bucket, with a warning |
-| names no place at all | `global` | every seeded country |
-| names a place we cannot bucket | — | empty, with a warning |
+| names a seeded country | `requested` | that country |
+| names a place we can bucket | `approximated` | the seeded countries in that bucket, with a warning |
+| names no place at all | `requested` | every seeded country |
+| names a place we cannot bucket | `unmatched` | **every seeded country**, with a warning saying it is not that audience |
+
+Two consequences that are not cosmetic.
+
+**`TargetQuery.coverage` had to be added, and this change is what earned it.** Two
+opposite targets now resolve to the identical country tuple: one that named no country
+(served exactly) and one whose country we could not serve at all (substituted
+wholesale). The tuple cannot tell them apart, so a report reading `countries` alone
+would present a whole-pool fallback as a deliberate global panel. `coverage` is the only
+thing that distinguishes them.
+
+**The fallback is per query, not per region.** *"The US and Nigeria"* resolves to the US
+alone, `requested`, with a Nigeria warning. Falling back for the unservable half would
+add Japan and Germany to a panel the servable half could have filled on its own —
+taking requested personas out to make room for unrequested ones.
+
+`TargetQuery.countries` is therefore **never empty**, which retires the earlier
+invariant that an empty tuple meant no coverage. The no-panel outcomes that remain are
+filter-driven — an age span the pool cannot reach, or filters that jointly exclude
+everybody — and `PanelSelection`'s shortfall notice reports those.
 
 ## Amended 2026-07-27 — the middle rung is model-supplied, and why
 

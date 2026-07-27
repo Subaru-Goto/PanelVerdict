@@ -281,6 +281,9 @@ class TargetNotice(BaseModel):
     message: str
 
 
+CoverageRung = Literal["requested", "approximated", "unmatched"]
+
+
 class TargetQuery(BaseModel):
     """A target description as the pool can serve it, plus what that cost.
 
@@ -288,10 +291,16 @@ class TargetQuery(BaseModel):
     contract between that resolution and the SQL that executes it — and because the
     report has to show which filters a verdict was drawn under.
 
-    `countries` is always explicit: the coarsest rung of the coverage ladder fills in
-    every seeded country rather than leaving the filter off, so an **empty tuple
-    means no coverage at all** — a panel of nobody. Every other collection here is a
-    filter, where empty means "don't filter on this".
+    `countries` is always explicit rather than empty-means-unfiltered, so the value
+    never has to be read together with something else to know what it means.
+
+    `coverage` is what `countries` cannot say on its own. Two very different targets
+    resolve to the whole pool — one that named no country (served exactly) and one
+    whose country we could not serve at all (substituted) — so the tuple is identical
+    and the meaning is opposite. `requested` means every named place was served, or
+    none was named; `approximated` means at least one was served by its
+    culture-tag neighbours; `unmatched` means none could be served and the panel is
+    the whole pool, carrying no geographic targeting at all.
 
     `disposition` is the vector half, rendered in the persona summary's own words and
     empty when the target named no temperament.
@@ -300,6 +309,7 @@ class TargetQuery(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     countries: tuple[Locale, ...]
+    coverage: CoverageRung
     min_age: int
     max_age: int
     gender: Gender | None

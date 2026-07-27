@@ -170,14 +170,76 @@ def test_a_multi_country_label_falls_back_on_its_tag_alone() -> None:
     assert len(_warnings(query)) == 1
 
 
-def test_a_region_off_the_ladder_entirely_yields_no_coverage() -> None:
-    """An empty panel is the honest outcome; a fabricated one is not."""
+def test_a_region_off_the_ladder_falls_back_to_the_whole_pool() -> None:
+    """Signed off 2026-07-27: a dead end helps nobody, so an unservable region is
+    answered with every country we have — loudly, and marked as unmatched."""
     query = resolve_target(
         TargetRequest(regions=[RequestedRegion(label="Nigeria", country_code="NG")])
     )
 
-    assert query.countries == ()
+    assert set(query.countries) == set(Locale)
+    assert query.coverage == "unmatched"
     assert "Nigeria" in _warnings(query)[0]
+
+
+def test_the_whole_pool_fallback_says_it_is_not_the_audience_asked_for() -> None:
+    """The panel is now non-empty and geographically wrong, which is a worse thing to
+    report quietly than an empty one. The warning has to name both what was searched
+    and what the result does not mean."""
+    query = resolve_target(
+        TargetRequest(regions=[RequestedRegion(label="Nigeria", country_code="NG")])
+    )
+
+    fallback = " ".join(_warnings(query))
+    for country in COUNTRY_NAME.values():
+        assert country in fallback
+    assert "not matched" in fallback
+
+
+def test_a_partly_served_target_is_not_diluted_by_the_fallback() -> None:
+    """The fallback is a last resort for the whole query, not a per-region one. Adding
+    Japan and Germany because Nigeria failed would take US personas out of a panel
+    that could have been entirely American."""
+    query = resolve_target(
+        TargetRequest(
+            regions=[
+                RequestedRegion(label="the US", country_code="US"),
+                RequestedRegion(label="Nigeria", country_code="NG"),
+            ]
+        )
+    )
+
+    assert query.countries == (Locale.US,)
+    assert query.coverage == "requested"
+
+
+def test_naming_no_country_is_not_the_same_as_failing_to_serve_one() -> None:
+    """Both draw the whole pool, so the panel alone cannot tell them apart — one is
+    exactly what was asked for, the other is a substitution. `coverage` is the only
+    thing that distinguishes them, which is why it exists."""
+    asked_for_nothing = resolve_target(TargetRequest())
+    could_not_serve = resolve_target(
+        TargetRequest(regions=[RequestedRegion(label="Nigeria", country_code="NG")])
+    )
+
+    assert asked_for_nothing.countries == could_not_serve.countries
+    assert asked_for_nothing.coverage == "requested"
+    assert could_not_serve.coverage == "unmatched"
+    assert _warnings(asked_for_nothing) == []
+
+
+def test_an_approximated_region_is_marked_as_approximated() -> None:
+    query = resolve_target(
+        TargetRequest(
+            regions=[
+                RequestedRegion(
+                    label="China", country_code="CN", culture_tag=CultureTag.ASIAN
+                )
+            ]
+        )
+    )
+
+    assert query.coverage == "approximated"
 
 
 def test_a_partly_covered_target_keeps_what_it_can_and_warns_about_the_rest() -> None:
@@ -457,9 +519,11 @@ def test_a_target_with_temperament_embeds_the_rendered_phrases(conn) -> None:
     assert embedder.texts == [_HIGH_NEUROTICISM]
 
 
-def test_an_uncovered_target_costs_no_embedding_and_draws_nobody(conn) -> None:
-    """No seeded country survived the ladder, so no persona can match whatever the
-    disposition says — sorting an empty set is not worth paying for."""
+def test_an_unservable_region_still_draws_a_panel_from_the_whole_pool(conn) -> None:
+    """The fallback means there is a real panel to rank, so the disposition is worth
+    embedding after all — the temperament half of the target is still servable even
+    when the geography is not."""
+    persist_pool(conn, [make_assembled(make_persona(id_="JP-00000", country="JP"))])
     embedder = CountingEmbedder()
     request = TargetRequest(
         regions=[RequestedRegion(label="Nigeria", country_code="NG")],
@@ -478,8 +542,8 @@ def test_an_uncovered_target_costs_no_embedding_and_draws_nobody(conn) -> None:
         embedder=embedder,
     )
 
-    assert selection.panel == []
-    assert embedder.texts == []
+    assert [p.id for p in selection.panel] == ["JP-00000"]
+    assert len(embedder.texts) == 1
     assert any(n.severity == "warning" for n in selection.notices)
 
 
@@ -587,26 +651,3 @@ def test_the_countries_the_panel_came_from_are_always_stated() -> None:
     assert query.countries == (Locale.US,)
     assert "Ohio" in _warnings(query)[0]
     assert [m for m in _readings(query) if "United States" in m]
-
-
-def test_an_uncovered_target_states_no_panel_rather_than_where_from() -> None:
-    query = resolve_target(
-        TargetRequest(regions=[RequestedRegion(label="Nigeria", country_code="NG")])
-    )
-
-    assert _readings(query) == []
-    assert len(_warnings(query)) == 2
-
-
-def test_an_uncovered_target_is_told_what_the_pool_does_cover() -> None:
-    """A dead end with no way forward is worse than a dead end. Every other outcome
-    names the countries in play — an approximation names its stand-in, a partial match
-    names what survived — so the one case that offers nothing is the one that most
-    needs to say what would have worked."""
-    query = resolve_target(
-        TargetRequest(regions=[RequestedRegion(label="Nigeria", country_code="NG")])
-    )
-
-    (no_panel,) = [m for m in _warnings(query) if "no panel was drawn" in m]
-    for country in COUNTRY_NAME.values():
-        assert country in no_panel

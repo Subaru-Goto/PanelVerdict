@@ -24,6 +24,7 @@ from app.schemas import (
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
     MIN_PERSONA_AGE,
+    CoverageRung,
     CultureTag,
     Locale,
     Persona,
@@ -66,12 +67,6 @@ def _named(countries: tuple[Locale, ...]) -> str:
     return ", ".join(COUNTRY_NAME[country] for country in countries)
 
 
-# Only for the dead end. `_NO_MATCH` alone is right where a country *did* resolve and
-# the remaining filters excluded everybody — naming the coverage there would blame the
-# countries for something they did not cause.
-_NO_COVERAGE = f"{_NO_MATCH} The pool currently covers {_named(tuple(Locale))}."
-
-
 def _seeded(country_code: str | None) -> Locale | None:
     """The seeded locale a country code names, if we seeded that country."""
     try:
@@ -82,40 +77,73 @@ def _seeded(country_code: str | None) -> Locale | None:
 
 def _resolve_region(
     region: RequestedRegion,
-) -> tuple[tuple[Locale, ...], TargetNotice | None]:
-    """One place, down the ladder: country → culture tag → nothing."""
+) -> tuple[tuple[Locale, ...], CoverageRung, TargetNotice | None]:
+    """One place, down the ladder: the country itself, then its culture tag."""
     exact = _seeded(region.country_code)
     if exact is not None:
-        return (exact,), None
+        return (exact,), "requested", None
 
     approximate = _SEEDED_BY_TAG.get(region.culture_tag) if region.culture_tag else None
     if approximate:
-        return approximate, _warn(
-            f"No {region.label} data; approximating with "
-            f"{region.culture_tag.value}-region personas ({_named(approximate)}). "
-            "Treat as indicative."
+        return (
+            approximate,
+            "approximated",
+            _warn(
+                f"No {region.label} data; approximating with "
+                f"{region.culture_tag.value}-region personas ({_named(approximate)}). "
+                "Treat as indicative."
+            ),
         )
 
-    return (), _warn(
-        f"No {region.label} data, and no seeded region close enough to stand in "
-        "for it. Those personas are missing from the panel."
+    return (
+        (),
+        "unmatched",
+        _warn(
+            f"No {region.label} data, and no seeded region close enough to stand in "
+            "for it."
+        ),
     )
 
 
 def _resolve_regions(
     regions: list[RequestedRegion],
-) -> tuple[tuple[Locale, ...], list[TargetNotice]]:
+) -> tuple[tuple[Locale, ...], CoverageRung, list[TargetNotice]]:
+    """Every named place, plus the whole-pool fallback when none could be served.
+
+    The fallback is deliberately per *query*, not per region: falling back for one
+    unservable region would add its neighbours to a panel that the served regions
+    could have filled on their own, taking requested personas out to make room for
+    unrequested ones.
+    """
     if not regions:
-        return tuple(Locale), []
+        return tuple(Locale), "requested", []
 
     countries: list[Locale] = []
     notices: list[TargetNotice] = []
+    approximated = False
     for region in regions:
-        reached, notice = _resolve_region(region)
+        reached, rung, notice = _resolve_region(region)
         countries.extend(country for country in reached if country not in countries)
+        approximated = approximated or rung == "approximated"
         if notice is not None:
             notices.append(notice)
-    return tuple(countries), notices
+
+    if countries:
+        return (
+            tuple(countries),
+            ("approximated" if approximated else "requested"),
+            notices,
+        )
+
+    every = tuple(Locale)
+    notices.append(
+        _warn(
+            f"The panel spans the whole pool instead ({_named(every)}), so it is "
+            "not matched to the audience described — read it as a check on the "
+            "wording rather than on that audience."
+        )
+    )
+    return every, "unmatched", notices
 
 
 def _resolve_ages(
@@ -193,7 +221,7 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
     the panel a customer gets may be narrower, coarser or emptier than the one they
     described, and only the notices distinguish those from a panel that matched.
     """
-    countries, notices = _resolve_regions(request.regions)
+    countries, coverage, notices = _resolve_regions(request.regions)
     min_age, max_age, age_notices = _resolve_ages(request.min_age, request.max_age)
     levels, trait_notices = _resolve_traits(request.traits)
     notices += age_notices + trait_notices
@@ -205,22 +233,20 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
                 f"{', '.join(request.unmapped)} — the panel is not matched on that."
             )
         )
-    if countries:
-        # Stated in code, so that whatever the translator did with the description
-        # the customer still learns which countries were in scope. A place the pool
-        # cannot resolve below its country — a state, a city — would otherwise be
-        # reported only as dropped, never as answered with the whole country.
-        #
-        # Phrased as the scope searched rather than the panel drawn, because nothing
-        # here knows whether anyone matched: the age span may be empty and the
-        # remaining filters may exclude everybody. Claiming a panel would put a
-        # notice about something that did not happen next to the warning saying so.
-        notices.append(_reading(f"Matched against panelists in {_named(countries)}."))
-    else:
-        notices.append(_warn(_NO_COVERAGE))
+    # Stated in code, so that whatever the translator did with the description the
+    # customer still learns which countries were in scope. A place the pool cannot
+    # resolve below its country — a state, a city — would otherwise be reported only
+    # as dropped, never as answered with the whole country.
+    #
+    # Phrased as the scope searched rather than the panel drawn, because nothing here
+    # knows whether anyone matched: the age span may be empty and the remaining
+    # filters may exclude everybody. Claiming a panel would put a notice about
+    # something that did not happen next to the warning saying so.
+    notices.append(_reading(f"Matched against panelists in {_named(countries)}."))
 
     return TargetQuery(
         countries=countries,
+        coverage=coverage,
         min_age=min_age,
         max_age=max_age,
         gender=request.gender,
@@ -285,15 +311,10 @@ def select_panel(
     """Natural-language target description → the panel that will vote on it.
 
     Translate, resolve onto the pool's coverage, then retrieve. Two model calls at
-    most — one to read the description, one to embed the temperament it asked for —
-    and the second is skipped when there is nothing to rank or nobody to rank.
+    most — one to read the description, and one to embed the temperament it asked
+    for, skipped when no temperament was named.
     """
     query = resolve_target(translator.translate(description=description))
-    if not query.countries:
-        # No seeded country survived the ladder, so no persona can match whatever
-        # the disposition says. Embedding it would be paying to sort an empty set.
-        return PanelSelection(panel=[], query=query, notices=query.notices)
-
     panel = retrieve_panel(
         conn,
         query,
