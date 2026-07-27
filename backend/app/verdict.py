@@ -65,6 +65,59 @@ def _highest_density_interval(a: float, b: float, mass: float) -> tuple[float, f
     return float(dist.ppf(lower_tail)), float(dist.ppf(lower_tail + mass))
 
 
+@dataclass(frozen=True)
+class PreferenceShortfall:
+    """What each choice risks, in preference-share points, both ways.
+
+    Reporting both directions is what lets a practical tie read as *"either
+    headline risks under a tenth of a point"* rather than as an accusation against
+    one of them.
+    """
+
+    shipping_a: float
+    shipping_b: float
+
+
+def expected_preference_shortfall(
+    *, preferring_b: int, total: int
+) -> PreferenceShortfall:
+    """Average preference-share points a choice falls short of an even split by,
+    weighted by the probability that it does.
+
+    This is the **expected loss** of Bayesian decision theory, deliberately not
+    named that. In a marketing report "loss" reads as money, and this measures
+    neither money nor reader behaviour — only how the panel split. Same rule that
+    forbids calling the share a "lift" (009).
+
+    It answers what `probability_majority_prefers_b` cannot: not *how often* a
+    choice would be wrong, but *how far* wrong, weighted by that likelihood. Two
+    panels of near-equal confidence can differ several-fold here, because a small
+    panel has fat tails — if it is wrong, it is wrong by more. That is why this is
+    the sounder stopping signal, since early stopping lands precisely in the
+    small-panel regime.
+
+    Decomposes as `P(that choice is worse) x average shortfall in that branch`; the
+    conditional magnitude alone is not reported because it has no likelihood
+    attached and so compares to nothing.
+    """
+    if total < 0:
+        raise ValueError(f"total must not be negative, got {total}")
+    if not 0 <= preferring_b <= total:
+        raise ValueError(f"{preferring_b} of {total} votes is not a possible split")
+
+    a, b = 1 + preferring_b, 1 + total - preferring_b
+    # E[(0.5-p)+] = 0.5*F(0.5; a, b) - E[p]*F(0.5; a+1, b), and the mirror for the
+    # other tail. Closed form in two Beta CDFs, so nothing is integrated at runtime.
+    mean = a / (a + b)
+    below = stats.beta(a, b).cdf(0.5)
+    below_shifted = stats.beta(a + 1, b).cdf(0.5)
+    shipping_b = 0.5 * below - mean * below_shifted
+    shipping_a = mean * (1 - below_shifted) - 0.5 * (1 - below)
+    return PreferenceShortfall(
+        shipping_a=float(shipping_a), shipping_b=float(shipping_b)
+    )
+
+
 def rope_verdict(
     interval: tuple[float, float], *, rope: tuple[float, float] = _ROPE
 ) -> RopeVerdict:

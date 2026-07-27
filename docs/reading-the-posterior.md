@@ -150,6 +150,55 @@ answer, or the budget cap is reached. A `P`-based rule also has the opposite fai
 on a genuine tie `P` hovers near 0.5 forever, so it can never stop early on exactly
 the tests whose answer was available soonest, and would burn the whole budget on them.
 
+## The expected preference shortfall, and why it is not called a loss
+
+`expected_preference_shortfall` is the average number of preference-share points a
+choice falls short of an even split by, **weighted by the probability that it does**.
+Both directions are reported.
+
+It is Bayesian decision theory's *expected loss*, deliberately renamed. In a marketing
+report "loss" reads as money, and this measures neither money nor reader behaviour —
+only how the panel split. The same rule that forbids calling the share a "lift".
+
+**It decomposes, and the two factors are worth seeing apart:**
+
+```
+shortfall  =  P(that choice is worse)  x  average shortfall in that branch
+```
+
+| votes | P(majority) | shortfall | = P(B worse) | x avg shortfall |
+|---|---|---|---|---|
+| 8 / 10 | 0.967 | **0.0019** | 0.0327 | 0.0578 |
+| 60 / 100 | 0.977 | **0.0004** | 0.0230 | 0.0186 |
+| 30 / 50 | 0.920 | 0.0025 | 0.0804 | 0.0315 |
+
+Read the first two rows together. Confidence is near-identical — 96.7% against 97.7% —
+and the shortfall differs **4.4-fold**. Not because the chance of being wrong differs
+much, but because being wrong costs three times as much: 5.8 points against 1.9.
+
+**That is the whole reason this number exists beside `probability_majority_prefers_b`.**
+Probability tells you *how often* a choice would be wrong. The shortfall tells you *how
+far* wrong, weighted by that likelihood. A small panel has fat tails — if it is wrong,
+it is wrong by more — and probability alone is blind to that.
+
+Which is also why it is the sounder stopping signal: early stopping lands precisely in
+the small-panel regime, where probability looks reassuring and exposure is largest.
+
+**The conditional magnitude is not reported**, only derivable as
+`shortfall / P(that choice is worse)`. On its own it carries no likelihood, so it
+compares to nothing — 5.8 points sounds alarming until you notice it is 3% likely.
+
+**Copy states the unit every time.** *"If B is the weaker headline, the panel's
+preference falls short of even by 0.2 points on average — and there's a 3% chance it
+is."* Probability, magnitude and scale in one breath.
+
+Worked end to end for 8 of 10 votes: 96.7% of the posterior says a majority prefers B;
+the remaining 3.3% says it does not, and in that branch the true share averages 0.442,
+so B trails by 5.8 points; `0.033 x 0.058 = 0.0019`.
+
+With no votes at all the prior gives 1/8 either way — a quarter of the whole scale,
+which is what knowing nothing costs.
+
 ## What none of these numbers mean
 
 **Not a click-through rate.** `E[p] - 0.5` is in preference-share points. Real readers

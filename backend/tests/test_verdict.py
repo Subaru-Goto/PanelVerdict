@@ -1,10 +1,15 @@
 from math import comb
 
 import pytest
-from scipy import stats
+from scipy import integrate, stats
 
 from app.schemas import VoteRecord
-from app.verdict import posterior, rope_verdict, tally_votes
+from app.verdict import (
+    expected_preference_shortfall,
+    posterior,
+    rope_verdict,
+    tally_votes,
+)
 
 
 def _vote(chosen_variant_id: str) -> VoteRecord:
@@ -162,3 +167,71 @@ class TestRopeVerdict:
     def test_a_nonsense_band_is_refused(self) -> None:
         with pytest.raises(ValueError):
             rope_verdict((0.4, 0.6), rope=(0.53, 0.47))
+
+
+class TestExpectedPreferenceShortfall:
+    def _numeric(self, k: int, total: int, *, toward: str) -> float:
+        """Integrate the shortfall directly — an independent route to the closed
+        form the implementation uses (two Beta CDFs, no integration)."""
+        density = stats.beta(1 + k, 1 + total - k).pdf
+        if toward == "b":
+            return integrate.quad(lambda p: (0.5 - p) * density(p), 0.0, 0.5)[0]
+        return integrate.quad(lambda p: (p - 0.5) * density(p), 0.5, 1.0)[0]
+
+    @pytest.mark.parametrize(
+        ("preferring_b", "total"), [(8, 10), (60, 100), (120, 200), (30, 50), (2, 7)]
+    )
+    def test_it_matches_direct_integration(self, preferring_b: int, total: int) -> None:
+        result = expected_preference_shortfall(preferring_b=preferring_b, total=total)
+        assert result.shipping_b == pytest.approx(
+            self._numeric(preferring_b, total, toward="b"), abs=1e-9
+        )
+        assert result.shipping_a == pytest.approx(
+            self._numeric(preferring_b, total, toward="a"), abs=1e-9
+        )
+
+    def test_it_decomposes_into_likelihood_times_magnitude(self) -> None:
+        """The reported number is P(B worse) x average shortfall in that branch —
+        8 of 10 votes is a 3.3% chance of being wrong by 5.8 points."""
+        result = expected_preference_shortfall(preferring_b=8, total=10)
+        probability_b_worse = stats.beta(9, 3).cdf(0.5)
+
+        assert probability_b_worse == pytest.approx(0.0327, abs=5e-4)
+        assert result.shipping_b / probability_b_worse == pytest.approx(
+            0.0578, abs=5e-4
+        )
+        assert result.shipping_b == pytest.approx(0.00189, abs=5e-6)
+
+    def test_confidence_alone_does_not_determine_the_shortfall(self) -> None:
+        """Why this exists beside P(majority): two panels of near-equal confidence
+        differ several-fold in exposure, because a small panel has fat tails — if
+        it is wrong, it is wrong by more."""
+        small = posterior(preferring_b=8, total=10)
+        large = posterior(preferring_b=60, total=100)
+        assert small.probability_majority_prefers_b == pytest.approx(0.967, abs=1e-3)
+        assert large.probability_majority_prefers_b == pytest.approx(0.977, abs=1e-3)
+
+        exposed = expected_preference_shortfall(preferring_b=8, total=10).shipping_b
+        safer = expected_preference_shortfall(preferring_b=60, total=100).shipping_b
+        assert exposed > 4 * safer
+
+    def test_the_two_directions_are_symmetric_under_swapping_the_variants(self) -> None:
+        forward = expected_preference_shortfall(preferring_b=8, total=10)
+        reversed_ = expected_preference_shortfall(preferring_b=2, total=10)
+        assert forward.shipping_b == pytest.approx(reversed_.shipping_a)
+        assert forward.shipping_a == pytest.approx(reversed_.shipping_b)
+
+    def test_an_even_split_exposes_both_choices_equally(self) -> None:
+        result = expected_preference_shortfall(preferring_b=5, total=10)
+        assert result.shipping_a == pytest.approx(result.shipping_b)
+
+    def test_no_votes_reports_the_prior_exposure(self) -> None:
+        """Uniform over [0,1], so the integral is 0.5^2/2 = 1/8 either way — a
+        quarter of the whole scale, which is what "we know nothing" costs."""
+        result = expected_preference_shortfall(preferring_b=0, total=0)
+        assert result.shipping_b == pytest.approx(1 / 8)
+        assert result.shipping_a == pytest.approx(1 / 8)
+
+    def test_impossible_counts_are_refused(self) -> None:
+        with pytest.raises(ValueError):
+            expected_preference_shortfall(preferring_b=11, total=10)

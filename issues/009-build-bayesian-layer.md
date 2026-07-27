@@ -12,7 +12,7 @@ status: open
 Pure-Python, deterministic — **no LLM** touches the statistics:
 
 - flat binary Beta-Binomial (SciPy, conjugate — no sampler),
-- full posterior report: **P(B>A)**, expected lift + 95% credible interval, **expected loss**, **ROPE** verdict (±3 pts → "practical tie — pick either or test a bolder variant"),
+- full posterior report: **P(B>A)**, preference share + 95% credible interval, **expected preference shortfall** (both directions — never "expected loss"; see the naming amendment), **ROPE** verdict (±3 pts → "practical tie — pick either or test a bolder variant"),
 - **adaptive stopping**: update posterior per batch, stop at the P-threshold or the budget cap,
 - neither-rate passed through descriptively (not modeled).
 
@@ -236,3 +236,29 @@ Return the sequence.
 Reading guide for all of the above, with worked numbers from the shipped
 implementation: [`docs/reading-the-posterior.md`](../docs/reading-the-posterior.md).
 [011](011-build-report-ui.md)'s copy should be written from it.
+
+
+## Amended 2026-07-27 — "loss" is banned for the same reason "lift" is
+
+The decision-theoretic quantity `E[(0.5 - p)+]` ships as
+**`expected_preference_shortfall`**, never as "expected loss" or "cost". The
+[011](011-build-report-ui.md) amendment already forbids "lift" because a marketer reads
+it as CTR; "loss" is worse, because it implies **money**. And after
+[015](015-task-framing-sensitivity.md) it would overclaim twice: that we measure value,
+and that we can predict it.
+
+- **Both directions are reported.** `shipping_a` and `shipping_b`. On a practical tie
+  that lets the report say *"either headline risks under a tenth of a point of panel
+  preference"*, which is actionable — a single-sided number reads as an accusation
+  against B.
+- **The conditional magnitude is not reported.** It is recoverable as
+  `shortfall / P(that choice is worse)`, and alone it carries no likelihood, so it
+  compares to nothing. The decomposition is documented in
+  [`docs/reading-the-posterior.md`](../docs/reading-the-posterior.md) instead.
+- **Copy states the unit every time.** *"If B is the weaker headline, the panel's
+  preference falls short of even by 0.2 points on average — and there's a 3% chance it
+  is."* Probability, magnitude and scale in one breath, with nothing lost by anyone.
+
+`docs/project-idea.md` carried both errors in one clause — "costs ... on average if
+it's actually worse" named the conditional under the unconditional's name — and is
+corrected, along with two stray "expected lift" usages.
