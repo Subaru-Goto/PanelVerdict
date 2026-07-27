@@ -6,7 +6,6 @@ from app.panel import (
     _income_band,
     persona_summary,
     render_persona_prompt,
-    render_trait_phrases,
 )
 from app.schemas import COUNTRY_NAME, BigFive, TraitLevel
 from tests.factories import make_persona
@@ -35,25 +34,21 @@ def test_every_trait_has_a_phrase_for_every_level() -> None:
     assert set(_TRAIT_PHRASES) == set(BigFive.model_fields)
 
 
-def test_a_partial_trait_request_renders_only_the_traits_it_names() -> None:
-    """A target usually names one or two traits. Filling the rest in with `medium`
-    would put words into the query the customer never asked for, and they would
-    compete for similarity against the traits they did ask for."""
-    rendered = render_trait_phrases(
-        {"neuroticism": TraitLevel.HIGH, "openness": TraitLevel.LOW}
+def test_the_traits_are_rendered_in_domain_order() -> None:
+    """Order is part of the text the summary was embedded from, so a reshuffle costs a
+    re-embedding of the whole pool. Written out rather than looked up: an expected
+    value taken from the table the renderer reads is one it cannot disagree with."""
+    persona = make_persona().model_copy(
+        update={"big_five": _with_traits(openness=-1.0, neuroticism=1.0)}
     )
 
-    # Written out rather than looked up: an expected value taken from the table the
-    # renderer reads is one it cannot disagree with, leaving only the ordering claim
-    # real. Domain order, so openness leads despite being named second.
-    assert rendered == (
+    assert (
         "practical and conventional, preferring the familiar to the novel; "
-        "sensitive to stress and prone to worry about how things might go wrong"
+        "reasonably organized without being rigid about it" in persona_summary(persona)
     )
-
-
-def test_an_empty_trait_request_renders_nothing() -> None:
-    assert render_trait_phrases({}) == ""
+    assert persona_summary(persona).endswith(
+        "sensitive to stress and prone to worry about how things might go wrong."
+    )
 
 
 def test_the_rendered_income_bands_are_unchanged() -> None:

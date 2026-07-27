@@ -1,5 +1,3 @@
-from collections.abc import Mapping
-
 from app.bigfive import bigfive_from_levels, bucketize
 from app.schemas import (
     BigFive,
@@ -74,27 +72,15 @@ def _income_band(quintile: int) -> str:
     return f"the {_BAND_OF_QUINTILE[quintile]} income range"
 
 
-def render_trait_phrases(levels: Mapping[TraitName, TraitLevel]) -> str:
-    """The phrases for the named trait levels, in domain order.
+def _dispositions(big_five: BigFive) -> str:
+    """The five trait phrases for a persona's sampled levels, in domain order.
 
-    Public because a target description is matched against the embedded persona
-    summary, so the query has to be written in the summary's own words. Rendering it
-    through this table rather than a paraphrase is what makes the similarity mean
-    something; anything else compares two vocabularies.
-
-    Takes a partial mapping: a target usually names one or two traits, and a query
-    should not invent levels for the rest.
+    Order comes from `BigFive`'s own field order and is part of the embedded summary,
+    so reshuffling it is a re-embedding bill rather than a cosmetic change.
     """
     return "; ".join(
-        _TRAIT_PHRASES[trait][levels[trait]]
-        for trait in _TRAIT_PHRASES
-        if trait in levels
+        _TRAIT_PHRASES[trait][bucketize(score)] for trait, score in big_five
     )
-
-
-def _dispositions(big_five: BigFive) -> str:
-    """The five trait phrases for a persona's sampled levels, in domain order."""
-    return render_trait_phrases({trait: bucketize(score) for trait, score in big_five})
 
 
 def render_demographics_prompt(persona: Persona) -> str:
