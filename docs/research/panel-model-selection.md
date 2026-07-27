@@ -5,7 +5,7 @@ Pricing/features verified **live on openrouter.ai, 2026-07-17** (the ticket requ
 
 ## TL;DR
 
-- **Provider:** OpenRouter, with **prompt caching** on the shared prefix (panel instructions + the two variants) — the main cost lever.
+- **Provider:** OpenRouter. ~~with **prompt caching** on the shared prefix (panel instructions + the two variants) — the main cost lever.~~ **Struck 2026-07-27:** caching cannot fire on this prompt at all — it needs 1,024 tokens (4,096 on Haiku 4.5) and the whole request is ~300–370. See [prompt-caching.md](prompt-caching.md). The cost lever is **output/reasoning tokens and the number of requests**.
 - **Panel model (v1 default):** **GPT-5 Mini** (`openai/gpt-5-mini`) — best value that plausibly clears the trait-enactment bar. **Haiku 4.5** (`anthropic/claude-haiku-4.5`) is the drop-in fallback.
 - **Fidelity benchmark:** **GPT-5.6 Sol** — the manipulation check compares Mini's Big-Five enactment against it; keep Mini if it matches, else fall back.
 - **Spend cap:** **$10** per-key credit cap on OpenRouter (hard 402 stop; see handling below).
@@ -24,9 +24,11 @@ Pricing/features verified **live on openrouter.ai, 2026-07-17** (the ticket requ
 
 Both panel candidates support **prompt caching** (cache-read column) and **structured output / tool-calling** (standard for OpenAI + Anthropic; OpenRouter exposes it and offers an "Exacto" tool-accuracy routing mode). The exact param — `response_format` json-schema vs a forced tool-call — is confirmed at build time.
 
-## Cost analysis (200-persona test, shared prefix cached)
+## Cost analysis (200-persona test)
 
-Assumes ~1.5k-token cached prefix, ~300-token per-persona input, ~80-token vote output:
+> **Both input assumptions below are wrong about the shipped prompt (corrected 2026-07-27, [prompt-caching.md](prompt-caching.md)).** There is no cached prefix — caching cannot fire under 1,024 tokens — and the per-persona input is ~300–370 tokens, not ~300 cached plus a 1.5k shared block. The **relative** ranking survives, because it is driven by list prices that have not changed; the **absolute** figures do not.
+
+Assumed, when written: ~1.5k-token cached prefix, ~300-token per-persona input, ~80-token vote output.
 
 | Model | ≈ cost / 200-persona test | Relative |
 |---|---|---|
@@ -34,7 +36,15 @@ Assumes ~1.5k-token cached prefix, ~300-token per-persona input, ~80-token vote 
 | Haiku 4.5 | ~$0.17 | ~3× |
 | GPT-5.6 Sol (flagship) | ~$1.00 | ~18× |
 
-GPT-5 Mini is cheaper than Haiku on **every** axis (4× input, 2.5× output, 4× cache) with **2× the context** — the clear value pick, contingent on fidelity. At ~5.5¢/test, the **$10 cap ≈ ~180 full tests**.
+GPT-5 Mini is cheaper than Haiku on **every** axis (4× input, 2.5× output, 4× cache) with **2× the context** — the clear value pick, contingent on fidelity.
+
+### What is actually known about the cost, and what is not
+
+**Input, computed from list prices:** 200 votes × ~300–370 tokens ≈ 60–74K tokens at $0.25/M ≈ **$0.015–0.019 per test**, uncached. A *perfect* cache would have saved under 2¢, which is why chasing it is not worth restructuring the prompt.
+
+**Output — unmeasured, and this is the term that matters.** gpt-5-mini is a reasoning model, so reasoning tokens bill at the output rate ($2/M) while not appearing in the visible response. The ~80-token figure above was a visible-output estimate with no reasoning allowance, so the real per-test cost could be **several times** ~$0.055 rather than below it. Nothing in this repo has logged token usage: 014 and 015 together ran ~7,000 votes and recorded no spend.
+
+So **"$10 cap ≈ ~180 full tests" is not a figure to plan against.** Closing this needs no new experiment, only instrumentation: log `usage.completion_tokens_details.reasoning_tokens` alongside `prompt_tokens` and `completion_tokens` on the first real 200-vote run, which is [010](../../issues/010-assemble-orchestrator-graph.md)'s. One run settles it exactly, and the same numbers feed 003's pre-flight budget check.
 
 ## Cost vs fidelity — why not just the cheapest, and why not flagship
 
