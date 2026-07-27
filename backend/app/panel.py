@@ -1,11 +1,21 @@
+from collections.abc import Mapping
+
 from app.bigfive import bigfive_from_levels, bucketize
-from app.schemas import BigFive, COUNTRY_NAME, EducationLevel, Persona, TraitLevel
+from app.schemas import (
+    BigFive,
+    COUNTRY_NAME,
+    EducationLevel,
+    INCOME_BAND_QUINTILES,
+    Persona,
+    TraitLevel,
+    TraitName,
+)
 
 # Five intensities per trait, phrased without pronouns so the vote prompt (second
 # person) and the summary embedded for retrieval (third person) can share one
 # table — the persona a query matches has to be the persona that votes. Wording
 # is BFI-2-Expanded-style descriptions of the sampled level, never numbers (006).
-_TRAIT_PHRASES: dict[str, dict[TraitLevel, str]] = {
+_TRAIT_PHRASES: dict[TraitName, dict[TraitLevel, str]] = {
     "openness": {
         TraitLevel.VERY_HIGH: "restlessly curious, forever chasing the new and the unconventional",
         TraitLevel.HIGH: "curious and imaginative, drawn to new ideas and experiences",
@@ -52,20 +62,39 @@ _EDUCATION_PHRASE: dict[EducationLevel, str] = {
 }
 
 
+_BAND_OF_QUINTILE = {
+    quintile: band
+    for band, quintiles in INCOME_BAND_QUINTILES.items()
+    for quintile in quintiles
+}
+
+
 def _income_band(quintile: int) -> str:
     """Quintile → relative income band; income is ranked within the person's own country."""
-    if quintile <= 2:
-        return "the lower income range"
-    if quintile == 3:
-        return "the middle income range"
-    return "the upper income range"
+    return f"the {_BAND_OF_QUINTILE[quintile]} income range"
+
+
+def render_trait_phrases(levels: Mapping[TraitName, TraitLevel]) -> str:
+    """The phrases for the named trait levels, in domain order.
+
+    Public because a target description is matched against the embedded persona
+    summary, so the query has to be written in the summary's own words. Rendering it
+    through this table rather than a paraphrase is what makes the similarity mean
+    something; anything else compares two vocabularies.
+
+    Takes a partial mapping: a target usually names one or two traits, and a query
+    should not invent levels for the rest.
+    """
+    return "; ".join(
+        _TRAIT_PHRASES[trait][levels[trait]]
+        for trait in _TRAIT_PHRASES
+        if trait in levels
+    )
 
 
 def _dispositions(big_five: BigFive) -> str:
     """The five trait phrases for a persona's sampled levels, in domain order."""
-    return "; ".join(
-        _TRAIT_PHRASES[trait][bucketize(score)] for trait, score in big_five
-    )
+    return render_trait_phrases({trait: bucketize(score) for trait, score in big_five})
 
 
 def render_demographics_prompt(persona: Persona) -> str:
