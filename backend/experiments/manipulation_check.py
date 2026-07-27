@@ -18,6 +18,7 @@ paying for the rest:
 """
 
 import argparse
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -31,6 +32,7 @@ from app.schemas import BigFive, Persona, TraitLevel
 from app.vote import PanelLLM, resolve_choice
 from experiments.design import (
     ARMS,
+    FRAMINGS,
     HIGH,
     LOW,
     ORDERS,
@@ -38,6 +40,7 @@ from experiments.design import (
     TRAITS,
     Arm,
     Choice,
+    Framing,
     HeadlinePair,
     VoteRow,
     write_rows,
@@ -124,6 +127,7 @@ class Cell:
     """One planned vote: what to send, and how to label what comes back."""
 
     arm: str
+    framing: str
     trait: str
     level: str
     persona_id: str
@@ -140,8 +144,9 @@ def plan_cells(
     replicates: int,
     arms: tuple[Arm, ...] = ARMS,
     pairs: tuple[HeadlinePair, ...] = PAIRS,
+    framings: tuple[Framing, ...] = FRAMINGS,
 ) -> list[Cell]:
-    """Enumerate every (arm × level × pair × replicate × order) cell.
+    """Enumerate every (arm × framing × level × pair × replicate × order) cell.
 
     Separate from execution so the whole design is inspectable — and its size
     known — before a single call is paid for.
@@ -156,23 +161,25 @@ def plan_cells(
             level = bucketize(getattr(persona.big_five, trait))
             for arm in arms:
                 prompt = render_arm(persona, arm)
-                for pair in pairs:
-                    text = {HIGH: pair.predicted_high, LOW: pair.predicted_low}
-                    for replicate in range(replicates):
-                        for order in ORDERS:
-                            cells.append(
-                                Cell(
-                                    arm=arm,
-                                    trait=trait,
-                                    level=level.value,
-                                    persona_id=persona.id,
-                                    pair_id=pair.id,
-                                    replicate=replicate,
-                                    order=order,
-                                    prompt=prompt,
-                                    options=(text[order[0]], text[order[1]]),
+                for framing in framings:
+                    for pair in pairs:
+                        text = {HIGH: pair.predicted_high, LOW: pair.predicted_low}
+                        for replicate in range(replicates):
+                            for order in ORDERS:
+                                cells.append(
+                                    Cell(
+                                        arm=arm,
+                                        framing=framing.id,
+                                        trait=trait,
+                                        level=level.value,
+                                        persona_id=persona.id,
+                                        pair_id=pair.id,
+                                        replicate=replicate,
+                                        order=order,
+                                        prompt=prompt,
+                                        options=(text[order[0]], text[order[1]]),
+                                    )
                                 )
-                            )
     return cells
 
 
@@ -191,6 +198,7 @@ def _vote(llm: PanelLLM, cell: Cell) -> VoteRow:
             sleep(_BACKOFF_SECONDS * 2**attempt)
     return VoteRow(
         arm=cell.arm,
+        framing=cell.framing,
         trait=cell.trait,
         level=cell.level,
         persona_id=cell.persona_id,
@@ -204,25 +212,40 @@ def _vote(llm: PanelLLM, cell: Cell) -> VoteRow:
 
 def collect_rows(
     *,
-    llm: PanelLLM,
+    llms: Mapping[str, PanelLLM],
     traits: list[str],
     replicates: int,
     arms: tuple[Arm, ...] = ARMS,
     pairs: tuple[HeadlinePair, ...] = PAIRS,
+    framings: tuple[Framing, ...] = FRAMINGS,
     workers: int = 1,
 ) -> list[VoteRow]:
     """Vote on every planned cell and tag each result.
+
+    One client per framing, because the question is bound at construction. A cell
+    routed to the wrong client would be labelled with one framing and asked
+    another's question, which nothing downstream could detect — so the mapping is
+    checked against the whole plan before any of it is paid for.
 
     Rows come back in plan order regardless of which call finished first, so the
     file two runs of one design produce differs only where the model differed.
     Concurrency is safe here because each cell is independent and carries its own
     labels — nothing is accumulated across calls.
     """
-    cells = plan_cells(traits=traits, replicates=replicates, arms=arms, pairs=pairs)
+    cells = plan_cells(
+        traits=traits,
+        replicates=replicates,
+        arms=arms,
+        pairs=pairs,
+        framings=framings,
+    )
+    missing = sorted({cell.framing for cell in cells} - set(llms))
+    if missing:
+        raise KeyError(f"no client for framing(s) {missing}; have {sorted(llms)}")
     if workers == 1:
-        return [_vote(llm, cell) for cell in cells]
+        return [_vote(llms[cell.framing], cell) for cell in cells]
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(lambda cell: _vote(llm, cell), cells))
+        return list(pool.map(lambda cell: _vote(llms[cell.framing], cell), cells))
 
 
 def _selected_arms(value: str) -> tuple[Arm, ...]:
@@ -243,6 +266,14 @@ def _selected_pairs(value: str) -> tuple[HeadlinePair, ...]:
     return tuple(pair for pair in PAIRS if pair.id in chosen)
 
 
+def _selected_framings(value: str) -> tuple[Framing, ...]:
+    chosen = tuple(name.strip() for name in value.split(","))
+    unknown = set(chosen) - {framing.id for framing in FRAMINGS}
+    if unknown:
+        raise argparse.ArgumentTypeError(f"unknown framing(s) {sorted(unknown)}")
+    return tuple(framing for framing in FRAMINGS if framing.id in chosen)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -254,6 +285,7 @@ def main() -> None:
     parser.add_argument("--traits", default=",".join(TRAITS))
     parser.add_argument("--arms", type=_selected_arms, default=ARMS)
     parser.add_argument("--pairs", type=_selected_pairs, default=PAIRS)
+    parser.add_argument("--framings", type=_selected_framings, default=FRAMINGS)
     parser.add_argument("--model", default=settings.panel_model)
     parser.add_argument("--workers", type=int, default=_DEFAULT_WORKERS)
     parser.add_argument("--out", type=Path, default=Path("experiments/out/votes.jsonl"))
@@ -265,25 +297,32 @@ def main() -> None:
         replicates=args.replicates,
         arms=args.arms,
         pairs=args.pairs,
+        framings=args.framings,
     )
     if settings.openrouter_api_key is None:
         raise SystemExit("openrouter_api_key is not set; cannot run the panel.")
 
     print(
         f"{len(cells)} votes on {args.model}: {len(args.arms)} arm(s), "
-        f"{len(traits)} trait(s), {args.workers} worker(s)."
+        f"{len(args.framings)} framing(s), {len(traits)} trait(s), "
+        f"{len(args.pairs)} pair(s), {args.workers} worker(s)."
     )
-    llm = OpenRouterPanelLLM(
-        api_key=settings.openrouter_api_key.get_secret_value(),
-        base_url=settings.openrouter_base_url,
-        model=args.model,
-    )
+    llms = {
+        framing.id: OpenRouterPanelLLM(
+            api_key=settings.openrouter_api_key.get_secret_value(),
+            base_url=settings.openrouter_base_url,
+            model=args.model,
+            question=framing.question,
+        )
+        for framing in args.framings
+    }
     rows = collect_rows(
-        llm=llm,
+        llms=llms,
         traits=traits,
         replicates=args.replicates,
         arms=args.arms,
         pairs=args.pairs,
+        framings=args.framings,
         workers=args.workers,
     )
     write_rows(rows, args.out)
