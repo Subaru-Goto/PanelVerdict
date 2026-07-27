@@ -1,7 +1,27 @@
-export type Verdict = {
+export type VoteTally = {
   counts: Record<string, number>;
   total: number;
-  winner: string;
+};
+
+export type RopeOutcome = "decisive" | "practical_tie" | "undecided";
+
+/** Preference-share points each choice risks. Never a monetary or click figure. */
+export type PreferenceExposure = {
+  shipping_a: number;
+  shipping_b: number;
+};
+
+export type PanelVerdict = {
+  /** E[p] — the share of the panel expected to prefer B. */
+  share_preferring_b: number;
+  /** P(p > 0.5) — confidence that more than half do. A different question. */
+  probability_majority_prefers_b: number;
+  credible_interval: [number, number];
+  credible_mass: number;
+  /** The band this verdict was decided against; it travels with the verdict. */
+  rope: [number, number];
+  outcome: RopeOutcome;
+  expected_preference_shortfall: PreferenceExposure;
 };
 
 export type Vote = {
@@ -11,7 +31,8 @@ export type Vote = {
 };
 
 export type EvaluateResponse = {
-  verdict: Verdict;
+  verdict: PanelVerdict;
+  tally: VoteTally;
   variants: Record<string, string>;
   votes: Vote[];
 };

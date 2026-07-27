@@ -25,3 +25,22 @@ behaviour change, git-tracked renames) rather than mixing into feature work.
   `schema.sql` next to its reader, rewrite imports, change no logic.
 - ~~**`persist_persona` single cursor.**~~ Done 2026-07-26: dropping the
   `interests` table left one INSERT, so there is no second cursor to unify.
+
+## A `VoteSplit` value object for `app/verdict.py` (noted 2026-07-27)
+
+`(preferring_b, total)` travels through five signatures plus `Posterior` and `Batch`,
+and `(rope, credible_mass)` through three. A small value object owning the validation
+and the Beta parameters would absorb both clumps, and `_checked_split` is the seam it
+would grow from.
+
+Not done with 009 because the branch was already large and the refactor touches every
+public signature in the module. Worth doing before 010 threads the same pairs through
+the orchestrator.
+
+Related, smaller: `tuple[float, float]` serves as both a credible interval and a ROPE
+band, so `rope_verdict(interval, rope=...)` accepts them swapped and returns a wrong
+answer rather than raising. Distinct types would catch it, but nothing type-checks this
+repo today, so it would be documentation rather than enforcement.
+
+And `app/main.py` reads `tally.counts["b"]` — fine while `/evaluate` hardcodes variants
+`"a"`/`"b"`, a `KeyError` the moment 010 names them anything else.

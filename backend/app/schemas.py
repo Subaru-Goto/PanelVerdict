@@ -130,12 +130,49 @@ class VoteRecord(BaseModel):
     reason: str
 
 
-class Verdict(BaseModel):
-    """Naive vote-count verdict: per-variant counts, total, and the winner."""
+class VoteTally(BaseModel):
+    """Descriptive per-variant counts. Deliberately no `winner` field.
+
+    A count leader is not a verdict: it carries no uncertainty, and the tiebreak it
+    would need is arbitrary. The decision lives in `PanelVerdict`.
+    """
 
     counts: dict[str, int]
     total: int
-    winner: str
+
+
+RopeVerdict = Literal["decisive", "practical_tie", "undecided"]
+
+
+class PreferenceExposure(BaseModel):
+    """Preference-share points each choice risks, both directions."""
+
+    shipping_a: float
+    shipping_b: float
+
+
+class PanelVerdict(BaseModel):
+    """The panel's preference for B as a distribution, plus a decision about it.
+
+    `share_preferring_b` is the estimate; `probability_majority_prefers_b` is
+    confidence in its direction. They are different questions and move
+    independently, which is why neither name is shortened.
+
+    `rope` travels with the verdict rather than being implied: the band encodes what
+    difference is worth acting on, which is a product decision rather than a derived
+    quantity, so a verdict silent about it could be re-labelled later unnoticed.
+
+    None of these are click-through rates. The panel chose *between* two variants;
+    real readers mostly see one.
+    """
+
+    share_preferring_b: float
+    probability_majority_prefers_b: float
+    credible_interval: tuple[float, float]
+    credible_mass: float
+    rope: tuple[float, float]
+    outcome: RopeVerdict
+    expected_preference_shortfall: PreferenceExposure
 
 
 class EvaluateRequest(BaseModel):
@@ -144,6 +181,7 @@ class EvaluateRequest(BaseModel):
 
 
 class EvaluateResponse(BaseModel):
-    verdict: Verdict
+    verdict: PanelVerdict
+    tally: VoteTally
     variants: dict[str, str]
     votes: list[VoteRecord]
