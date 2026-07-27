@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from scipy import optimize, stats
 
@@ -14,9 +14,9 @@ from app.schemas import (
 # act on. Two reasons for the width, both measured (009): a ±3 band cannot contain
 # the HDI until ~1,100 votes, so `practical_tie` would never have been reachable at
 # an affordable panel size; and 7 points sits inside the panel's own 11-20% flip
-# rate (015), so calling it a tie is honesty rather than laxity. It cannot be
-# derived from the posterior — it encodes what difference is worth acting on, which
-# is a domain judgment. Signed off 2026-07-27; v2 makes it per-test.
+# rate, so calling it a tie is honesty rather than laxity. It cannot be derived from
+# the posterior — it encodes what difference is worth acting on, which is a domain
+# judgment. Signed off 2026-07-27.
 _ROPE = (0.43, 0.57)
 
 
@@ -42,6 +42,15 @@ class Posterior:
     share_preferring_b: float
     probability_majority_prefers_b: float
     interval: tuple[float, float]
+
+
+def _checked_split(preferring_b: int, total: int) -> tuple[int, int]:
+    """Validate a vote split and return the posterior's Beta parameters."""
+    if total < 0:
+        raise ValueError(f"total must not be negative, got {total}")
+    if not 0 <= preferring_b <= total:
+        raise ValueError(f"{preferring_b} of {total} votes is not a possible split")
+    return 1 + preferring_b, 1 + total - preferring_b
 
 
 def _highest_density_interval(a: float, b: float, mass: float) -> tuple[float, float]:
@@ -93,8 +102,7 @@ def expected_preference_shortfall(
 
     This is the **expected loss** of Bayesian decision theory, deliberately not
     named that. In a marketing report "loss" reads as money, and this measures
-    neither money nor reader behaviour — only how the panel split. Same rule that
-    forbids calling the share a "lift" (009).
+    neither money nor reader behaviour — only how the panel split.
 
     It answers what `probability_majority_prefers_b` cannot: not *how often* a
     choice would be wrong, but *how far* wrong, weighted by that likelihood. Two
@@ -107,12 +115,7 @@ def expected_preference_shortfall(
     conditional magnitude alone is not reported because it has no likelihood
     attached and so compares to nothing.
     """
-    if total < 0:
-        raise ValueError(f"total must not be negative, got {total}")
-    if not 0 <= preferring_b <= total:
-        raise ValueError(f"{preferring_b} of {total} votes is not a possible split")
-
-    a, b = 1 + preferring_b, 1 + total - preferring_b
+    a, b = _checked_split(preferring_b, total)
     # E[(0.5-p)+] = 0.5*F(0.5; a, b) - E[p]*F(0.5; a+1, b), and the mirror for the
     # other tail. Closed form in two Beta CDFs, so nothing is integrated at runtime.
     mean = a / (a + b)
@@ -167,14 +170,9 @@ def posterior(
     An empty panel is not an error — it returns the prior, which is the honest
     answer to "what do we know before anyone has voted".
     """
-    if total < 0:
-        raise ValueError(f"total must not be negative, got {total}")
-    if not 0 <= preferring_b <= total:
-        raise ValueError(f"{preferring_b} of {total} votes is not a possible split")
     if not 0 < credible_mass < 1:
         raise ValueError(f"credible_mass must lie in (0, 1), got {credible_mass}")
-
-    a, b = 1 + preferring_b, 1 + total - preferring_b
+    a, b = _checked_split(preferring_b, total)
     return Posterior(
         preferring_b=preferring_b,
         total=total,
@@ -231,9 +229,9 @@ def _confirmed(verdicts: list[RopeVerdict], confirmations: int) -> bool:
     )
 
 
-# Three consecutive agreeing batches, measured as the least-bad streak: it holds
-# false `decisive` on a genuinely tied panel to 1.2% against 0.3% for a full panel,
-# where stopping at the first crossing gives ~8-10% (009).
+# Three consecutive agreeing batches. Measured over 600 simulated panels: this holds
+# false `decisive` on a genuinely tied panel to 1.2%, against 0.3% for a full panel
+# and ~8-10% for stopping at the first crossing.
 _CONFIRMATIONS = 3
 
 
@@ -247,28 +245,17 @@ def panel_progress(
 ) -> PanelProgress:
     """Replay a panel batch by batch, accumulating the posterior as votes arrive.
 
-    Each entry of `batches` is `(preferring_b, total)` for that batch alone;
-    accumulation happens here, because a conjugate update is addition and a caller
+    Each entry of `batches` is `(preferring_b, total)` for that batch alone.
+    Accumulation happens here because a conjugate update is addition, and a caller
     doing it by hand is somewhere to get it wrong.
 
-    **`stop_early` defaults off, and that is a measured decision, not caution.**
-    Stopping when a verdict first appears inflates false `decisive` verdicts on
-    genuinely tied variants roughly 25-fold — and it is not Bayesian inference that
-    breaks, since the posterior given the collected votes is valid however the run
-    stopped. What breaks is the decision rule on top: stop-at-first-crossing selects
-    for favourable wobbles. Confirmation streaks repair most of it but catch fewer
-    real differences than a full panel, because a run can be decisive at the cap
-    without having been decisive two batches earlier. And the feature exists to save
-    money: a 200-vote panel costs about $0.44 and stopping early saves about $0.20,
-    which does not buy a 4-fold false-positive rate even at three confirmations.
-
-    Enable it where a panel is large enough for the saving to be real — tie
-    detection wants ~1,100 votes — never to make a 200-persona run cheaper.
-
-    The full sequence is returned either way: [011] animates the interval narrowing,
-    which is worth more than decoration, since watching uncertainty shrink shows what
-    an interval means far better than a sentence explaining it.
+    `stop_early` defaults off. Stopping when a verdict first appears selects for
+    favourable wobbles — the interval narrows as batches arrive but its position also
+    drifts, so each look is a fresh chance to cross a band edge by luck — and it
+    saves too little to be worth that. The full sequence is returned either way, so
+    a caller can render the interval narrowing without re-running anything.
     """
+
     if not batches:
         raise ValueError("a panel needs at least one batch")
     if confirmations < 1:
@@ -324,9 +311,9 @@ def panel_verdict(
 ) -> PanelVerdict:
     """Assemble the reportable verdict: posterior, decision, and the band used.
 
-    The band is carried rather than implied. It is a product decision that becomes
-    per-test after v1, so a verdict silent about which band produced it could be
-    re-labelled later with no way to notice.
+    The band travels with the verdict rather than being implied, because it is a
+    product decision rather than a derived quantity: a verdict silent about which
+    band produced it could be re-labelled later with nothing to notice.
     """
     summary = posterior(
         preferring_b=preferring_b, total=total, credible_mass=credible_mass
@@ -339,7 +326,5 @@ def panel_verdict(
         credible_mass=credible_mass,
         rope=rope,
         outcome=rope_verdict(summary.interval, rope=rope),
-        expected_preference_shortfall=PreferenceExposure(
-            shipping_a=shortfall.shipping_a, shipping_b=shortfall.shipping_b
-        ),
+        expected_preference_shortfall=PreferenceExposure(**asdict(shortfall)),
     )

@@ -12,9 +12,9 @@ status: open
 Pure-Python, deterministic — **no LLM** touches the statistics:
 
 - flat binary Beta-Binomial (SciPy, conjugate — no sampler),
-- full posterior report: **P(B>A)**, preference share + 95% credible interval, **expected preference shortfall** (both directions — never "expected loss"; see the naming amendment), **ROPE** verdict (±3 pts → "practical tie — pick either or test a bolder variant"),
+- full posterior report: **P(B>A)**, preference share + 95% credible interval, **expected preference shortfall** (both directions — never "expected loss"; see the naming amendment), **ROPE** verdict (±7 pts → "practical tie — pick either or test a bolder variant"; widened from ±3, see the amendment),
 - **adaptive stopping**: update posterior per batch, stop at the P-threshold or the budget cap,
-- neither-rate passed through descriptively (not modeled).
+- ~~neither-rate passed through descriptively~~ — struck 2026-07-27: [002](002-decide-vote-schema.md) settled on a **forced binary {A, B}** with no `neither`, so there is no rate to pass through. Revisit only if that schema decision changes.
 
 ## Amended 2026-07-26 — the design is a paired comparison, and "lift" must be renamed
 
@@ -29,7 +29,7 @@ cause real damage:
    control group: there was never an arm structure to put one in.
 2. **One parameter, and it is already what this ticket says.** `p = P(prefers B)`,
    `k` of `n` votes for B, flat Beta prior. So **`P(B>A)` is exactly the posterior
-   mass above 0.5**, and the ±3pt ROPE is a band around 0.5. Also why a ~200-persona
+   mass above 0.5**, and the ROPE (±7pt, see below) is a band around 0.5. Also why a ~200-persona
    panel suffices where a two-arm CTR test would need thousands.
 3. **"Expected lift" is two-arm vocabulary and will be misread as CTR lift.** Here it
    can only mean `E[p] − 0.5`, in **preference-share points**. It is *not* a predicted
@@ -65,8 +65,11 @@ Run this layer's own model over 015's negative control — the lever Gligorić's
 
 | cell | E[p] | 95% CrI | P(B>A) | ROPE mass |
 |---|---|---|---|---|
-| `second_person` / click | 0.892 | [0.825, 0.944] | 1.000000 | 9×10⁻¹⁶ |
-| `second_person` / attention | 0.931 | [0.875, 0.972] | 1.000000 | 9×10⁻²⁰ |
+| `second_person` / click | 0.892 | [0.831, 0.949] | 1.000000 | 9×10⁻¹⁶ |
+| `second_person` / attention | 0.931 | [0.880, 0.976] | 1.000000 | 9×10⁻²⁰ |
+
+(Intervals are HDIs, as shipped. An earlier draft of this table quoted equal-tailed
+ones, which the HDI amendment below rejects.)
 
 Nothing is malfunctioning there. The model is doing exactly what this ticket
 specifies, and it reports near-total certainty about a difference that does not
@@ -157,9 +160,10 @@ ticket's "stop at the P-threshold" disagrees with its own ROPE verdict
 | 200 | 117 | 0.9919 | [0.516, 0.652] | undecided |
 | 400 | 224 | 0.9918 | [0.511, 0.608] | undecided |
 | 800 | 433 | 0.9902 | [0.507, 0.576] | undecided |
-| 1600 | 847 | 0.9906 | [0.505, 0.554] | undecided |
+| 1600 | 847 | 0.9906 | [0.505, 0.554] | practical_tie |
 
-So a run stopping the moment P crosses the bar stops and then reports *inconclusive*.
+Recomputed against the ±7 band that ships. So below ~1,600 votes a run stopping the
+moment P crosses the bar stops and then reports *inconclusive*.
 The votes are spent, the criterion is met, and the customer gets no answer.
 
 The two rules ask different questions. `P(p > 0.5) >= 0.99` asks whether B is ahead
@@ -176,8 +180,11 @@ crosses, so a P-based rule can *never* stop early on exactly the tests whose ans
 was available soonest — it would spend the whole budget establishing a tie the ROPE
 could have declared at a fraction of it.
 
-`P >= 0.99` stays as a reported number and keeps the sign-off below. It is no longer
-the trigger.
+`P >= 0.99` is **retired entirely**, superseded by the amendment below: with stopping
+off by default there is nothing for a threshold to trigger, and a bare 0.99 in the
+payload would invite exactly the "97% sure, just ship it" reading that the expected
+preference shortfall exists to answer. `probability_majority_prefers_b` is reported as
+a number; no threshold is applied to it.
 
 ### Reported confidence threshold: P >= 0.99
 
@@ -334,3 +341,24 @@ and that we can predict it.
 `docs/project-idea.md` carried both errors in one clause — "costs ... on average if
 it's actually worse" named the conditional under the unconditional's name — and is
 corrected, along with two stray "expected lift" usages.
+
+
+## Amended 2026-07-27 — three confirmations, and what is still not wired
+
+**`_CONFIRMATIONS = 3` is sourced by our own measurement, not convention.** Over 600
+simulated panels it holds false `decisive` on a genuinely tied panel to 1.2%, against
+0.3% for a full panel and ~8–10% for stopping at the first crossing. It only takes
+effect when a caller opts into `stop_early`, which nothing does; if stopping is ever
+switched on in production the number wants a fresh look, because the simulation
+assumed batches of 20 to a cap of 200.
+
+**The per-batch sequence exists but is not in the payload.** `panel_progress` returns
+it, and `EvaluateResponse` carries only the final verdict — because `/evaluate` still
+votes `FIXED_PANEL` in one shot, so there are no batches to stream. Wiring it belongs
+to [010](010-assemble-orchestrator-graph.md), which owns the batching, and
+[011](011-build-report-ui.md), which consumes it. Recorded here so "return the
+sequence" is not mistaken for done.
+
+**Also not reachable yet:** n = 200. `/evaluate` runs five hardcoded personas, so the
+posterior is computed over five votes. Panel selection is
+[007](007-build-targeting-query-translation.md) and orchestration is 010.

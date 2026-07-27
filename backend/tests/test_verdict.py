@@ -97,7 +97,7 @@ class TestPosterior:
     def test_a_skewed_posterior_excludes_the_tie_where_equal_tails_would_not(
         self,
     ) -> None:
-        """The case that chose the HDI over the equal-tailed interval (009).
+        """The case that chose the HDI over the equal-tailed interval.
 
         Eight of ten votes: the equal-tailed interval starts at 0.482 and so admits
         a tie, the HDI starts above 0.5 and does not. Same posterior, opposite
@@ -151,14 +151,14 @@ class TestRopeVerdict:
         assert rope_verdict((0.485, 0.570)) == "practical_tie"
 
     def test_the_band_is_a_parameter_not_a_constant(self) -> None:
-        """The signed-off default lives in one place; a v2 per-test band reuses
-        this function unchanged."""
+        """The default lives in one place, so a caller can probe another band
+        without reaching into the module."""
         assert rope_verdict((0.580, 0.700), rope=(0.45, 0.55)) == "decisive"
         assert rope_verdict((0.46, 0.54), rope=(0.45, 0.55)) == "practical_tie"
 
     def test_one_vote_separates_decisive_from_undecided_at_n_200(self) -> None:
-        """The boundary sensitivity documented in reading-the-posterior.md,
-        asserted end-to-end so the doc's claim cannot drift from the code."""
+        """One vote separates the two verdicts here, so "decisive" must not be
+        read as robust. Asserted end-to-end so the claim cannot drift."""
         assert rope_verdict(posterior(preferring_b=128, total=200).interval) == (
             "decisive"
         )
@@ -262,8 +262,8 @@ class TestPanelProgress:
         assert second_width < first_width
 
     def test_by_default_it_never_stops_early(self) -> None:
-        """The measured default: peeking inflates false decisive ~25-fold and saves
-        about twenty cents, so the whole panel is always spent."""
+        """Peeking inflates false `decisive` on a tied panel roughly 25-fold, so
+        the whole panel is always spent unless a caller opts out."""
         result = panel_progress([(20, 20)] * 5)
         assert len(result.batches) == 5
         assert result.stopped_early is False
@@ -328,8 +328,8 @@ class TestPanelProgress:
 
 class TestPanelVerdictPayload:
     def test_it_carries_the_band_that_produced_it(self) -> None:
-        """The band is a product decision that becomes per-test after v1, so a
-        verdict silent about which one it used could be re-labelled unnoticed."""
+        """A verdict silent about which band produced it could be re-labelled
+        later with nothing to notice."""
         result = panel_verdict(preferring_b=128, total=200)
         assert result.rope == (0.43, 0.57)
         assert result.outcome == "decisive"

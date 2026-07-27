@@ -133,9 +133,8 @@ class VoteRecord(BaseModel):
 class VoteTally(BaseModel):
     """Descriptive per-variant counts. Deliberately no `winner` field.
 
-    A count leader is not a verdict: it carries no uncertainty, and naming one
-    beside a preference share is the misreading 011 exists to prevent. The decision
-    lives in `PanelVerdict`.
+    A count leader is not a verdict: it carries no uncertainty, and the tiebreak it
+    would need is arbitrary. The decision lives in `PanelVerdict`.
     """
 
     counts: dict[str, int]
@@ -146,8 +145,7 @@ RopeVerdict = Literal["decisive", "practical_tie", "undecided"]
 
 
 class PreferenceExposure(BaseModel):
-    """Preference-share points each choice risks. Never called a loss — see
-    `app.verdict.expected_preference_shortfall`."""
+    """Preference-share points each choice risks, both directions."""
 
     shipping_a: float
     shipping_b: float
@@ -160,10 +158,9 @@ class PanelVerdict(BaseModel):
     confidence in its direction. They are different questions and move
     independently, which is why neither name is shortened.
 
-    `rope` travels with the verdict rather than being implied. The band encodes what
-    difference is worth acting on, it is a product decision rather than a derived
-    quantity, and it becomes per-test after v1 — so a verdict that did not say which
-    band produced it could be silently re-labelled later.
+    `rope` travels with the verdict rather than being implied: the band encodes what
+    difference is worth acting on, which is a product decision rather than a derived
+    quantity, so a verdict silent about it could be re-labelled later unnoticed.
 
     None of these are click-through rates. The panel chose *between* two variants;
     real readers mostly see one.
