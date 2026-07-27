@@ -4,8 +4,23 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from app.schemas import PanelVoteOutput, PlausibilityScore
 
 
+VOTE_QUESTION = "Which do you prefer?"
+
+# Held apart from the question so that varying the question (015) cannot reach the
+# positional and content-based-reason instructions. A framing arm that reworded
+# those would ablate framing and instruction-following together.
+_ANSWER_INSTRUCTION = (
+    "Pick option_1 or option_2, and give a one-line "
+    "reason based on the content — not its position."
+)
+
+
 def build_vote_messages(
-    system_prompt: str, option_1: str, option_2: str
+    system_prompt: str,
+    option_1: str,
+    option_2: str,
+    *,
+    question: str = VOTE_QUESTION,
 ) -> list[BaseMessage]:
     """Build the chat messages for one persona's vote.
 
@@ -17,8 +32,7 @@ def build_vote_messages(
         "Here are two options.\n"
         f"Option 1: {option_1}\n"
         f"Option 2: {option_2}\n\n"
-        "Which do you prefer? Pick option_1 or option_2, and give a one-line "
-        "reason based on the content — not its position."
+        f"{question} {_ANSWER_INSTRUCTION}"
     )
     return [SystemMessage(content=system_prompt), HumanMessage(content=task)]
 
@@ -30,7 +44,18 @@ class OpenRouterPanelLLM:
     endpoint layer.
     """
 
-    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        question: str = VOTE_QUESTION,
+    ) -> None:
+        # One test asks one question of everybody, so the question is panel
+        # configuration rather than vote data. Binding it here keeps it off the
+        # PanelLLM protocol, which every caller but 015 would carry for nothing.
+        self._question = question
         # No temperature: gpt-5-mini (a reasoning model) rejects any non-default
         # temperature with a 400.
         self._model = ChatOpenAI(
@@ -42,7 +67,9 @@ class OpenRouterPanelLLM:
     def vote(
         self, *, system_prompt: str, option_1: str, option_2: str
     ) -> PanelVoteOutput:
-        messages = build_vote_messages(system_prompt, option_1, option_2)
+        messages = build_vote_messages(
+            system_prompt, option_1, option_2, question=self._question
+        )
         result = self._model.invoke(messages)
         if not isinstance(result, PanelVoteOutput):
             raise RuntimeError(f"panel model returned no structured vote: {result!r}")
