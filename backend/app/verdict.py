@@ -1,11 +1,14 @@
 from dataclasses import dataclass
-from typing import Literal
 
 from scipy import optimize, stats
 
-from app.schemas import Verdict, VoteRecord
-
-RopeVerdict = Literal["decisive", "practical_tie", "undecided"]
+from app.schemas import (
+    PanelVerdict,
+    PreferenceExposure,
+    RopeVerdict,
+    VoteRecord,
+    VoteTally,
+)
 
 # ±7 preference-share points around even: within it, a difference is too small to
 # act on. Two reasons for the width, both measured (009): a ±3 band cannot contain
@@ -299,15 +302,44 @@ def panel_progress(
     return PanelProgress(batches=steps, stopped_early=len(steps) < len(batches))
 
 
-def tally_votes(records: list[VoteRecord], variant_ids: list[str]) -> Verdict:
-    """Count votes per variant.
+def tally_votes(records: list[VoteRecord], variant_ids: list[str]) -> VoteTally:
+    """Count votes per variant, descriptively.
 
     counts is zero-filled over variant_ids, so a variant with no votes still
-    reports 0. On a tie, winner is the first tied variant in variant_ids order
-    (an arbitrary tiebreak).
+    reports 0. No winner is derived: a count leader carries no uncertainty, and the
+    tiebreak it used to need was arbitrary. `panel_verdict` decides.
     """
     counts = {variant_id: 0 for variant_id in variant_ids}
     for record in records:
         counts[record.chosen_variant_id] += 1
-    winner = max(counts, key=counts.get)
-    return Verdict(counts=counts, total=len(records), winner=winner)
+    return VoteTally(counts=counts, total=len(records))
+
+
+def panel_verdict(
+    *,
+    preferring_b: int,
+    total: int,
+    rope: tuple[float, float] = _ROPE,
+    credible_mass: float = 0.95,
+) -> PanelVerdict:
+    """Assemble the reportable verdict: posterior, decision, and the band used.
+
+    The band is carried rather than implied. It is a product decision that becomes
+    per-test after v1, so a verdict silent about which band produced it could be
+    re-labelled later with no way to notice.
+    """
+    summary = posterior(
+        preferring_b=preferring_b, total=total, credible_mass=credible_mass
+    )
+    shortfall = expected_preference_shortfall(preferring_b=preferring_b, total=total)
+    return PanelVerdict(
+        share_preferring_b=summary.share_preferring_b,
+        probability_majority_prefers_b=summary.probability_majority_prefers_b,
+        credible_interval=summary.interval,
+        credible_mass=credible_mass,
+        rope=rope,
+        outcome=rope_verdict(summary.interval, rope=rope),
+        expected_preference_shortfall=PreferenceExposure(
+            shipping_a=shortfall.shipping_a, shipping_b=shortfall.shipping_b
+        ),
+    )

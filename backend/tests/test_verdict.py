@@ -8,6 +8,7 @@ from app.verdict import (
     _confirmed,
     expected_preference_shortfall,
     panel_progress,
+    panel_verdict,
     posterior,
     rope_verdict,
     tally_votes,
@@ -25,14 +26,16 @@ def _vote(chosen_variant_id: str) -> VoteRecord:
     )
 
 
-def test_tally_votes_counts_and_picks_winner() -> None:
+def test_tally_votes_counts_without_naming_a_winner() -> None:
+    """A count leader carries no uncertainty and used an arbitrary tiebreak, so the
+    tally reports the numbers and `panel_verdict` decides."""
     records = [_vote("vA"), _vote("vA"), _vote("vB")]
 
-    verdict = tally_votes(records, variant_ids=["vA", "vB"])
+    tally = tally_votes(records, variant_ids=["vA", "vB"])
 
-    assert verdict.counts == {"vA": 2, "vB": 1}
-    assert verdict.total == 3
-    assert verdict.winner == "vA"
+    assert tally.counts == {"vA": 2, "vB": 1}
+    assert tally.total == 3
+    assert not hasattr(tally, "winner")
 
 
 def test_tally_votes_zero_fills_variant_with_no_votes() -> None:
@@ -42,18 +45,15 @@ def test_tally_votes_zero_fills_variant_with_no_votes() -> None:
 
     assert verdict.counts == {"vA": 2, "vB": 0}  # vB never chosen, still reported
     assert verdict.total == 2
-    assert verdict.winner == "vA"
 
 
-def test_tally_votes_breaks_tie_by_variant_ids_order() -> None:
-    # vB is encountered first, but the tiebreak must follow variant_ids order,
-    # not the order votes happened to arrive in.
-    records = [_vote("vB"), _vote("vA")]
+def test_tally_votes_reports_a_tie_as_a_tie() -> None:
+    """The old arbitrary tiebreak is gone: an even split is just an even split."""
+    records = [_vote("vA"), _vote("vB")]
 
-    verdict = tally_votes(records, variant_ids=["vA", "vB"])
+    tally = tally_votes(records, variant_ids=["vA", "vB"])
 
-    assert verdict.counts == {"vA": 1, "vB": 1}
-    assert verdict.winner == "vA"  # tie -> first in variant_ids order
+    assert tally.counts == {"vA": 1, "vB": 1}
 
 
 class TestPosterior:
@@ -324,3 +324,33 @@ class TestPanelProgress:
         assert [
             b.verdict for b in panel_progress(per_batch, rope=(0.2, 0.8)).batches
         ] == ["undecided", "practical_tie"]
+
+
+class TestPanelVerdictPayload:
+    def test_it_carries_the_band_that_produced_it(self) -> None:
+        """The band is a product decision that becomes per-test after v1, so a
+        verdict silent about which one it used could be re-labelled unnoticed."""
+        result = panel_verdict(preferring_b=128, total=200)
+        assert result.rope == (0.43, 0.57)
+        assert result.outcome == "decisive"
+
+        narrow = panel_verdict(preferring_b=128, total=200, rope=(0.47, 0.53))
+        assert narrow.rope == (0.47, 0.53)
+
+    def test_it_reports_the_posterior_and_both_exposures(self) -> None:
+        result = panel_verdict(preferring_b=120, total=200)
+        reference = posterior(preferring_b=120, total=200)
+        exposure = expected_preference_shortfall(preferring_b=120, total=200)
+
+        assert result.share_preferring_b == reference.share_preferring_b
+        assert (
+            result.probability_majority_prefers_b
+            == reference.probability_majority_prefers_b
+        )
+        assert result.credible_interval == reference.interval
+        assert result.credible_mass == 0.95
+        assert result.expected_preference_shortfall.shipping_a == exposure.shipping_a
+        assert result.expected_preference_shortfall.shipping_b == exposure.shipping_b
+
+    def test_the_payload_names_no_winner(self) -> None:
+        assert "winner" not in panel_verdict(preferring_b=200, total=200).model_dump()

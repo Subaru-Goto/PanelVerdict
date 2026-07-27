@@ -7,7 +7,7 @@ from app.llm import OpenRouterPanelLLM
 from app.panel import FIXED_PANEL
 from app.schemas import EvaluateRequest, EvaluateResponse
 from app.vote import PanelLLM, collect_panel_votes
-from app.verdict import tally_votes
+from app.verdict import panel_verdict, tally_votes
 
 app = FastAPI(title="PanelVerdict API")
 
@@ -43,5 +43,10 @@ def evaluate(
     votes = collect_panel_votes(
         test_id="tracer", variants=variants, panel=FIXED_PANEL, llm=llm
     )
-    verdict = tally_votes(votes, variant_ids=list(variants))
-    return EvaluateResponse(verdict=verdict, variants=variants, votes=votes)
+    tally = tally_votes(votes, variant_ids=list(variants))
+    return EvaluateResponse(
+        verdict=panel_verdict(preferring_b=tally.counts["b"], total=tally.total),
+        tally=tally,
+        variants=variants,
+        votes=votes,
+    )

@@ -33,8 +33,17 @@ def test_evaluate_returns_verdict_variants_and_reasons(stub_llm) -> None:
     assert len(body["votes"]) == len(FIXED_PANEL)
     assert all(vote["reason"] == "clear discount framing" for vote in body["votes"])
 
-    # verdict counts both variants; constant option_1 vote + counterbalancing
-    # means "a" wins (ties, if any, break to the first variant id).
-    assert body["verdict"]["total"] == len(FIXED_PANEL)
-    assert set(body["verdict"]["counts"]) == {"a", "b"}
-    assert body["verdict"]["winner"] == "a"
+    # the tally is descriptive; both variants are always reported
+    assert body["tally"]["total"] == len(FIXED_PANEL)
+    assert set(body["tally"]["counts"]) == {"a", "b"}
+    assert "winner" not in body["tally"]
+
+    # the verdict is the posterior plus a decision, and it carries its own band —
+    # nothing in the payload names a winner.
+    verdict = body["verdict"]
+    assert verdict["rope"] == [0.43, 0.57]
+    assert verdict["outcome"] in ("decisive", "practical_tie", "undecided")
+    assert 0.0 <= verdict["share_preferring_b"] <= 1.0
+    assert 0.0 <= verdict["probability_majority_prefers_b"] <= 1.0
+    assert set(verdict["expected_preference_shortfall"]) == {"shipping_a", "shipping_b"}
+    assert "winner" not in verdict
