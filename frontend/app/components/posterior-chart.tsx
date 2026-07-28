@@ -123,8 +123,10 @@ export default function PosteriorChart({
         />
       </svg>
       <div className="flex justify-between gap-4 text-xs text-zinc-500">
-        <span>← everyone prefers A: “{variants.a}”</span>
-        <span className="text-right">everyone prefers B: “{variants.b}” →</span>
+        <span>← 0% prefer B — all votes to “{variants.a}”</span>
+        <span className="text-right">
+          100% prefer B — all votes to “{variants.b}” →
+        </span>
       </div>
       <ul className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
         <LegendEntry
@@ -140,8 +142,8 @@ export default function PosteriorChart({
             />
           }
         >
-          Dashed line — panel mean: {formatPercent(verdict.share_preferring_b)}{" "}
-          prefer B.
+          Mean — the panel’s best guess:{" "}
+          {formatPercent(verdict.share_preferring_b)} prefer B.
         </LegendEntry>
         <LegendEntry
           swatch={
@@ -156,9 +158,9 @@ export default function PosteriorChart({
             />
           }
         >
-          Thick bar — the true share sits between {formatPercent(criLow)} and{" "}
-          {formatPercent(criHigh)} ({formatPercent(verdict.credible_mass)}{" "}
-          sure).
+          {formatPercent(verdict.credible_mass)} HDI — the true share sits
+          between {formatPercent(criLow)} and {formatPercent(criHigh)} (
+          {formatPercent(verdict.credible_mass)} sure).
         </LegendEntry>
         <LegendEntry
           swatch={
@@ -171,7 +173,7 @@ export default function PosteriorChart({
             />
           }
         >
-          Gray band — the tie zone: splits from {formatPercent(ropeLow)} to{" "}
+          ROPE — the tie zone: splits from {formatPercent(ropeLow)} to{" "}
           {formatPercent(ropeHigh)} read as even.
         </LegendEntry>
       </ul>

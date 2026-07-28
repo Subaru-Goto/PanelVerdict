@@ -51,7 +51,8 @@ describe("posterior chart", () => {
   it("names every mark in the legend with its number", () => {
     render(<Report result={makeResponse()} />);
 
-    expect(screen.getByText(/panel mean: 29% prefer B/)).toBeTruthy();
+    expect(screen.getByText(/Mean — the panel’s best guess: 29% prefer B/))
+      .toBeTruthy();
     expect(
       screen.getByText(/true share sits between 17% and 42% \(95% sure\)/),
     ).toBeTruthy();
@@ -60,11 +61,11 @@ describe("posterior chart", () => {
     ).toBeTruthy();
   });
 
-  it("labels the axis ends with the actual headline text", () => {
+  it("anchors the axis ends with the scale and the actual headline text", () => {
     render(<Report result={makeResponse()} />);
 
-    const left = screen.getByText(/everyone prefers A/);
-    const right = screen.getByText(/everyone prefers B:/);
+    const left = screen.getByText(/^← 0% prefer B/);
+    const right = screen.getByText(/100% prefer B/);
     expect(left.textContent).toContain("Save 50% today");
     expect(right.textContent).toContain("Members save half");
   });
