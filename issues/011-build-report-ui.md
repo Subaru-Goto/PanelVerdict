@@ -3,7 +3,7 @@ title: "Build the report UI (Next.js)"
 labels: [wayfinder:task]
 parent: 000-map
 blocked_by: [009-build-bayesian-layer, 010-assemble-orchestrator-graph]
-assignee: null
+assignee: Subaru-Goto
 status: open
 ---
 
@@ -16,7 +16,8 @@ The report dashboard:
   three-way label; the placeholder UI derives the headline, this ticket designs it),
 - ~~segment breakdown (target vs. control group)~~ — dropped 2026-07-26, see below,
 - reason list (reason *clustering* is fog — see map Notes),
-- **live batch-streaming progress** ("87/200 personas voted…") over SSE,
+- ~~**live batch-streaming progress** ("87/200 personas voted…") over SSE~~ — moved
+  to [021](021-progress-ux.md) (v2) with the replay animation, 2026-07-28,
 - **all model output rendered as plain text** (exfiltration-markup defense — never `dangerouslySetInnerHTML` on model output).
 
 ## Amended 2026-07-26 — never label the headline number "lift"
@@ -97,3 +98,39 @@ available as **data**, not only as notice prose. `TargetQuery.traits` is a tuple
 `TraitRequest` — `trait`, `level`, and the `source_phrase` it was read from — so a chip
 reading *"conscientiousness: high — from "cautious""* needs no string parsing. Show the
 source phrase, not just the trait: it is the only part a customer can check.
+
+## Design decided 2026-07-28 — prototype verdict (user)
+
+Three structurally different variants were prototyped on the live page against mock
+data from the real stopped run; the user picked a hybrid:
+
+- **Layout: the "evidence dashboard"** (prototype variant B). Verdict as one compact
+  chip line — not a banner — over a grid of stat tiles (share + CrI, both
+  "shipping X is the mistake" probabilities, tie + resolution), a panel-composition
+  card (country chips, trait chips showing the `source_phrase`, coverage badge when
+  not `requested`, notices listed inside with warnings dotted red), and the reasons
+  as an always-visible feed.
+- **The posterior: variant A's annotated distribution block**, dropped into that
+  layout in place of B's compact strip. The full construction is the decision: a
+  caption saying what the curve *is* ("how likely each possible split of the whole
+  audience is, given those N votes"); axis ends labelled with the actual headline
+  text ("← everyone prefers A: '…'"), because the first reader instinctively read
+  the winner's share into an axis that shows B's — the labels exist for that flip;
+  a legend naming every mark with its number (dashed mean line, CrI bar, gray
+  too-small-to-matter band); area filled and curve stroked as separate paths (a
+  stroked closed area draws its baseline as a fake datum — caught by the user).
+- **The density is computed client-side from the tally** — Beta(b+1, a+1), log-space,
+  ~30 lines of hand-rolled SVG. No chart library (minimal-dependencies rule; nothing
+  a library adds is needed).
+- **Principle, learned the empirical way** (three consecutive "what is this line?"
+  questions): every visible mark either carries an on-screen name and number, or it
+  is deleted. Legends are not decoration in this product.
+
+The prototype was deleted after capture; 011b re-implements the winner properly.
+
+**Delivery decided 2026-07-28 (user):** two PRs — **011a** un-breaks the frontend
+against the current backend (send `target_description`; type and minimally render
+`counts`, `notices`, `stop_reason`, `query`), **011b** builds the decided report
+design. The live batch-streaming line item and the replay animation both move to
+[021](021-progress-ux.md) (v2); 011 ships with a plain pending state. The
+same-meaning caveat is always-on copy (the automatic check has no mechanism yet).
