@@ -65,7 +65,8 @@ them by construction.
   from `n` and the band rather than stored. It is currently a comment in `config.py` next to
   the profiles, which is a number that can drift from the table beside it. [011](011-build-report-ui.md)
   needs it to make a thin panel's `undecided`-shaped result self-explaining: *"this panel could
-  detect a gap of 26 points or more; it did not find one."*
+  detect a gap of 24 points or more; it did not find one."* (Written as 26 while the figure was
+  a raw vote share; see the correction below.)
 - **Keep** `practical_tie` as a boolean.
 - **Retire** `undecided` as a stored outcome. A recommendation becomes something the report
   derives from the probability against a stated threshold at render time, so the plain-English
@@ -108,6 +109,16 @@ figures are **deleted rather than recomputed there**: a resolution beside the ta
 outlive a change to either input, and putting it *in* config would make the settings module
 import SciPy for a number nothing in config reads. The measured costs stay in that comment,
 since nothing derives them.
+
+**The resolutions are ±24 / ±16.7 / ±13.9, not ±26 / ±17 / ±14.** The first pass expressed the
+gap as a raw vote share (`k / n`) while every other number in the payload — `share_preferring_b`,
+the interval, the band — lives in the *posterior* share, which the flat prior pulls toward 0.5.
+So the report was about to print *"can resolve a lean of 26.0 points"* directly beside a share of
+74.1%, two numbers measuring the same thing on different scales. It now reads the boundary split
+back through `posterior`, and the test recovers the boundary by walking every split rather than by
+halving, so the unit is pinned by something other than the code under test. The discrepancy shrinks
+with *n* (0.1 points at 200) and is worst at the dev size, which is the size the sentence exists
+for.
 
 Three deviations from the ticket as written:
 

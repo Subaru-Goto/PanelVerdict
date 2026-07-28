@@ -368,7 +368,7 @@ class TestPanelVerdictPayload:
         assert result.probability_worth_acting_on.shipping_a == pytest.approx(
             0.946, abs=5e-4
         )
-        assert result.detectable_gap == pytest.approx(0.17, abs=5e-3)
+        assert result.detectable_gap == pytest.approx(0.1667, abs=5e-4)
         # The three regions partition one posterior, so the payload's own numbers must
         # close — the only check that they came from the same split and the same band.
         assert (
@@ -431,23 +431,33 @@ class TestDetectableGap:
     """
 
     @pytest.mark.parametrize("total", [25, 100, 200, 400])
-    def test_the_gap_is_exactly_the_boundary_it_claims_to_be(self, total: int) -> None:
-        """Asserted as a boundary rather than against a recomputed number: at the gap
-        the verdict is decisive, and one whole vote below it, it is not. A test that
-        re-derived the value the same way the code does could not fail."""
-        gap = detectable_gap(total=total)
-        assert gap is not None
+    def test_the_gap_is_the_reported_lean_at_the_first_decisive_split(
+        self, total: int
+    ) -> None:
+        """Two independent routes to the same number.
 
-        at = round(total * (0.5 + gap))
-        assert (
-            rope_verdict(posterior(preferring_b=at, total=total).interval) == "decisive"
+        The boundary is found by walking every split rather than by halving, so a broken
+        bisection cannot agree with it. And the expectation is read off
+        `share_preferring_b` rather than by dividing counts, which pins the *unit*: the
+        gap has to be comparable with the share the report prints beside it, and that is
+        a posterior mean pulled toward 0.5, not `k / n`.
+        """
+        first_decisive = next(
+            k
+            for k in range(total // 2, total + 1)
+            if rope_verdict(posterior(preferring_b=k, total=total).interval)
+            == "decisive"
         )
-        assert (
-            rope_verdict(posterior(preferring_b=at - 1, total=total).interval)
-            != "decisive"
+        reported = posterior(preferring_b=first_decisive, total=total)
+
+        assert detectable_gap(total=total) == pytest.approx(
+            reported.share_preferring_b - 0.5
         )
 
     def test_a_bigger_panel_detects_a_smaller_gap(self) -> None:
+        """Sampled across doublings, not consecutive sizes. The boundary moves in whole
+        votes, so one extra panelist can round the other way and widen the gap slightly —
+        the trend is what holds, not every step of it."""
         gaps = [detectable_gap(total=n) for n in (25, 50, 100, 200, 400)]
 
         assert all(gap is not None for gap in gaps)

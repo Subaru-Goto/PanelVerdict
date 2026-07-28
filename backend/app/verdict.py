@@ -192,11 +192,18 @@ def detectable_gap(
     storing it would be asserting a precision that was not bought. It exceeds the band's
     half-width at every size — a difference the band calls negligible stays negligible
     however much is spent — and it approaches that half-width only as the interval
-    narrows, which costs the square of the improvement.
+    narrows, which costs the square of the improvement. The trend is what holds, not
+    every step: the boundary moves in whole votes, so one more panelist can round the
+    other way and widen it a little.
 
     Bisected because the verdict is monotone in the split: once the interval clears the
     band it stays clear, so the boundary can be found in log time rather than by walking
     every split.
+
+    Reported as a **posterior** lean, not `k / n`, so that it can be read straight against
+    `share_preferring_b` and the band — both of which live in that same shrunk space. The
+    two differ by 2 points at the dev size, which is the size where this number matters
+    most.
     """
     low, high = total // 2, total
     if _verdict_at(total, high, rope, credible_mass) != "decisive":
@@ -207,7 +214,8 @@ def detectable_gap(
             high = middle
         else:
             low = middle
-    return high / total - 0.5
+    a, b = _checked_split(high, total)
+    return a / (a + b) - 0.5
 
 
 def _verdict_at(
