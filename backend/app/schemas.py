@@ -347,13 +347,40 @@ class TargetQuery(BaseModel):
     notices: tuple[TargetNotice, ...]
 
 
+class PanelCounts(BaseModel):
+    """How many personas were asked for, matched, and actually voted.
+
+    Three numbers because each *pair* answers a different question: requested vs
+    matched is the target being narrower than the pool, matched vs voted is the model
+    failing. Only `voted` carries the verdict — a reader given one count cannot tell a
+    thin audience from a bad provider day, and both look like a wide interval.
+    """
+
+    requested: int
+    matched: int
+    voted: int
+
+
 class EvaluateRequest(BaseModel):
+    target_description: str
     headline_a: str
     headline_b: str
 
 
 class EvaluateResponse(BaseModel):
+    """One panel test as the report renders it.
+
+    `query` and `notices` overlap — the query carries its own notices — and the
+    duplication is accepted: `query` is the filter contract the verdict was drawn
+    under, `notices` is the complete reader-facing set including what retrieval
+    itself revealed, and a projection type that subtracted one from the other would
+    exist only to be re-joined in the UI.
+    """
+
     verdict: PanelVerdict
     tally: VoteTally
+    counts: PanelCounts
+    query: TargetQuery
+    notices: tuple[TargetNotice, ...]
     variants: dict[str, str]
     votes: list[VoteRecord]

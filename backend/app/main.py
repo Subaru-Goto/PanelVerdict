@@ -1,15 +1,17 @@
 import logging
+from collections.abc import Iterator
 
+import psycopg
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db import check_connection
-from app.llm import OpenRouterPanelLLM
-from app.panel import FIXED_PANEL
+from app.llm import OpenRouterPanelLLM, OpenRouterTargetTranslator
+from app.pipeline import EmptyPanel, NoVotes, run_panel_test
 from app.schemas import EvaluateRequest, EvaluateResponse
-from app.vote import PanelLLM, collect_panel_votes, total_usage
-from app.verdict import panel_verdict, tally_votes
+from app.targeting import TargetTranslator
+from app.vote import PanelLLM
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +25,38 @@ app.add_middleware(
 )
 
 
-def get_panel_llm() -> PanelLLM:
+def _require_api_key() -> str:
     key = settings.openrouter_api_key
     if key is None:
         raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY is not set")
+    return key.get_secret_value()
+
+
+def get_panel_llm() -> PanelLLM:
     return OpenRouterPanelLLM(
-        api_key=key.get_secret_value(),
+        api_key=_require_api_key(),
         base_url=settings.openrouter_base_url,
         model=settings.panel.model,
     )
+
+
+def get_translator() -> TargetTranslator:
+    return OpenRouterTargetTranslator(
+        api_key=_require_api_key(),
+        base_url=settings.openrouter_base_url,
+        model=settings.targeting_model,
+    )
+
+
+def get_conn() -> Iterator[psycopg.Connection]:
+    """One plain connection per request — no pool, no pgvector adapter.
+
+    The panel path reads scalar columns only (017 dropped the persona vector from
+    targeting), so `register_vector` is the write path's and 012's concern, not
+    this one's.
+    """
+    with psycopg.connect(settings.database_url) as conn:
+        yield conn
 
 
 @app.get("/health")
@@ -41,36 +66,36 @@ def health() -> dict[str, str]:
 
 @app.post("/evaluate")
 def evaluate(
-    request: EvaluateRequest, llm: PanelLLM = Depends(get_panel_llm)
+    request: EvaluateRequest,
+    llm: PanelLLM = Depends(get_panel_llm),
+    translator: TargetTranslator = Depends(get_translator),
+    conn: psycopg.Connection = Depends(get_conn),
 ) -> EvaluateResponse:
     variants = {"a": request.headline_a, "b": request.headline_b}
-    votes = collect_panel_votes(
-        test_id="tracer", variants=variants, panel=FIXED_PANEL, llm=llm
-    )
-    # Logged before the failure check, so a refused run still records what it spent: the
-    # votes that did arrive were paid for whether or not a verdict comes out.
-    logger.info("panel usage: %s", total_usage(votes.usage))
-    # Any failure is refused rather than reported, because this endpoint votes the
-    # 5-persona FIXED_PANEL: one missing vote is a fifth of it, and a verdict on four
-    # personas presented as a verdict on five is a half-panel. A 200-persona panel can
-    # absorb a few and wants a partial-run policy instead — which is also why
-    # `EvaluateResponse` has nowhere to put a shortfall.
-    #
-    # The detail names the exception types only. A failure message can carry provider
-    # response text and the model's own output, which do not belong in an HTTP body.
-    if votes.failures:
-        logger.error("panel votes failed: %s", votes.failures)
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"{len(votes.failures)} of {len(FIXED_PANEL)} panelists did not vote "
-                f"({', '.join(sorted({f.error.split(':')[0] for f in votes.failures}))})"
-            ),
+    # Both refusal messages are safe to forward by construction: `EmptyPanel` is this
+    # codebase's own sentence, and `NoVotes` carries exception types only — never the
+    # failure text, which can include provider responses and the model's own output.
+    try:
+        result = run_panel_test(
+            conn,
+            description=request.target_description,
+            variants=variants,
+            size=settings.panel.size,
+            translator=translator,
+            llm=llm,
         )
-    tally = tally_votes(votes.records, variant_ids=list(variants))
+    except EmptyPanel as error:
+        # The request is the problem — the target names an audience this pool cannot
+        # serve — so the code says "fix what you asked", not "the service failed".
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except NoVotes as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
     return EvaluateResponse(
-        verdict=panel_verdict(preferring_b=tally.counts["b"], total=tally.total),
-        tally=tally,
+        verdict=result.verdict,
+        tally=result.tally,
+        counts=result.counts,
+        query=result.selection.query,
+        notices=result.selection.notices,
         variants=variants,
-        votes=votes.records,
+        votes=result.votes.records,
     )

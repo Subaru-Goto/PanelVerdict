@@ -1,8 +1,11 @@
-"""Shared builders for pool-pipeline tests (personas + assembled personas)."""
+"""Shared builders and doubles for pool- and panel-pipeline tests."""
 
 from typing import Literal
 
+import psycopg
+
 from app.assembly import AssembledPersona
+from app.persistence import persist_pool
 from app.schemas import (
     BigFive,
     EducationLevel,
@@ -10,6 +13,8 @@ from app.schemas import (
     Locale,
     PanelVoteOutput,
     Persona,
+    RequestedRegion,
+    TargetRequest,
 )
 from app.vote import VoteResponse
 
@@ -68,3 +73,31 @@ def make_assembled(
 ) -> AssembledPersona:
     persona = persona or make_persona()
     return AssembledPersona(persona=persona, summary_embedding=embedding or [0.5] * DIM)
+
+
+JAPAN_REQUEST = TargetRequest(
+    regions=[RequestedRegion(label="Japan", country_code="JP")]
+)
+
+
+class StubTranslator:
+    """Returns its canned request whatever the description says — the translation
+    step is a paid model call, and no endpoint or pipeline test should make one."""
+
+    def __init__(self, request: TargetRequest = JAPAN_REQUEST) -> None:
+        self._request = request
+
+    def translate(self, *, description: str) -> TargetRequest:
+        return self._request
+
+
+def seed_japanese(conn: psycopg.Connection, count: int) -> None:
+    """Personas a `JAPAN_REQUEST` target matches, with distinct ages so a test can
+    single one out by its rendered prompt."""
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_=f"JP-{i:05d}", country="JP", age=30 + i))
+            for i in range(count)
+        ],
+    )
