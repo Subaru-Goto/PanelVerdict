@@ -5,13 +5,13 @@ import psycopg
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
+from app.config import USD_PER_VOTE, settings
 from app.db import check_connection
-from app.llm import OpenRouterPanelLLM, OpenRouterTargetTranslator
+from app.llm import OpenRouterPanelLLM, OpenRouterTargetTranslator, remaining_credit
 from app.pipeline import EmptyPanel, NoVotes, run_panel_test
-from app.schemas import EvaluateRequest, EvaluateResponse
+from app.schemas import EvaluateRequest, EvaluateResponse, Notice
 from app.targeting import TargetTranslator
-from app.vote import PanelLLM
+from app.vote import OutOfCredit, PanelLLM
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,38 @@ def get_translator() -> TargetTranslator:
     )
 
 
+def get_remaining_credit() -> float | None:
+    if settings.openrouter_api_key is None:
+        return None
+    return remaining_credit(
+        api_key=settings.openrouter_api_key.get_secret_value(),
+        base_url=settings.openrouter_base_url,
+    )
+
+
+def budget_notice(remaining: float | None, *, size: int) -> tuple[Notice, ...]:
+    """Warn-and-proceed, never refuse (010f's decision): a run the credit cannot
+    finish is still worth starting, because every vote it casts lands in the ledger
+    and a re-run after top-up resumes free. None never warns — an unknown balance
+    is an unlimited key or a failed check, not evidence of a thin one."""
+    if remaining is None:
+        return ()
+    estimated = size * USD_PER_VOTE
+    if remaining >= estimated:
+        return ()
+    return (
+        Notice(
+            severity="warning",
+            message=(
+                f"Your OpenRouter credit (${remaining:.2f}) may not cover this run "
+                f"(about ${estimated:.2f}). The run proceeds anyway: votes already "
+                "cast are saved, so topping up and re-running resumes at no extra "
+                "cost."
+            ),
+        ),
+    )
+
+
 def get_conn() -> Iterator[psycopg.Connection]:
     """One plain connection per request — no pool, no pgvector adapter.
 
@@ -70,6 +102,7 @@ def evaluate(
     llm: PanelLLM = Depends(get_panel_llm),
     translator: TargetTranslator = Depends(get_translator),
     conn: psycopg.Connection = Depends(get_conn),
+    credit: float | None = Depends(get_remaining_credit),
 ) -> EvaluateResponse:
     variants = {"a": request.headline_a, "b": request.headline_b}
     # Both refusal messages are safe to forward by construction: `EmptyPanel` is this
@@ -90,12 +123,16 @@ def evaluate(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except NoVotes as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+    except OutOfCredit as error:
+        # The account's fault, not the server's, and the remedy is in the message:
+        # the text is this codebase's own sentence, never the provider's.
+        raise HTTPException(status_code=402, detail=str(error)) from error
     return EvaluateResponse(
         verdict=result.verdict,
         tally=result.tally,
         counts=result.counts,
         query=result.selection.query,
-        notices=result.notices,
+        notices=budget_notice(credit, size=settings.panel.size) + result.notices,
         stop_reason=result.stop_reason,
         variants=variants,
         votes=result.votes.records,

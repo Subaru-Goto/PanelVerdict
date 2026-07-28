@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.messages.ai import (
@@ -9,9 +10,11 @@ from langchain_core.messages.ai import (
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers.pydantic import PydanticOutputParser
 from langchain_openai import ChatOpenAI
+from openai import APIStatusError
 
 from app.llm import OpenRouterPanelLLM, _vote_response, build_vote_messages
 from app.schemas import PanelVoteOutput
+from app.vote import OutOfCredit
 
 # 014's 5,400 collected votes were cast under exactly this task text. Pinning it as
 # a literal is what makes a later edit visible rather than quietly making that run
@@ -309,3 +312,51 @@ def test_configuration_declares_everything_the_adapter_binds() -> None:
     ]
 
     assert len(set(configurations)) == len(configurations)
+
+
+def test_the_vote_call_carries_the_measured_read_timeout() -> None:
+    """60s ≈ 3× the slowest of 250 timed votes and ~4× their p99
+    (docs/research/first-full-scale-run.md) — no valid vote observed to date comes
+    near it, and a hung request now costs a worker one minute, not the SDK
+    default's ten."""
+    llm = OpenRouterPanelLLM(
+        api_key="test", base_url="http://openrouter.invalid", model="openai/gpt-5-mini"
+    )
+
+    assert _bound_model(llm).request_timeout == 60
+
+
+class TestOutOfCreditTranslation:
+    """The SDK reports a 402 as its generic APIStatusError, whose type name is all a
+    VoteFailure carries — so the adapter renames exactly that status, and no other."""
+
+    class _Raising:
+        def __init__(self, status: int) -> None:
+            self._status = status
+
+        def invoke(self, messages: object) -> object:
+            request = httpx.Request("POST", "http://openrouter.invalid")
+            raise APIStatusError(
+                "provider text that must not travel",
+                response=httpx.Response(self._status, request=request),
+                body=None,
+            )
+
+    def _llm(self, status: int) -> OpenRouterPanelLLM:
+        llm = OpenRouterPanelLLM(
+            api_key="test",
+            base_url="http://openrouter.invalid",
+            model="openai/gpt-5-mini",
+        )
+        llm._model = self._Raising(status)
+        return llm
+
+    def test_a_402_becomes_out_of_credit_with_fixed_text(self) -> None:
+        with pytest.raises(OutOfCredit) as caught:
+            self._llm(402).vote(system_prompt="s", option_1="a", option_2="b")
+
+        assert "provider text" not in str(caught.value)
+
+    def test_any_other_status_stays_what_it_was(self) -> None:
+        with pytest.raises(APIStatusError):
+            self._llm(500).vote(system_prompt="s", option_1="a", option_2="b")

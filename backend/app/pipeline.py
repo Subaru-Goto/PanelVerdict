@@ -25,8 +25,10 @@ from app.verdict import StopReason, panel_verdict, stopping_decision, tally_vote
 from app.vote import (
     ORDER_SEED,
     VOTE_CONCURRENCY,
+    OutOfCredit,
     PanelLLM,
     PanelVotes,
+    VoteFailure,
     VoteUsage,
     build_vote_request,
     collect_panel_votes,
@@ -113,20 +115,49 @@ def _stopped_early_notice(
     )
 
 
+def _failure_kind(failure: VoteFailure) -> str:
+    """The exception type's name — the only part of a failure string safe to act
+    on or forward, since the rest can carry provider and model text."""
+    return failure.error.split(":")[0]
+
+
+def _credit_notice(exhausted: bool, voted: int, matched: int) -> tuple[Notice, ...]:
+    """The 402 stop's message names its remedy, like every notice here: the votes
+    already cast are in the ledger, so the run is suspended, not lost."""
+    if not exhausted:
+        return ()
+    return (
+        Notice(
+            severity="warning",
+            message=(
+                f"OpenRouter credit ran out after {voted} of the {matched} matched "
+                "panelists voted. Rejected requests are not charged, and the votes "
+                "already cast are saved — top up and re-run to resume where this "
+                "stopped."
+            ),
+        ),
+    )
+
+
 def _vote_shortfall_notice(votes: PanelVotes, matched: int) -> tuple[Notice, ...]:
     """Failed votes as a message, not an arithmetic exercise.
 
     Worded for its remedy, which is what separates it from retrieval's shortfall: the
     pool cannot give more matched personas, but a failed vote is transient — the
     panelist exists and a re-run may recover them (resume is 010e).
+
+    Credit refusals are excluded: their story belongs to the credit notice, and
+    "transient — a re-run may recover them" beside "credit ran out" would read as a
+    contradiction about the same failures.
     """
-    if not votes.failures:
+    transient = [f for f in votes.failures if _failure_kind(f) != "OutOfCredit"]
+    if not transient:
         return ()
     return (
         Notice(
             severity="warning",
             message=(
-                f"{len(votes.failures)} of the {matched} matched panelists did not "
+                f"{len(transient)} of the {matched} matched panelists did not "
                 "vote, so the verdict rests on fewer votes. These failures are "
                 "transient — a re-run may recover them."
             ),
@@ -234,6 +265,7 @@ def run_panel_test(
     # so a lead that flips sides cannot accumulate confirmations across the flip.
     votes = PanelVotes(records=[], usage=(), failures=())
     stop_reason: StopReason | None = None
+    credit_exhausted = False
     asked = 0
     streak = 0
     last_reading: tuple[StopReason, str] | None = None
@@ -248,6 +280,12 @@ def run_panel_test(
             usage=votes.usage + chunk.usage,
             failures=votes.failures + chunk.failures,
         )
+        # A 402 is terminal for the run: every later chunk would fail the same way,
+        # so fanning them out buys latency and nothing else. The failure type name
+        # is the signal, the same channel NoVotes reads.
+        if any(_failure_kind(f) == "OutOfCredit" for f in chunk.failures):
+            credit_exhausted = True
+            break
         if not votes.records:
             continue
         tally = tally_votes(votes.records, variant_ids=list(variants))
@@ -263,11 +301,17 @@ def run_panel_test(
             stop_reason = reason
             break
 
-    # Before the no-votes check, so a fully refused run still records what it spent.
+    # Before the refusal checks, so a fully refused run still records what it spent.
     logger.info("panel usage test_id=%s: %s", test_id, total_usage(votes.usage))
 
+    if credit_exhausted and not votes.records:
+        raise OutOfCredit(
+            "OpenRouter credit is exhausted and no vote was cast — rejected "
+            "requests are not charged. Top up and re-run: votes from earlier runs "
+            "are saved and resume free."
+        )
     if not votes.records:
-        kinds = ", ".join(sorted({f.error.split(":")[0] for f in votes.failures}))
+        kinds = ", ".join(sorted({_failure_kind(f) for f in votes.failures}))
         raise NoVotes(f"0 of {len(selection.panel)} panelists voted ({kinds})")
 
     tally = tally_votes(votes.records, variant_ids=list(variants))
@@ -283,6 +327,7 @@ def run_panel_test(
         ),
         notices=selection.notices
         + _stopped_early_notice(stop_reason, asked, len(selection.panel))
+        + _credit_notice(credit_exhausted, len(votes.records), len(selection.panel))
         + _vote_shortfall_notice(votes, len(selection.panel)),
         stop_reason=stop_reason,
     )

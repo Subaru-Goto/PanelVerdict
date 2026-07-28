@@ -2,8 +2,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import settings
-from app.main import app, get_conn, get_panel_llm, get_translator
+from app.main import (
+    app,
+    budget_notice,
+    get_conn,
+    get_panel_llm,
+    get_remaining_credit,
+    get_translator,
+)
 from app.persistence import persist_pool
+from app.vote import OutOfCredit
 from tests.factories import (
     StubTranslator,
     make_assembled,
@@ -36,6 +44,8 @@ def client(conn, stub_llm):
     app.dependency_overrides[get_panel_llm] = lambda: stub_llm(
         chosen="option_1", reason="clear discount framing"
     )
+    # No network in tests: the credit check is a live GET when not overridden.
+    app.dependency_overrides[get_remaining_credit] = lambda: None
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -154,3 +164,57 @@ def test_a_partial_run_returns_a_verdict_with_the_shortfall_in_the_counts(
         "1 of the 3" in notice["message"] and "did not vote" in notice["message"]
         for notice in body["notices"]
     )
+
+
+def test_exhausted_credit_is_a_402_naming_the_remedy(client, conn) -> None:
+    """Not a 502: the server did nothing wrong, and 'bad gateway' sends a human to
+    the wrong place. The 402 carries what to do — and no provider text."""
+    seed_japanese(conn, 3)
+
+    class Broke:
+        configuration = "stub"
+
+        def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+            raise OutOfCredit("OpenRouter credit exhausted (402)")
+
+    app.dependency_overrides[get_panel_llm] = lambda: Broke()
+
+    response = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 402
+    detail = response.json()["detail"]
+    assert "Top up and re-run" in detail
+    assert "not charged" in detail
+
+
+class TestBudgetNotice:
+    """010f's pre-flight, decided as warn-and-proceed: a run the credit cannot
+    finish is still worth starting, because every vote it casts is saved and a
+    re-run after top-up resumes free. So the check informs; it never refuses."""
+
+    def test_thin_credit_warns_with_both_figures(self) -> None:
+        (notice,) = budget_notice(0.05, size=200)
+
+        assert notice.severity == "warning"
+        assert "$0.05" in notice.message
+        assert "$0.15" in notice.message
+        assert "top" in notice.message and "re-run" in notice.message
+
+    def test_sufficient_credit_says_nothing(self) -> None:
+        assert budget_notice(5.00, size=200) == ()
+
+    def test_an_unknown_balance_never_warns(self) -> None:
+        """None is an unlimited key or a failed check — a broken meter must not
+        cry wolf over a run it cannot price."""
+        assert budget_notice(None, size=200) == ()
+
+
+def test_the_preflight_warning_reaches_the_response(client, conn) -> None:
+    seed_japanese(conn, 3)
+    app.dependency_overrides[get_remaining_credit] = lambda: 0.01
+
+    response = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 200
+    messages = [n["message"] for n in response.json()["notices"]]
+    assert any("credit" in m and "re-run" in m for m in messages)

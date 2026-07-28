@@ -20,6 +20,17 @@ VOTE_CONCURRENCY = 25
 ORDER_SEED = 0
 
 
+class OutOfCredit(Exception):
+    """The provider refused payment (402): terminal for the run, free of charge.
+
+    Raised by the adapter rather than letting the SDK's error through, because a 402
+    arrives as the generic `APIStatusError` — indistinguishable *by type name* from
+    any other odd status, and the type name is all a `VoteFailure` carries. Rejected
+    requests are not charged, and the vote cache keeps what was already cast, so the
+    remedy this failure names is top up and re-run, never re-pay.
+    """
+
+
 @dataclass(frozen=True)
 class VoteUsage:
     """What one vote cost, as the provider reported it, and how long it took.
