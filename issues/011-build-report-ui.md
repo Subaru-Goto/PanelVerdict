@@ -4,8 +4,15 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: [009-build-bayesian-layer, 010-assemble-orchestrator-graph]
 assignee: Subaru-Goto
-status: open
+status: closed
 ---
+
+**Delivered 2026-07-28** in two PRs as decided: #63 (011a, wire fix + typed
+response + vitest suite) and #64 (011b, the decided dashboard + annotated
+posterior). Post-merge follow-ups ticketed: [022](022-rename-worth-acting-on-field.md)
+(wire field rename born from the tile-copy iteration),
+[023](023-vote-feed-voter-details.md) (voter details in the reasons feed),
+[021](021-progress-ux.md) (progress UX, v2).
 
 ## Goal
 
