@@ -93,11 +93,14 @@ class StubTranslator:
 
 def seed_japanese(conn: psycopg.Connection, count: int) -> None:
     """Personas a `JAPAN_REQUEST` target matches, with distinct ages so a test can
-    single one out by its rendered prompt."""
+    single one out by its rendered prompt. Ages wrap inside the pool's span, so the
+    first sixty stay unique — enough for any test that picks one panelist out."""
     persist_pool(
         conn,
         [
-            make_assembled(make_persona(id_=f"JP-{i:05d}", country="JP", age=30 + i))
+            make_assembled(
+                make_persona(id_=f"JP-{i:05d}", country="JP", age=30 + i % 60)
+            )
             for i in range(count)
         ],
     )

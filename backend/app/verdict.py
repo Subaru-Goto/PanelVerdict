@@ -4,6 +4,7 @@ from scipy import optimize, stats
 
 from app.schemas import (
     PanelVerdict,
+    StopReason,
     PreferenceExposure,
     PreferenceProbability,
     RopeVerdict,
@@ -179,6 +180,38 @@ def probability_practical_tie(
     return float(distribution.cdf(high) - distribution.cdf(low))
 
 
+def stopping_decision(
+    *,
+    preferring_b: int,
+    total: int,
+    rope: tuple[float, float] = _ROPE,
+    credible_mass: float = 0.95,
+) -> StopReason | None:
+    """Whether more votes would change what the report says — None means keep buying.
+
+    The rule 010d chose over three agreeing labels: stop when the report would
+    already make a call, at the report's own bar. `credible_mass` is the only
+    threshold, so the run stops exactly when the render-time recommendation would
+    fire — no second constant to source, and no gap where the run stops before the
+    report would call it or keeps spending after it has.
+
+    Both stops are answers. `decisive` in either direction, and `practical_tie` —
+    the stop a label-agreement rule could never take, because the label fires on
+    ~5.6% of genuinely tied splits and three in a row effectively never.
+    """
+    worth = probability_worth_acting_on(
+        preferring_b=preferring_b, total=total, rope=rope
+    )
+    if max(worth.shipping_a, worth.shipping_b) >= credible_mass:
+        return "decisive"
+    if (
+        probability_practical_tie(preferring_b=preferring_b, total=total, rope=rope)
+        >= credible_mass
+    ):
+        return "practical_tie"
+    return None
+
+
 def detectable_gap(
     *, total: int, rope: tuple[float, float] = _ROPE, credible_mass: float = 0.95
 ) -> float | None:
@@ -231,10 +264,10 @@ def rope_verdict(
     """Compare a credible interval against the region of practical equivalence.
 
     Not what a report carries — a verdict states the band as probabilities, since a label
-    reads `undecided` from a coin flip all the way to a near-certainty. What still needs a
-    label is `_CONFIRMATIONS`, which counts batches *agreeing*: agreement needs something
-    discrete to compare, and there the coarseness costs a batch rather than a
-    recommendation.
+    reads `undecided` from a coin flip all the way to a near-certainty. And no longer the
+    stopping rule either: 010d stops on the probabilities crossing `credible_mass`
+    directly. What keeps this alive is `detectable_gap`, whose boundary is defined by
+    this comparison going decisive.
 
     Three outcomes, and the third is the point of the method: `undecided` is a
     statement about the data, where `practical_tie` is a *positive* finding — the
@@ -285,111 +318,6 @@ def posterior(
         probability_majority_prefers_b=float(stats.beta(a, b).sf(0.5)),
         interval=_highest_density_interval(a, b, credible_mass),
     )
-
-
-@dataclass(frozen=True)
-class Batch:
-    """Cumulative state after one batch, and what it implied at that moment."""
-
-    index: int
-    preferring_b: int
-    total: int
-    posterior: Posterior
-    verdict: RopeVerdict
-    shortfall: PreferenceShortfall
-
-
-@dataclass(frozen=True)
-class PanelProgress:
-    """Every batch of a panel run, for the report's narrowing animation.
-
-    `stopped_early` distinguishes a run that reached a confirmed verdict from one
-    that spent its whole panel — the report may not present them alike, since an
-    early stop is a selected sample and the full panel is not.
-    """
-
-    batches: list[Batch]
-    stopped_early: bool
-
-    @property
-    def final(self) -> Batch:
-        return self.batches[-1]
-
-
-def _confirmed(verdicts: list[RopeVerdict], confirmations: int) -> bool:
-    """Whether one definite verdict has held for the last `confirmations` batches.
-
-    A definite verdict reached once is not settled: the HDI narrows as batches
-    arrive but its position also drifts, so each look is a fresh chance to cross a
-    ROPE edge by luck. `decisive` and `practical_tie` are both actionable but they
-    are different answers, so a streak mixing them has confirmed nothing.
-    """
-    window = verdicts[-confirmations:]
-    return (
-        len(window) == confirmations
-        and window[0] != "undecided"
-        and len(set(window)) == 1
-    )
-
-
-# Three consecutive agreeing batches. Measured over 600 simulated panels: this holds
-# false `decisive` on a genuinely tied panel to 1.2%, against 0.3% for a full panel
-# and ~8-10% for stopping at the first crossing.
-_CONFIRMATIONS = 3
-
-
-def panel_progress(
-    batches: list[tuple[int, int]],
-    *,
-    rope: tuple[float, float] = _ROPE,
-    credible_mass: float = 0.95,
-    stop_early: bool = False,
-    confirmations: int = _CONFIRMATIONS,
-) -> PanelProgress:
-    """Replay a panel batch by batch, accumulating the posterior as votes arrive.
-
-    Each entry of `batches` is `(preferring_b, total)` for that batch alone.
-    Accumulation happens here because a conjugate update is addition, and a caller
-    doing it by hand is somewhere to get it wrong.
-
-    `stop_early` defaults off. Stopping when a verdict first appears selects for
-    favourable wobbles — the interval narrows as batches arrive but its position also
-    drifts, so each look is a fresh chance to cross a band edge by luck — and it
-    saves too little to be worth that. The full sequence is returned either way, so
-    a caller can render the interval narrowing without re-running anything.
-    """
-
-    if not batches:
-        raise ValueError("a panel needs at least one batch")
-    if confirmations < 1:
-        raise ValueError(f"confirmations must be at least 1, got {confirmations}")
-
-    steps: list[Batch] = []
-    verdicts: list[RopeVerdict] = []
-    preferring_b = total = 0
-    for index, (batch_preferring_b, batch_total) in enumerate(batches):
-        preferring_b += batch_preferring_b
-        total += batch_total
-        current = posterior(
-            preferring_b=preferring_b, total=total, credible_mass=credible_mass
-        )
-        verdicts.append(rope_verdict(current.interval, rope=rope))
-        steps.append(
-            Batch(
-                index=index,
-                preferring_b=preferring_b,
-                total=total,
-                posterior=current,
-                verdict=verdicts[-1],
-                shortfall=expected_preference_shortfall(
-                    preferring_b=preferring_b, total=total
-                ),
-            )
-        )
-        if stop_early and _confirmed(verdicts, confirmations):
-            break
-
-    return PanelProgress(batches=steps, stopped_early=len(steps) < len(batches))
 
 
 def tally_votes(records: list[VoteRecord], variant_ids: list[str]) -> VoteTally:

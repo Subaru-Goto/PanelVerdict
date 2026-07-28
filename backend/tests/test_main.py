@@ -65,6 +65,9 @@ def test_evaluate_returns_the_full_panel_test_payload(client, conn) -> None:
     assert body["query"]["coverage"] == "requested"
     assert isinstance(body["notices"], list)
 
+    # a single-chunk run at the dev size ends by exhaustion, not by decision
+    assert body["stop_reason"] is None
+
     # the tally is descriptive; both variants are always reported
     assert body["tally"]["total"] == 5
     assert set(body["tally"]["counts"]) == {"a", "b"}
