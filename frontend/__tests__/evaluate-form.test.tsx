@@ -108,7 +108,9 @@ describe("coverage", () => {
 
     fillAndSubmit();
 
-    expect(await screen.findByText(/drawn from US, JP, DE/)).toBeTruthy();
+    expect(await screen.findByText("US")).toBeTruthy();
+    expect(screen.getByText("JP")).toBeTruthy();
+    expect(screen.getByText("DE")).toBeTruthy();
   });
 
   it("names the stand-in when a region was approximated", async () => {
