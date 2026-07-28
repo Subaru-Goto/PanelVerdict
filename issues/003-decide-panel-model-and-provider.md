@@ -30,7 +30,7 @@ Full research + live pricing: [`docs/research/panel-model-selection.md`](../docs
 - **Provider:** OpenRouter. ~~**prompt caching** on the shared prefix (panel instructions + the two variants) — the main cost lever.~~ **Struck 2026-07-27 — see the amendment below.**
 - **Panel model id (v1 default):** `openai/gpt-5-mini` — best value that plausibly clears trait enactment (≈ $0.25/$2 per M, cache-read ≈ $0.025/M, 400K ctx). Fallback: `anthropic/claude-haiku-4.5` ($1/$5, cache-read $0.10/M).
 - **Structured output:** supported on both (exact param — `response_format` json-schema vs forced tool-call — confirmed at build).
-- **Cost:** GPT-5 Mini is ~⅓ of Haiku and ~1/18 of flagship — the *ranking* holds. The **≈ $0.055 / 200-persona test** figure does not; it assumed a cached prefix that cannot exist and a vote output with no reasoning-token allowance. Unmeasured, and possibly several times higher — see the amendment below.
+- **Cost:** GPT-5 Mini is ~⅓ of Haiku and ~1/18 of flagship — the *ranking* holds. The ≈ $0.055 / 200-persona test figure does not: **measured at $0.107** on 2026-07-28, because vote output is ~3× the assumed size and two thirds of it is reasoning. That leaves **~93 tests inside the $10 cap**, not ~180 — see the measurement below.
 - **Fidelity benchmark:** `openai/gpt-5.6-sol` — the **manipulation check** compares Mini's Big-Five enactment against it and confirms-or-revises the final pick (plan **B**: benchmark flagship, deploy cheapest that passes). Fidelity is a selection criterion, not just cost (Huang et al. 2026). **Answered 2026-07-26 ([014](014-targeting-manipulation-check.md), [results](../docs/research/manipulation-check.md)):** Mini enacts Big Five *in behaviour* — 32.5% of votes change against a ~11% noise floor, with clean negative controls — which is the specific thing Han et al. 2025 found persona injection failing to do. Mini stays. The flagship comparison is no longer needed to establish that traits work; it would only rank fidelity.
 - **Spend cap:** **$10** per-key credit cap. On exhaustion → **HTTP 402**, requests rejected, no overage. Handle via: pre-flight `GET /api/v1/key` budget check, graceful mid-run stop (mark run **partial**, never emit a half-panel), and resume-after-top-up via the per-vote cache (ticket 002). Distinct from 429 rate-limit (retry w/ backoff).
 - **Dev vs run (config-driven):** **stub** (free, CI/plumbing) → **GPT-5-family nano** (integration path) → **GPT-5 Mini** (real runs). Panel model is a **config setting**, never hardcoded; a dev model tests plumbing, never quality.
@@ -70,17 +70,47 @@ for a saving that is bounded above by **under 2¢ per test** — and it would st
 1,024 tokens. Padding a prompt to hit a threshold in order to win a 0.1× read on 2¢ is a
 net loss twice over.
 
-**The consequence for the spend cap is the part that matters.** The $0.055 estimate had
-input caching baked in *and* assumed ~80 output tokens per vote. gpt-5-mini is a reasoning
-model: reasoning tokens bill at the output rate and never appear in the response, so the
-true figure is unmeasured and plausibly **several times higher**, not lower. "$10 cap ≈
-~180 full tests" should not be planned against.
+**The consequence for the spend cap is the part that matters** — and it has now been
+measured, so this stops being a warning and becomes a number.
 
-Closing this needs instrumentation, not an experiment: log `prompt_tokens`,
-`completion_tokens` and `usage.completion_tokens_details.reasoning_tokens` on the first
-real 200-vote run — [010](010-assemble-orchestrator-graph.md)'s — which also supplies the
-numbers the pre-flight budget check above needs to be more than a guess. 014 and 015 ran
-~7,000 votes between them and recorded no spend, so nothing existing can be mined for it.
+## Measured 2026-07-28 — $0.107 per test, ~93 tests inside the cap
+
+20 votes through the shipped vote path, at two reasoning-effort arms. Full readings in
+[`panel-model-selection.md`](../docs/research/panel-model-selection.md); what this ticket
+needs:
+
+| | default effort | `reasoning_effort=low` |
+|---|---|---|
+| cost / 200-vote test | **$0.107** | $0.057 |
+| **tests inside the $10 cap** | **~93** | ~175 |
+| latency / vote | mean 4.43s, p95 7.33s | mean 2.47s, p95 4.74s |
+
+**The suspicion above was right, and about 2× is the size of it.** ~$0.055 becomes **$0.107**,
+because output is ~234 tokens per vote rather than the assumed ~80 and **68% of it is
+reasoning** — invisible in the response, billed at $2/M. So *"$10 cap ≈ ~180 full tests"* was
+roughly double: it is **~93**.
+
+**The pre-flight check now has something real to compare against.** OpenRouter's reported
+`cost` matched the list-price derivation *exactly* on 20/20 votes, so `limit_remaining` and an
+estimate built from $0.25/$2 are in the same units and either can be used.
+
+**Prompt caching is confirmed dead by observation**, not only by threshold arithmetic:
+`cached_tokens` read 0 on every vote, and the measured prompt is 270 tokens against a
+1,024-token minimum.
+
+**A read timeout still cannot be set from this.** 10 votes per arm gives a p95 over ten points
+and no p99 at all, which is the figure that matters for cutting off a hung request. The first
+full 200-vote run supplies it.
+
+**`reasoning_effort=low` halves the bill and is deliberately not adopted.** Effort changes what
+the panel is, and both [014](014-targeting-manipulation-check.md)'s first-position rate and
+[015](015-task-framing-sensitivity.md)'s framing sensitivity were measured at the default.
+Adopting it means re-measuring those first — a separate decision with its own spend.
+
+**One wiring trap, recorded because it silently costs the cost figure.** langchain's
+`reasoning={"effort": ...}` object switches the call to the **Responses API**, which returns no
+`token_usage` and therefore no `cost`. `reasoning_effort=` is the form that stays on Chat
+Completions. The low arm was first measured against the wrong endpoint and discarded.
 
 **If input cost ever does matter** (much longer personas, a many-variant test), the
 preconditions are all recorded in the research doc: shared content first, ≥1,024 tokens of

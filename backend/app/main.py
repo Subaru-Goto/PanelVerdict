@@ -8,7 +8,7 @@ from app.db import check_connection
 from app.llm import OpenRouterPanelLLM
 from app.panel import FIXED_PANEL
 from app.schemas import EvaluateRequest, EvaluateResponse
-from app.vote import PanelLLM, collect_panel_votes
+from app.vote import PanelLLM, collect_panel_votes, total_usage
 from app.verdict import panel_verdict, tally_votes
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,9 @@ def evaluate(
     votes = collect_panel_votes(
         test_id="tracer", variants=variants, panel=FIXED_PANEL, llm=llm
     )
+    # Logged before the failure check, so a refused run still records what it spent: the
+    # votes that did arrive were paid for whether or not a verdict comes out.
+    logger.info("panel usage: %s", total_usage(votes.usage))
     # Any failure is refused rather than reported, because this endpoint votes the
     # 5-persona FIXED_PANEL: one missing vote is a fifth of it, and a verdict on four
     # personas presented as a verdict on five is a half-panel. A 200-persona panel can

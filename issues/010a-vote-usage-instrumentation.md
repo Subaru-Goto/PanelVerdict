@@ -4,7 +4,7 @@ labels: [wayfinder:task]
 parent: 010-assemble-orchestrator-graph
 blocked_by: []
 assignee: null
-status: open
+status: closed
 ---
 
 ## Goal
@@ -19,6 +19,9 @@ that finishes without these fields is a run whose cost is gone, and three siblin
 are guessing until it lands.
 
 ## Why this is not optional
+
+*(State when written. The measurement is at the end of this ticket — the per-test cost is
+$0.107, and the numbers below are the estimates it replaced.)*
 
 The project currently has **no** per-test cost estimate. The old `$0.055 / 200-persona test`
 was retracted rather than corrected, because it assumed a prompt cache that
@@ -115,14 +118,20 @@ in the response. Prompt caching [cannot fire](../docs/research/prompt-caching.md
 ~300-370 token prompt, so effort is the only knob that reaches the dominant term. It is the
 cost lever [008](008-build-panel-evaluation.md) concluded did not exist.
 
-**The parameter shape.** `_default_params` sends both `reasoning_effort` and `reasoning`
-through verbatim on the Chat Completions path (`base.py:1352-1353`); the
-`reasoning_effort` → `reasoning: {effort}` rename happens only in
-`_construct_responses_api_payload` (`base.py:4282-4283`), which is the Responses API path we
-do not take. So pass **`reasoning={"effort": "low"}`** — OpenRouter documents the unified
-`reasoning` object and does not document accepting OpenAI's native `reasoning_effort`, and on
-our path nothing translates one into the other. OpenRouter accepts
-`max | xhigh | high | medium | low | minimal | none` for the GPT-5 series.
+**The parameter shape — and this was got wrong first time round.** Both fields do go through
+`_default_params` verbatim (`base.py:1352-1353`), which is what the original reasoning here
+rested on. What it missed is `_use_responses_api` (`base.py:1751-1764`): **`self.reasoning is
+not None` is one of the conditions that switches langchain to the Responses API.** So setting
+the unified object does not merely rename a parameter, it moves the call to a different
+endpoint — one whose response carries no `token_usage` and therefore **no `cost`**, and which
+nothing in this project had ever been measured against. `reasoning_effort` is not in that
+condition list, so it stays on Chat Completions.
+
+Measured, not reasoned: the object form returned Responses-shaped metadata with the cost
+missing on 10/10 votes, `reasoning_effort` returned the cost on 10/10, and forcing
+`use_responses_api=False` alongside the object had the request rejected outright. So pass
+**`reasoning_effort="low"`**. The provider's documented vocabulary — `max | xhigh | high |
+medium | low | minimal | none` — is unchanged; only the field carrying it is.
 
 **`exclude: true` is not a saving.** It hides the trace while still reasoning and still
 billing. Only lowering the effort lowers the count, and only the count lowers the cost.
@@ -254,3 +263,42 @@ what to do about it.
 numbers down. Adopting `low` retires 014's and 015's measurements until their harness is
 re-run, which is its own decision and its own spend — and one this ticket's numbers are what
 make decidable.
+
+## Closed 2026-07-28
+
+**$0.107 per 200-vote test at default effort, ~93 tests inside the $10 cap.** Full readings in
+[`panel-model-selection.md`](../docs/research/panel-model-selection.md) and the decision-facing
+summary in [003](003-decide-panel-model-and-provider.md). The raw rows land in
+`backend/experiments/out/cost.jsonl`, which is **gitignored** like every other experiment
+artifact here — so the two documents are the durable record, and `--report` re-reads a local
+run without paying for it again.
+
+What the numbers said, beyond the headline:
+
+- **The retracted ~$0.055 was low by ~2×, and output was the reason** — ~234 tokens per vote
+  against the assumed ~80, **68% of it reasoning**. Input was over-estimated at the same time
+  (270 tokens, not 300–370) but is only a sixth of the bill.
+- **The provider's `cost` equals the list-price derivation exactly**, bit-for-bit on 20/20
+  votes. So [010f](010f-budget-guard.md)'s pre-flight check can use either, in the same units
+  as `limit_remaining`.
+- **Caching confirmed dead by observation** — `cached_tokens` 0 on every vote, prompt 270
+  tokens against a 1,024 minimum. Wider margin than
+  [`prompt-caching.md`](../docs/research/prompt-caching.md) derived.
+- **`low` halves the bill** ($0.057) and cuts latency 44%, with 0 parse failures across 10
+  votes. Not adopted — that needs 014's and 015's harness re-run first, and the effort arms
+  exist so that decision has numbers rather than an argument.
+- **A read timeout still cannot be set.** 10 votes per arm gives a p95 over ten points and no
+  p99, which is the figure 010f wants. [010c](010c-panel-test-pipeline.md)'s first full run
+  supplies it. Recorded so nobody reads the p95 above as the answer.
+
+Two deviations from the ticket as written:
+
+1. **The parameter is `reasoning_effort=`, not `reasoning={"effort": ...}`** — see the
+   correction in the effort section. The object form silently changes endpoint and loses the
+   cost figure, which cost one confounded arm to discover.
+2. **A parse failure now carries only its exception type.** The ticket assumed the failure's
+   message was safe to log; langchain formats it as `f"Invalid json output: {text}"`, so it
+   carried the model's whole reply into the log. The type is what a caller acts on.
+
+Not done here, and deliberately: 010c's 200-vote run supersedes these figures, and the
+reasoning-effort decision is its own ticket when someone wants it.

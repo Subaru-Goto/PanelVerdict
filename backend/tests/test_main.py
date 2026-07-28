@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app, get_panel_llm
 from app.panel import FIXED_PANEL
-from app.schemas import PanelVoteOutput
+from tests.factories import voted
 
 
 def test_evaluate_returns_verdict_variants_and_reasons(stub_llm) -> None:
@@ -59,7 +59,7 @@ def test_evaluate_refuses_a_verdict_when_a_panelist_did_not_vote() -> None:
         def vote(self, *, system_prompt: str, option_1: str, option_2: str):
             if "61-year-old" in system_prompt:
                 raise RuntimeError("api key sk-secret rejected")
-            return PanelVoteOutput(chosen="option_1", reason="stub")
+            return voted()
 
     app.dependency_overrides[get_panel_llm] = RefusingOne
     try:

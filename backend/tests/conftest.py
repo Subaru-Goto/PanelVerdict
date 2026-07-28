@@ -5,7 +5,8 @@ import pytest
 from testcontainers.postgres import PostgresContainer
 
 from app.persistence import prepare_connection
-from app.schemas import PanelVoteOutput
+from app.vote import VoteResponse
+from tests.factories import voted
 
 
 class StubLLM:
@@ -15,10 +16,8 @@ class StubLLM:
         self._chosen = chosen
         self._reason = reason
 
-    def vote(
-        self, *, system_prompt: str, option_1: str, option_2: str
-    ) -> PanelVoteOutput:
-        return PanelVoteOutput(chosen=self._chosen, reason=self._reason)
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+        return voted(self._chosen, self._reason)
 
 
 @pytest.fixture

@@ -1,4 +1,5 @@
 import random
+from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Literal, Protocol
@@ -17,10 +18,87 @@ VOTE_CONCURRENCY = 25
 ORDER_SEED = 0
 
 
+@dataclass(frozen=True)
+class VoteUsage:
+    """What one vote cost, as the provider reported it, and how long it took.
+
+    The provenance is mixed on purpose: the token counts and `cost` come from the
+    provider's own usage block, while `seconds` is measured locally because no provider
+    reports it.
+
+    `reasoning_tokens` and `cost` are optional because **absent is not zero**. Reasoning
+    tokens bill at the output rate and are the largest single term, so a zero standing in
+    for an unreported figure understates the bill by most of it — and a cost of 0.0 in a
+    total that a budget decision reads is worse than an admitted gap.
+    """
+
+    input_tokens: int
+    cached_tokens: int | None
+    output_tokens: int
+    reasoning_tokens: int | None
+    cost: float | None
+    seconds: float
+
+
+@dataclass(frozen=True)
+class VoteResponse:
+    """One panelist's vote and what it cost to obtain.
+
+    `usage` is optional for two different reasons: a test double should not have to
+    invent token counts, and a provider that omits its usage block has still cast a
+    perfectly good vote.
+    """
+
+    output: PanelVoteOutput
+    usage: VoteUsage | None
+
+
+@dataclass(frozen=True)
+class UsageTotals:
+    """A run's usage, summed — with how many votes each sum actually covers.
+
+    The counts are not bookkeeping. `reasoning_tokens` and `cost` are optional per vote,
+    so a sum over the votes that reported them is a *partial* figure, and a partial
+    figure presented as a total is how a run gets planned against a number that is
+    quietly too small.
+    """
+
+    votes: int
+    usage_reported: int
+    input_tokens: int
+    cached_tokens: int
+    cached_reported: int
+    output_tokens: int
+    reasoning_tokens: int
+    reasoning_reported: int
+    cost: float
+    cost_reported: int
+
+
+def total_usage(usage: Sequence[VoteUsage | None]) -> UsageTotals:
+    """Sum a run's per-vote usage, counting what each sum is a sum over."""
+    reported = [u for u in usage if u is not None]
+    cached = [u.cached_tokens for u in reported if u.cached_tokens is not None]
+    reasoning = [u.reasoning_tokens for u in reported if u.reasoning_tokens is not None]
+    cost = [u.cost for u in reported if u.cost is not None]
+    return UsageTotals(
+        votes=len(usage),
+        usage_reported=len(reported),
+        input_tokens=sum(u.input_tokens for u in reported),
+        cached_tokens=sum(cached),
+        cached_reported=len(cached),
+        output_tokens=sum(u.output_tokens for u in reported),
+        reasoning_tokens=sum(reasoning),
+        reasoning_reported=len(reasoning),
+        cost=sum(cost),
+        cost_reported=len(cost),
+    )
+
+
 class PanelLLM(Protocol):
     def vote(
         self, *, system_prompt: str, option_1: str, option_2: str
-    ) -> PanelVoteOutput: ...
+    ) -> VoteResponse: ...
 
 
 def presentation_orders(
@@ -96,9 +174,15 @@ class PanelVotes:
 
     A caller that reads `records` and never looks at `failures` has made that decision
     by omission — which is the one reading this shape exists to prevent.
+
+    `usage` runs parallel to `records`, one entry each, holding `None` where the provider
+    reported nothing. It is the per-vote list rather than a total so that a latency
+    percentile stays available; `total_usage` derives the sums, which keeps them from
+    drifting from the list they summarise.
     """
 
     records: list[VoteRecord]
+    usage: tuple[VoteUsage | None, ...]
     failures: tuple[VoteFailure, ...]
 
 
@@ -109,21 +193,27 @@ def _cast_vote(
     test_id: str,
     variants: dict[str, str],
     llm: PanelLLM,
-) -> VoteRecord:
-    """One panelist's vote, identity re-attached. Runs on a worker thread."""
+) -> tuple[VoteRecord, VoteUsage | None]:
+    """One panelist's vote and its cost, identity re-attached. Runs on a worker thread.
+
+    The two are returned together so the collector can pair them in its own loop, where
+    it already holds the persona. Accumulating usage inside the model adapter instead
+    would need no lock either, but nothing would bound it to one run.
+    """
     first_id, second_id = presentation_order
-    output = llm.vote(
+    response = llm.vote(
         system_prompt=render_persona_prompt(persona),
         option_1=variants[first_id],
         option_2=variants[second_id],
     )
-    return VoteRecord(
+    record = VoteRecord(
         persona_id=persona.id,
         test_id=test_id,
-        chosen_variant_id=resolve_choice(output.chosen, presentation_order),
+        chosen_variant_id=resolve_choice(response.output.chosen, presentation_order),
         presentation_order=presentation_order,
-        reason=output.reason,
+        reason=response.output.reason,
     )
+    return record, response.usage
 
 
 def collect_panel_votes(
@@ -155,7 +245,7 @@ def collect_panel_votes(
     orders = presentation_orders((first_id, second_id), len(panel), seed=seed)
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
-        futures: list[Future[VoteRecord]] = [
+        futures: list[Future[tuple[VoteRecord, VoteUsage | None]]] = [
             pool.submit(
                 _cast_vote,
                 persona,
@@ -168,11 +258,14 @@ def collect_panel_votes(
         ]
 
     records: list[VoteRecord] = []
+    usage: list[VoteUsage | None] = []
     failures: list[VoteFailure] = []
     for persona, future in zip(panel, futures):
         error = future.exception()
         if error is None:
-            records.append(future.result())
+            record, vote_usage = future.result()
+            records.append(record)
+            usage.append(vote_usage)
             continue
         # A worker captures BaseException, so an interrupt raised inside one would
         # otherwise be filed as a panelist who declined to vote and the panel would
@@ -182,4 +275,4 @@ def collect_panel_votes(
         failures.append(
             VoteFailure(persona_id=persona.id, error=f"{type(error).__name__}: {error}")
         )
-    return PanelVotes(records=records, failures=tuple(failures))
+    return PanelVotes(records=records, usage=tuple(usage), failures=tuple(failures))
