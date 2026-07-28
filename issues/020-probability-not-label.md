@@ -3,7 +3,7 @@ title: "Report the ROPE as a probability, not a three-way label"
 labels: [wayfinder:task]
 blocked_by: []
 assignee: null
-status: open
+status: closed
 ---
 
 ## Goal
@@ -65,7 +65,8 @@ them by construction.
   from `n` and the band rather than stored. It is currently a comment in `config.py` next to
   the profiles, which is a number that can drift from the table beside it. [011](011-build-report-ui.md)
   needs it to make a thin panel's `undecided`-shaped result self-explaining: *"this panel could
-  detect a gap of 26 points or more; it did not find one."*
+  detect a gap of 24 points or more; it did not find one."* (Written as 26 while the figure was
+  a raw vote share; see the correction below.)
 - **Keep** `practical_tie` as a boolean.
 - **Retire** `undecided` as a stored outcome. A recommendation becomes something the report
   derives from the probability against a stated threshold at render time, so the plain-English
@@ -88,3 +89,58 @@ them by construction.
 
 The ROPE stays at **±7** and the profiles stay at 25 / 100 / 200. This ticket changes how the
 verdict is *reported*, not what counts as a meaningful difference.
+
+## Closed 2026-07-28
+
+`PanelVerdict` carries `probability_worth_acting_on`, `probability_practical_tie` and
+`detectable_gap`; `outcome` is gone from the payload. `rope_verdict` itself stays, for
+`_CONFIRMATIONS = 3` only — counting batches *agreeing* needs something discrete to compare,
+and there the coarseness costs a batch rather than a recommendation. This does **not**
+pre-decide [010d](010d-adaptive-stopping.md), which may well replace the label with a
+continuous quantity crossing a threshold; it keeps working what already works.
+
+`undecided` is retired as a *stored* answer, which is what the ticket asked. It survives on
+`Batch.verdict`, which has no caller outside `verdict.py` today — but [011](011-build-report-ui.md)'s
+batch-streaming progress is where that stops being true, so the label needs a decision there
+rather than an assumption that it is already private.
+
+`detectable_gap` computes from *n* and the band, so `config.py`'s per-profile ±26/±17/±14
+figures are **deleted rather than recomputed there**: a resolution beside the table would
+outlive a change to either input, and putting it *in* config would make the settings module
+import SciPy for a number nothing in config reads. The measured costs stay in that comment,
+since nothing derives them.
+
+**The resolutions are ±24 / ±16.7 / ±13.9, not ±26 / ±17 / ±14.** The first pass expressed the
+gap as a raw vote share (`k / n`) while every other number in the payload — `share_preferring_b`,
+the interval, the band — lives in the *posterior* share, which the flat prior pulls toward 0.5.
+So the report was about to print *"can resolve a lean of 26.0 points"* directly beside a share of
+74.1%, two numbers measuring the same thing on different scales. It now reads the boundary split
+back through `posterior`, and the test recovers the boundary by walking every split rather than by
+halving, so the unit is pinned by something other than the code under test. The discrepancy shrinks
+with *n* (0.1 points at 200) and is worst at the dev size, which is the size the sentence exists
+for.
+
+Three deviations from the ticket as written:
+
+1. **`practical_tie` is a probability, not a boolean.** The ticket said "keep it as a flag";
+   a flag bakes a threshold in at compute time, which is the exact thing this change is
+   against. `probability_practical_tie` is the same assertion with the number left attached.
+2. **Both directions ship, not just B.** The ticket specified
+   `probability_worth_acting_on_b: float` and noted the mirror was "worth exposing if the
+   report reads both directions" — it does, so the field is a `PreferenceExposure` with the
+   same `shipping_a` / `shipping_b` names `expected_preference_shortfall` already uses.
+3. **The frontend moved too, because it was reading `outcome`.** Removing the field would
+   otherwise have rendered a blank headline rather than failing. The recommendation is derived
+   at render time and the bar is the verdict's **own `credible_mass`** — the one credibility
+   the payload already states — because any other number would be one nobody signed off. It is
+   printed beside the two probabilities, since the ticket asked for a *stated* threshold and a
+   bar the reader cannot see is the same withholding in a smaller form. Consequence worth
+   knowing: at 65/100 the headline still declines to call it, since 0.946 is under 0.95. The
+   difference is that the 0.946 is now on screen next to it, which was the complaint.
+
+`probability_worth_acting_on` gets its **own type** rather than reusing `PreferenceExposure`.
+The two are structurally identical and differ only in unit — probability in 0-1 against
+preference-share points — and the frontend picks the formatter by hand, so a reader that
+formatted 0.95 as "95 points" would be wrong by the width of the scale.
+
+401 tests green (+2), `tsc --noEmit` and eslint clean.

@@ -5,6 +5,7 @@ from scipy import optimize, stats
 from app.schemas import (
     PanelVerdict,
     PreferenceExposure,
+    PreferenceProbability,
     RopeVerdict,
     VoteRecord,
     VoteTally,
@@ -128,10 +129,112 @@ def expected_preference_shortfall(
     )
 
 
+@dataclass(frozen=True)
+class ActionableProbability:
+    """How likely each choice is to be the wrong one, both directions.
+
+    The same two field names `PreferenceShortfall` uses for the same two branches, and a
+    separate type because the units differ: probability in 0-1 against preference-share
+    points. Structural identity is what makes mixing them up easy.
+    """
+
+    shipping_a: float
+    shipping_b: float
+
+
+def probability_worth_acting_on(
+    *, preferring_b: int, total: int, rope: tuple[float, float] = _ROPE
+) -> ActionableProbability:
+    """How probable it is that each variant wins by an amount worth acting on.
+
+    The band's own question, answered as a probability instead of a bucket. A three-way
+    label reads `undecided` for everything from a coin flip to a near-certainty — at
+    65/100 it says `undecided` about something this puts near 0.95 — because comparing an
+    interval to a band throws away where inside the interval the mass actually sits.
+
+    Named for what a reader does with it, not for the geometry: `shipping_a` is the
+    probability that shipping A costs a gap the band would call worth having.
+    """
+    a, b = _checked_split(preferring_b, total)
+    low, high = rope
+    distribution = stats.beta(a, b)
+    return ActionableProbability(
+        shipping_a=float(1 - distribution.cdf(high)),
+        shipping_b=float(distribution.cdf(low)),
+    )
+
+
+def probability_practical_tie(
+    *, preferring_b: int, total: int, rope: tuple[float, float] = _ROPE
+) -> float:
+    """How probable it is that the difference is too small to act on either way.
+
+    The positive finding the band exists for, and the one thing no interval-free
+    posterior can assert: a narrow interval near even is not evidence of equivalence
+    until something says how near counts.
+    """
+    a, b = _checked_split(preferring_b, total)
+    low, high = rope
+    distribution = stats.beta(a, b)
+    return float(distribution.cdf(high) - distribution.cdf(low))
+
+
+def detectable_gap(
+    *, total: int, rope: tuple[float, float] = _ROPE, credible_mass: float = 0.95
+) -> float | None:
+    """The smallest preference gap a panel this size could call decisive, or None.
+
+    What makes a small panel's null result readable. *"This panel could have detected any
+    gap this wide and found none"* is a finding; `undecided` on its own is not, because it
+    cannot be told apart from a panel that found genuine equivalence.
+
+    Derived rather than configured: it follows from the panel size and the band, so
+    storing it would be asserting a precision that was not bought. It exceeds the band's
+    half-width at every size — a difference the band calls negligible stays negligible
+    however much is spent — and it approaches that half-width only as the interval
+    narrows, which costs the square of the improvement. The trend is what holds, not
+    every step: the boundary moves in whole votes, so one more panelist can round the
+    other way and widen it a little.
+
+    Bisected because the verdict is monotone in the split: once the interval clears the
+    band it stays clear, so the boundary can be found in log time rather than by walking
+    every split.
+
+    Reported as a **posterior** lean, not `k / n`, so that it can be read straight against
+    `share_preferring_b` and the band — both of which live in that same shrunk space. The
+    two differ by 2 points at the dev size, which is the size where this number matters
+    most.
+    """
+    low, high = total // 2, total
+    if _verdict_at(total, high, rope, credible_mass) != "decisive":
+        return None
+    while low + 1 < high:
+        middle = (low + high) // 2
+        if _verdict_at(total, middle, rope, credible_mass) == "decisive":
+            high = middle
+        else:
+            low = middle
+    a, b = _checked_split(high, total)
+    return a / (a + b) - 0.5
+
+
+def _verdict_at(
+    total: int, preferring_b: int, rope: tuple[float, float], credible_mass: float
+) -> RopeVerdict:
+    a, b = _checked_split(preferring_b, total)
+    return rope_verdict(_highest_density_interval(a, b, credible_mass), rope=rope)
+
+
 def rope_verdict(
     interval: tuple[float, float], *, rope: tuple[float, float] = _ROPE
 ) -> RopeVerdict:
     """Compare a credible interval against the region of practical equivalence.
+
+    Not what a report carries — a verdict states the band as probabilities, since a label
+    reads `undecided` from a coin flip all the way to a near-certainty. What still needs a
+    label is `_CONFIRMATIONS`, which counts batches *agreeing*: agreement needs something
+    discrete to compare, and there the coarseness costs a batch rather than a
+    recommendation.
 
     Three outcomes, and the third is the point of the method: `undecided` is a
     statement about the data, where `practical_tie` is a *positive* finding — the
@@ -309,7 +412,7 @@ def panel_verdict(
     rope: tuple[float, float] = _ROPE,
     credible_mass: float = 0.95,
 ) -> PanelVerdict:
-    """Assemble the reportable verdict: posterior, decision, and the band used.
+    """Assemble the reportable verdict: posterior, the band's probabilities, and the band.
 
     The band travels with the verdict rather than being implied, because it is a
     product decision rather than a derived quantity: a verdict silent about which
@@ -319,12 +422,21 @@ def panel_verdict(
         preferring_b=preferring_b, total=total, credible_mass=credible_mass
     )
     shortfall = expected_preference_shortfall(preferring_b=preferring_b, total=total)
+    worth_acting_on = probability_worth_acting_on(
+        preferring_b=preferring_b, total=total, rope=rope
+    )
     return PanelVerdict(
         share_preferring_b=summary.share_preferring_b,
         probability_majority_prefers_b=summary.probability_majority_prefers_b,
         credible_interval=summary.interval,
         credible_mass=credible_mass,
         rope=rope,
-        outcome=rope_verdict(summary.interval, rope=rope),
+        probability_worth_acting_on=PreferenceProbability(**asdict(worth_acting_on)),
+        probability_practical_tie=probability_practical_tie(
+            preferring_b=preferring_b, total=total, rope=rope
+        ),
+        detectable_gap=detectable_gap(
+            total=total, rope=rope, credible_mass=credible_mass
+        ),
         expected_preference_shortfall=PreferenceExposure(**asdict(shortfall)),
     )

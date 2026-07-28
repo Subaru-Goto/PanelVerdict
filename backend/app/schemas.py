@@ -181,8 +181,20 @@ class PreferenceExposure(BaseModel):
     shipping_b: float
 
 
+class PreferenceProbability(BaseModel):
+    """How likely each choice is to be the wrong one, both directions.
+
+    Structurally identical to `PreferenceExposure` and deliberately not it: one is a
+    probability in 0-1, the other a count of preference-share points, and a reader that
+    formatted 0.95 as "95 points" would be off by the width of the whole scale.
+    """
+
+    shipping_a: float
+    shipping_b: float
+
+
 class PanelVerdict(BaseModel):
-    """The panel's preference for B as a distribution, plus a decision about it.
+    """The panel's preference for B as a distribution, and the band's own probabilities.
 
     `share_preferring_b` is the estimate; `probability_majority_prefers_b` is
     confidence in its direction. They are different questions and move
@@ -191,6 +203,14 @@ class PanelVerdict(BaseModel):
     `rope` travels with the verdict rather than being implied: the band encodes what
     difference is worth acting on, which is a product decision rather than a derived
     quantity, so a verdict silent about it could be re-labelled later unnoticed.
+
+    **No field here names a recommendation.** That is derived at render time against a
+    threshold the reader can see, because a threshold applied here is one they cannot: the
+    same word would stand for everything between a coin flip and a near-certainty.
+
+    `detectable_gap` is the smallest gap this panel size could have called decisive. It is
+    what makes a null result readable: a wide interval alone cannot distinguish *"they are
+    equivalent"* from *"this panel was too small to tell"*.
 
     None of these are click-through rates. The panel chose *between* two variants;
     real readers mostly see one.
@@ -201,7 +221,9 @@ class PanelVerdict(BaseModel):
     credible_interval: tuple[float, float]
     credible_mass: float
     rope: tuple[float, float]
-    outcome: RopeVerdict
+    probability_worth_acting_on: PreferenceProbability
+    probability_practical_tie: float
+    detectable_gap: float | None
     expected_preference_shortfall: PreferenceExposure
 
 

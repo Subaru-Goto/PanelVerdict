@@ -3,10 +3,15 @@ export type VoteTally = {
   total: number;
 };
 
-export type RopeOutcome = "decisive" | "practical_tie" | "undecided";
-
 /** Preference-share points each choice risks. Never a monetary or click figure. */
 export type PreferenceExposure = {
+  shipping_a: number;
+  shipping_b: number;
+};
+
+/** How likely each choice is to be the wrong one. Same shape as `PreferenceExposure`,
+ *  different unit — a probability in 0-1, so `formatPercent` and never `formatPoints`. */
+export type PreferenceProbability = {
   shipping_a: number;
   shipping_b: number;
 };
@@ -20,7 +25,11 @@ export type PanelVerdict = {
   credible_mass: number;
   /** The band this verdict was decided against; it travels with the verdict. */
   rope: [number, number];
-  outcome: RopeOutcome;
+  /** P(that choice loses by a gap the band would call worth having), each direction. */
+  probability_worth_acting_on: PreferenceProbability;
+  probability_practical_tie: number;
+  /** Smallest gap this panel size could have called decisive; null if no split could. */
+  detectable_gap: number | null;
   expected_preference_shortfall: PreferenceExposure;
 };
 

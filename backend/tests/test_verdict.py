@@ -5,11 +5,15 @@ from scipy import integrate, stats
 
 from app.schemas import VoteRecord
 from app.verdict import (
+    _ROPE,
     _confirmed,
+    detectable_gap,
     expected_preference_shortfall,
     panel_progress,
     panel_verdict,
     posterior,
+    probability_practical_tie,
+    probability_worth_acting_on,
     rope_verdict,
     tally_votes,
 )
@@ -332,10 +336,13 @@ class TestPanelVerdictPayload:
         later with nothing to notice."""
         result = panel_verdict(preferring_b=128, total=200)
         assert result.rope == (0.43, 0.57)
-        assert result.outcome == "decisive"
 
         narrow = panel_verdict(preferring_b=128, total=200, rope=(0.47, 0.53))
         assert narrow.rope == (0.47, 0.53)
+        assert (
+            narrow.probability_worth_acting_on.shipping_a
+            > result.probability_worth_acting_on.shipping_a
+        )
 
     def test_it_reports_the_posterior_and_both_exposures(self) -> None:
         result = panel_verdict(preferring_b=120, total=200)
@@ -352,5 +359,122 @@ class TestPanelVerdictPayload:
         assert result.expected_preference_shortfall.shipping_a == exposure.shipping_a
         assert result.expected_preference_shortfall.shipping_b == exposure.shipping_b
 
+    def test_it_reports_the_band_as_probabilities_and_a_resolution(self) -> None:
+        """The 65/100 row of 020's table, which is the split the three-way label got
+        wrong: 0.946 reported as `undecided`. Written as the published numbers rather
+        than as calls to the same functions, so a mis-wired argument cannot agree."""
+        result = panel_verdict(preferring_b=65, total=100)
+
+        assert result.probability_worth_acting_on.shipping_a == pytest.approx(
+            0.946, abs=5e-4
+        )
+        assert result.detectable_gap == pytest.approx(0.1667, abs=5e-4)
+        # The three regions partition one posterior, so the payload's own numbers must
+        # close — the only check that they came from the same split and the same band.
+        assert (
+            result.probability_worth_acting_on.shipping_a
+            + result.probability_worth_acting_on.shipping_b
+            + result.probability_practical_tie
+        ) == pytest.approx(1.0)
+
     def test_the_payload_names_no_winner(self) -> None:
         assert "winner" not in panel_verdict(preferring_b=200, total=200).model_dump()
+
+
+class TestActionableProbability:
+    """P(the share falls outside the band), which is what the three-way label replaced.
+
+    The label collapses everything between dead-even and near-certain into `undecided`;
+    these are the numbers it was collapsing.
+    """
+
+    def test_a_symmetric_split_risks_each_direction_equally(self) -> None:
+        outside = probability_worth_acting_on(preferring_b=50, total=100)
+
+        assert outside.shipping_a == pytest.approx(outside.shipping_b)
+
+    def test_the_three_regions_account_for_the_whole_posterior(self) -> None:
+        """Independent of how either tail is computed: whatever mass is not above the
+        band or below it must be inside it, so the two tails cannot both drift."""
+        outside = probability_worth_acting_on(preferring_b=63, total=100)
+        inside = probability_practical_tie(preferring_b=63, total=100)
+
+        assert outside.shipping_a + outside.shipping_b + inside == pytest.approx(1.0)
+
+    def test_it_separates_splits_the_label_calls_identical(self) -> None:
+        """The whole point. `rope_verdict` reads `undecided` at both of these, which is
+        why a report built on the label cannot tell a coin-flip from a near-certainty."""
+        even = probability_worth_acting_on(preferring_b=50, total=100)
+        leaning = probability_worth_acting_on(preferring_b=65, total=100)
+
+        assert (
+            rope_verdict(posterior(preferring_b=50, total=100).interval) == "undecided"
+        )
+        assert (
+            rope_verdict(posterior(preferring_b=65, total=100).interval) == "undecided"
+        )
+        assert even.shipping_a < 0.1
+        assert leaning.shipping_a > 0.9
+
+    def test_a_lopsided_panel_is_near_certain_in_one_direction_only(self) -> None:
+        outside = probability_worth_acting_on(preferring_b=90, total=100)
+
+        assert outside.shipping_a > 0.99
+        assert outside.shipping_b < 0.01
+
+
+class TestDetectableGap:
+    """The smallest gap a panel of a given size could call decisive.
+
+    This is what makes a thin panel's null result readable: "could have detected a gap
+    this wide, found nothing" says something, where "undecided" does not.
+    """
+
+    @pytest.mark.parametrize("total", [25, 100, 200, 400])
+    def test_the_gap_is_the_reported_lean_at_the_first_decisive_split(
+        self, total: int
+    ) -> None:
+        """Two independent routes to the same number.
+
+        The boundary is found by walking every split rather than by halving, so a broken
+        bisection cannot agree with it. And the expectation is read off
+        `share_preferring_b` rather than by dividing counts, which pins the *unit*: the
+        gap has to be comparable with the share the report prints beside it, and that is
+        a posterior mean pulled toward 0.5, not `k / n`.
+        """
+        first_decisive = next(
+            k
+            for k in range(total // 2, total + 1)
+            if rope_verdict(posterior(preferring_b=k, total=total).interval)
+            == "decisive"
+        )
+        reported = posterior(preferring_b=first_decisive, total=total)
+
+        assert detectable_gap(total=total) == pytest.approx(
+            reported.share_preferring_b - 0.5
+        )
+
+    def test_a_bigger_panel_detects_a_smaller_gap(self) -> None:
+        """Sampled across doublings, not consecutive sizes. The boundary moves in whole
+        votes, so one extra panelist can round the other way and widen the gap slightly —
+        the trend is what holds, not every step of it."""
+        gaps = [detectable_gap(total=n) for n in (25, 50, 100, 200, 400)]
+
+        assert all(gap is not None for gap in gaps)
+        assert gaps == sorted(gaps, reverse=True)
+
+    def test_no_panel_can_detect_a_gap_inside_the_band(self) -> None:
+        """A difference the band calls negligible is negligible at any sample size, so
+        the gap can never fall below the band's own half-width however much is spent."""
+        rope_half = _ROPE[1] - 0.5
+
+        assert all(detectable_gap(total=n) > rope_half for n in (25, 200, 2000))
+
+    def test_the_gap_tracks_the_analytic_prediction(self) -> None:
+        """Checked against a different formula rather than against itself: a 95%
+        interval half-width for a proportion near even is ~0.98/sqrt(n), so the gap
+        should land near the band's half-width plus that."""
+        for total in (100, 200, 400):
+            predicted = 0.07 + 0.98 / total**0.5
+
+            assert detectable_gap(total=total) == pytest.approx(predicted, abs=0.015)
