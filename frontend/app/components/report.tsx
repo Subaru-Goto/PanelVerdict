@@ -210,15 +210,17 @@ export default function Report({ result }: { result: EvaluateResponse }) {
           value={formatPercent(verdict.share_preferring_b)}
           detail={`${formatPercent(verdict.credible_mass)} credible: ${formatPercent(verdict.credible_interval[0])} to ${formatPercent(verdict.credible_interval[1])}`}
         />
+        {/* Crossed on purpose: the chance shipping B is wrong IS the chance the
+            panel prefers A by more than the tie band. */}
         <StatTile
-          label="Risk of shipping A"
-          value={formatPercent(verdict.probability_worth_acting_on.shipping_a)}
-          detail="chance A loses by a gap worth having"
+          label="Chance A is preferred"
+          value={formatPercent(verdict.probability_worth_acting_on.shipping_b)}
+          detail="by a gap big enough to matter"
         />
         <StatTile
-          label="Risk of shipping B"
-          value={formatPercent(verdict.probability_worth_acting_on.shipping_b)}
-          detail="chance B loses by a gap worth having"
+          label="Chance B is preferred"
+          value={formatPercent(verdict.probability_worth_acting_on.shipping_a)}
+          detail="by a gap big enough to matter"
         />
         <StatTile
           label="Practical tie"

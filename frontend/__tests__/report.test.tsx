@@ -16,12 +16,16 @@ describe("verdict line", () => {
 });
 
 describe("stat tiles", () => {
-  it("states both shipping-risk probabilities and the tie", () => {
+  it("states both preference probabilities and the tie", () => {
+    // The 98% is probability_worth_acting_on.shipping_b: the chance shipping B
+    // is wrong is the chance A is meaningfully preferred, so it must sit under
+    // A's label — a swap here is the bug this test exists to catch.
     render(<Report result={makeResponse()} />);
 
-    expect(screen.getByText("Risk of shipping A")).toBeTruthy();
-    expect(screen.getByText("Risk of shipping B")).toBeTruthy();
-    expect(screen.getByText("98%")).toBeTruthy();
+    const tileA = screen.getByText("Chance A is preferred");
+    expect(tileA.parentElement?.textContent).toContain("98%");
+    const tileB = screen.getByText("Chance B is preferred");
+    expect(tileB.parentElement?.textContent).toContain("0%");
     expect(screen.getByText("Practical tie")).toBeTruthy();
     expect(
       screen.getByText(/resolves 16.7 points or more from even/),
