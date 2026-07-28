@@ -148,7 +148,7 @@ function PanelCard({ result }: { result: EvaluateResponse }) {
       </div>
       {query.coverage === "approximated" && (
         <p className="text-sm text-zinc-500">
-          A stand-in region was used; see the notices.
+          A stand-in region was used — the notice below names it.
         </p>
       )}
       <NoticeList notices={notices} />
@@ -156,7 +156,7 @@ function PanelCard({ result }: { result: EvaluateResponse }) {
         {counts.voted} of {counts.matched} matched panelists voted (
         {counts.requested} requested)
         {stop_reason !== null &&
-          " — stopped early: the panel had already answered"}
+          " — stopped early: the call was already clear, and more votes would only have narrowed the range, not changed it"}
         .
       </p>
     </div>
@@ -238,11 +238,10 @@ export default function Report({ result }: { result: EvaluateResponse }) {
             lean reads as no call, not as a tie.{" "}
           </>
         )}
-        Picking A risks{" "}
-        {formatPoints(verdict.expected_preference_shortfall.shipping_a)},
-        picking B risks{" "}
-        {formatPoints(verdict.expected_preference_shortfall.shipping_b)} of
-        panel preference.
+        Shipping A anyway would give up{" "}
+        {formatPoints(verdict.expected_preference_shortfall.shipping_a)} of
+        preference on average; shipping B would give up{" "}
+        {formatPoints(verdict.expected_preference_shortfall.shipping_b)}.
       </p>
       <PosteriorChart verdict={verdict} tally={tally} variants={variants} />
       <p className="text-xs text-zinc-500">
