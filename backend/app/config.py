@@ -25,12 +25,14 @@ class PanelProfile:
 
 type ProfileName = Literal["dev", "demo", "prod"]
 
-# Costs measured 2026-07-28 at $0.000536/vote (docs/research/panel-model-selection.md);
-# nothing derives them, so they are recorded here.
+# Costs measured 2026-07-28 at USD_PER_VOTE below (docs/research/first-full-scale-run.md,
+# superseding the 10-vote $0.000536 reading — output ran ~310 tokens/vote at scale,
+# not 234):
 #
-#   dev   25 → $0.013/run — plumbing, where the verdict's content is irrelevant
-#   demo 100 → $0.054/run — enough panelists to read as a panel
-#   prod 200 → $0.107/run — ~93 runs inside the $10 credit cap
+#   dev   25 → $0.018/run — plumbing, where the verdict's content is irrelevant
+#   demo 100 → $0.073/run — enough panelists to read as a panel
+#   prod 200 → $0.145/run — ~70 fixed-length runs inside the $10 credit cap
+#     (more in practice: a decisive pair stopped at 50 votes for $0.036)
 #
 # What each size *buys* is not recorded here: `verdict.detectable_gap` computes it from the
 # size and the band, and every report carries it. A figure written down beside the table
@@ -44,6 +46,11 @@ PROFILES: dict[ProfileName, PanelProfile] = {
     "demo": PanelProfile(size=100, model="openai/gpt-5-mini"),
     "prod": PanelProfile(size=200, model="openai/gpt-5-mini"),
 }
+
+# The higher of the two at-scale readings ($0.000687 over 200 votes, $0.000726 over
+# 50 — first-full-scale-run.md), so the pre-flight warning errs toward warning a run
+# that would have squeaked through rather than waving through one that will not.
+USD_PER_VOTE = 0.000726
 
 
 class Settings(BaseSettings):

@@ -2,8 +2,10 @@ import json
 from time import perf_counter
 from typing import Literal, get_args
 
+import httpx
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from openai import APIStatusError
 
 from app.schemas import (
     INCOME_BAND_QUINTILES,
@@ -19,7 +21,7 @@ from app.schemas import (
     TraitLevel,
     TraitName,
 )
-from app.vote import VoteResponse, VoteUsage
+from app.vote import OutOfCredit, VoteResponse, VoteUsage
 
 
 VOTE_QUESTION = "Which do you prefer?"
@@ -30,6 +32,15 @@ VOTE_QUESTION = "Which do you prefer?"
 type ReasoningEffort = Literal[
     "none", "minimal", "low", "medium", "high", "xhigh", "max"
 ]
+
+# Sourced from the first full-scale run (docs/research/first-full-scale-run.md):
+# ~3× the slowest of 250 timed votes (18.9s) and ~4× their p99 (14.0s). Wide on
+# purpose — cutting off a valid-but-slow reasoning response thins the panel, while
+# a hang costs latency only; this caps a hung attempt at a minute instead of the
+# SDK default's ten (the SDK may retry twice, so a persistently hanging vote costs
+# at most ~three). Passed as the SDK's whole-request timeout — connect and write
+# included — the read phase is just the part that ever ran long.
+VOTE_READ_TIMEOUT_SECONDS = 60
 
 # Held apart from the question so that varying the question cannot reach the
 # positional and content-based-reason instructions. An experiment that reworded those
@@ -235,10 +246,8 @@ class OpenRouterPanelLLM:
         # `max_retries` is the SDK's own default, stated rather than inherited: a panel
         # fans 25 requests out at once, so 429s are expected traffic and this is the line
         # that decides whether one costs a vote. The SDK backs off and honours
-        # `retry-after`. A read timeout is deliberately left at the SDK's 600s until
-        # there is a measured latency distribution to set it from — short enough to stop
-        # a hung request holding a worker, long enough not to cut off a slow-but-valid
-        # reasoning response, is not a guess worth making.
+        # `retry-after`. The read timeout waited for a measured latency distribution
+        # rather than being guessed; it has one now — see VOTE_READ_TIMEOUT_SECONDS.
         # `include_raw` keeps the AIMessage, which is the only way to reach what the
         # vote cost: the parsed-object form discards it. It rewires the output plumbing
         # and nothing else — the bound model is identical — so it cannot move a prompt
@@ -260,6 +269,7 @@ class OpenRouterPanelLLM:
             base_url=base_url,
             api_key=api_key,
             max_retries=2,
+            timeout=VOTE_READ_TIMEOUT_SECONDS,
             reasoning_effort=reasoning_effort,
         ).with_structured_output(PanelVoteOutput, include_raw=True)
 
@@ -268,13 +278,44 @@ class OpenRouterPanelLLM:
             system_prompt, option_1, option_2, question=self._question
         )
         started = perf_counter()
-        result = self._model.invoke(messages)
+        try:
+            result = self._model.invoke(messages)
+        except APIStatusError as error:
+            # The SDK retries 429/5xx itself; a 402 arrives here directly and is
+            # terminal for the whole run, not just this vote. Fixed text only —
+            # the provider's message never travels.
+            if error.status_code == 402:
+                raise OutOfCredit("OpenRouter credit exhausted (402)") from error
+            raise
         seconds = perf_counter() - started
         if not isinstance(result, dict):
             raise RuntimeError(
                 f"expected include_raw's dict, got {type(result).__name__}"
             )
         return _vote_response(result, seconds=seconds)
+
+
+def remaining_credit(*, api_key: str, base_url: str) -> float | None:
+    """What is left on the key (`GET /key`, same units as the vote costs), or None
+    when unknown — an unlimited key reports null, and a failed check reports
+    nothing: the pre-flight is advisory, and a broken meter must never block or
+    misprice a run it cannot read.
+    """
+    try:
+        response = httpx.get(
+            f"{base_url}/key",
+            headers={"Authorization": f"Bearer {api_key}"},
+            # Not a measured figure like the vote timeout — there is nothing to
+            # measure: the check is advisory, any failure (including this timeout)
+            # returns None, and 5s only bounds how long the pre-flight may delay
+            # the run it advises.
+            timeout=5,
+        )
+        response.raise_for_status()
+        remaining = response.json()["data"]["limit_remaining"]
+        return float(remaining) if remaining is not None else None
+    except (httpx.HTTPError, KeyError, TypeError, ValueError):
+        return None
 
 
 class OpenRouterTargetTranslator:

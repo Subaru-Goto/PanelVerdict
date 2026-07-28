@@ -6,7 +6,7 @@ import pytest
 from app.pipeline import EmptyPanel, NoVotes, run_panel_test
 from app.persistence import persist_pool
 from app.schemas import PanelCounts, RequestedRegion, TargetRequest
-from app.vote import VoteResponse
+from app.vote import OutOfCredit, VoteResponse
 from tests.factories import (
     JAPAN_REQUEST,
     StubTranslator,
@@ -356,3 +356,104 @@ class TestVoteCache:
         _run(conn, llm=spy)
 
         assert spy.calls == 0
+
+
+class OutOfCreditLLM:
+    """Answers the first `paid` votes, then every call is the provider's 402.
+
+    Counts calls so a test can assert the pipeline stopped *asking* — fanning out
+    chunk after chunk of doomed requests costs latency, and the panelists' order
+    means later chunks would all fail anyway.
+    """
+
+    configuration = "stub"
+
+    def __init__(self, paid: int) -> None:
+        self.calls = 0
+        self._paid = paid
+        self._lock = threading.Lock()
+
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+        with self._lock:
+            self.calls += 1
+            if self.calls <= self._paid:
+                return voted("option_1")
+        raise OutOfCredit("OpenRouter credit exhausted (402)")
+
+
+class TestOutOfCredit:
+    """010f: a mid-run 402 is terminal for the run but not for the test — the cache
+    holds what was paid for, so the stop's message is 'top up and resume', and the
+    endpoint's code says whose fault it is (the account's, not the server's)."""
+
+    def test_credit_running_out_mid_run_stops_asking_and_names_the_remedy(
+        self, conn
+    ) -> None:
+        # Seeded with 75 *distinct* ages, not seed_japanese (which wraps at 60):
+        # the prompt omits the persona id, so age-twins render identical prompts,
+        # fingerprint identically, and share cached votes across chunks — content
+        # is identity, and this test needs 75 distinguishable panelists.
+        persist_pool(
+            conn,
+            [
+                make_assembled(
+                    make_persona(id_=f"JP-{i:05d}", country="JP", age=20 + i)
+                )
+                for i in range(75)
+            ],
+        )
+        llm = OutOfCreditLLM(paid=25)
+
+        result = _run(conn, size=75, llm=llm)
+
+        assert result.counts.voted == 25
+        # Chunk 3 was never attempted: 25 paid + 25 refused, not 75.
+        assert llm.calls == 50
+        (notice,) = [n for n in result.notices if "credit" in n.message.lower()]
+        assert notice.severity == "warning"
+        assert "25" in notice.message and "75" in notice.message
+        assert "top up" in notice.message and "re-run" in notice.message
+
+    def test_the_saved_votes_actually_resume(self, conn) -> None:
+        seed_japanese(conn, 50)
+        _run(conn, size=50, llm=OutOfCreditLLM(paid=25))
+
+        spy = SpyLLM()
+        result = _run(conn, size=50, llm=spy)
+
+        assert result.counts.voted == 50
+        assert spy.calls == 25
+
+    def test_no_votes_and_no_credit_raises_out_of_credit_not_no_votes(
+        self, conn
+    ) -> None:
+        seed_japanese(conn, 5)
+
+        with pytest.raises(OutOfCredit):
+            _run(conn, llm=OutOfCreditLLM(paid=0))
+
+    def test_a_partially_paid_chunk_keeps_its_votes_and_tells_one_story(
+        self, conn
+    ) -> None:
+        """The credit can die mid-chunk: the paid votes in that chunk must survive,
+        and the 402 refusals must not also be narrated as 'transient' vote failures
+        — 'a re-run may recover them' and 'credit ran out' beside each other read
+        as a contradiction, and the credit notice already names the real remedy."""
+        persist_pool(
+            conn,
+            [
+                make_assembled(
+                    make_persona(id_=f"JP-{i:05d}", country="JP", age=20 + i)
+                )
+                for i in range(75)
+            ],
+        )
+        llm = OutOfCreditLLM(paid=30)
+
+        result = _run(conn, size=75, llm=llm)
+
+        assert result.counts.voted == 30
+        assert llm.calls == 50
+        (credit,) = [n for n in result.notices if "credit" in n.message.lower()]
+        assert "30" in credit.message
+        assert not any("did not vote" in n.message for n in result.notices)
