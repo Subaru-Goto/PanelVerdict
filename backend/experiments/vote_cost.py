@@ -103,7 +103,7 @@ def collect_cost_rows(
         llm = OpenRouterPanelLLM(
             api_key=api_key,
             base_url=settings.openrouter_base_url,
-            model=settings.panel_model,
+            model=settings.panel.model,
             reasoning_effort=arm,
         )
         for replicate in range(replicates):
