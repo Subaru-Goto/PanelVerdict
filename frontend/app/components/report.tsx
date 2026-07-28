@@ -211,12 +211,12 @@ export default function Report({ result }: { result: EvaluateResponse }) {
           detail={`${formatPercent(verdict.credible_mass)} credible: ${formatPercent(verdict.credible_interval[0])} to ${formatPercent(verdict.credible_interval[1])}`}
         />
         <StatTile
-          label="Shipping A is the mistake"
+          label="Risk of shipping A"
           value={formatPercent(verdict.probability_worth_acting_on.shipping_a)}
           detail="chance A loses by a gap worth having"
         />
         <StatTile
-          label="Shipping B is the mistake"
+          label="Risk of shipping B"
           value={formatPercent(verdict.probability_worth_acting_on.shipping_b)}
           detail="chance B loses by a gap worth having"
         />

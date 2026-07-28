@@ -16,11 +16,11 @@ describe("verdict line", () => {
 });
 
 describe("stat tiles", () => {
-  it("states both shipping-mistake probabilities and the tie", () => {
+  it("states both shipping-risk probabilities and the tie", () => {
     render(<Report result={makeResponse()} />);
 
-    expect(screen.getByText("Shipping A is the mistake")).toBeTruthy();
-    expect(screen.getByText("Shipping B is the mistake")).toBeTruthy();
+    expect(screen.getByText("Risk of shipping A")).toBeTruthy();
+    expect(screen.getByText("Risk of shipping B")).toBeTruthy();
     expect(screen.getByText("98%")).toBeTruthy();
     expect(screen.getByText("Practical tie")).toBeTruthy();
     expect(
