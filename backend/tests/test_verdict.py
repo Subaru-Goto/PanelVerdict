@@ -454,6 +454,25 @@ class TestDetectableGap:
             reported.share_preferring_b - 0.5
         )
 
+    @pytest.mark.parametrize("total", [1, 2, 3, 4])
+    def test_below_five_votes_no_split_is_decisive(self, total: int) -> None:
+        """The floor 010b decided *not* to legislate, shown to exist as arithmetic:
+        below n=5 even a unanimous panel's interval cannot clear the band, so the
+        gap is None — and a unanimous panel's actionable probability stays under
+        the 95% bar, so the render-time recommendation reads "no call" without any
+        rule saying so. If either stops holding — a narrower band, a lower mass —
+        the no-threshold decision needs relitigating, which is what this failing
+        would signal."""
+        assert detectable_gap(total=total) is None
+        unanimous = probability_worth_acting_on(preferring_b=total, total=total)
+        assert unanimous.shipping_a < 0.95
+
+    def test_five_votes_is_where_a_verdict_first_becomes_reachable(self) -> None:
+        """The edge accepted on the ticket, pinned from both sides: unanimous
+        five-of-five is the smallest panel that clears the bar."""
+        assert detectable_gap(total=5) is not None
+        assert probability_worth_acting_on(preferring_b=5, total=5).shipping_a > 0.95
+
     def test_a_bigger_panel_detects_a_smaller_gap(self) -> None:
         """Sampled across doublings, not consecutive sizes. The boundary moves in whole
         votes, so one extra panelist can round the other way and widen the gap slightly —

@@ -25,9 +25,9 @@ from app.schemas import (
     CoverageRung,
     CultureTag,
     Locale,
+    Notice,
     Persona,
     RequestedRegion,
-    Notice,
     TargetQuery,
     TargetRequest,
     TraitName,
@@ -294,7 +294,9 @@ def _shortfall_notices(panel: list[Persona], size: int) -> tuple[Notice, ...]:
     return (
         _warn(
             f"Only {len(panel)} of the {size} panelists asked for match this target, "
-            "so the verdict rests on fewer votes and a wider interval."
+            "so the verdict rests on fewer votes and a wider interval. The pool has "
+            "no more matching people — re-running will not help; a broader target "
+            "would."
         ),
     )
 

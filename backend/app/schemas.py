@@ -298,8 +298,8 @@ class TargetRequest(BaseModel):
 class Notice(BaseModel):
     """One thing the customer has to know about this run.
 
-    Renamed from `TargetNotice` when failed votes joined the list: most notices are
-    about how the target was read, but not all of them are.
+    Not target-scoped: most notices are about how the target was read, but a failed
+    vote produces one too.
 
     Two severities because they call for different treatment, not different styling:
     `warning` means the panel is not the one asked for, `reading` means it is and
