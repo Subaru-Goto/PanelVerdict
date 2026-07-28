@@ -105,20 +105,45 @@ def test_a_thin_match_reports_all_three_counts_distinctly(conn) -> None:
 
 
 def test_notices_survive_assembly(conn) -> None:
-    """Both sources in one result: the query's own notice (an unmapped attribute) and
-    the one retrieval added (the shortfall). Dropping either in assembly is the
-    failure this pins."""
+    """All three sources in one list: the query's own notice (an unmapped attribute),
+    retrieval's (the thin match), and the pipeline's own (failed votes). Dropping any
+    of them in assembly is the failure this pins."""
     seed_japanese(conn, 2)
     request = TargetRequest(
         regions=[RequestedRegion(label="Japan", country_code="JP")],
         unmapped=["gamers"],
     )
 
-    result = _run(conn, request=request, size=5)
+    result = _run(conn, request=request, size=5, llm=FlakyLLM(failures=1))
 
-    messages = [notice.message for notice in result.selection.notices]
+    messages = [notice.message for notice in result.notices]
     assert any("gamers" in message for message in messages)
     assert any("Only 2 of the 5" in message for message in messages)
+    assert any("1 of the 2" in message for message in messages)
+
+
+def test_failed_votes_are_a_notice_naming_the_remedy(conn) -> None:
+    """The two thinnings read differently because their remedies differ: the pool
+    cannot give more matched personas, but a failed vote is transient and a re-run
+    may recover it. A customer must not have to subtract counts to learn which gap
+    they are looking at."""
+    seed_japanese(conn, 5)
+
+    result = _run(conn, llm=FlakyLLM(failures=2))
+
+    (notice,) = [n for n in result.notices if "did not vote" in n.message]
+    assert notice.severity == "warning"
+    assert "2 of the 5" in notice.message
+    assert "re-run" in notice.message
+
+
+def test_a_full_run_carries_no_vote_notice(conn) -> None:
+    seed_japanese(conn, 5)
+
+    result = _run(conn)
+
+    assert not any("did not vote" in n.message for n in result.notices)
+    assert result.notices == result.selection.notices
 
 
 def test_coverage_travels_as_data(conn) -> None:
