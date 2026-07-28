@@ -8,10 +8,12 @@ from factories import DIM, big_five, make_assembled, make_persona
 from app.assembly import AssembledPersona
 from app.persistence import (
     apply_schema,
+    load_votes,
     persist_persona,
     persist_pool,
     prepare_connection,
     retrieve_panel,
+    store_votes,
 )
 from app.schemas import (
     EducationLevel,
@@ -21,6 +23,7 @@ from app.schemas import (
     TraitLevel,
     TraitName,
     TraitRequest,
+    VoteRecord,
 )
 from app.targeting import resolve_target
 
@@ -435,3 +438,37 @@ def test_every_trait_a_target_can_name_is_a_column(conn):
     }
 
     assert set(get_args(TraitName)) <= columns
+
+
+def _vote_record(reason: str = "liked it") -> VoteRecord:
+    return VoteRecord(
+        persona_id="JP-00001",
+        test_id="t1",
+        chosen_variant_id="a",
+        presentation_order=["a", "b"],
+        reason=reason,
+    )
+
+
+def test_a_stored_vote_loads_back_whole(conn):
+    record = _vote_record()
+    assert store_votes(conn, {"fp1": record}) == 1
+
+    assert load_votes(conn, ["fp1"]) == {"fp1": record}
+
+
+def test_load_returns_only_the_fingerprints_that_exist(conn):
+    store_votes(conn, {"fp1": _vote_record()})
+
+    assert load_votes(conn, ["fp1", "fp-unknown"]).keys() == {"fp1"}
+    assert load_votes(conn, []) == {}
+
+
+def test_the_ledger_is_append_only(conn):
+    """Votes are paid model output — the one table not regenerable from a seed
+    (010e's ruling). A colliding write must leave the original untouched, never
+    replace it: the first vote under a fingerprint is THE vote for that question."""
+    store_votes(conn, {"fp1": _vote_record(reason="first")})
+
+    assert store_votes(conn, {"fp1": _vote_record(reason="second")}) == 0
+    assert load_votes(conn, ["fp1"])["fp1"].reason == "first"

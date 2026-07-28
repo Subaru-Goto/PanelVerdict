@@ -5,7 +5,7 @@ a throwaway container without live credentials. Idempotent: re-running the seed
 skips personas already present.
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -16,7 +16,7 @@ from psycopg.rows import dict_row
 
 from app.assembly import AssembledPersona
 from app.bigfive import LEVEL_BOUNDS
-from app.schemas import BigFive, Persona, TargetQuery
+from app.schemas import BigFive, Persona, TargetQuery, VoteRecord
 
 
 class PersonaRow(TypedDict):
@@ -66,9 +66,10 @@ def apply_schema(conn: psycopg.Connection) -> None:
         conn.rollback()
         raise RuntimeError(
             "the personas table is missing a column this build writes "
-            f"({', '.join(_REQUIRED_COLUMNS)}). Drop the database and reseed: the "
-            "sampled columns are a pure function of the master seed, so no "
-            "information is lost."
+            f"({', '.join(_REQUIRED_COLUMNS)}). Drop the personas table and reseed: "
+            "its columns are a pure function of the master seed, so no information "
+            "is lost. Do not drop the whole database — the votes ledger is paid "
+            "model output and cannot be regenerated."
         ) from error
 
 
@@ -250,3 +251,79 @@ def retrieve_panel(
         "ORDER BY md5(id || %s::text), id LIMIT %s",
         params,
     )
+
+
+class VoteRow(TypedDict):
+    """One `votes` row as `load_votes` selects it — same contract as `PersonaRow`:
+    the SELECT list and the field reads share one spelling."""
+
+    request_fingerprint: str
+    persona_id: str
+    test_id: str
+    chosen_variant_id: str
+    presentation_order: list[str]
+    reason: str
+
+
+_VOTE_COLUMNS = ", ".join(VoteRow.__annotations__)
+
+
+def store_votes(conn: psycopg.Connection, votes: Mapping[str, VoteRecord]) -> int:
+    """Append newly cast votes to the ledger; return how many were new.
+
+    `ON CONFLICT DO NOTHING`, never update: votes are paid model output, and the
+    first vote stored under a fingerprint is *the* vote for that question (010e's
+    append-only ruling). A colliding write is a concurrent run that paid twice for
+    the same answer — regrettable, but not a reason to rewrite history.
+    """
+    written = 0
+    with conn.transaction():
+        for fingerprint, record in votes.items():
+            # Columns spelled literally, not joined from `VoteRow`: the values
+            # below are hand-ordered, and every column is text, so a reordered
+            # TypedDict would land them in the wrong columns without an error.
+            result = conn.execute(
+                """
+                INSERT INTO votes (request_fingerprint, persona_id, test_id,
+                    chosen_variant_id, presentation_order, reason)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (request_fingerprint) DO NOTHING
+                """,
+                (
+                    fingerprint,
+                    record.persona_id,
+                    record.test_id,
+                    record.chosen_variant_id,
+                    record.presentation_order,
+                    record.reason,
+                ),
+            )
+            written += result.rowcount
+    return written
+
+
+def load_votes(
+    conn: psycopg.Connection, fingerprints: Sequence[str]
+) -> dict[str, VoteRecord]:
+    """The cached votes among `fingerprints`, keyed back on the fingerprint.
+
+    `test_id` comes back as stored — the run that paid for the vote, not the run
+    reading it — so a resumed run's records carry their true provenance.
+    """
+    if not fingerprints:
+        return {}
+    with conn.cursor(row_factory=dict_row) as cur:
+        rows = cur.execute(
+            f"SELECT {_VOTE_COLUMNS} FROM votes WHERE request_fingerprint = ANY(%s)",
+            [list(fingerprints)],
+        ).fetchall()
+    return {
+        row["request_fingerprint"]: VoteRecord(
+            persona_id=row["persona_id"],
+            test_id=row["test_id"],
+            chosen_variant_id=row["chosen_variant_id"],
+            presentation_order=row["presentation_order"],
+            reason=row["reason"],
+        )
+        for row in (cast(VoteRow, r) for r in rows)
+    }

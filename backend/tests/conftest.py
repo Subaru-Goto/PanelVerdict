@@ -12,6 +12,8 @@ from tests.factories import voted
 class StubLLM:
     """A PanelLLM double returning a fixed vote for every call — no network."""
 
+    configuration = "stub"
+
     def __init__(self, chosen: Literal["option_1", "option_2"], reason: str = "stub"):
         self._chosen = chosen
         self._reason = reason
@@ -36,6 +38,8 @@ def pg_url():
 def conn(pg_url):
     with psycopg.connect(pg_url) as connection:
         prepare_connection(connection)
-        connection.execute("TRUNCATE personas CASCADE")
+        # votes has no FK to personas (the ledger must survive a pool reseed), so
+        # CASCADE alone would leave cache rows leaking between tests.
+        connection.execute("TRUNCATE personas, votes CASCADE")
         connection.commit()
         yield connection

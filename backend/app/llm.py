@@ -1,3 +1,4 @@
+import json
 from time import perf_counter
 from typing import Literal, get_args
 
@@ -213,6 +214,21 @@ class OpenRouterPanelLLM:
         # Reasoning effort is the same kind of thing: one panel deliberates one way, and
         # an experimental arm is a separate instance rather than a per-call argument.
         self._question = question
+        # The whole ask, declared where it is bound: 015 showed the verdict moves
+        # with the question's wording, so a vote cached under one question must not
+        # answer another (010e). The scaffold is rendered by the real message
+        # builder with blank inputs — the blanks are what the fingerprint itself
+        # carries — so an edit to the template or the answer instruction changes
+        # this string without anyone remembering to mirror it here. JSON framing
+        # for the same reason as the fingerprint's: the question is free text.
+        scaffold = build_vote_messages("", "", "", question=question)
+        self.configuration = json.dumps(
+            {
+                "model": model,
+                "effort": reasoning_effort,
+                "ask": [str(message.content) for message in scaffold],
+            }
+        )
         # No temperature: gpt-5-mini (a reasoning model) rejects any non-default
         # temperature with a 400.
         #

@@ -3,8 +3,8 @@ title: "Per-vote cache: exact replay, and resume instead of re-run"
 labels: [wayfinder:task]
 parent: 010-assemble-orchestrator-graph
 blocked_by: [010c-panel-test-pipeline]
-assignee: null
-status: open
+assignee: Subaru-Goto
+status: closed
 ---
 
 ## Goal
@@ -74,3 +74,78 @@ ruling, because the persona pool's "just drop it" habit would be expensive here.
 
 Budget checks and 402 detection → [010f](010f-budget-guard.md). This ticket makes resuming
 *possible*; 010f decides when to stop and when to resume.
+
+## Closed 2026-07-28
+
+The cache ships, and the key is **not** the `(persona, test, order)` triple above — it is
+the **fingerprint of the question itself** (decided with the user): a sha256 over the
+adapter's configuration plus the exact request strings (`app/vote.py:
+vote_fingerprint`). That one move dispatched three of this ticket's open questions at
+once:
+
+- **Invalidation** (the hash-vs-manual fork): hash-in-key, so it is automatic and total —
+  a changed persona template, headline, question wording, or model *is* a different
+  fingerprint, and the stale-cache failure this ticket calls "worse than no cache" is
+  unrepresentable rather than guarded against.
+- **`test_id` never became a persisted entity.** Re-run identity is content identity:
+  same inputs fingerprint the same, so a second `/evaluate` finds its votes with no
+  "tests" table and no way for callers to name a prior run. `test_id` stays a correlation
+  id, stored as provenance — a cached vote keeps the id of the run that **paid** for it.
+- **`order` fell out of the key.** A swapped order swaps `option_1`/`option_2` inside the
+  fingerprint, so the 0.66 counterbalancing trap cannot fire; the triple survives as
+  queryable columns beside the key.
+
+**The adapter's whole ask is in the key, not just the model id.** `OpenRouterPanelLLM`
+also binds the vote question ([015](015-task-framing-sensitivity.md) measured the verdict
+moving with its wording) and the reasoning effort, so `PanelLLM` grew one attribute —
+`configuration`, everything the adapter contributes to the question — and a knob added
+later joins the key by extending that string, not the protocol.
+
+**Drop-and-reseed ruled out — the ledger is append-only** (the explicit ruling this
+ticket asked for). Votes are paid output, the first non-regenerable table in the project:
+`store_votes` is `ON CONFLICT DO NOTHING`, never update, and there is deliberately **no
+foreign key to personas**, so reseeding the pool cannot cascade into the ledger.
+
+**The subtle mechanical bit:** presentation orders are fixed per chunk *before* the
+hit/miss split (`collect_panel_votes` accepts pre-assigned orders) — a fresh draw over
+the misses alone would re-pair panelists with positions and turn every would-be hit into
+a paid miss. Cached and fresh votes merge back in panel order with `None` usage entries,
+so `PanelVotes`' two documented invariants hold and nothing downstream can tell a cached
+vote from a paid one — which is what makes resuming statistically legitimate.
+
+**Ops note:** an existing dev database predates the `votes` table; re-running the seed
+(idempotent, "0 written") applies the schema. Until then `/evaluate` fails loudly with
+`UndefinedTable` — nothing silent.
+
+**The review caught two real holes, both fixed:**
+
+- **Durability.** `store_votes` ran inside the request's open transaction, so the write
+  was a savepoint that only committed at a clean request exit — a run dying at vote 180
+  would have rolled back all 180 stored votes, defeating this ticket's headline promise.
+  The pipeline now commits per chunk, with a test that stored votes survive a rollback.
+- **The scaffold was outside the key.** The human message wraps the options in fixed
+  scaffolding ("Here are two options…" plus the answer instruction); editing it changes
+  the ask without changing the fingerprint. `configuration` is now derived from
+  `build_vote_messages` itself, rendered with blank inputs — a template edit changes the
+  key with nobody remembering to mirror it — and is JSON-framed like the fingerprint.
+
+**Known limits, on the record:**
+
+- *Replay is exact downstream of targeting.* `/evaluate` re-translates the description
+  through a live model each run; a translation that comes back different changes the
+  panel, and with it the chunk composition and fingerprints. The failure is fail-safe —
+  paid misses, never a wrong vote served — but "the votes are the only non-deterministic
+  step left" holds per-panel, not per-description. Caching the translation is its own
+  decision, not smuggled in here.
+- *The structured-output schema* (`PanelVoteOutput`'s field names and descriptions) also
+  shapes the ask and is not in the key. Accepted as residual: a schema change breaks
+  parsing of old-shape answers loudly, and keying on it would mean fingerprinting a
+  generated JSON schema — machinery out of proportion to the risk today.
+
+`apply_schema`'s stale-column error no longer says "drop the database" — that advice
+predates a database holding paid output; it now says to drop and reseed the personas
+table only.
+
+Unlocked but deliberately not run here: test-retest (002's metric — needs a paid run,
+010f territory) and resume-after-402 (010f builds the trigger; the mechanism now
+exists).

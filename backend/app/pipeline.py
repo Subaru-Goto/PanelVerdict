@@ -11,15 +11,28 @@ from uuid import uuid4
 
 import psycopg
 
-from app.schemas import Notice, PanelCounts, PanelVerdict, VoteTally
+from app.persistence import load_votes, store_votes
+from app.schemas import (
+    Notice,
+    PanelCounts,
+    PanelVerdict,
+    Persona,
+    VoteRecord,
+    VoteTally,
+)
 from app.targeting import PanelSelection, TargetTranslator, select_panel
 from app.verdict import StopReason, panel_verdict, stopping_decision, tally_votes
 from app.vote import (
+    ORDER_SEED,
     VOTE_CONCURRENCY,
     PanelLLM,
     PanelVotes,
+    VoteUsage,
+    build_vote_request,
     collect_panel_votes,
+    presentation_orders,
     total_usage,
+    vote_fingerprint,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,6 +134,72 @@ def _vote_shortfall_notice(votes: PanelVotes, matched: int) -> tuple[Notice, ...
     )
 
 
+def _chunk_votes(
+    conn: psycopg.Connection,
+    panel: list[Persona],
+    *,
+    test_id: str,
+    variants: dict[str, str],
+    llm: PanelLLM,
+) -> PanelVotes:
+    """One chunk's votes: the ledger first, the model only for what is missing.
+
+    Orders are fixed for the whole chunk *before* the hit/miss split — a fresh draw
+    over the misses alone would re-pair panelists with positions, and every
+    would-be hit on the next run would fingerprint as a new question (010e).
+
+    Cached and fresh votes merge back in panel order, the records' documented
+    ordering, with a None usage entry per cached vote so usage stays parallel to
+    records. A cached vote costs nothing today, and None — "nothing reported" — is
+    exactly what the usage totals should say about it.
+    """
+    first_id, second_id = variants
+    orders = presentation_orders((first_id, second_id), len(panel), seed=ORDER_SEED)
+    fingerprints = {
+        persona.id: vote_fingerprint(
+            build_vote_request(persona, order, variants=variants),
+            configuration=llm.configuration,
+        )
+        for persona, order in zip(panel, orders)
+    }
+    cached = load_votes(conn, list(fingerprints.values()))
+    misses = [
+        (persona, order)
+        for persona, order in zip(panel, orders)
+        if fingerprints[persona.id] not in cached
+    ]
+    fresh = collect_panel_votes(
+        test_id=test_id,
+        variants=variants,
+        panel=[persona for persona, _ in misses],
+        llm=llm,
+        orders=[order for _, order in misses],
+    )
+    store_votes(
+        conn, {fingerprints[record.persona_id]: record for record in fresh.records}
+    )
+    # Committed per chunk, not per request: the endpoint's connection only commits
+    # at a clean exit, so a store that waited for it would die with the run — and
+    # the ledger exists precisely so a run that dies at vote 180 does not cost 180
+    # votes to get back.
+    conn.commit()
+
+    fresh_pairs = {
+        record.persona_id: (record, usage)
+        for record, usage in zip(fresh.records, fresh.usage)
+    }
+    records: list[VoteRecord] = []
+    usage: list[VoteUsage | None] = []
+    for persona in panel:
+        if (hit := cached.get(fingerprints[persona.id])) is not None:
+            records.append(hit)
+            usage.append(None)
+        elif (pair := fresh_pairs.get(persona.id)) is not None:
+            records.append(pair[0])
+            usage.append(pair[1])
+    return PanelVotes(records=records, usage=tuple(usage), failures=fresh.failures)
+
+
 def run_panel_test(
     conn: psycopg.Connection,
     *,
@@ -144,8 +223,9 @@ def run_panel_test(
     if not selection.panel:
         raise EmptyPanel(f"no persona matches this target (size {size} requested)")
 
-    # A correlation id only — votes are not persisted until 010e, so this ties the
-    # records and the log lines of one run together and nothing more.
+    # Stamped on the votes this run pays for. A cached vote keeps the test_id of
+    # the run that paid for it — the ledger records provenance, and identity across
+    # runs is the fingerprint's job, not this id's.
     test_id = str(uuid4())
 
     # Chunks are one concurrency-load each, so no worker idles mid-chunk and the
@@ -159,8 +239,8 @@ def run_panel_test(
     last_reading: tuple[StopReason, str] | None = None
     for start in range(0, len(selection.panel), VOTE_CONCURRENCY):
         chunk_panel = selection.panel[start : start + VOTE_CONCURRENCY]
-        chunk = collect_panel_votes(
-            test_id=test_id, variants=variants, panel=chunk_panel, llm=llm
+        chunk = _chunk_votes(
+            conn, chunk_panel, test_id=test_id, variants=variants, llm=llm
         )
         asked += len(chunk_panel)
         votes = PanelVotes(
