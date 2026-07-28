@@ -156,9 +156,9 @@ export default function PosteriorChart({
             />
           }
         >
-          Thick bar — the split sits between {formatPercent(criLow)} and{" "}
-          {formatPercent(criHigh)} with {formatPercent(verdict.credible_mass)}{" "}
-          credibility.
+          Thick bar — the true share sits between {formatPercent(criLow)} and{" "}
+          {formatPercent(criHigh)} ({formatPercent(verdict.credible_mass)}{" "}
+          sure).
         </LegendEntry>
         <LegendEntry
           swatch={
@@ -171,8 +171,8 @@ export default function PosteriorChart({
             />
           }
         >
-          Gray band — too small to matter: splits from{" "}
-          {formatPercent(ropeLow)} to {formatPercent(ropeHigh)} read as even.
+          Gray band — the tie zone: splits from {formatPercent(ropeLow)} to{" "}
+          {formatPercent(ropeHigh)} read as even.
         </LegendEntry>
       </ul>
     </figure>

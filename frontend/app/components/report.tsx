@@ -208,33 +208,33 @@ export default function Report({ result }: { result: EvaluateResponse }) {
         <StatTile
           label="Share preferring B"
           value={formatPercent(verdict.share_preferring_b)}
-          detail={`${formatPercent(verdict.credible_mass)} credible: ${formatPercent(verdict.credible_interval[0])} to ${formatPercent(verdict.credible_interval[1])}`}
+          detail={`true share is between ${formatPercent(verdict.credible_interval[0])} and ${formatPercent(verdict.credible_interval[1])} (${formatPercent(verdict.credible_mass)} sure)`}
         />
         {/* Crossed on purpose: the chance shipping B is wrong IS the chance the
             panel prefers A by more than the tie band. */}
         <StatTile
           label="Chance A is preferred"
           value={formatPercent(verdict.probability_worth_acting_on.shipping_b)}
-          detail="by a gap big enough to matter"
+          detail="by more than the tie zone"
         />
         <StatTile
           label="Chance B is preferred"
           value={formatPercent(verdict.probability_worth_acting_on.shipping_a)}
-          detail="by a gap big enough to matter"
+          detail="by more than the tie zone"
         />
         <StatTile
           label="Practical tie"
           value={formatPercent(verdict.probability_practical_tie)}
           detail={
             verdict.detectable_gap !== null
-              ? `this panel resolves ${formatPoints(verdict.detectable_gap)} or more from even`
+              ? `leans under ${formatPoints(verdict.detectable_gap)} are too small for this panel to detect`
               : undefined
           }
         />
       </div>
       <p className="text-sm text-zinc-500">
-        All probabilities are called against a{" "}
-        {formatPercent(verdict.credible_mass)} bar. Picking A risks{" "}
+        The verdict above only calls a lean or a tie when its chance clears{" "}
+        {formatPercent(verdict.credible_mass)}. Picking A risks{" "}
         {formatPoints(verdict.expected_preference_shortfall.shipping_a)},
         picking B risks{" "}
         {formatPoints(verdict.expected_preference_shortfall.shipping_b)} of

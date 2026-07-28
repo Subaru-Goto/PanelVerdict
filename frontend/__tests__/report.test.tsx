@@ -28,14 +28,16 @@ describe("stat tiles", () => {
     expect(tileB.parentElement?.textContent).toContain("0%");
     expect(screen.getByText("Practical tie")).toBeTruthy();
     expect(
-      screen.getByText(/resolves 16.7 points or more from even/),
+      screen.getByText(/leans under 16.7 points are too small for this panel/),
     ).toBeTruthy();
   });
 
-  it("keeps the credible interval beside the share", () => {
+  it("keeps the credible interval beside the share, in plain words", () => {
     render(<Report result={makeResponse()} />);
 
-    expect(screen.getByText(/95% credible: 17% to 42%/)).toBeTruthy();
+    expect(
+      screen.getByText(/true share is between 17% and 42% \(95% sure\)/),
+    ).toBeTruthy();
   });
 });
 
@@ -47,9 +49,12 @@ describe("posterior chart", () => {
     render(<Report result={makeResponse()} />);
 
     expect(screen.getByText(/panel mean: 29% prefer B/)).toBeTruthy();
-    expect(screen.getByText(/between 17% and 42% with 95% credibility/))
-      .toBeTruthy();
-    expect(screen.getByText(/splits from 43% to 57% read as even/)).toBeTruthy();
+    expect(
+      screen.getByText(/true share sits between 17% and 42% \(95% sure\)/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/tie zone: splits from 43% to 57% read as even/),
+    ).toBeTruthy();
   });
 
   it("labels the axis ends with the actual headline text", () => {
