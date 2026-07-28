@@ -124,9 +124,9 @@ def test_a_panel_with_no_votes_is_a_bad_gateway_naming_types_only(client, conn) 
 def test_a_partial_run_returns_a_verdict_with_the_shortfall_in_the_counts(
     client, conn
 ) -> None:
-    """The 5-persona all-or-nothing refusal is retired: a panel that lost votes
-    reports the counts and offers the verdict. Where the line for *too* partial sits
-    is 010b's — nothing here invents a threshold in passing."""
+    """The 5-persona all-or-nothing refusal is retired, and by 010b's decision no
+    threshold replaces it: every run with at least one vote gets a verdict, and the
+    customer is informed through the counts and a notice rather than refused."""
     seed_japanese(conn, 3)
 
     class RefusingOne:
@@ -143,3 +143,7 @@ def test_a_partial_run_returns_a_verdict_with_the_shortfall_in_the_counts(
     body = response.json()
     assert body["counts"] == {"requested": _SIZE, "matched": 3, "voted": 2}
     assert body["tally"]["total"] == 2
+    assert any(
+        "1 of the 3" in notice["message"] and "did not vote" in notice["message"]
+        for notice in body["notices"]
+    )

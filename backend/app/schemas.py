@@ -295,8 +295,11 @@ class TargetRequest(BaseModel):
         return self
 
 
-class TargetNotice(BaseModel):
-    """One thing the customer has to know about how their target was read.
+class Notice(BaseModel):
+    """One thing the customer has to know about this run.
+
+    Not target-scoped: most notices are about how the target was read, but a failed
+    vote produces one too.
 
     Two severities because they call for different treatment, not different styling:
     `warning` means the panel is not the one asked for, `reading` means it is and
@@ -344,7 +347,7 @@ class TargetQuery(BaseModel):
     income_quintiles: tuple[int, ...]
     education: tuple[EducationLevel, ...]
     traits: tuple[TraitRequest, ...]
-    notices: tuple[TargetNotice, ...]
+    notices: tuple[Notice, ...]
 
 
 class PanelCounts(BaseModel):
@@ -381,6 +384,6 @@ class EvaluateResponse(BaseModel):
     tally: VoteTally
     counts: PanelCounts
     query: TargetQuery
-    notices: tuple[TargetNotice, ...]
+    notices: tuple[Notice, ...]
     variants: dict[str, str]
     votes: list[VoteRecord]

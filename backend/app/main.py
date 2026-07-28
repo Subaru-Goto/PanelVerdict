@@ -95,7 +95,7 @@ def evaluate(
         tally=result.tally,
         counts=result.counts,
         query=result.selection.query,
-        notices=result.selection.notices,
+        notices=result.notices,
         variants=variants,
         votes=result.votes.records,
     )

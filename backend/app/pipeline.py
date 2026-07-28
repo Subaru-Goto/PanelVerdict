@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import psycopg
 
-from app.schemas import PanelCounts, PanelVerdict, VoteTally
+from app.schemas import Notice, PanelCounts, PanelVerdict, VoteTally
 from app.targeting import PanelSelection, TargetTranslator, select_panel
 from app.verdict import panel_verdict, tally_votes
 from app.vote import PanelLLM, PanelVotes, collect_panel_votes, total_usage
@@ -42,6 +42,10 @@ class PanelTestResult:
     `selection` travels whole rather than as the panel list alone, because the verdict is
     unreadable without the query and notices that produced it — a narrower panel than
     asked for and a panel that matched exactly are the same list of personas.
+
+    `notices` is the complete set — the selection's plus anything the run itself added —
+    for the same reason `PanelSelection.notices` already is: one place to look rather
+    than two lists to remember to concatenate.
     """
 
     selection: PanelSelection
@@ -49,6 +53,28 @@ class PanelTestResult:
     tally: VoteTally
     verdict: PanelVerdict
     counts: PanelCounts
+    notices: tuple[Notice, ...]
+
+
+def _vote_shortfall_notice(votes: PanelVotes, matched: int) -> tuple[Notice, ...]:
+    """Failed votes as a message, not an arithmetic exercise.
+
+    Worded for its remedy, which is what separates it from retrieval's shortfall: the
+    pool cannot give more matched personas, but a failed vote is transient — the
+    panelist exists and a re-run may recover them (resume is 010e).
+    """
+    if not votes.failures:
+        return ()
+    return (
+        Notice(
+            severity="warning",
+            message=(
+                f"{len(votes.failures)} of the {matched} matched panelists did not "
+                "vote, so the verdict rests on fewer votes. These failures are "
+                "transient — a re-run may recover them."
+            ),
+        ),
+    )
 
 
 def run_panel_test(
@@ -94,4 +120,5 @@ def run_panel_test(
             matched=len(selection.panel),
             voted=len(votes.records),
         ),
+        notices=selection.notices + _vote_shortfall_notice(votes, len(selection.panel)),
     )

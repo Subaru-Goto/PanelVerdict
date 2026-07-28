@@ -25,9 +25,9 @@ from app.schemas import (
     CoverageRung,
     CultureTag,
     Locale,
+    Notice,
     Persona,
     RequestedRegion,
-    TargetNotice,
     TargetQuery,
     TargetRequest,
     TraitName,
@@ -52,12 +52,12 @@ class TargetTranslator(Protocol):
     def translate(self, *, description: str) -> TargetRequest: ...
 
 
-def _warn(message: str) -> TargetNotice:
-    return TargetNotice(severity="warning", message=message)
+def _warn(message: str) -> Notice:
+    return Notice(severity="warning", message=message)
 
 
-def _reading(message: str) -> TargetNotice:
-    return TargetNotice(severity="reading", message=message)
+def _reading(message: str) -> Notice:
+    return Notice(severity="reading", message=message)
 
 
 def _named(countries: tuple[Locale, ...]) -> str:
@@ -74,7 +74,7 @@ def _seeded(country_code: str | None) -> Locale | None:
 
 def _resolve_region(
     region: RequestedRegion,
-) -> tuple[tuple[Locale, ...], CoverageRung, TargetNotice | None]:
+) -> tuple[tuple[Locale, ...], CoverageRung, Notice | None]:
     """One place, down the ladder: the country itself, then its culture tag."""
     exact = _seeded(region.country_code)
     if exact is not None:
@@ -104,7 +104,7 @@ def _resolve_region(
 
 def _resolve_regions(
     regions: list[RequestedRegion],
-) -> tuple[tuple[Locale, ...], CoverageRung, list[TargetNotice]]:
+) -> tuple[tuple[Locale, ...], CoverageRung, list[Notice]]:
     """Every named place, plus the whole-pool fallback when none could be served.
 
     The fallback is deliberately per *query*, not per region: falling back for one
@@ -116,7 +116,7 @@ def _resolve_regions(
         return tuple(Locale), "requested", []
 
     countries: list[Locale] = []
-    notices: list[TargetNotice] = []
+    notices: list[Notice] = []
     approximated = False
     for region in regions:
         reached, rung, notice = _resolve_region(region)
@@ -145,7 +145,7 @@ def _resolve_regions(
 
 def _resolve_ages(
     min_age: int | None, max_age: int | None
-) -> tuple[int, int, list[TargetNotice]]:
+) -> tuple[int, int, list[Notice]]:
     """Clamp the requested span onto the pool's, and say so when that bites.
 
     Each bound is clamped independently, so a span entirely outside the pool ends up
@@ -182,7 +182,7 @@ def _resolve_ages(
 
 def _resolve_traits(
     requested: list[TraitRequest],
-) -> tuple[tuple[TraitRequest, ...], list[TargetNotice]]:
+) -> tuple[tuple[TraitRequest, ...], list[Notice]]:
     """One reading per trait, since each becomes a bound on that trait's column.
 
     Two levels of one trait would filter for both at once and match nobody, so the
@@ -278,7 +278,7 @@ class PanelSelection:
 
     panel: list[Persona]
     query: TargetQuery
-    notices: tuple[TargetNotice, ...]
+    notices: tuple[Notice, ...]
 
 
 # Fixed by default, so the same target description draws the same panel run after
@@ -286,7 +286,7 @@ class PanelSelection:
 PANEL_SEED = 0
 
 
-def _shortfall_notices(panel: list[Persona], size: int) -> tuple[TargetNotice, ...]:
+def _shortfall_notices(panel: list[Persona], size: int) -> tuple[Notice, ...]:
     if len(panel) >= size:
         return ()
     if not panel:
@@ -294,7 +294,9 @@ def _shortfall_notices(panel: list[Persona], size: int) -> tuple[TargetNotice, .
     return (
         _warn(
             f"Only {len(panel)} of the {size} panelists asked for match this target, "
-            "so the verdict rests on fewer votes and a wider interval."
+            "so the verdict rests on fewer votes and a wider interval. The pool has "
+            "no more matching people — re-running will not help; a broader target "
+            "would."
         ),
     )
 

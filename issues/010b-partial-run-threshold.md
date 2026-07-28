@@ -3,8 +3,8 @@ title: "Decide the partial-run threshold: when is a thinned panel still a verdic
 labels: [wayfinder:grilling]
 parent: 010-assemble-orchestrator-graph
 blocked_by: [010a-vote-usage-instrumentation]
-assignee: null
-status: open
+assignee: Subaru-Goto
+status: closed
 ---
 
 ## Question
@@ -84,3 +84,52 @@ The failure *rate* is unmeasured — no real 200-vote run has happened. So this 
 set a line from the **interval mathematics**, which is already known, rather than from an
 assumed failure frequency. If it finds itself needing a failure rate, that is a signal to run
 [010c](010c-panel-test-pipeline.md) first and come back.
+
+## Resolved 2026-07-28 — no threshold, and the customer is informed instead
+
+**Decided with the user: there is no partial-run threshold.** Every run that produces at
+least one vote returns a verdict. The only refusals are the two degenerate cases
+[010c](010c-panel-test-pipeline.md) already shipped — `matched = 0` is 422 (nobody to ask)
+and `voted = 0` is 502 (nobody answered) — and neither is a threshold; both are arithmetic.
+
+**Why the question dissolved rather than got answered.** The four candidate shapes above
+were written when the verdict was a three-way label, and a threshold's job was to stop a
+thin panel overclaiming. The overclaiming lived in the *label* — "decisive" on 22 votes
+reads like "decisive" on 200 — and [020](020-probability-not-label.md) removed the label.
+Every quantity in the payload now carries its own uncertainty: the probabilities widen with
+few votes because that is what the posterior does, `detectable_gap` states what the size
+can resolve, and the three counts sit beside them. The half-panel [003](003-decide-panel-model-and-provider.md)
+forbade was a *disguised* thin panel; the disguise is no longer constructible.
+
+**The lines that remain are all derived, none legislated:**
+
+- `detectable_gap` is `None` below n=5 — the mathematics' own statement that no split could
+  have been decisive.
+- Below n=5 no unanimous panel clears `credible_mass`, so the render-time recommendation
+  reads "no call" without a rule saying so.
+- Any legislated floor between those and 194 would be an unsourced constant.
+
+**The accepted edge, stated rather than hidden:** at n=5 a unanimous panel reaches
+P=0.966 and the headline calls it. That is the honest Bayesian answer to five-of-five, and
+it renders beside "5 voted" and a ±36-point resolution. If it needs softening, that is a
+presentation judgement belonging to [011](011-build-report-ui.md), not a compute-time gate.
+
+**"Mark partial" concretely = the counts plus the notices, no boolean.** `voted < matched`
+is derivable from data the payload already carries; a stored flag would be a label again.
+The two thinnings now read differently because their remedies differ:
+
+- *Retrieval shortfall* (already existed): the pool gave what it could — re-running
+  changes nothing; broaden the target or grow the pool.
+- *Vote shortfall* (**built with this decision**): `_vote_shortfall_notice` in
+  `app/pipeline.py` — "N of the M matched panelists did not vote… transient — a re-run may
+  recover them." `PanelTestResult.notices` is the complete set (selection's plus the
+  run's own), the same one-place-to-look rule `PanelSelection.notices` already followed,
+  and `/evaluate` forwards it.
+
+Renamed `TargetNotice` → `Notice`: the moment a vote failure joined the list, the type
+stopped being about how the target was read.
+
+Deferred with owners: resume-instead-of-re-run is [010e](010e-per-vote-cache.md)'s (the
+notice's wording upgrades when it lands); rendering the informing is [011](011-build-report-ui.md)'s.
+
+414 tests green (+2), ruff check and format clean.
