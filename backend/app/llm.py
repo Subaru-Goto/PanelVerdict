@@ -140,14 +140,18 @@ def _vote_usage(raw: AIMessage, seconds: float) -> VoteUsage | None:
     token_usage = raw.response_metadata.get("token_usage")
     return VoteUsage(
         input_tokens=usage["input_tokens"],
-        # Cached input bills at a reduced rate, so it is part of the cost and not only
-        # part of the caching question. `prompt-caching.md` concluded a cache cannot fire
-        # at our prompt size; a run where this is consistently 0 is that conclusion
-        # observed rather than derived from published thresholds.
+        # Cached input bills at a reduced rate, so it is part of the cost. Expected to
+        # read 0 for a vote: the providers' caches have a minimum prompt size several
+        # times ours, so no prefix of ours is eligible (see prompt-caching.md).
         cached_tokens=usage.get("input_token_details", {}).get("cache_read"),
         output_tokens=usage["output_tokens"],
         # A provider that did not report reasoning leaves the key out rather than
         # writing a zero, and the difference is most of the bill.
+        #
+        # Both detail keys are read as literals, which holds only because no service tier
+        # is requested: langchain builds them as f"{service_tier_prefix}reasoning" and
+        # f"{service_tier_prefix}cache_read", so asking for `flex` or `priority` would
+        # move them and silently return None for the largest cost term.
         reasoning_tokens=usage.get("output_token_details", {}).get("reasoning"),
         cost=_numeric(token_usage.get("cost"))
         if isinstance(token_usage, dict)
@@ -162,13 +166,19 @@ def _vote_response(result: dict[str, object], *, seconds: float) -> VoteResponse
     `include_raw` stops a parse failure raising on its own — it arrives as
     `parsing_error` beside a null `parsed`. A caller that read only `parsed` would file
     the empty result as a real vote, so the raise `vote` already promised is restored
-    here. The message carries the failure's reason rather than the message body: this
-    string reaches `VoteFailure.error` and a log line, and the body can be the model's
-    entire output.
+    here.
+
+    Only the parse error's *type* is carried, never its message. langchain builds that
+    message as `f"Invalid json output: {text}"`, so interpolating it would copy the model's
+    entire reply into `VoteFailure.error` and from there into a log line. The type says
+    which way the vote failed, which is what a caller does anything with; recovering the
+    text costs a re-run, and that is the cheaper mistake.
     """
     error = result.get("parsing_error")
     if error is not None:
-        raise RuntimeError(f"panel model returned no structured vote: {error}")
+        raise RuntimeError(
+            f"panel model returned no structured vote: {type(error).__name__}"
+        )
     parsed = result.get("parsed")
     if not isinstance(parsed, PanelVoteOutput):
         raise RuntimeError(
@@ -216,8 +226,8 @@ class OpenRouterPanelLLM:
         # `include_raw` keeps the AIMessage, which is the only way to reach what the
         # vote cost: the parsed-object form discards it. It rewires the output plumbing
         # and nothing else — the bound model is identical — so it cannot move a prompt
-        # token, and therefore cannot make 014's and 015's runs incomparable to later
-        # ones.
+        # token, which is what keeps votes already collected comparable with votes cast
+        # after it.
         #
         # `reasoning` and not `reasoning_effort`: langchain passes both through verbatim
         # on the Chat Completions path, and only the Responses API path renames one into

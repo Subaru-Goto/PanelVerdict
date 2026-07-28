@@ -1,25 +1,22 @@
-"""Vote-cost calibration (010a): what does one panel vote actually cost?
+"""Vote-cost calibration: what does one panel vote actually cost?
 
-The project has no per-test cost estimate — the old one was retracted, not corrected —
-so three sibling tickets are planning against a blank. This spends a fraction of a cent
-to replace it with a measurement.
+Drives `collect_panel_votes` rather than a private thread pool, so the reading describes
+the path that ships. A private pool would be simpler and would measure this harness.
 
-It drives `collect_panel_votes`, not a private thread pool, so what gets measured is the
-path that ships. Reading it any other way would produce a number for a harness.
-
-Two arms by default. `default` sends no reasoning parameter at all, which is the
-configuration every existing measurement was taken under; `low` is the only lever that
-reaches the dominant cost term, since reasoning tokens bill at the output rate and a
-prompt cache cannot fire at our prompt size. The comparison is the point — nothing here
-adopts an effort, because doing so would retire 014's first-position rate and 015's
-framing sensitivity until their harness is re-run.
+Two arms. `default` sends no reasoning parameter at all, which is the configuration every
+existing measurement in this project was taken under; `low` is the only lever that reaches
+the dominant cost term, since reasoning tokens bill at the output rate and a prompt cache
+cannot fire at our prompt size. It produces the comparison and adopts neither, because
+changing the effort changes what the panel is: the measured first-position rate and the
+question-wording sensitivity were both taken at the default, and neither survives the
+switch without being measured again.
 
     python -m experiments.vote_cost --dry-run
     python -m experiments.vote_cost --out out/cost.jsonl
     python -m experiments.vote_cost --report out/cost.jsonl
 
-Ten votes is not a distribution. It settles an order of magnitude, and 010c's first real
-200-vote run supersedes it.
+Ten votes per arm settles an order of magnitude. It is not a distribution, and nothing
+here should be read as one.
 """
 
 import argparse
@@ -27,6 +24,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import mean, quantiles
+from typing import get_args
 
 from app.config import settings
 from app.llm import OpenRouterPanelLLM, ReasoningEffort
@@ -47,6 +45,11 @@ HEADLINES = {
     "b": "A $14.99 handling fee applies to every order",
 }
 
+# The default panel size, chosen so that a practical tie is expressible at the ±7 ROPE.
+# A per-vote figure is extrapolated to it because the question behind this harness is what
+# one full test costs.
+PANEL_SIZE = 200
+
 DEFAULT_ARMS: tuple[ReasoningEffort | None, ...] = (None, "low")
 
 # FIXED_PANEL is five personas, so two replicates is the ticket's ten votes per arm. The
@@ -57,15 +60,22 @@ DEFAULT_REPLICATES = 2
 
 @dataclass(frozen=True)
 class CostRow:
+    """One vote's usage, labelled with the arm and panelist it came from.
+
+    `usage` is held whole rather than flattened into columns: a copy of every `VoteUsage`
+    field would have to be mapped out and back, and each hop is somewhere the optional
+    fields could quietly acquire a zero.
+
+    `error` is set exactly when the vote failed, which is also when `usage` is None — a
+    refused vote produces a row so that a re-read can see the refusal, since `records`
+    cannot carry one.
+    """
+
     arm: str
     replicate: int
     persona_id: str
-    input_tokens: int | None
-    cached_tokens: int | None
-    output_tokens: int | None
-    reasoning_tokens: int | None
-    cost: float | None
-    seconds: float | None
+    usage: VoteUsage | None
+    error: str | None = None
 
 
 def _arm_name(effort: ReasoningEffort | None) -> str:
@@ -73,20 +83,13 @@ def _arm_name(effort: ReasoningEffort | None) -> str:
 
 
 def _rows(
-    arm: ReasoningEffort | None, replicate: int, panel_ids: list[str], usage: tuple
+    arm: ReasoningEffort | None,
+    replicate: int,
+    panel_ids: list[str],
+    usage: tuple[VoteUsage | None, ...],
 ) -> list[CostRow]:
     return [
-        CostRow(
-            arm=_arm_name(arm),
-            replicate=replicate,
-            persona_id=persona_id,
-            input_tokens=u.input_tokens if u else None,
-            cached_tokens=u.cached_tokens if u else None,
-            output_tokens=u.output_tokens if u else None,
-            reasoning_tokens=u.reasoning_tokens if u else None,
-            cost=u.cost if u else None,
-            seconds=u.seconds if u else None,
-        )
+        CostRow(arm=_arm_name(arm), replicate=replicate, persona_id=persona_id, usage=u)
         for persona_id, u in zip(panel_ids, usage)
     ]
 
@@ -111,47 +114,54 @@ def collect_cost_rows(
                 llm=llm,
                 seed=ORDER_SEED + replicate,
             )
-            for failure in votes.failures:
-                print(
-                    f"  ! {_arm_name(arm)}/{replicate} {failure.persona_id}: "
-                    f"{failure.error}"
-                )
             rows += _rows(
                 arm,
                 replicate,
                 [record.persona_id for record in votes.records],
                 votes.usage,
             )
+            # A refused vote is the schema-compliance signal: cheaper reasoning that stops
+            # satisfying the response schema turns a saving into a lost vote, which is
+            # strictly worse than not saving. Recorded as a row, with the exception type
+            # only — the full message carries the model's own output.
+            rows += [
+                CostRow(
+                    arm=_arm_name(arm),
+                    replicate=replicate,
+                    persona_id=failure.persona_id,
+                    usage=None,
+                    error=failure.error.split(":")[0],
+                )
+                for failure in votes.failures
+            ]
     return rows
 
 
+# `quantiles(n=20)` needs at least 20 points to place every cut between two observations;
+# below that it interpolates, and below four it is reporting the maximum under another
+# name. So the p95 is suppressed rather than printed from a handful of values.
+#
+# p95 and not the p99 a read timeout wants: a p99 needs on the order of a hundred
+# observations before it stops being the single slowest one. Ten votes cannot supply it,
+# and the first full-panel run can.
+_MIN_FOR_PERCENTILE = 4
+
+
 def _spread(values: list[float]) -> str:
-    """min/mean/max, plus p95 once there are enough values for it to mean anything."""
+    """min/mean/max, plus a p95 once there are enough values to place one."""
     if not values:
         return "unreported"
     body = f"min {min(values):.4g}  mean {mean(values):.4g}  max {max(values):.4g}"
-    if len(values) >= 4:
+    if len(values) >= _MIN_FOR_PERCENTILE:
         body += f"  p95 {quantiles(values, n=20)[18]:.4g}"
     return body
 
 
 def report(rows: list[CostRow]) -> None:
-    """Print each arm's reading, and the two comparisons the ticket exists to make."""
+    """Print each arm's reading, and set the two figures against each other."""
     for arm in dict.fromkeys(row.arm for row in rows):
         arm_rows = [row for row in rows if row.arm == arm]
-        usage = tuple(
-            VoteUsage(
-                input_tokens=row.input_tokens or 0,
-                cached_tokens=row.cached_tokens,
-                output_tokens=row.output_tokens or 0,
-                reasoning_tokens=row.reasoning_tokens,
-                cost=row.cost,
-                seconds=row.seconds or 0.0,
-            )
-            if row.input_tokens is not None
-            else None
-            for row in arm_rows
-        )
+        usage = tuple(row.usage for row in arm_rows)
         totals = total_usage(usage)
         reported = [u for u in usage if u is not None]
 
@@ -174,6 +184,12 @@ def report(rows: list[CostRow]) -> None:
             f"  cached tokens    {totals.cached_tokens} over "
             f"{totals.cached_reported}/{totals.votes} votes reporting"
         )
+        refused = [row for row in arm_rows if row.error is not None]
+        if refused:
+            print(
+                f"  !! {len(refused)} vote(s) never returned a parseable answer: "
+                f"{', '.join(sorted({row.error or '' for row in refused}))}"
+            )
 
         # Reasoning tokens are a *subset* of the output tokens, not a third term — the
         # provider reports them as a breakdown of `completion_tokens`. Adding them again
@@ -191,9 +207,11 @@ def report(rows: list[CostRow]) -> None:
         )
         print(f"  cost derived     ${derived:.6f} at $0.25/$2 per M")
         if per_vote_reported is not None:
+            per_vote_derived = derived / max(totals.usage_reported, 1)
             print(
-                f"  → per 200 votes  ${per_vote_reported * 200:.4f} reported, "
-                f"${derived / max(totals.usage_reported, 1) * 200:.4f} derived"
+                f"  → per {PANEL_SIZE} votes  "
+                f"${per_vote_reported * PANEL_SIZE:.4f} reported, "
+                f"${per_vote_derived * PANEL_SIZE:.4f} derived"
             )
 
     # Reasoning must visibly differ between arms, or a wired-up effort and an ignored one
@@ -201,9 +219,11 @@ def report(rows: list[CostRow]) -> None:
     # applied".
     by_arm = {
         arm: [
-            row.reasoning_tokens
+            row.usage.reasoning_tokens
             for row in rows
-            if row.arm == arm and row.reasoning_tokens is not None
+            if row.arm == arm
+            and row.usage is not None
+            and row.usage.reasoning_tokens is not None
         ]
         for arm in dict.fromkeys(row.arm for row in rows)
     }
@@ -212,7 +232,7 @@ def report(rows: list[CostRow]) -> None:
         print(
             f"\nreasoning tokens by arm: { {a: round(m, 1) for a, m in means.items()} }"
         )
-        if len(set(round(m) for m in means.values())) == 1:
+        if len(set(means.values())) == 1:
             print("  !! arms did not differ — suspect the parameter before the finding")
 
 
@@ -222,20 +242,30 @@ def _write(rows: list[CostRow], path: Path) -> None:
 
 
 def _read(path: Path) -> list[CostRow]:
-    return [
-        CostRow(**json.loads(line)) for line in path.read_text().splitlines() if line
-    ]
+    rows = []
+    for line in path.read_text().splitlines():
+        if not line:
+            continue
+        row = json.loads(line)
+        usage = row.pop("usage")
+        rows.append(CostRow(**row, usage=VoteUsage(**usage) if usage else None))
+    return rows
+
+
+# Read off the type rather than re-listed, so a level added there reaches the CLI. A
+# second copy would silently reject the new level, and an effort the provider does not
+# recognise is accepted by the request and then does nothing.
+EFFORTS: dict[str, ReasoningEffort | None] = {"default": None} | {
+    effort: effort for effort in get_args(ReasoningEffort.__value__)
+}
 
 
 def _effort(value: str) -> ReasoningEffort | None:
-    if value == "default":
-        return None
-    allowed = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
-    if value not in allowed:
+    if value not in EFFORTS:
         raise argparse.ArgumentTypeError(
-            f"unknown effort {value!r}; expected default or one of {', '.join(allowed)}"
+            f"unknown effort {value!r}; expected one of {', '.join(EFFORTS)}"
         )
-    return value
+    return EFFORTS[value]
 
 
 def main() -> None:

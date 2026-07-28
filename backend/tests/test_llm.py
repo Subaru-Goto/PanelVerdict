@@ -6,6 +6,8 @@ from langchain_core.messages.ai import (
     UsageMetadata,
 )
 
+from langchain_core.exceptions import OutputParserException
+from langchain_core.output_parsers.pydantic import PydanticOutputParser
 from langchain_openai import ChatOpenAI
 
 from app.llm import OpenRouterPanelLLM, _vote_response, build_vote_messages
@@ -97,6 +99,16 @@ def _raw(
     )
 
 
+def _real_parse_error(text: str) -> Exception:
+    """The exception langchain itself puts in `parsing_error`, produced by the parser
+    rather than described — a hand-rolled stand-in cannot show what its message contains.
+    """
+    parser = PydanticOutputParser(pydantic_object=PanelVoteOutput)
+    with pytest.raises(OutputParserException) as caught:
+        parser.invoke(AIMessage(content=text))
+    return caught.value
+
+
 def _result(raw: AIMessage, parsed: PanelVoteOutput | None = None) -> dict[str, object]:
     return {
         "raw": raw,
@@ -174,25 +186,50 @@ def test_the_observed_latency_travels_with_the_vote() -> None:
     assert response.usage.seconds == 4.65
 
 
-def test_a_parsing_error_raises_and_names_the_failure() -> None:
-    """include_raw stops a parse failure raising on its own — it comes back in the
-    dict. A caller that only checked `parsed` would file an empty vote as a real one,
-    so this is converted back into the raise `vote` already promised, carrying the
-    reason rather than a dump of the whole message."""
-    raw = AIMessage(content="not json at all")
-    result = {"raw": raw, "parsed": None, "parsing_error": ValueError("bad json")}
+def test_a_parsing_error_raises_rather_than_passing_for_a_vote() -> None:
+    """include_raw stops a parse failure raising on its own — it comes back in the dict
+    beside a null `parsed`, so a caller that checked only `parsed` would file an empty
+    result as a real vote."""
+    result = {
+        "raw": AIMessage(content="not json at all"),
+        "parsed": None,
+        "parsing_error": _real_parse_error("not json at all"),
+    }
 
     with pytest.raises(RuntimeError) as caught:
         _vote_response(result, seconds=1.0)
 
-    assert "bad json" in str(caught.value)
-    assert "not json at all" not in str(caught.value)
+    assert "OutputParserException" in str(caught.value)
+
+
+def test_the_raise_does_not_repeat_the_output_that_failed_to_parse() -> None:
+    """langchain formats the parse failure as `f"Invalid json output: {text}"`, so
+    interpolating its message would copy the model's whole reply into `VoteFailure.error`
+    and from there into a log line. Only the type is carried.
+
+    The fixture is the exception the parser really raises: a hand-rolled `ValueError`
+    would let this test pass while the shipped path still copied the text.
+    """
+    result = {
+        "raw": AIMessage(content="Sorry, I cannot choose. Contact ada@example.com"),
+        "parsed": None,
+        "parsing_error": _real_parse_error(
+            "Sorry, I cannot choose. Contact ada@example.com"
+        ),
+    }
+
+    with pytest.raises(RuntimeError) as caught:
+        _vote_response(result, seconds=1.0)
+
+    assert "OutputParserException" in str(caught.value)
+    assert "ada@example.com" not in str(caught.value)
+    assert "Invalid json output" not in str(caught.value)
 
 
 def test_cached_input_tokens_are_carried_when_reported() -> None:
-    """prompt-caching.md concluded a cache cannot fire at our prompt size, from published
-    thresholds rather than observation. Carrying the figure is what lets a real run either
-    confirm that or overturn it — and cached input bills at a reduced rate regardless."""
+    """Cached input bills at a reduced rate, so the figure is part of a vote's cost.
+    Carrying it is also what lets a real run confirm or overturn the expectation that no
+    prefix of ours is cache-eligible."""
     raw = _raw()
     raw.usage_metadata["input_token_details"]["cache_read"] = 0
 
@@ -235,9 +272,14 @@ def test_a_reasoning_effort_is_sent_as_the_unified_object() -> None:
 
 def test_the_default_arm_sends_no_reasoning_parameter_at_all() -> None:
     """Every measurement this project has was taken at the provider's default effort, so
-    the default has to stay untouched rather than become an explicit medium."""
+    the default has to stay untouched rather than become an explicit medium.
+
+    Asserted as the key's absence from the outbound parameters rather than as the field
+    being None, because the field being None is its own default — that assertion would
+    still pass if the parameter were never wired up at all.
+    """
     llm = OpenRouterPanelLLM(
         api_key="test", base_url="http://openrouter.invalid", model="openai/gpt-5-mini"
     )
 
-    assert _bound_model(llm).reasoning is None
+    assert "reasoning" not in _bound_model(llm)._default_params
