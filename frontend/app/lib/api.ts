@@ -9,6 +9,13 @@ export type PreferenceExposure = {
   shipping_b: number;
 };
 
+/** How likely each choice is to be the wrong one. Same shape as `PreferenceExposure`,
+ *  different unit — a probability in 0-1, so `formatPercent` and never `formatPoints`. */
+export type PreferenceProbability = {
+  shipping_a: number;
+  shipping_b: number;
+};
+
 export type PanelVerdict = {
   /** E[p] — the share of the panel expected to prefer B. */
   share_preferring_b: number;
@@ -19,7 +26,7 @@ export type PanelVerdict = {
   /** The band this verdict was decided against; it travels with the verdict. */
   rope: [number, number];
   /** P(that choice loses by a gap the band would call worth having), each direction. */
-  probability_worth_acting_on: PreferenceExposure;
+  probability_worth_acting_on: PreferenceProbability;
   probability_practical_tie: number;
   /** Smallest gap this panel size could have called decisive; null if no split could. */
   detectable_gap: number | null;

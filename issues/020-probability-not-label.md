@@ -92,11 +92,16 @@ verdict is *reported*, not what counts as a meaningful difference.
 ## Closed 2026-07-28
 
 `PanelVerdict` carries `probability_worth_acting_on`, `probability_practical_tie` and
-`detectable_gap`; `outcome` is gone from the payload. `rope_verdict` itself stays, as the
-**stopping** signal only — that is where a coarse label costs a batch rather than a
-recommendation, and where `_CONFIRMATIONS = 3` needs something discrete to count agreement
-over. `undecided` is retired as a *stored* answer, which is what the ticket asked; it survives
-in `Batch.verdict`, which never leaves the module.
+`detectable_gap`; `outcome` is gone from the payload. `rope_verdict` itself stays, for
+`_CONFIRMATIONS = 3` only — counting batches *agreeing* needs something discrete to compare,
+and there the coarseness costs a batch rather than a recommendation. This does **not**
+pre-decide [010d](010d-adaptive-stopping.md), which may well replace the label with a
+continuous quantity crossing a threshold; it keeps working what already works.
+
+`undecided` is retired as a *stored* answer, which is what the ticket asked. It survives on
+`Batch.verdict`, which has no caller outside `verdict.py` today — but [011](011-build-report-ui.md)'s
+batch-streaming progress is where that stops being true, so the label needs a decision there
+rather than an assumption that it is already private.
 
 `detectable_gap` computes from *n* and the band, so `config.py`'s per-profile ±26/±17/±14
 figures are **deleted rather than recomputed there**: a resolution beside the table would
@@ -116,9 +121,15 @@ Three deviations from the ticket as written:
 3. **The frontend moved too, because it was reading `outcome`.** Removing the field would
    otherwise have rendered a blank headline rather than failing. The recommendation is derived
    at render time and the bar is the verdict's **own `credible_mass`** — the one credibility
-   the payload already states — because any other number would be one nobody signed off.
-   Consequence worth knowing: at 65/100 the headline still declines to call it, since 0.946
-   is under 0.95. The difference is that the 0.946 is now on screen next to it, which was the
-   complaint.
+   the payload already states — because any other number would be one nobody signed off. It is
+   printed beside the two probabilities, since the ticket asked for a *stated* threshold and a
+   bar the reader cannot see is the same withholding in a smaller form. Consequence worth
+   knowing: at 65/100 the headline still declines to call it, since 0.946 is under 0.95. The
+   difference is that the 0.946 is now on screen next to it, which was the complaint.
+
+`probability_worth_acting_on` gets its **own type** rather than reusing `PreferenceExposure`.
+The two are structurally identical and differ only in unit — probability in 0-1 against
+preference-share points — and the frontend picks the formatter by hand, so a reader that
+formatted 0.95 as "95 points" would be wrong by the width of the scale.
 
 401 tests green (+2), `tsc --noEmit` and eslint clean.

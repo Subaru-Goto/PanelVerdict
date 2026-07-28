@@ -5,14 +5,15 @@ from scipy import integrate, stats
 
 from app.schemas import VoteRecord
 from app.verdict import (
+    _ROPE,
     _confirmed,
     detectable_gap,
     expected_preference_shortfall,
-    probability_practical_tie,
-    probability_worth_acting_on,
     panel_progress,
     panel_verdict,
     posterior,
+    probability_practical_tie,
+    probability_worth_acting_on,
     rope_verdict,
     tally_votes,
 )
@@ -359,15 +360,22 @@ class TestPanelVerdictPayload:
         assert result.expected_preference_shortfall.shipping_b == exposure.shipping_b
 
     def test_it_reports_the_band_as_probabilities_and_a_resolution(self) -> None:
-        result = panel_verdict(preferring_b=120, total=200)
-        outside = probability_worth_acting_on(preferring_b=120, total=200)
+        """The 65/100 row of 020's table, which is the split the three-way label got
+        wrong: 0.946 reported as `undecided`. Written as the published numbers rather
+        than as calls to the same functions, so a mis-wired argument cannot agree."""
+        result = panel_verdict(preferring_b=65, total=100)
 
-        assert result.probability_worth_acting_on.shipping_a == outside.shipping_a
-        assert result.probability_worth_acting_on.shipping_b == outside.shipping_b
-        assert result.probability_practical_tie == probability_practical_tie(
-            preferring_b=120, total=200
+        assert result.probability_worth_acting_on.shipping_a == pytest.approx(
+            0.946, abs=5e-4
         )
-        assert result.detectable_gap == detectable_gap(200)
+        assert result.detectable_gap == pytest.approx(0.17, abs=5e-3)
+        # The three regions partition one posterior, so the payload's own numbers must
+        # close — the only check that they came from the same split and the same band.
+        assert (
+            result.probability_worth_acting_on.shipping_a
+            + result.probability_worth_acting_on.shipping_b
+            + result.probability_practical_tie
+        ) == pytest.approx(1.0)
 
     def test_the_payload_names_no_winner(self) -> None:
         assert "winner" not in panel_verdict(preferring_b=200, total=200).model_dump()
@@ -418,8 +426,8 @@ class TestActionableProbability:
 class TestDetectableGap:
     """The smallest gap a panel of a given size could call decisive.
 
-    This is what makes a thin panel's null result readable: "could have detected 26
-    points, found nothing" says something, where "undecided" does not.
+    This is what makes a thin panel's null result readable: "could have detected a gap
+    this wide, found nothing" says something, where "undecided" does not.
     """
 
     @pytest.mark.parametrize("total", [25, 100, 200, 400])
@@ -427,7 +435,7 @@ class TestDetectableGap:
         """Asserted as a boundary rather than against a recomputed number: at the gap
         the verdict is decisive, and one whole vote below it, it is not. A test that
         re-derived the value the same way the code does could not fail."""
-        gap = detectable_gap(total)
+        gap = detectable_gap(total=total)
         assert gap is not None
 
         at = round(total * (0.5 + gap))
@@ -440,7 +448,7 @@ class TestDetectableGap:
         )
 
     def test_a_bigger_panel_detects_a_smaller_gap(self) -> None:
-        gaps = [detectable_gap(n) for n in (25, 50, 100, 200, 400)]
+        gaps = [detectable_gap(total=n) for n in (25, 50, 100, 200, 400)]
 
         assert all(gap is not None for gap in gaps)
         assert gaps == sorted(gaps, reverse=True)
@@ -448,9 +456,9 @@ class TestDetectableGap:
     def test_no_panel_can_detect_a_gap_inside_the_band(self) -> None:
         """A difference the band calls negligible is negligible at any sample size, so
         the gap can never fall below the band's own half-width however much is spent."""
-        rope_half = 0.57 - 0.5
+        rope_half = _ROPE[1] - 0.5
 
-        assert all(detectable_gap(n) > rope_half for n in (25, 200, 2000))
+        assert all(detectable_gap(total=n) > rope_half for n in (25, 200, 2000))
 
     def test_the_gap_tracks_the_analytic_prediction(self) -> None:
         """Checked against a different formula rather than against itself: a 95%
@@ -459,4 +467,4 @@ class TestDetectableGap:
         for total in (100, 200, 400):
             predicted = 0.07 + 0.98 / total**0.5
 
-            assert detectable_gap(total) == pytest.approx(predicted, abs=0.015)
+            assert detectable_gap(total=total) == pytest.approx(predicted, abs=0.015)

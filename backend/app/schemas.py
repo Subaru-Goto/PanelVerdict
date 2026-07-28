@@ -181,8 +181,20 @@ class PreferenceExposure(BaseModel):
     shipping_b: float
 
 
+class PreferenceProbability(BaseModel):
+    """How likely each choice is to be the wrong one, both directions.
+
+    Structurally identical to `PreferenceExposure` and deliberately not it: one is a
+    probability in 0-1, the other a count of preference-share points, and a reader that
+    formatted 0.95 as "95 points" would be off by the width of the whole scale.
+    """
+
+    shipping_a: float
+    shipping_b: float
+
+
 class PanelVerdict(BaseModel):
-    """The panel's preference for B as a distribution, plus a decision about it.
+    """The panel's preference for B as a distribution, and the band's own probabilities.
 
     `share_preferring_b` is the estimate; `probability_majority_prefers_b` is
     confidence in its direction. They are different questions and move
@@ -192,12 +204,9 @@ class PanelVerdict(BaseModel):
     difference is worth acting on, which is a product decision rather than a derived
     quantity, so a verdict silent about it could be re-labelled later unnoticed.
 
-    The band is reported as **probabilities rather than a bucket**, which is what it was
-    specified as. A three-way label reads `undecided` for every split from a coin flip to a
-    near-certainty — at 65/100 it says `undecided` about something the numbers put near
-    0.95 — so the bucket that carried the least information was also the one returned most
-    often. A recommendation is something a reader derives from these against a threshold
-    they can see, not something collapsed away before they get here.
+    **No field here names a recommendation.** That is derived at render time against a
+    threshold the reader can see, because a threshold applied here is one they cannot: the
+    same word would stand for everything between a coin flip and a near-certainty.
 
     `detectable_gap` is the smallest gap this panel size could have called decisive. It is
     what makes a null result readable: a wide interval alone cannot distinguish *"they are
@@ -212,7 +221,7 @@ class PanelVerdict(BaseModel):
     credible_interval: tuple[float, float]
     credible_mass: float
     rope: tuple[float, float]
-    probability_worth_acting_on: PreferenceExposure
+    probability_worth_acting_on: PreferenceProbability
     probability_practical_tie: float
     detectable_gap: float | None
     expected_preference_shortfall: PreferenceExposure
