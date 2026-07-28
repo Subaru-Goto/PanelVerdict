@@ -31,6 +31,13 @@ Today nothing stops a 22-persona verdict being presented like a 200-persona one.
 
 The statistics already say something concrete, and it is the natural place to anchor:
 
+> **Both bullets below are wrong, and the correction is this ticket's main finding
+> (2026-07-28).** The ~1,100 figure was 009's **±3** requirement, not ±7; at ±7 a tie becomes
+> expressible at n=194. But the real error is the other way round: `practical_tie` is reported
+> on only **~5.6%** of genuinely tied panels at n=200, so it is ~94% unavailable *at full
+> size*. Thinning cannot remove an outcome that was never reliably there, so this cannot be
+> the basis for a floor. See the resolution below.
+
 - At the ±7 ROPE, `practical_tie` needs roughly **1,100 votes** to be expressible at all
   ([009](009-build-bayesian-layer.md)). Below that, one of three outcomes is unreachable —
   and a verdict that *cannot* return `practical_tie` is not a weaker verdict, it is a

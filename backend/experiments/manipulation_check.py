@@ -294,7 +294,7 @@ def main() -> None:
     parser.add_argument("--arms", type=_selected_arms, default=ARMS)
     parser.add_argument("--pairs", type=_selected_pairs, default=PAIRS)
     parser.add_argument("--framings", type=_selected_framings, default=FRAMINGS)
-    parser.add_argument("--model", default=settings.panel_model)
+    parser.add_argument("--model", default=settings.panel.model)
     parser.add_argument("--workers", type=int, default=_DEFAULT_WORKERS)
     parser.add_argument("--out", type=Path, default=Path("experiments/out/votes.jsonl"))
     parser.add_argument(

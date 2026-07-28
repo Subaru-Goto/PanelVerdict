@@ -27,14 +27,20 @@ end-to-end run is a straight line that either works or does not.
 
 ## What this ticket owns
 
-**The panel size.** `select_panel(size=...)` accepts any size ≥ 1 on purpose — it is a
-mechanism, and a retrieval function that refused small draws would block the tests and any
-segment-vs-segment comparison. So the policy lands here:
+**The panel size** — now a config profile, not a constant this ticket picks.
+`settings.panel.size` is declared and unread until this ticket consumes it, the same status
+`settings.targeting_model` has.
 
 - [007](007-build-targeting-query-translation.md) asks for **100–300 personas**, all
   target-matched.
-- **n=200 is the signed-off default** (2026-07-27), chosen so `practical_tie` is reachable
-  at the ±7 ROPE ([009](009-build-bayesian-layer.md)).
+- `dev` 25 · `demo` 100 · `prod` 200, defaulting to `dev` so an unconfigured run costs a
+  cent rather than a tenth of the credit cap. Resolutions and costs are in `config.py`.
+- **The reason for 200 changed on 2026-07-28, while the number stayed.** It had been chosen
+  so `practical_tie` would be reachable at the ±7 ROPE; a tie is in fact reported on only
+  **~5.6%** of genuinely tied panels at that size, so that reason never held. What justifies
+  200 is its **resolution**: it calls a ±14-point gap decisive, for $0.107 a run.
+- Sizing is not fixed forever: deriving n from the resolution a customer asks for is
+  [019](019-derive-panel-size-from-resolution.md), a v2 ticket.
 
 **Three counts in the payload — requested, matched, voted.** The verdict rests on the third
 (`len(votes.records)`), and all three have to reach the report or

@@ -30,7 +30,7 @@ def get_panel_llm() -> PanelLLM:
     return OpenRouterPanelLLM(
         api_key=key.get_secret_value(),
         base_url=settings.openrouter_base_url,
-        model=settings.panel_model,
+        model=settings.panel.model,
     )
 
 
