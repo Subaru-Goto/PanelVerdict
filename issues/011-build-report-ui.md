@@ -11,7 +11,9 @@ status: open
 
 The report dashboard:
 
-- vote split, posterior plot (P(B>A), **preference share** + CrI — see the amendment), ROPE verdict,
+- vote split, posterior plot (P(B>A), **preference share** + CrI — see the amendment), the band
+  as probabilities plus the panel's resolution ([020](020-probability-not-label.md) retired the
+  three-way label; the placeholder UI derives the headline, this ticket designs it),
 - ~~segment breakdown (target vs. control group)~~ — dropped 2026-07-26, see below,
 - reason list (reason *clustering* is fog — see map Notes),
 - **live batch-streaming progress** ("87/200 personas voted…") over SSE,

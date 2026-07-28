@@ -25,18 +25,20 @@ class PanelProfile:
 
 type ProfileName = Literal["dev", "demo", "prod"]
 
-# Measured 2026-07-28 at $0.000536/vote (see docs/research/panel-model-selection.md).
-# "Resolution" is the smallest preference gap a panel of that size can call decisive at
-# 95% credibility, against the ±7 band — it degrades gracefully rather than hitting a
-# cliff, which is why a cheap profile is a real panel and not a broken one.
+# Costs measured 2026-07-28 at $0.000536/vote (docs/research/panel-model-selection.md);
+# nothing derives them, so they are recorded here.
 #
-#   dev   25 → ±26 pts, $0.013/run — plumbing, where the verdict's content is irrelevant
-#   demo 100 → ±17 pts, $0.054/run — enough panelists to read as a panel
-#   prod 200 → ±14 pts, $0.107/run — ~93 runs inside the $10 credit cap
+#   dev   25 → $0.013/run — plumbing, where the verdict's content is irrelevant
+#   demo 100 → $0.054/run — enough panelists to read as a panel
+#   prod 200 → $0.107/run — ~93 runs inside the $10 credit cap
+#
+# What each size *buys* is not recorded here: `verdict.detectable_gap` computes it from the
+# size and the band, and every report carries it. A figure written down beside the table
+# would silently outlive a change to either input.
 #
 # 200 keeps the size it was signed off at, but not the reason: it was chosen so that a
 # `practical_tie` would be reachable, and a tie turns out to be reported on only ~5.6% of
-# genuinely tied panels at that size. The defensible reason is the resolution above.
+# genuinely tied panels at that size. What defends it is the gap it can resolve.
 PROFILES: dict[ProfileName, PanelProfile] = {
     "dev": PanelProfile(size=25, model="openai/gpt-5-mini"),
     "demo": PanelProfile(size=100, model="openai/gpt-5-mini"),

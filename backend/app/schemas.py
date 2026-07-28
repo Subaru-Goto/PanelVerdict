@@ -192,6 +192,17 @@ class PanelVerdict(BaseModel):
     difference is worth acting on, which is a product decision rather than a derived
     quantity, so a verdict silent about it could be re-labelled later unnoticed.
 
+    The band is reported as **probabilities rather than a bucket**, which is what it was
+    specified as. A three-way label reads `undecided` for every split from a coin flip to a
+    near-certainty — at 65/100 it says `undecided` about something the numbers put near
+    0.95 — so the bucket that carried the least information was also the one returned most
+    often. A recommendation is something a reader derives from these against a threshold
+    they can see, not something collapsed away before they get here.
+
+    `detectable_gap` is the smallest gap this panel size could have called decisive. It is
+    what makes a null result readable: a wide interval alone cannot distinguish *"they are
+    equivalent"* from *"this panel was too small to tell"*.
+
     None of these are click-through rates. The panel chose *between* two variants;
     real readers mostly see one.
     """
@@ -201,7 +212,9 @@ class PanelVerdict(BaseModel):
     credible_interval: tuple[float, float]
     credible_mass: float
     rope: tuple[float, float]
-    outcome: RopeVerdict
+    probability_worth_acting_on: PreferenceExposure
+    probability_practical_tie: float
+    detectable_gap: float | None
     expected_preference_shortfall: PreferenceExposure
 
 

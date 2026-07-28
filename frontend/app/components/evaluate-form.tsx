@@ -2,25 +2,31 @@
 
 import { useState, type FormEvent } from "react";
 
-import {
-  evaluate,
-  type EvaluateResponse,
-  type PanelVerdict,
-  type RopeOutcome,
-} from "../lib/api";
+import { evaluate, type EvaluateResponse, type PanelVerdict } from "../lib/api";
 
-const OUTCOME_LABEL: Record<RopeOutcome, string> = {
-  decisive: "Panel leans clearly",
-  practical_tie: "Practical tie",
-  undecided: "Not enough votes to tell",
+/** The probability that the panel's lead is worth acting on, whichever way it leans. */
+const actionable = (verdict: PanelVerdict): number =>
+  Math.max(
+    verdict.probability_worth_acting_on.shipping_a,
+    verdict.probability_worth_acting_on.shipping_b,
+  );
+
+/** A recommendation derived here rather than delivered as a label, so the probability it
+ *  rests on stays on screen beside it. The bar is the verdict's own credible mass — the
+ *  credibility everything else in the report is already stated at. */
+const headline = (verdict: PanelVerdict): string => {
+  if (actionable(verdict) >= verdict.credible_mass) return "Panel leans clearly";
+  if (verdict.probability_practical_tie >= verdict.credible_mass)
+    return "Practical tie";
+  return "No call at this credibility";
 };
 
-const OUTCOME_ADVICE: Record<RopeOutcome, string> = {
-  decisive: "The preference is wide enough to be worth acting on.",
-  practical_tie:
-    "Credibly too close to matter — pick either, or test a bolder variant.",
-  undecided:
-    "The interval still straddles the tie band; more votes would be needed.",
+const advice = (verdict: PanelVerdict): string => {
+  if (actionable(verdict) >= verdict.credible_mass)
+    return "The lead is wide enough to be worth acting on.";
+  if (verdict.probability_practical_tie >= verdict.credible_mass)
+    return "Credibly too close to matter — pick either, or test a bolder variant.";
+  return "Read the probability above and decide against your own bar; more votes would sharpen it.";
 };
 
 /** Which variant the panel leans toward. B is only the reference, not the default. */
@@ -96,9 +102,7 @@ export default function EvaluateForm() {
       {result && (
         <section className="flex flex-col gap-4">
           <div className="flex flex-col gap-2 rounded border border-zinc-200 p-4 dark:border-zinc-800">
-            <p className="text-sm text-zinc-500">
-              {OUTCOME_LABEL[result.verdict.outcome]}
-            </p>
+            <p className="text-sm text-zinc-500">{headline(result.verdict)}</p>
             <p className="text-lg font-semibold">
               {LEADING_SIDE(result) === "b"
                 ? result.variants.b
@@ -110,9 +114,12 @@ export default function EvaluateForm() {
               {formatPercent(result.verdict.credible_interval[0])} to{" "}
               {formatPercent(result.verdict.credible_interval[1])}.
             </p>
-            <p className="text-sm text-zinc-500">
-              {OUTCOME_ADVICE[result.verdict.outcome]}
+            <p className="text-sm">
+              {formatPercent(actionable(result.verdict))} chance the lead is worth
+              acting on, {formatPercent(result.verdict.probability_practical_tie)}{" "}
+              chance the two are too close to matter.
             </p>
+            <p className="text-sm text-zinc-500">{advice(result.verdict)}</p>
             <p className="text-sm text-zinc-500">
               Picking A risks{" "}
               {formatPoints(result.verdict.expected_preference_shortfall.shipping_a)},
@@ -121,6 +128,13 @@ export default function EvaluateForm() {
               of panel preference. Treated as a tie within{" "}
               {formatPoints(0.5 - result.verdict.rope[0])} of even.
             </p>
+            {result.verdict.detectable_gap !== null && (
+              <p className="text-sm text-zinc-500">
+                A panel this size can resolve a lead of{" "}
+                {formatPoints(result.verdict.detectable_gap)} or more, so anything
+                narrower than that reads as no call rather than as equivalence.
+              </p>
+            )}
             <p className="text-sm text-zinc-500">
               {Object.entries(result.tally.counts)
                 .map(([id, n]) => `${id.toUpperCase()}: ${n}`)

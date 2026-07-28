@@ -39,13 +39,14 @@ def test_evaluate_returns_verdict_variants_and_reasons(stub_llm) -> None:
     assert set(body["tally"]["counts"]) == {"a", "b"}
     assert "winner" not in body["tally"]
 
-    # the verdict is the posterior plus a decision, and it carries its own band —
-    # nothing in the payload names a winner.
+    # the verdict is the posterior plus the band's probabilities, and it carries its own
+    # band — nothing in the payload names a winner.
     verdict = body["verdict"]
     assert verdict["rope"] == [0.43, 0.57]
-    assert verdict["outcome"] in ("decisive", "practical_tie", "undecided")
     assert 0.0 <= verdict["share_preferring_b"] <= 1.0
     assert 0.0 <= verdict["probability_majority_prefers_b"] <= 1.0
+    assert set(verdict["probability_worth_acting_on"]) == {"shipping_a", "shipping_b"}
+    assert 0.0 <= verdict["probability_practical_tie"] <= 1.0
     assert set(verdict["expected_preference_shortfall"]) == {"shipping_a", "shipping_b"}
     assert "winner" not in verdict
 
