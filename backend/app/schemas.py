@@ -173,6 +173,10 @@ class VoteTally(BaseModel):
 
 RopeVerdict = Literal["decisive", "practical_tie", "undecided"]
 
+# Why a run ended before its panel did. A subset of RopeVerdict on purpose:
+# `undecided` is not a reason to stop, it is the reason to keep buying votes.
+StopReason = Literal["decisive", "practical_tie"]
+
 
 class PreferenceExposure(BaseModel):
     """Preference-share points each choice risks, both directions."""
@@ -385,5 +389,8 @@ class EvaluateResponse(BaseModel):
     counts: PanelCounts
     query: TargetQuery
     notices: tuple[Notice, ...]
+    # An early stop is a fact about the run, carried as data so the report can
+    # distinguish "stopped because answered" from a shortfall without parsing prose.
+    stop_reason: StopReason | None
     variants: dict[str, str]
     votes: list[VoteRecord]

@@ -6,15 +6,14 @@ from scipy import integrate, stats
 from app.schemas import VoteRecord
 from app.verdict import (
     _ROPE,
-    _confirmed,
     detectable_gap,
     expected_preference_shortfall,
-    panel_progress,
     panel_verdict,
     posterior,
     probability_practical_tie,
     probability_worth_acting_on,
     rope_verdict,
+    stopping_decision,
     tally_votes,
 )
 
@@ -243,91 +242,41 @@ class TestExpectedPreferenceShortfall:
             expected_preference_shortfall(preferring_b=11, total=10)
 
 
-class TestPanelProgress:
-    def test_it_accumulates_across_batches(self) -> None:
-        """Batches report what they alone did; accumulating is this function's job,
-        because a conjugate update is just addition and a caller doing it by hand is
-        a place to get it wrong."""
-        result = panel_progress([(12, 20), (11, 20), (14, 20)])
-        assert [(b.preferring_b, b.total) for b in result.batches] == [
-            (12, 20),
-            (23, 40),
-            (37, 60),
-        ]
+class TestStoppingDecision:
+    """The continuous rule 010d chose over label agreement: stop when the report
+    would already make a call. Expected values are 020's published table plus the
+    verified tie readings, not recomputations."""
 
-    def test_every_batch_carries_what_it_implied_at_the_time(self) -> None:
-        """The animation needs the interval per batch, not only at the end."""
-        result = panel_progress([(15, 20), (15, 20)])
-        first, second = result.batches
-        assert first.posterior.total == 20
-        assert second.posterior.total == 40
-        first_width = first.posterior.interval[1] - first.posterior.interval[0]
-        second_width = second.posterior.interval[1] - second.posterior.interval[0]
-        assert second_width < first_width
+    def test_a_clear_lead_stops_as_decisive(self) -> None:
+        assert stopping_decision(preferring_b=66, total=100) == "decisive"
+        assert stopping_decision(preferring_b=67, total=100) == "decisive"
 
-    def test_by_default_it_never_stops_early(self) -> None:
-        """Peeking inflates false `decisive` on a tied panel roughly 25-fold, so
-        the whole panel is always spent unless a caller opts out."""
-        result = panel_progress([(20, 20)] * 5)
-        assert len(result.batches) == 5
-        assert result.stopped_early is False
-        assert result.batches[0].verdict == "decisive"
+    def test_a_lead_for_a_stops_too(self) -> None:
+        """Direction-blind: A winning ends the run exactly like B winning."""
+        assert stopping_decision(preferring_b=33, total=100) == "decisive"
 
-    def test_stopping_needs_the_verdict_confirmed_not_merely_reached(self) -> None:
-        result = panel_progress([(20, 20)] * 5, stop_early=True, confirmations=3)
-        assert len(result.batches) == 3
-        assert result.stopped_early is True
+    def test_just_under_the_bar_continues(self) -> None:
+        """65/100 is the split the old label got wrong at 0.946 — and 0.946 is
+        still under 0.95, so the run keeps buying votes rather than calling it."""
+        assert stopping_decision(preferring_b=65, total=100) is None
 
-    def test_one_confirmation_reproduces_the_naive_rule(self) -> None:
-        result = panel_progress([(20, 20)] * 5, stop_early=True, confirmations=1)
-        assert len(result.batches) == 1
-        assert result.stopped_early is True
+    def test_a_proven_tie_stops(self) -> None:
+        """The stop the label rule could never take: an even split at n=200 is
+        credibly inside the band (0.954), so more votes answer nothing."""
+        assert stopping_decision(preferring_b=100, total=200) == "practical_tie"
 
-    def test_a_flip_flopping_verdict_never_confirms(self) -> None:
-        """The failure the streak exists to catch: a run that crosses a ROPE edge and
-        falls back has not settled anything."""
-        assert _confirmed(["decisive", "undecided", "decisive"], 3) is False
-        assert _confirmed(["decisive", "decisive", "undecided"], 3) is False
-        assert _confirmed(["undecided", "decisive", "decisive", "decisive"], 3) is True
+    def test_an_unproven_tie_continues(self) -> None:
+        """Equivalence is expensive: dead even at n=100 is only 0.84 inside the
+        band, and at n=170 still 0.93 — the tie stop needs nearly the full cap."""
+        assert stopping_decision(preferring_b=50, total=100) is None
+        assert stopping_decision(preferring_b=85, total=170) is None
 
-    def test_a_run_of_undecided_is_not_a_confirmation(self) -> None:
-        assert _confirmed(["undecided"] * 5, 3) is False
-
-    def test_the_two_definite_verdicts_do_not_confirm_each_other(self) -> None:
-        """Both are actionable but they are not the same answer, so a streak mixing
-        them has settled nothing."""
-        assert _confirmed(["decisive", "practical_tie", "decisive"], 3) is False
-        assert _confirmed(["practical_tie"] * 3, 3) is True
-
-    def test_reaching_the_last_batch_is_not_stopping_early(self) -> None:
-        result = panel_progress([(20, 20)] * 3, stop_early=True, confirmations=3)
-        assert len(result.batches) == 3
-        assert result.stopped_early is False
-
-    def test_the_final_batch_is_the_reportable_one(self) -> None:
-        result = panel_progress([(12, 20), (11, 20)])
-        assert result.final is result.batches[-1]
-        assert result.final.total == 40
-
-    def test_a_panel_with_no_batches_is_a_caller_error(self) -> None:
-        with pytest.raises(ValueError, match="at least one batch"):
-            panel_progress([])
-
-    def test_an_impossible_batch_is_refused(self) -> None:
-        with pytest.raises(ValueError):
-            panel_progress([(21, 20)])
-
-    def test_the_band_flows_through_to_every_batch(self) -> None:
-        """Asserted by the band changing an outcome, not merely being accepted: a
-        26/40 split is a tie inside a wide band and undecided inside the default."""
-        per_batch = [(13, 20), (13, 20)]
-        assert [b.verdict for b in panel_progress(per_batch).batches] == [
-            "undecided",
-            "undecided",
-        ]
-        assert [
-            b.verdict for b in panel_progress(per_batch, rope=(0.2, 0.8)).batches
-        ] == ["undecided", "practical_tie"]
+    def test_the_bar_is_the_credible_mass_not_a_new_constant(self) -> None:
+        """65/100 continues at the default bar and stops at a lower one — the
+        threshold is the caller's credibility, nothing invented here."""
+        assert stopping_decision(preferring_b=65, total=100, credible_mass=0.9) == (
+            "decisive"
+        )
 
 
 class TestPanelVerdictPayload:

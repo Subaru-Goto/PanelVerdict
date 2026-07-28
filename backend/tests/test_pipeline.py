@@ -146,6 +146,90 @@ def test_a_full_run_carries_no_vote_notice(conn) -> None:
     assert result.notices == result.selection.notices
 
 
+class PrefersLLM:
+    """Votes for one headline by content, blind to position — the double that makes
+    a lopsided panel deterministic under counterbalanced presentation orders."""
+
+    def __init__(self, favourite: str) -> None:
+        self._favourite = favourite
+
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+        return voted("option_1" if option_1 == self._favourite else "option_2")
+
+
+def test_a_clear_winner_stops_after_two_confirming_chunks(conn) -> None:
+    """Unanimous chunks put P(worth acting on) at ~1.0 from the first boundary,
+    but a mid-run stop needs two consecutive confirming boundaries — the streak
+    the simulation sourced — so the third chunk is the one never bought."""
+    seed_japanese(conn, 75)
+
+    result = _run(conn, size=75, llm=PrefersLLM(_VARIANTS["b"]))
+
+    assert result.stop_reason == "decisive"
+    assert result.counts.voted == 50
+    assert result.counts.matched == 75
+    assert result.tally.total == 50
+
+
+def test_an_early_stop_reads_as_an_answer_not_a_shortfall(conn) -> None:
+    """010d's sharpest warning: stopping because the answer is clear and stopping
+    because votes failed are opposite situations with the same arithmetic. The
+    early stop is a reading; only failures are a warning."""
+    seed_japanese(conn, 75)
+
+    result = _run(conn, size=75, llm=PrefersLLM(_VARIANTS["b"]))
+
+    (stopped,) = [n for n in result.notices if "Stopped after" in n.message]
+    assert stopped.severity == "reading"
+    assert "50 of the 75" in stopped.message
+    assert not any("did not vote" in n.message for n in result.notices)
+
+
+class FlakyPrefersLLM:
+    """Prefers one headline by content, but the first `failures` calls raise —
+    the double for the trap case where a stop fires with failed votes on board."""
+
+    def __init__(self, favourite: str, failures: int) -> None:
+        self._favourite = favourite
+        self._remaining = failures
+        self._lock = threading.Lock()
+
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+        with self._lock:
+            if self._remaining > 0:
+                self._remaining -= 1
+                raise RuntimeError("transient")
+        return voted("option_1" if option_1 == self._favourite else "option_2")
+
+
+def test_a_stop_on_the_last_chunk_with_failures_is_not_an_early_stop(conn) -> None:
+    """The trap the first version fell into: a decision firing on the final
+    boundary with a few failed votes left nobody unasked, so "the remaining votes
+    would not have changed the call" would be a false sentence about votes that
+    merely failed. No stopped notice — the failures keep their own warning."""
+    seed_japanese(conn, 50)
+
+    result = _run(conn, size=50, llm=FlakyPrefersLLM(_VARIANTS["b"], failures=2))
+
+    assert result.stop_reason == "decisive"
+    assert result.counts.voted == 48
+    assert not any("Stopped after" in n.message for n in result.notices)
+    assert any("2 of the 50" in n.message for n in result.notices)
+
+
+def test_an_undecided_run_buys_the_whole_panel(conn) -> None:
+    """Counterbalanced orders under a position-only voter split near even, and an
+    even split at n=50 proves nothing — so every chunk is bought and no stopped
+    notice appears."""
+    seed_japanese(conn, 50)
+
+    result = _run(conn, size=50)
+
+    assert result.stop_reason is None
+    assert result.counts.voted == 50
+    assert not any("Stopped after" in n.message for n in result.notices)
+
+
 def test_coverage_travels_as_data(conn) -> None:
     """The ticket's sharpest case: a target that named nowhere and one that named
     somewhere unservable resolve to the identical country tuple, and only `coverage`
