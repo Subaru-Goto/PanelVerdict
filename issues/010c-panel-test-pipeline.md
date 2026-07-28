@@ -3,8 +3,8 @@ title: "The panel-test pipeline: target description in, verdict out"
 labels: [wayfinder:task]
 parent: 010-assemble-orchestrator-graph
 blocked_by: []
-assignee: null
-status: open
+assignee: Subaru-Goto
+status: closed
 ---
 
 ## Goal
@@ -84,3 +84,45 @@ the actual per-test cost and the latency distribution.
   frontier has graduated it.
 - Segment breakdown target vs. control: dropped 2026-07-26. A production panel is one target
   group and the posterior is read off it; controls live in the testing track.
+
+## Closed 2026-07-28
+
+`app/pipeline.py::run_panel_test` — the straight line, with the HTTP layer mapping its two
+refusals: an **empty panel is 422** (the target names an audience this pool cannot serve;
+nothing was spent, and the model is never constructed), a **panel with zero votes is 502**
+(the provider failed; the message carries exception types only). A partial run returns 200
+with the shortfall visible in the counts — no threshold invented, per this ticket;
+[010b](010b-partial-run-threshold.md) still owns that line. `FIXED_PANEL` is out of the
+product path; `/evaluate` now requires `target_description` and returns counts, the query
+(with `coverage` as data) and the full notice set.
+
+Deviations and corrections:
+
+1. **The pgvector requirement above was stale, and the connection design collapsed with
+   it.** `retrieve_panel` selects scalar columns only — [017](017-representative-sampling.md)
+   removed the persona vector from this path after this ticket was written — so there is no
+   pool, no `configure=` hook, and no adapter: one plain `psycopg.connect` per request.
+   `register_vector` remains the write path's and [012](012-build-analyst-chatbot-tools.md)'s
+   concern.
+2. **`test_id` is a uuid4 correlation id only.** There is no `tests` table until
+   [010e](010e-per-vote-cache.md); it ties one run's log lines and vote records together.
+3. **The frontend is deliberately broken until [011](011-build-report-ui.md).** The form
+   does not send `target_description` yet; accepted rather than patched minimally twice.
+
+**The first paid run through this pipeline happened by accident, and its exact cost is
+unrecoverable** — a validation script turned out to run against live credentials and the
+seeded dev pool: 25 votes + 1 translation, ~$0.014 *derived* from the 010a rate, because the
+bare script never configured logging and the INFO usage line was dropped. The failure this
+section warned about, demonstrated on its own ticket. Two consequences: uvicorn configures
+logging in real deployments, but any bare script driving the pipeline must call
+`logging.basicConfig` first; and the **deliberate** first 200-vote run — which supersedes
+010a's 10-persona reading and supplies the latency distribution
+[010f](010f-budget-guard.md) wants — is still to be done, $0.107 at prod size. One free
+observation from the accidental payload: with literal headlines "a"/"b", 23/25 personas
+chose 'a', mostly reasoning "first letter of the alphabet" — 014's position/content bias,
+live.
+
+`FIXED_PANEL` itself survives in `app/panel.py` referenced only by its own test —
+dead weight to sweep in a later cleanup, not product path.
+
+412 tests green (+11), ruff check and format clean.
