@@ -229,19 +229,22 @@ class OpenRouterPanelLLM:
         # token, which is what keeps votes already collected comparable with votes cast
         # after it.
         #
-        # `reasoning` and not `reasoning_effort`: langchain passes both through verbatim
-        # on the Chat Completions path, and only the Responses API path renames one into
-        # the other — so on our path the unified object OpenRouter documents is the one
-        # that arrives. Left unset by default because every measurement this project has
-        # was taken at the provider's default effort.
+        # `reasoning_effort` and not the `reasoning={"effort": ...}` object the provider
+        # documents, because setting `reasoning` is one of the conditions that switches
+        # langchain to the **Responses API** — a different endpoint, whose response
+        # carries no `token_usage` and therefore no `cost`, and which nothing measured
+        # here has ever been taken against. Confirmed on the wire: the object form comes
+        # back with Responses-shaped metadata and the cost missing, while this form stays
+        # on Chat Completions and reports it. Forcing `use_responses_api=False` alongside
+        # the object is not a way out — the request is then rejected outright.
+        #
+        # Left unset by default, so the default arm is the provider's own default effort.
         self._model = ChatOpenAI(
             model=model,
             base_url=base_url,
             api_key=api_key,
             max_retries=2,
-            reasoning=None
-            if reasoning_effort is None
-            else {"effort": reasoning_effort},
+            reasoning_effort=reasoning_effort,
         ).with_structured_output(PanelVoteOutput, include_raw=True)
 
     def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:

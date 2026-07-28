@@ -12,8 +12,8 @@ question-wording sensitivity were both taken at the default, and neither survive
 switch without being measured again.
 
     python -m experiments.vote_cost --dry-run
-    python -m experiments.vote_cost --out out/cost.jsonl
-    python -m experiments.vote_cost --report out/cost.jsonl
+    python -m experiments.vote_cost --out experiments/out/cost.jsonl
+    python -m experiments.vote_cost --report experiments/out/cost.jsonl
 
 Ten votes per arm settles an order of magnitude. It is not a distribution, and nothing
 here should be read as one.
@@ -276,7 +276,7 @@ def main() -> None:
         default=DEFAULT_ARMS,
     )
     parser.add_argument("--replicates", type=int, default=DEFAULT_REPLICATES)
-    parser.add_argument("--out", type=Path, default=Path("out/cost.jsonl"))
+    parser.add_argument("--out", type=Path, default=Path("experiments/out/cost.jsonl"))
     parser.add_argument(
         "--report", type=Path, help="read a previous run and re-print it"
     )

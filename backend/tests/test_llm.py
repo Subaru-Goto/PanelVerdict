@@ -252,13 +252,16 @@ def _bound_model(llm: OpenRouterPanelLLM) -> ChatOpenAI:
 
 
 def test_a_reasoning_effort_is_sent_as_the_unified_object() -> None:
-    """The trap this guards is that an unrecognised or misnamed reasoning parameter is
-    accepted and then does nothing, so an arm measuring `low` would return the default's
-    numbers and read as "effort makes no difference" rather than as a wiring bug. It
-    reaches through the runnable because the only other way to notice is a paid call.
+    """Two traps, and the second one cost a confounded arm to find.
 
-    `reasoning` and not `reasoning_effort`: both are passed through verbatim on the Chat
-    Completions path, and OpenRouter documents only the former.
+    An unrecognised or misnamed reasoning parameter is accepted and then does nothing, so
+    an arm measuring `low` would return the default's numbers and read as "effort makes no
+    difference" rather than as a wiring bug.
+
+    And setting the documented `reasoning={"effort": ...}` object switches langchain to the
+    Responses API, which reports no `token_usage` and therefore no cost — measuring against
+    a different endpoint from every earlier reading. `reasoning_effort` is the form that
+    stays put, and staying put is the half worth asserting.
     """
     llm = OpenRouterPanelLLM(
         api_key="test",
@@ -266,20 +269,23 @@ def test_a_reasoning_effort_is_sent_as_the_unified_object() -> None:
         model="openai/gpt-5-mini",
         reasoning_effort="low",
     )
+    bound = _bound_model(llm)
 
-    assert _bound_model(llm)._default_params["reasoning"] == {"effort": "low"}
+    assert bound._default_params["reasoning_effort"] == "low"
+    assert bound._use_responses_api({}) is False
 
 
 def test_the_default_arm_sends_no_reasoning_parameter_at_all() -> None:
     """Every measurement this project has was taken at the provider's default effort, so
     the default has to stay untouched rather than become an explicit medium.
 
-    Asserted as the key's absence from the outbound parameters rather than as the field
-    being None, because the field being None is its own default — that assertion would
-    still pass if the parameter were never wired up at all.
+    The endpoint is asserted alongside it: the default arm has to be on Chat Completions
+    for its cost figures to exist at all, and for the two arms to be comparable.
     """
     llm = OpenRouterPanelLLM(
         api_key="test", base_url="http://openrouter.invalid", model="openai/gpt-5-mini"
     )
+    bound = _bound_model(llm)
 
-    assert "reasoning" not in _bound_model(llm)._default_params
+    assert bound._default_params.get("reasoning_effort") is None
+    assert bound._use_responses_api({}) is False
