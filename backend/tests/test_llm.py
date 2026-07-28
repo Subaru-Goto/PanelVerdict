@@ -289,3 +289,23 @@ def test_the_default_arm_sends_no_reasoning_parameter_at_all() -> None:
 
     assert bound._default_params.get("reasoning_effort") is None
     assert bound._use_responses_api({}) is False
+
+
+def test_configuration_declares_everything_the_adapter_binds() -> None:
+    """The vote cache keys on `configuration` (010e), so every constructor knob that
+    changes what the model is asked must change it — 015 measured the verdict moving
+    with the question's wording, and a cached vote must not answer a reworded one."""
+
+    base = {"api_key": "test", "base_url": "http://openrouter.invalid"}
+    configurations = [
+        OpenRouterPanelLLM(**base, model="openai/gpt-5-mini").configuration,
+        OpenRouterPanelLLM(**base, model="openai/gpt-6").configuration,
+        OpenRouterPanelLLM(
+            **base, model="openai/gpt-5-mini", question="Which would you click?"
+        ).configuration,
+        OpenRouterPanelLLM(
+            **base, model="openai/gpt-5-mini", reasoning_effort="low"
+        ).configuration,
+    ]
+
+    assert len(set(configurations)) == len(configurations)

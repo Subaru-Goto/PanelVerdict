@@ -20,6 +20,8 @@ from tests.factories import (
 class SpyLLM:
     """Votes option_1 and counts its calls, so a test can assert it was never asked."""
 
+    configuration = "stub"
+
     def __init__(self) -> None:
         self.calls = 0
         self._lock = threading.Lock()
@@ -33,6 +35,8 @@ class SpyLLM:
 class FailingLLM:
     """Every vote raises, with a message a response body must never carry."""
 
+    configuration = "stub"
+
     def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
         raise RuntimeError("the model's entire output, which must stay in the log")
 
@@ -40,6 +44,8 @@ class FailingLLM:
 class FlakyLLM:
     """The first `failures` votes raise; the rest succeed. Which personas lose their
     vote depends on thread scheduling, and no test here should care."""
+
+    configuration = "stub"
 
     def __init__(self, failures: int) -> None:
         self._remaining = failures
@@ -150,6 +156,8 @@ class PrefersLLM:
     """Votes for one headline by content, blind to position — the double that makes
     a lopsided panel deterministic under counterbalanced presentation orders."""
 
+    configuration = "stub"
+
     def __init__(self, favourite: str) -> None:
         self._favourite = favourite
 
@@ -188,6 +196,8 @@ def test_an_early_stop_reads_as_an_answer_not_a_shortfall(conn) -> None:
 class FlakyPrefersLLM:
     """Prefers one headline by content, but the first `failures` calls raise —
     the double for the trap case where a stop fires with failed votes on board."""
+
+    configuration = "stub"
 
     def __init__(self, favourite: str, failures: int) -> None:
         self._favourite = favourite
@@ -277,3 +287,72 @@ def test_usage_is_logged_even_when_no_verdict_comes_out(conn, caplog) -> None:
         _run(conn, llm=FailingLLM())
 
     assert any("usage" in record.message for record in caplog.records)
+
+
+class TestVoteCache:
+    """010e: every vote is stored keyed on the fingerprint of the question asked,
+    and the ledger is read before the model is — a re-run replays, a broken run
+    resumes, and nothing downstream can tell a cached vote from a paid one."""
+
+    def test_a_re_run_replays_the_whole_test_without_paying(self, conn) -> None:
+        seed_japanese(conn, 5)
+        first = _run(conn)
+
+        spy = SpyLLM()
+        second = _run(conn, llm=spy)
+
+        assert spy.calls == 0
+        # Record equality includes test_id: a cached vote keeps the id of the run
+        # that paid for it — provenance, not this run's correlation id.
+        assert second.votes.records == first.votes.records
+        assert second.verdict == first.verdict
+
+    def test_a_resumed_run_pays_only_for_the_votes_that_failed(self, conn) -> None:
+        seed_japanese(conn, 5)
+        first = _run(conn, llm=FlakyLLM(failures=2))
+        assert len(first.votes.records) == 3
+
+        spy = SpyLLM()
+        second = _run(conn, llm=spy)
+
+        assert spy.calls == 2
+        assert len(second.votes.records) == 5
+        assert second.votes.failures == ()
+        # Usage stays parallel to records — None per cached vote — and the cached
+        # three sit among the five in panel order, exactly as first cast.
+        assert len(second.votes.usage) == 5
+        cached = {r.persona_id for r in first.votes.records}
+        assert [
+            r for r in second.votes.records if r.persona_id in cached
+        ] == first.votes.records
+
+    def test_a_changed_headline_is_a_new_question(self, conn) -> None:
+        seed_japanese(conn, 5)
+        _run(conn)
+
+        spy = SpyLLM()
+        run_panel_test(
+            conn,
+            description="Japanese homeowners",
+            variants=_VARIANTS | {"b": "A different promise"},
+            size=5,
+            translator=StubTranslator(),
+            llm=spy,
+        )
+
+        assert spy.calls == 5
+
+    def test_paid_votes_survive_the_run_dying_before_the_response(self, conn) -> None:
+        """The ledger's whole point: a run that dies at vote 180 must not cost 180
+        votes to get back. The request connection only commits at a clean exit, so
+        a store that waits for it dies with the run — votes must be committed per
+        chunk, and a rollback (what a crashed request leaves behind) must not
+        take them."""
+        seed_japanese(conn, 5)
+        _run(conn)
+        conn.rollback()
+
+        spy = SpyLLM()
+        _run(conn, llm=spy)
+
+        assert spy.calls == 0

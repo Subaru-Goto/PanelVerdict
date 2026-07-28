@@ -1,3 +1,5 @@
+import hashlib
+import json
 import random
 from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -96,9 +98,58 @@ def total_usage(usage: Sequence[VoteUsage | None]) -> UsageTotals:
 
 
 class PanelLLM(Protocol):
+    # Everything the adapter itself contributes to what is asked — the model id
+    # plus whatever it binds (the vote question, reasoning effort). It lives on the
+    # adapter rather than travelling as separate parameters so the cache key (010e)
+    # is fingerprinted against the ask that actually happens: a caller cannot hand
+    # the pipeline one description and vote with another, and a knob added to the
+    # adapter joins the key by extending this string, not the protocol.
+    configuration: str
+
     def vote(
         self, *, system_prompt: str, option_1: str, option_2: str
     ) -> VoteResponse: ...
+
+
+@dataclass(frozen=True)
+class VoteRequest:
+    """Exactly what one panelist is asked, as the strings the model receives.
+
+    Assembled in one place so the request that is sent and the request that is
+    fingerprinted cannot drift apart — a fingerprint over a *reconstruction* of the
+    question would go stale the moment the reconstruction and the assembly disagree.
+    """
+
+    system_prompt: str
+    option_1: str
+    option_2: str
+
+
+def build_vote_request(
+    persona: Persona, presentation_order: list[str], *, variants: dict[str, str]
+) -> VoteRequest:
+    first_id, second_id = presentation_order
+    return VoteRequest(
+        system_prompt=render_persona_prompt(persona),
+        option_1=variants[first_id],
+        option_2=variants[second_id],
+    )
+
+
+def vote_fingerprint(request: VoteRequest, *, configuration: str) -> str:
+    """The cache key for one vote: a digest of the question itself.
+
+    Keying on the request's own strings plus the adapter's configuration is what
+    makes invalidation automatic — change the persona template, a headline, the
+    vote question's wording, or the model, and the key changes with it, so a stale
+    entry cannot be served (010e). The presentation order is already inside: a
+    swapped order swaps option_1/option_2. JSON framing so no separator convention
+    is needed for strings that may contain anything.
+    """
+    framed = json.dumps(
+        [configuration, request.system_prompt, request.option_1, request.option_2]
+    )
+    return hashlib.sha256(framed.encode()).hexdigest()
 
 
 def presentation_orders(
@@ -200,11 +251,11 @@ def _cast_vote(
     it already holds the persona. Accumulating usage inside the model adapter instead
     would need no lock either, but nothing would bound it to one run.
     """
-    first_id, second_id = presentation_order
+    request = build_vote_request(persona, presentation_order, variants=variants)
     response = llm.vote(
-        system_prompt=render_persona_prompt(persona),
-        option_1=variants[first_id],
-        option_2=variants[second_id],
+        system_prompt=request.system_prompt,
+        option_1=request.option_1,
+        option_2=request.option_2,
     )
     record = VoteRecord(
         persona_id=persona.id,
@@ -224,12 +275,18 @@ def collect_panel_votes(
     llm: PanelLLM,
     seed: int = ORDER_SEED,
     concurrency: int = VOTE_CONCURRENCY,
+    orders: Sequence[list[str]] | None = None,
 ) -> PanelVotes:
     """Cast every panelist's vote concurrently, and report the ones that failed.
 
     Each panelist sees the two variants in one of two orders, drawn from a balanced
     shuffled assignment, votes positionally (blind to which variant is which), and the
     position is resolved back to a variant id.
+
+    `orders` overrides the internal draw for callers that fixed the pairing before
+    narrowing the panel — the cache split (010e) assigns orders to a whole chunk,
+    then sends only the misses here, and a fresh draw over the smaller panel would
+    re-pair panelists with positions.
 
     A vote that fails after the client's own retries costs that panelist and no other:
     the remaining votes still stand, and the panel comes back short with the reason
@@ -242,7 +299,8 @@ def collect_panel_votes(
         )
 
     first_id, second_id = variants
-    orders = presentation_orders((first_id, second_id), len(panel), seed=seed)
+    if orders is None:
+        orders = presentation_orders((first_id, second_id), len(panel), seed=seed)
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures: list[Future[tuple[VoteRecord, VoteUsage | None]]] = [

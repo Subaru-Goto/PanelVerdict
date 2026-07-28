@@ -9,10 +9,12 @@ from app.schemas import PanelVoteOutput, Persona, TraitLevel
 from app.vote import (
     VoteResponse,
     VoteUsage,
+    build_vote_request,
     collect_panel_votes,
     presentation_orders,
     resolve_choice,
     total_usage,
+    vote_fingerprint,
 )
 from tests.factories import voted
 
@@ -170,6 +172,8 @@ class FailingOnAge:
     """Refuses one panelist and answers the rest, like a model returning nothing
     parseable for one prompt out of two hundred."""
 
+    configuration = "stub"
+
     def __init__(self, age: int) -> None:
         self._age = age
 
@@ -203,6 +207,8 @@ def test_the_votes_are_cast_concurrently() -> None:
     barrier = threading.Barrier(len(panel))
 
     class Rendezvous:
+        configuration = "stub"
+
         def vote(
             self, *, system_prompt: str, option_1: str, option_2: str
         ) -> VoteResponse:
@@ -223,6 +229,8 @@ def test_the_votes_are_cast_concurrently() -> None:
 class EchoingThePrompt:
     """Answers with the prompt it was given, so a record can be checked against the
     panelist it belongs to."""
+
+    configuration = "stub"
 
     def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
         return voted(reason=system_prompt)
@@ -378,3 +386,88 @@ def test_totals_of_a_run_that_reported_nothing_are_zero_not_absent() -> None:
     assert totals.usage_reported == 0
     assert totals.reasoning_tokens == 0
     assert totals.cost == 0.0
+
+
+class TestVoteFingerprint:
+    """The cache key is the question itself (010e): any change to what the model
+    would be asked must change the fingerprint, or a stored vote silently answers a
+    question it was never asked. The ingredients are the exact request strings plus
+    the adapter's configuration — not persona/test ids, which can stay equal across
+    a prompt change."""
+
+    def _key(
+        self,
+        *,
+        persona: Persona | None = None,
+        order: list[str] | None = None,
+        variants: dict[str, str] | None = None,
+        configuration: str = "model=openai/gpt-5-mini",
+    ) -> str:
+        return vote_fingerprint(
+            build_vote_request(
+                persona or _persona("p0"),
+                order or ["vA", "vB"],
+                variants=variants
+                or {"vA": "Save 50% today", "vB": "Members save half"},
+            ),
+            configuration=configuration,
+        )
+
+    def test_the_same_question_keys_the_same(self) -> None:
+        assert self._key() == self._key()
+
+    def test_every_ingredient_of_the_question_changes_the_key(self) -> None:
+        keys = [
+            self._key(),
+            self._key(configuration="model=openai/gpt-6"),
+            # A different age renders a different persona prompt; the id alone would
+            # not, since the prompt deliberately omits it.
+            self._key(persona=_persona("p0", age=55)),
+            self._key(variants={"vA": "Save 50% today!", "vB": "Members save half"}),
+            self._key(order=["vB", "vA"]),
+        ]
+
+        assert len(set(keys)) == len(keys)
+
+
+def test_the_request_shows_the_variants_in_presentation_order() -> None:
+    """option_1 is whatever the order puts first — the position bias (014) lives or
+    dies on this mapping, so the request builder gets its own check."""
+    request = build_vote_request(
+        _persona("p0"),
+        ["vB", "vA"],
+        variants={"vA": "alpha text", "vB": "beta text"},
+    )
+
+    assert request.option_1 == "beta text"
+    assert request.option_2 == "alpha text"
+    assert "30-year-old" in request.system_prompt
+
+
+def test_pre_assigned_orders_are_honoured() -> None:
+    """010e fixes each chunk's orders before splitting it into cache hits and
+    misses, so the misses must arrive with their positions already assigned — a
+    fresh draw over the smaller panel would re-pair panelists with positions and
+    turn every would-be cache hit into a paid miss on the next run."""
+    panel = [_persona("p0"), _persona("p1")]
+    # Both reversed — a split no internal draw would produce, so honouring it is
+    # only explicable by the parameter.
+    orders = [["vB", "vA"], ["vB", "vA"]]
+
+    votes = collect_panel_votes(
+        test_id="t1",
+        variants={"vA": "alpha", "vB": "beta"},
+        panel=panel,
+        llm=AlwaysFirstShown(),
+        orders=orders,
+    )
+
+    assert [r.presentation_order for r in votes.records] == orders
+    assert [r.chosen_variant_id for r in votes.records] == ["vB", "vB"]
+
+
+class AlwaysFirstShown:
+    configuration = "stub"
+
+    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+        return voted("option_1")

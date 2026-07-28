@@ -111,6 +111,8 @@ def test_a_panel_with_no_votes_is_a_bad_gateway_naming_types_only(client, conn) 
     seed_japanese(conn, 3)
 
     class Failing:
+        configuration = "stub"
+
         def vote(self, *, system_prompt: str, option_1: str, option_2: str):
             raise RuntimeError("api key sk-secret rejected")
 
@@ -133,6 +135,8 @@ def test_a_partial_run_returns_a_verdict_with_the_shortfall_in_the_counts(
     seed_japanese(conn, 3)
 
     class RefusingOne:
+        configuration = "stub"
+
         def vote(self, *, system_prompt: str, option_1: str, option_2: str):
             if "31-year-old" in system_prompt:
                 raise RuntimeError("transient")
