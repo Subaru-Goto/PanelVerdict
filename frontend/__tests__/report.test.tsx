@@ -28,7 +28,10 @@ describe("stat tiles", () => {
     expect(tileB.parentElement?.textContent).toContain("0%");
     expect(screen.getByText("Practical tie")).toBeTruthy();
     expect(
-      screen.getByText(/leans under 16.7 points are too small for this panel/),
+      screen.getByText(/chance the true split lands in the tie zone/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/can only detect leans of 16.7 points or more/),
     ).toBeTruthy();
   });
 

@@ -225,16 +225,20 @@ export default function Report({ result }: { result: EvaluateResponse }) {
         <StatTile
           label="Practical tie"
           value={formatPercent(verdict.probability_practical_tie)}
-          detail={
-            verdict.detectable_gap !== null
-              ? `leans under ${formatPoints(verdict.detectable_gap)} are too small for this panel to detect`
-              : undefined
-          }
+          detail="chance the true split lands in the tie zone"
         />
       </div>
       <p className="text-sm text-zinc-500">
         The verdict above only calls a lean or a tie when its chance clears{" "}
-        {formatPercent(verdict.credible_mass)}. Picking A risks{" "}
+        {formatPercent(verdict.credible_mass)}.{" "}
+        {verdict.detectable_gap !== null && (
+          <>
+            This panel can only detect leans of{" "}
+            {formatPoints(verdict.detectable_gap)} or more — a smaller true
+            lean reads as no call, not as a tie.{" "}
+          </>
+        )}
+        Picking A risks{" "}
         {formatPoints(verdict.expected_preference_shortfall.shipping_a)},
         picking B risks{" "}
         {formatPoints(verdict.expected_preference_shortfall.shipping_b)} of
