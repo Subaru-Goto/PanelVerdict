@@ -81,7 +81,7 @@ describe("EvaluateForm", () => {
     expect(
       await screen.findByText(/50 of 200 matched panelists voted/),
     ).toBeTruthy();
-    expect(screen.getByText(/stopped early: the panel had already answered/))
+    expect(screen.getByText(/stopped early: the call was already clear/))
       .toBeTruthy();
   });
 
@@ -108,7 +108,9 @@ describe("coverage", () => {
 
     fillAndSubmit();
 
-    expect(await screen.findByText(/drawn from US, JP, DE/)).toBeTruthy();
+    expect(await screen.findByText("US")).toBeTruthy();
+    expect(screen.getByText("JP")).toBeTruthy();
+    expect(screen.getByText("DE")).toBeTruthy();
   });
 
   it("names the stand-in when a region was approximated", async () => {
@@ -176,7 +178,7 @@ describe("units", () => {
 
     fillAndSubmit();
 
-    const sentence = await screen.findByText(/Picking A risks/);
+    const sentence = await screen.findByText(/Shipping A anyway would give up/);
     expect(sentence.textContent).toContain("0.4 points");
     expect(sentence.textContent).toContain("21.2 points");
   });

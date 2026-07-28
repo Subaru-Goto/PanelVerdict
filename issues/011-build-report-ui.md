@@ -106,7 +106,10 @@ data from the real stopped run; the user picked a hybrid:
 
 - **Layout: the "evidence dashboard"** (prototype variant B). Verdict as one compact
   chip line — not a banner — over a grid of stat tiles (share + CrI, both
-  "shipping X is the mistake" probabilities, tie + resolution), a panel-composition
+  "shipping X is the mistake" probabilities — renamed "Chance X is preferred /
+  by a gap big enough to matter" 2026-07-28 (user: no blame, no win-lose
+  framing; note the wire fields cross over: shipping_b feeds A's tile) —,
+  tie + resolution), a panel-composition
   card (country chips, trait chips showing the `source_phrase`, coverage badge when
   not `requested`, notices listed inside with warnings dotted red), and the reasons
   as an always-visible feed.
