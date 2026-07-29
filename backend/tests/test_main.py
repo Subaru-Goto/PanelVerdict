@@ -11,19 +11,24 @@ from app.main import (
     budget_notice,
     get_analyst,
     get_conn,
+    get_embedder,
     get_panel_llm,
     get_remaining_credit,
     get_translator,
 )
-from app.persistence import persist_pool
+from app.persistence import nearest_panelists, persist_pool
 from app.vote import OutOfCredit
 from tests.factories import (
+    FixedEmbedder,
     ScriptedChatModel,
     StubTranslator,
     make_assembled,
+    make_panel_vote,
     make_persona,
     ndjson_events,
+    pointing,
     seed_japanese,
+    tool_call_message,
     voted,
 )
 
@@ -57,6 +62,8 @@ def client(conn, stub_llm):
     app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
         responses=[AIMessage(content="The interval cleared the band.")]
     )
+    # A real embedding is a paid call; the canned vector keeps /chat free.
+    app.dependency_overrides[get_embedder] = lambda: FixedEmbedder(pointing(0))
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -300,6 +307,63 @@ def test_chat_streams_the_analysts_reply_as_ndjson(client) -> None:
     events = ndjson_events(response.text.splitlines())
     tokens = [e["text"] for e in events if e["type"] == "token"]
     assert "".join(tokens) == "The interval cleared the band."
+    assert events[-1] == {"type": "done"}
+
+
+def test_the_chat_connection_can_bind_a_query_vector(conn, pg_url, monkeypatch) -> None:
+    """Every other test replaces get_conn with the fixture connection, which
+    registers the pgvector adapter — only this test exercises the real
+    dependency. search_personas binds a numpy vector; a connection without the
+    adapter cannot even send that query. (`conn` is here as a precondition:
+    it guarantees the container already has the extension and schema.)"""
+    # database_url is a derived property, so the patch lands on the class.
+    monkeypatch.setattr(type(settings), "database_url", pg_url)
+    dependency = get_conn()
+    try:
+        live = next(dependency)
+        found = nearest_panelists(live, embedding=pointing(0), panel_ids=[], limit=1)
+        assert found == []
+    finally:
+        dependency.close()
+
+
+def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None:
+    """The stream body executes after the handler returns; this pins that the
+    yield-dependency connection is still open when the tool finally runs, and
+    that the whole wiring — request votes → panel scope, embedder → query
+    vector — holds over HTTP, not just in-process."""
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_="US-00000"), embedding=pointing(0)),
+            make_assembled(make_persona(id_="US-00001"), embedding=pointing(1)),
+        ],
+    )
+    app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
+        responses=[
+            tool_call_message(name="search_personas", args={"query": "thrifty"}),
+            AIMessage(content="One panelist stands out."),
+        ]
+    )
+    votes = [
+        make_panel_vote("US-00000").model_dump(mode="json"),
+        make_panel_vote("US-00001").model_dump(mode="json"),
+    ]
+
+    response = client.post(
+        "/chat",
+        json={
+            "thread_id": "t-main-5",
+            "message": "Who here is thrifty?",
+            "result": {**_CHAT_RESULT, "votes": votes},
+        },
+    )
+
+    assert response.status_code == 200
+    events = ndjson_events(response.text.splitlines())
+    assert {"type": "tool", "name": "search_personas"} in events
+    tokens = [e["text"] for e in events if e["type"] == "token"]
+    assert "".join(tokens) == "One panelist stands out."
     assert events[-1] == {"type": "done"}
 
 

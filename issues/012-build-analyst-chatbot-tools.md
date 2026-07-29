@@ -52,6 +52,31 @@ The exact chip set is fog until this ticket is worked (see map Notes).
   upgrade can break the parsing loop in `stream_analyst`; the streaming test
   suite is the tripwire, and the fallback is `stream_mode="messages"` at the
   cost of the tool front edge.
+- **`search_personas` is panel-only (user, 2026-07-29).** The tool searches
+  the voters of the current test (`WHERE id = ANY(<panel ids from
+  result.votes>)`), not the whole pool — the chat lives on one report and the
+  chips are report questions, so the analyst talks about the people on screen.
+  Pool-wide search is deferred until a real "would a different audience
+  differ?" conversation needs it, which pairs with `run_panel_test` anyway.
+  Two review notes (2026-07-29): the scope is honest-client scoping, not a
+  security control — `panel_ids` come from client-supplied `result.votes`,
+  and the pool is one shared synthetic dataset with no tenancy boundary, so
+  nothing confidential is reachable either way. And HNSW being approximate,
+  a selective `id = ANY(panel)` filter can post-filter candidates below
+  `limit` at pool scale; at v1 size the planner seq-scans and results are
+  exact.
+- **Tool dependencies travel by closure (user, 2026-07-29).** `build_tools`
+  grows `conn=` / `embedder=` keyword args and the tool bodies close over
+  them — the pattern `analyze_results` already set. LangChain's
+  `context_schema`/`ToolRuntime` earns its machinery when tools are defined
+  far from where deps are known (shared tool libraries, agent-internal
+  state); these tools are per-request by design, so the closure costs
+  nothing. This closes the ticket's open "closures vs context_schema"
+  question.
+- **`search_personas` returns top-5 (user sign-off, 2026-07-29).** Convention,
+  not measurement: ~40 tokens per persona summary keeps a search around 200
+  tokens while giving the model enough names to answer concretely. Revisit if
+  answers feel starved or bloated once real chats run.
 - **Agent middleware: not adopted in 012a.** The hand-rolled loop is ~30 lines
   and needed neither effort escalation nor per-turn model swaps; the question
   stays open per the 010 amendment and gets its final answer when this ticket
