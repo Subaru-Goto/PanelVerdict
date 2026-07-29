@@ -50,21 +50,43 @@ describe("posterior chart", () => {
   it("names every mark in the legend with its number", () => {
     render(<Report result={makeResponse()} />);
 
-    expect(screen.getByText(/Mean — the panel’s best guess: 29% prefer B/))
-      .toBeTruthy();
     expect(
-      screen.getByText(/true share sits between 17% and 42% \(95% sure\)/),
+      screen.getByText(/^Mean — the estimated split: 29% prefer B\.$/),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/B’s true share sits between 17% and 42% \(95% sure\)/),
     ).toBeTruthy();
     expect(
       screen.getByText(/tie zone: splits from 43% to 57% read as even/),
     ).toBeTruthy();
   });
 
-  it("anchors the axis ends with the scale and the actual headline text", () => {
+  it("annotates the mean line on the chart in both directions", () => {
+    // The chart lives in B-space, so the leading side's share appeared nowhere
+    // on the plot — the reader had to compute 100 − 29 at the dashed line.
     render(<Report result={makeResponse()} />);
 
-    const left = screen.getByText(/^← 0% prefer B/);
-    const right = screen.getByText(/100% prefer B/);
+    expect(
+      screen.getByText(/^estimated split: 71% prefer A · 29% prefer B/),
+    ).toBeTruthy();
+  });
+
+  it("writes each edge's number at its mark on the chart", () => {
+    // The axis has no ticks, so a number that lives only in the legend names a
+    // position the eye cannot find on the plot.
+    render(<Report result={makeResponse()} />);
+
+    const svg = screen.getByRole("img", { name: /posterior distribution/i });
+    for (const edge of ["17%", "42%", "43%", "57%"]) {
+      expect(svg.textContent).toContain(edge);
+    }
+  });
+
+  it("anchors the axis ends with the direction and the actual headline text", () => {
+    render(<Report result={makeResponse()} />);
+
+    const left = screen.getByText(/^← prefer A/);
+    const right = screen.getByText(/^prefer B/);
     expect(left.textContent).toContain("Save 50% today");
     expect(right.textContent).toContain("Members save half");
   });

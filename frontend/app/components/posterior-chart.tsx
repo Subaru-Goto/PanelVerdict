@@ -10,11 +10,14 @@ const SAMPLES = 101;
 // SVG user units — the viewBox scales to the container, so only the ratios
 // matter, not the absolute values.
 const WIDTH = 600;
-const BASELINE = 160;
-const PLOT_TOP = 8;
-const CRI_Y = 172;
+/** The mean label's text baseline, in the headroom band above the plot — the
+ *  curve's peak reaches PLOT_TOP, so a label inside the plot collides with it. */
+const LABEL_Y = 14;
+const PLOT_TOP = 24;
+const BASELINE = 176;
+const CRI_Y = 188;
 /** Clears the CrI bar's 6px round caps below CRI_Y. */
-const HEIGHT = 184;
+const HEIGHT = 200;
 /** Keeps 2px strokes at p = 0 and p = 1 inside the viewBox. */
 const PAD = 4;
 
@@ -64,6 +67,15 @@ export default function PosteriorChart({
   const area = `${curve} L${x(1)},${BASELINE} L${x(0)},${BASELINE} Z`;
   const [criLow, criHigh] = verdict.credible_interval;
   const [ropeLow, ropeHigh] = verdict.rope;
+  const mean = verdict.share_preferring_b;
+  // The chart lives in B-space, so the leading side's share appears nowhere on
+  // the plot without this — a reader at the dashed line had to compute 100 − 29
+  // themselves. Fixed A-then-B order, matching the tiles.
+  const meanLabel =
+    `estimated split: ${formatPercent(1 - mean)} prefer A · ` +
+    `${formatPercent(mean)} prefer B`;
+  // Flipping the anchor keeps the label inside the viewBox wherever the mean sits.
+  const labelOnRight = mean <= 0.5;
 
   return (
     <figure className="flex flex-col gap-2 rounded border border-zinc-200 p-4 dark:border-zinc-800">
@@ -88,6 +100,27 @@ export default function PosteriorChart({
           height={BASELINE - PLOT_TOP}
           className="fill-zinc-200/60 dark:fill-zinc-800/60"
         />
+        {/* Edge numbers sit inside the band's top; the interval's sit beside its
+            bar below the baseline — different rows, so 42% and 43% (7 SVG units
+            apart in x) cannot collide. */}
+        <text
+          x={x(ropeLow) + 4}
+          y={PLOT_TOP + 14}
+          textAnchor="start"
+          fontSize={11}
+          className="fill-zinc-500 dark:fill-zinc-400"
+        >
+          {formatPercent(ropeLow)}
+        </text>
+        <text
+          x={x(ropeHigh) - 4}
+          y={PLOT_TOP + 14}
+          textAnchor="end"
+          fontSize={11}
+          className="fill-zinc-500 dark:fill-zinc-400"
+        >
+          {formatPercent(ropeHigh)}
+        </text>
         <path d={area} className="fill-blue-600/10 dark:fill-blue-500/15" />
         <path
           d={curve}
@@ -96,14 +129,23 @@ export default function PosteriorChart({
           className="fill-none stroke-blue-600 dark:stroke-blue-500"
         />
         <line
-          x1={x(verdict.share_preferring_b)}
+          x1={x(mean)}
           y1={PLOT_TOP}
-          x2={x(verdict.share_preferring_b)}
+          x2={x(mean)}
           y2={BASELINE}
           strokeWidth={2}
           strokeDasharray="5 4"
           className="stroke-blue-600 dark:stroke-blue-500"
         />
+        <text
+          x={labelOnRight ? x(mean) + 8 : x(mean) - 8}
+          y={LABEL_Y}
+          textAnchor={labelOnRight ? "start" : "end"}
+          fontSize={12}
+          className="fill-zinc-600 dark:fill-zinc-400"
+        >
+          {meanLabel}
+        </text>
         <line
           x1={x(0)}
           y1={BASELINE}
@@ -121,12 +163,28 @@ export default function PosteriorChart({
           strokeLinecap="round"
           className="stroke-blue-600 dark:stroke-blue-500"
         />
+        <text
+          x={x(criLow) - 8}
+          y={CRI_Y + 4}
+          textAnchor="end"
+          fontSize={11}
+          className="fill-zinc-500 dark:fill-zinc-400"
+        >
+          {formatPercent(criLow)}
+        </text>
+        <text
+          x={x(criHigh) + 8}
+          y={CRI_Y + 4}
+          textAnchor="start"
+          fontSize={11}
+          className="fill-zinc-500 dark:fill-zinc-400"
+        >
+          {formatPercent(criHigh)}
+        </text>
       </svg>
       <div className="flex justify-between gap-4 text-xs text-zinc-500">
-        <span>← 0% prefer B — all votes to “{variants.a}”</span>
-        <span className="text-right">
-          100% prefer B — all votes to “{variants.b}” →
-        </span>
+        <span>← prefer A — “{variants.a}”</span>
+        <span className="text-right">prefer B — “{variants.b}” →</span>
       </div>
       <ul className="flex flex-col gap-1 text-xs text-zinc-600 dark:text-zinc-400">
         <LegendEntry
@@ -142,8 +200,10 @@ export default function PosteriorChart({
             />
           }
         >
-          Mean — the panel’s best guess:{" "}
-          {formatPercent(verdict.share_preferring_b)} prefer B.
+          {/* The legend speaks one currency — B's share, the chart's own ruler —
+              so the mean (29%) reads straight against the HDI (17–42%) and the
+              band (43–57%). The A reading lives on the on-chart label. */}
+          Mean — the estimated split: {formatPercent(mean)} prefer B.
         </LegendEntry>
         <LegendEntry
           swatch={
@@ -158,7 +218,7 @@ export default function PosteriorChart({
             />
           }
         >
-          {formatPercent(verdict.credible_mass)} HDI — the true share sits
+          {formatPercent(verdict.credible_mass)} HDI — B’s true share sits
           between {formatPercent(criLow)} and {formatPercent(criHigh)} (
           {formatPercent(verdict.credible_mass)} sure).
         </LegendEntry>
