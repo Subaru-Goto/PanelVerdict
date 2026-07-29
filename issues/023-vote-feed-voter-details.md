@@ -3,9 +3,22 @@ title: "Vote feed: show who voted, not their database handle"
 labels: [wayfinder:task]
 parent: 000-map
 blocked_by: [011-build-report-ui]
-assignee: null
-status: open
+assignee: Subaru-Goto
+status: closed
 ---
+
+**Delivered 2026-07-29** in PR #66. Each vote carries a `voter` summary; the
+feed leads with choice, reason, and a client-composed demographic line, Big
+Five behind a `<details>` disclosure in the trait-chip vocabulary, synthetic
+note above the feed. Open questions resolved at implementation: line composed
+client-side (copy iterates in the frontend); chips reused. Income ships as
+the **band**, not the quintile — the vote prompt never mentions a quintile,
+so the wire speaks what the panelist enacted. The wire vote became a new
+`PanelVote` type (ledger's `test_id`/`presentation_order` stay off the wire,
+signed off in review). `vote.py` untouched, fingerprints unaffected. The same
+PR carried a second commit: cold-reader rounds on the posterior chart (mean
+label on-chart, edge numbers at their marks, direction-only axis ends,
+one-currency legend).
 
 ## Goal
 
