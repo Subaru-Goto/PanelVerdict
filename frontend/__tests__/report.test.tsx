@@ -78,6 +78,37 @@ describe("posterior chart", () => {
   });
 });
 
+describe("vote feed", () => {
+  it("shows the voter as a person, never their database handle", () => {
+    // 023: a persona id identifies a row, not a reader. The demographic line is
+    // what makes the reason beside it evidence.
+    render(<Report result={makeResponse()} />);
+
+    expect(screen.queryByText(/US-00042/)).toBeNull();
+    expect(
+      screen.getByText(/34 · female · US · university degree · upper income/),
+    ).toBeTruthy();
+  });
+
+  it("keeps the Big Five behind a disclosure, in the chip vocabulary", () => {
+    render(<Report result={makeResponse()} />);
+
+    expect(screen.getByText("personality")).toBeTruthy();
+    expect(screen.getByText(/agreeableness: very low/)).toBeTruthy();
+    expect(screen.getByText(/conscientiousness: very high/)).toBeTruthy();
+  });
+
+  it("says the voters are synthetic", () => {
+    // The demographics look real enough to ask — so the copy answers before
+    // anyone has to.
+    render(<Report result={makeResponse()} />);
+
+    expect(
+      screen.getByText(/synthetic panelists — sampled personas, not real people/),
+    ).toBeTruthy();
+  });
+});
+
 describe("panel card", () => {
   it("shows each trait as a chip carrying its source phrase", () => {
     // The 017 amendment: the source phrase is the only part of the trait

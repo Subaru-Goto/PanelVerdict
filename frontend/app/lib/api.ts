@@ -34,10 +34,31 @@ export type PanelVerdict = {
   expected_preference_shortfall: PreferenceExposure;
 };
 
+export type Gender = "male" | "female";
+
+/** Income travels as the band the vote prompt rendered — the prompt never
+ *  mentions a quintile, so neither does the wire. */
+export type IncomeBand = "lower" | "middle" | "upper";
+
+/** The voter as a person: demographics verbatim, traits already bucketized to the
+ *  same five levels the vote prompt was rendered from — never raw scores. Every
+ *  voter is synthetic; the feed's copy says so where these fields show. */
+export type VoterSummary = {
+  country: Locale;
+  age: number;
+  gender: Gender;
+  education: EducationLevel;
+  income_band: IncomeBand;
+  traits: Record<TraitName, TraitLevel>;
+};
+
+/** `persona_id` stays for reproducibility, but it identifies a row, not a reader —
+ *  the feed leads with `voter` and never shows the id. */
 export type Vote = {
   persona_id: string;
   chosen_variant_id: string;
   reason: string;
+  voter: VoterSummary;
 };
 
 /** `warning` means the panel is not the one asked for; `reading` means it is, and
@@ -78,7 +99,7 @@ export type TargetQuery = {
   coverage: CoverageRung;
   min_age: number;
   max_age: number;
-  gender: "male" | "female" | null;
+  gender: Gender | null;
   income_quintiles: number[];
   education: EducationLevel[];
   traits: TraitRequest[];

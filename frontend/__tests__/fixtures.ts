@@ -40,6 +40,20 @@ const BASE: EvaluateResponse = {
       persona_id: "US-00042",
       chosen_variant_id: "a",
       reason: "<b>50% off</b> is the only thing here that changes my decision.",
+      voter: {
+        country: "US",
+        age: 34,
+        gender: "female",
+        education: "tertiary",
+        income_band: "upper",
+        traits: {
+          openness: "high",
+          conscientiousness: "very_high",
+          extraversion: "medium",
+          agreeableness: "very_low",
+          neuroticism: "low",
+        },
+      },
     },
   ],
 };

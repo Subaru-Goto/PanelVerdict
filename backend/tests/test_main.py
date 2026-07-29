@@ -68,6 +68,28 @@ def test_evaluate_returns_the_full_panel_test_payload(client, conn) -> None:
     assert len(body["votes"]) == 5
     assert all(vote["reason"] == "clear discount framing" for vote in body["votes"])
 
+    # each vote carries its voter as a person — demographics plus the five trait
+    # levels — while the ledger's provenance (test_id, presentation_order) stays
+    # off the wire (023)
+    vote = body["votes"][0]
+    assert set(vote) == {"persona_id", "chosen_variant_id", "reason", "voter"}
+    assert vote["voter"]["country"] == "JP"
+    assert set(vote["voter"]) == {
+        "country",
+        "age",
+        "gender",
+        "education",
+        "income_band",
+        "traits",
+    }
+    assert set(vote["voter"]["traits"]) == {
+        "openness",
+        "conscientiousness",
+        "extraversion",
+        "agreeableness",
+        "neuroticism",
+    }
+
     # what the verdict is a verdict *on*: the three counts, the query the panel was
     # drawn under (coverage as data, not just the country list), and the notices
     assert body["counts"] == {"requested": _SIZE, "matched": 5, "voted": 5}

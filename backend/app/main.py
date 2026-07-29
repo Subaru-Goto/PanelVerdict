@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import USD_PER_VOTE, settings
 from app.db import check_connection
 from app.llm import OpenRouterPanelLLM, OpenRouterTargetTranslator, remaining_credit
+from app.panel import votes_with_voters
 from app.pipeline import EmptyPanel, NoVotes, run_panel_test
 from app.schemas import EvaluateRequest, EvaluateResponse, Notice
 from app.targeting import TargetTranslator
@@ -135,5 +136,5 @@ def evaluate(
         notices=budget_notice(credit, size=settings.panel.size) + result.notices,
         stop_reason=result.stop_reason,
         variants=variants,
-        votes=result.votes.records,
+        votes=votes_with_voters(result.votes.records, result.selection.panel),
     )
