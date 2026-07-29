@@ -57,7 +57,7 @@ def get_panel_llm() -> PanelLLM:
 
 
 def get_translator() -> TargetTranslator:
-    """Translate user input into structured output for the panel"""
+    """Translate target description into structured output for the panel"""
     return OpenRouterTargetTranslator(
         api_key=_require_api_key(),
         base_url=settings.openrouter_base_url,
