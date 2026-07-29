@@ -415,6 +415,27 @@ class ChatResponse(BaseModel):
     reply: str
 
 
+class ChatStreamEvent(BaseModel):
+    """One NDJSON line of the streaming /chat response (012b).
+
+    A stream commits its HTTP status at the first byte, so failures cannot
+    become a 502 or 402 after tokens have flowed — `error` carries the same
+    fixed sentences in-band instead. `done` exists so the client can tell a
+    finished stream from a dropped connection.
+
+    Serialized with `model_dump_json(exclude_none=True)` — each type uses its
+    own field and the others stay off the wire.
+    """
+
+    type: Literal["tool", "token", "error", "done"]
+    # TODO(user): which field belongs to which type is your contract to keep —
+    # consider whether a discriminated union (one model per type) would say it
+    # better than three optionals, and decide before the frontend consumes this.
+    name: str | None = None
+    text: str | None = None
+    message: str | None = None
+
+
 class EvaluateResponse(BaseModel):
     """One panel test as the report renders it.
 

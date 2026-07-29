@@ -13,6 +13,8 @@ checkpointer is the scale-up path, not a redesign.
 ticket): graph *authoring* stays v2, the modern API does not.
 """
 
+from collections.abc import Iterator
+
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
@@ -106,6 +108,57 @@ def build_tools(result: EvaluateResponse) -> list[BaseTool]:
         return analysis_facts(result).model_dump_json()
 
     return [analyze_results]
+
+
+def stream_analyst(
+    *,
+    model: BaseChatModel,
+    result: EvaluateResponse,
+    thread_id: str,
+    message: str,
+    checkpointer: BaseCheckpointSaver,
+) -> Iterator[str]:
+    """Yield the agent's turn as NDJSON lines — one `ChatStreamEvent` each.
+
+    Same agent, same step budget, same failure *meanings* as `run_analyst` —
+    but a stream cannot change its HTTP status after the first byte, so every
+    failure becomes one in-band `error` event carrying the same fixed sentence
+    a status code used to carry. Nothing the model or provider wrote may ever
+    appear in an error event.
+    """
+    # TODO(user) 1: build the tools and the agent exactly as run_analyst does,
+    #   and derive the same step budget.
+    #
+    # TODO(user) 2: iterate the modern streaming API —
+    #       agent.stream(
+    #           {"messages": [HumanMessage(content=message)]},
+    #           {"configurable": {"thread_id": thread_id},
+    #            "recursion_limit": limit},
+    #           stream_mode="messages",
+    #       )
+    #   Each item is a (message_chunk, metadata) pair. Decide per pair:
+    #     - a ToolMessage means a tool just finished → yield a "tool" event
+    #       with its name (the dock's "checking the numbers…" moment);
+    #     - an AIMessageChunk whose text is non-empty is a piece of the
+    #       answer → yield a "token" event. Chunks that only carry tool-call
+    #       deltas have empty text — skip them, never emit empty tokens.
+    #   Serialize every event with model_dump_json(exclude_none=True) + "\n".
+    #
+    # TODO(user) 3: after the loop completes, yield the "done" event.
+    #
+    # TODO(user) 4: wrap the loop so failures become ONE "error" event and the
+    #   generator stops — no re-raise, the stream is the only channel left:
+    #     - GraphRecursionError → the AnalystLoopOverrun sentence,
+    #     - APIStatusError with status 402 → the OutOfCredit sentence,
+    #     - anything else → a generic fixed sentence naming only the
+    #       exception *type* (the vote path shows why: messages can carry
+    #       provider and model text).
+    #
+    # When this is green, switch /chat in main.py to StreamingResponse
+    # (media_type="application/x-ndjson") and delete run_analyst plus its
+    # now-dead tests — the invoke path should not survive as a second way
+    # to do the same thing.
+    raise NotImplementedError
 
 
 def run_analyst(
