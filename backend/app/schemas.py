@@ -411,29 +411,43 @@ class EvaluateRequest(BaseModel):
     headline_b: str
 
 
-class ChatResponse(BaseModel):
-    reply: str
+class ToolEvent(BaseModel):
+    """A tool just started — the front edge, so the dock can say what the
+    analyst is doing while a minutes-long tool is still running."""
+
+    type: Literal["tool"] = "tool"
+    name: str
 
 
-class ChatStreamEvent(BaseModel):
-    """One NDJSON line of the streaming /chat response (012b).
+class TokenEvent(BaseModel):
+    """One piece of the answer, in arrival order."""
 
-    A stream commits its HTTP status at the first byte, so failures cannot
-    become a 502 or 402 after tokens have flowed — `error` carries the same
-    fixed sentences in-band instead. `done` exists so the client can tell a
-    finished stream from a dropped connection.
+    type: Literal["token"] = "token"
+    text: str
 
-    Serialized with `model_dump_json(exclude_none=True)` — each type uses its
-    own field and the others stay off the wire.
-    """
 
-    type: Literal["tool", "token", "error", "done"]
-    # TODO(user): which field belongs to which type is your contract to keep —
-    # consider whether a discriminated union (one model per type) would say it
-    # better than three optionals, and decide before the frontend consumes this.
-    name: str | None = None
-    text: str | None = None
-    message: str | None = None
+class ErrorEvent(BaseModel):
+    """The turn failed, in-band: a stream commits its HTTP status at the
+    first byte, so failures cannot become a 502 or 402 after tokens have
+    flowed — `message` carries the same fixed sentences a status code used
+    to carry, never provider or model text. Terminal: no `done` follows."""
+
+    type: Literal["error"] = "error"
+    message: str
+
+
+class DoneEvent(BaseModel):
+    """The stream finished cleanly — what tells the client a completed turn
+    from a dropped connection."""
+
+    type: Literal["done"] = "done"
+
+
+# One NDJSON line of the streaming /chat response. A union, not one
+# model with optionals: each event type states the field it must carry, so
+# a tool event without a name cannot be constructed, and nothing depends on
+# a serialization flag to keep the unused fields off the wire.
+ChatStreamEvent = ToolEvent | TokenEvent | ErrorEvent | DoneEvent
 
 
 class EvaluateResponse(BaseModel):
@@ -461,7 +475,7 @@ class EvaluateResponse(BaseModel):
 class ChatRequest(BaseModel):
     """One analyst turn: the new message, the thread it continues, and the test.
 
-    History lives server-side under `thread_id` (012, user decision): the
+    History lives server-side under `thread_id`: the
     checkpointed transcript keeps ToolMessages, so a follow-up is answered from
     context instead of re-buying the tool calls a text-only replay would drop.
     The client mints the id — one per rendered report.

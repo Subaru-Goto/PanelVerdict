@@ -43,6 +43,15 @@ The exact chip set is fog until this ticket is worked (see map Notes).
   settled before 012c consumes it): `/chat` becomes a streaming response,
   frontend reads it via fetch + ReadableStream (EventSource cannot POST).
   012a's loop stays the engine — only the transport changes.
+- **Stream wire: `stream_events(version="v3")`, accepted as experimental
+  (user, 2026-07-29).** The v3 protocol emits `LangChainBetaWarning` and
+  LangChain may still reshape it, but it is the only mode that surfaces
+  `tool-started` — the front edge the dock needs while `run_panel_test` runs
+  for minutes. Known trade: the event anatomy (envelope dicts, two message
+  dialects) was established by probing, not docs, so a langchain/langgraph
+  upgrade can break the parsing loop in `stream_analyst`; the streaming test
+  suite is the tripwire, and the fallback is `stream_mode="messages"` at the
+  cost of the tool front edge.
 - **Agent middleware: not adopted in 012a.** The hand-rolled loop is ~30 lines
   and needed neither effort escalation nor per-turn model swaps; the question
   stays open per the 010 amendment and gets its final answer when this ticket

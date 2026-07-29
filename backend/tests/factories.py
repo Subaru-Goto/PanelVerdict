@@ -1,12 +1,14 @@
 """Shared builders and doubles for pool- and panel-pipeline tests."""
 
-from collections.abc import Sequence
+import json
+import re
+from collections.abc import Iterable, Iterator, Sequence
 from typing import Literal
 
 import psycopg
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
 
 from app.assembly import AssembledPersona
@@ -24,6 +26,12 @@ from app.schemas import (
 from app.vote import VoteResponse
 
 DIM = 1536
+
+
+def ndjson_events(lines: Iterable[str]) -> list[dict[str, str]]:
+    """Decode a ChatStreamEvent wire transcript, one JSON object per line —
+    the reading half of the NDJSON contract, shared by every stream test."""
+    return [json.loads(line) for line in lines]
 
 
 def voted(
@@ -130,13 +138,7 @@ class ScriptedChatModel(BaseChatModel):
         # schemas here would duplicate what the tests already prove.
         return self
 
-    def _generate(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: object = None,
-        **kwargs: object,
-    ) -> ChatResult:
+    def _next_message(self, messages: list[BaseMessage]) -> AIMessage:
         self.seen.append(list(messages))
         message = (
             self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
@@ -144,9 +146,60 @@ class ScriptedChatModel(BaseChatModel):
         # A fresh, id-less copy every time: langgraph's add_messages reducer
         # upserts by message id, so returning the same object twice would
         # replace the first occurrence instead of appending a second.
-        message = message.model_copy(deep=True, update={"id": None})
-        return ChatResult(generations=[ChatGeneration(message=message)])
+        return message.model_copy(deep=True, update={"id": None})
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: object = None,
+        **kwargs: object,
+    ) -> ChatResult:
+        return ChatResult(
+            generations=[ChatGeneration(message=self._next_message(messages))]
+        )
 
     @property
     def _llm_type(self) -> str:
         return "scripted"
+
+
+class StreamingScriptedChatModel(ScriptedChatModel):
+    """The same script, delivered the way a natively streaming model delivers
+    it: an answer as word-sized chunks, a tool call as one chunk.
+
+    A subclass rather than `_stream` on the base, on purpose: the stream
+    transport has two wire dialects (whole messages from non-streaming models,
+    deltas from streaming ones), and keeping the base fake non-streaming is
+    what keeps the whole-message dialect testable at all.
+    """
+
+    def _stream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: object = None,
+        **kwargs: object,
+    ) -> Iterator[ChatGenerationChunk]:
+        message = self._next_message(messages)
+        if message.tool_calls:
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content="",
+                    tool_call_chunks=[
+                        {
+                            "name": call["name"],
+                            "args": json.dumps(call["args"]),
+                            "id": call["id"],
+                            "index": 0,
+                            "type": "tool_call_chunk",
+                        }
+                        for call in message.tool_calls
+                    ],
+                )
+            )
+            return
+        # Word-plus-trailing-space pieces, so the joined chunks reproduce the
+        # scripted text byte for byte — the invariant the stream tests assert.
+        for part in re.findall(r"\S+\s*", message.text):
+            yield ChatGenerationChunk(message=AIMessageChunk(content=part))

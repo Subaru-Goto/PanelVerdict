@@ -5,12 +5,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.analyst import (
-    _SYSTEM_PROMPT,
-    AnalystLoopOverrun,
-    analysis_facts,
-    run_analyst,
-)
+from app.analyst import _SYSTEM_PROMPT, analysis_facts, stream_analyst
 from app.schemas import (
     EvaluateResponse,
     PanelCounts,
@@ -21,7 +16,7 @@ from app.schemas import (
     VoteTally,
 )
 from app.verdict import panel_verdict
-from tests.factories import ScriptedChatModel
+from tests.factories import ScriptedChatModel, ndjson_events
 
 
 def _result(*, preferring_b: int = 14, total: int = 50) -> EvaluateResponse:
@@ -102,16 +97,21 @@ def _run(
     thread_id: str = "t-1",
     message: str = "Why did it stop early?",
 ) -> str:
-    return run_analyst(
-        model=model,
-        result=_result(),
-        thread_id=thread_id,
-        message=message,
-        checkpointer=checkpointer or InMemorySaver(),
+    """One turn's answer, reassembled from the stream — these tests are about
+    the agent's behavior, and the stream is the only transport it has."""
+    events = ndjson_events(
+        stream_analyst(
+            model=model,
+            result=_result(),
+            thread_id=thread_id,
+            message=message,
+            checkpointer=checkpointer or InMemorySaver(),
+        )
     )
+    return "".join(e["text"] for e in events if e["type"] == "token")
 
 
-class TestRunAnalyst:
+class TestAnalystAgent:
     def test_the_agent_runs_our_tool_and_returns_the_final_reply(self) -> None:
         """The one wiring fact worth pinning about create_agent: a ToolMessage
         carrying OUR recomputed facts only appears in the second prompt if the
@@ -144,13 +144,6 @@ class TestRunAnalyst:
         # The framework replies to the bad call id itself; the pinned fact is
         # only that the run survives and the model gets *some* ToolMessage.
         assert any(isinstance(m, ToolMessage) for m in model.seen[1])
-
-    def test_a_model_that_never_answers_hits_the_step_budget(self) -> None:
-        # A one-message script repeats forever (see ScriptedChatModel).
-        model = ScriptedChatModel(responses=[_tool_call_message()])
-
-        with pytest.raises(AnalystLoopOverrun):
-            _run(model)
 
     def test_the_agent_owns_the_system_prompt_and_it_stays_constant(self) -> None:
         model = ScriptedChatModel(responses=[AIMessage(content="ok")])

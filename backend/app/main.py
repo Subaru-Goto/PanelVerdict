@@ -4,11 +4,12 @@ from collections.abc import Iterator
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.analyst import AnalystLoopOverrun, analysis_facts, run_analyst
+from app.analyst import analysis_facts, stream_analyst
 from app.config import USD_PER_VOTE, settings
 from app.db import check_connection
 from app.llm import (
@@ -21,7 +22,6 @@ from app.panel import votes_with_voters
 from app.pipeline import EmptyPanel, NoVotes, run_panel_test
 from app.schemas import (
     ChatRequest,
-    ChatResponse,
     EvaluateRequest,
     EvaluateResponse,
     Notice,
@@ -173,24 +173,22 @@ _CHECKPOINTER = InMemorySaver()
 @app.post("/chat")
 def chat(
     request: ChatRequest, analyst: BaseChatModel = Depends(get_analyst)
-) -> ChatResponse:
-    # Validated before the agent runs, so a malformed tally costs a 422 and no
-    # model call — inside the run it would surface only after a paid step.
+) -> StreamingResponse:
+    # Validated before the stream starts, so a malformed tally costs a 422 and
+    # no model call — this is the last moment a status code can still say it.
+    # Every later failure is the stream's to report, as an in-band `error`
+    # event with a fixed sentence (see stream_analyst).
     try:
         analysis_facts(request.result)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    try:
-        reply = run_analyst(
+    return StreamingResponse(
+        stream_analyst(
             model=analyst,
             result=request.result,
             thread_id=request.thread_id,
             message=request.message,
             checkpointer=_CHECKPOINTER,
-        )
-    except AnalystLoopOverrun as error:
-        # The agent's own fixed sentence — nothing the model produced travels.
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    except OutOfCredit as error:
-        raise HTTPException(status_code=402, detail=str(error)) from error
-    return ChatResponse(reply=reply)
+        ),
+        media_type="application/x-ndjson",
+    )
