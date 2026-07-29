@@ -132,7 +132,7 @@ def run_analyst(
     agent = create_agent(
         model, tools, system_prompt=_SYSTEM_PROMPT, checkpointer=checkpointer
     )
-    limit = 2 * len(tools) + 2
+    limit = 2 * len(tools) + 2 # 2n + 1 where n = num tools
     try:
         state = agent.invoke(
             {"messages": [HumanMessage(content=message)]},
