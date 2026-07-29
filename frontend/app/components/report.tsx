@@ -12,6 +12,7 @@ import type {
   VoterSummary,
 } from "../lib/api";
 import { formatPercent, formatPoints } from "../lib/format";
+import AnalystDock from "./analyst-dock";
 import PosteriorChart from "./posterior-chart";
 
 /** Max, not B's: either direction can be the one worth acting on and the payload does not
@@ -297,6 +298,7 @@ export default function Report({ result }: { result: EvaluateResponse }) {
       </p>
       <PanelCard result={result} />
       <VoteList votes={result.votes} />
+      <AnalystDock result={result} />
     </section>
   );
 }
