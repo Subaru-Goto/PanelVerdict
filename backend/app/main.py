@@ -5,14 +5,17 @@ import psycopg
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pgvector.psycopg import register_vector
 
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.analyst import analysis_facts, stream_analyst
+from app.assembly import Embedder
 from app.config import USD_PER_VOTE, settings
 from app.db import check_connection
 from app.llm import (
+    OpenRouterEmbedder,
     OpenRouterPanelLLM,
     OpenRouterTargetTranslator,
     analyst_chat_model,
@@ -65,6 +68,16 @@ def get_translator() -> TargetTranslator:
     )
 
 
+def get_embedder() -> Embedder:
+    """The query half of search_personas — same model that embedded the pool,
+    so query and corpus vectors live in one space."""
+    return OpenRouterEmbedder(
+        api_key=_require_api_key(),
+        base_url=settings.openrouter_base_url,
+        model=settings.embedding_model,
+    )
+
+
 def get_analyst() -> BaseChatModel:
     return analyst_chat_model(
         api_key=_require_api_key(),
@@ -106,13 +119,15 @@ def budget_notice(remaining: float | None, *, size: int) -> tuple[Notice, ...]:
 
 
 def get_conn() -> Iterator[psycopg.Connection]:
-    """One plain connection per request — no pool, no pgvector adapter.
+    """One plain connection per request, pgvector adapter registered.
 
-    The panel path reads scalar columns only (017 dropped the persona vector from
-    targeting), so `register_vector` is the write path's and 012's concern, not
-    this one's.
+    The adapter is per-connection state and the chat path binds query vectors
+    (search_personas), so every checkout gets it. Deliberately NOT
+    `prepare_connection`: that also runs schema DDL, which is the seed's job,
+    not a request's.
     """
     with psycopg.connect(settings.database_url) as conn:
+        register_vector(conn)
         yield conn
 
 
@@ -172,7 +187,10 @@ _CHECKPOINTER = InMemorySaver()
 
 @app.post("/chat")
 def chat(
-    request: ChatRequest, analyst: BaseChatModel = Depends(get_analyst)
+    request: ChatRequest,
+    analyst: BaseChatModel = Depends(get_analyst),
+    conn: psycopg.Connection = Depends(get_conn),
+    embedder: Embedder = Depends(get_embedder),
 ) -> StreamingResponse:
     # Validated before the stream starts, so a malformed tally costs a 422 and
     # no model call — this is the last moment a status code can still say it.
@@ -189,6 +207,8 @@ def chat(
             thread_id=request.thread_id,
             message=request.message,
             checkpointer=_CHECKPOINTER,
+            conn=conn,
+            embedder=embedder,
         ),
         media_type="application/x-ndjson",
     )

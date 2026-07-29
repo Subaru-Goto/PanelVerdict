@@ -3,12 +3,13 @@ from typing import get_args
 import numpy as np
 import psycopg
 import pytest
-from factories import DIM, big_five, make_assembled, make_persona
+from factories import DIM, big_five, make_assembled, make_persona, pointing
 
 from app.assembly import AssembledPersona
 from app.persistence import (
     apply_schema,
     load_votes,
+    nearest_panelists,
     persist_persona,
     persist_pool,
     prepare_connection,
@@ -438,6 +439,73 @@ def test_every_trait_a_target_can_name_is_a_column(conn):
     }
 
     assert set(get_args(TraitName)) <= columns
+
+
+def test_search_returns_panelists_nearest_first(conn):
+    # Similarity deliberately disagrees with id order, so an ORDER BY id (or
+    # insertion order) accidentally passing is impossible.
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_="US-00000"), embedding=pointing(0, 1)),
+            make_assembled(make_persona(id_="US-00001"), embedding=pointing(1)),
+            make_assembled(make_persona(id_="US-00002"), embedding=pointing(0)),
+        ],
+    )
+
+    found = nearest_panelists(
+        conn,
+        embedding=pointing(0),
+        panel_ids=["US-00000", "US-00001", "US-00002"],
+        limit=10,
+    )
+
+    assert [p.id for p in found] == ["US-00002", "US-00000", "US-00001"]
+
+
+def test_search_never_returns_personas_outside_the_panel(conn):
+    """The decided scope (012): the analyst talks about this report's voters.
+    The outsider's embedding is IDENTICAL to the query — the strongest possible
+    match still loses to the panel filter, so ranking can never widen scope."""
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_="US-00000"), embedding=pointing(0)),
+            make_assembled(make_persona(id_="US-00001"), embedding=pointing(1)),
+        ],
+    )
+
+    found = nearest_panelists(
+        conn, embedding=pointing(0), panel_ids=["US-00001"], limit=10
+    )
+
+    assert [p.id for p in found] == ["US-00001"]
+
+
+def test_an_empty_panel_finds_nobody(conn):
+    """The same dangerous inversion test_no_coverage_retrieves_nobody pins for
+    targeting: no ids must mean nobody, never "no filter, search everyone"."""
+    persist_pool(conn, [make_assembled(make_persona(id_="US-00000"))])
+
+    assert nearest_panelists(conn, embedding=pointing(0), panel_ids=[], limit=10) == []
+
+
+def test_limit_caps_the_search_and_keeps_the_nearest(conn):
+    """A cap has to drop the far end, not an arbitrary subset — otherwise the
+    analyst's "most similar panelists" is a lie at exactly panel size."""
+    persist_pool(
+        conn,
+        [
+            make_assembled(make_persona(id_="US-00000"), embedding=pointing(1)),
+            make_assembled(make_persona(id_="US-00001"), embedding=pointing(0)),
+            make_assembled(make_persona(id_="US-00002"), embedding=pointing(0, 1)),
+        ],
+    )
+    panel = ["US-00000", "US-00001", "US-00002"]
+
+    found = nearest_panelists(conn, embedding=pointing(0), panel_ids=panel, limit=2)
+
+    assert [p.id for p in found] == ["US-00001", "US-00002"]
 
 
 def _vote_record(reason: str = "liked it") -> VoteRecord:

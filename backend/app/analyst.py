@@ -10,8 +10,10 @@ share them, both acceptable at demo scale; the Postgres checkpointer is the
 scale-up path, not a redesign.
 """
 
+import json
 from collections.abc import Iterator
 
+import psycopg
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
@@ -21,6 +23,9 @@ from langgraph.errors import GraphRecursionError
 from openai import APIStatusError
 from pydantic import BaseModel
 
+from app.assembly import Embedder
+from app.panel import persona_summary
+from app.persistence import nearest_panelists
 from app.schemas import (
     ChatStreamEvent,
     CoverageRung,
@@ -95,7 +100,18 @@ def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
     )
 
 
-def build_tools(result: EvaluateResponse) -> list[BaseTool]:
+# Top-5 per search: user sign-off 2026-07-29, convention rather than
+# measurement — ~40 tokens per summary keeps one search near 200 tokens while
+# giving the model enough names to answer concretely.
+_SEARCH_LIMIT = 5
+
+
+def build_tools(
+    result: EvaluateResponse,
+    *,
+    conn: psycopg.Connection,
+    embedder: Embedder,
+) -> list[BaseTool]:
     """The tools for one request, closed over that request's test."""
 
     @tool
@@ -105,7 +121,26 @@ def build_tools(result: EvaluateResponse) -> list[BaseTool]:
         citing any figure."""
         return analysis_facts(result).model_dump_json()
 
-    return [analyze_results]
+    @tool
+    def search_personas(query: str) -> str:
+        """The panelists of THIS test whose profiles best match a
+        plain-language description, nearest first — who was on the panel,
+        which panelists are price-sensitive, and so on. The query is a
+        description of people, not SQL."""
+        found = nearest_panelists(
+            conn,
+            embedding=embedder.embed([query])[0],
+            panel_ids=[vote.persona_id for vote in result.votes],
+            limit=_SEARCH_LIMIT,
+        )
+        return json.dumps(
+            [
+                {"id": persona.id, "summary": persona_summary(persona)}
+                for persona in found
+            ]
+        )
+
+    return [analyze_results, search_personas]
 
 
 def stream_analyst(
@@ -115,6 +150,8 @@ def stream_analyst(
     thread_id: str,
     message: str,
     checkpointer: BaseCheckpointSaver,
+    conn: psycopg.Connection,
+    embedder: Embedder,
 ) -> Iterator[str]:
     """Yield the agent's turn as NDJSON lines — one `ChatStreamEvent` each.
 
@@ -126,7 +163,7 @@ def stream_analyst(
     status code would otherwise have carried. Nothing the model or provider
     wrote may ever appear in an error event.
     """
-    tools = build_tools(result)
+    tools = build_tools(result, conn=conn, embedder=embedder)
 
     # The step budget, per turn, derived not tuned: one model-then-tools round
     # per available tool (two supersteps each, in langgraph's currency) plus

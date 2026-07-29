@@ -58,9 +58,12 @@ def apply_schema(conn: psycopg.Connection) -> None:
     every id a resume-skip, so no insert ever names the missing column and the run
     reports "0 written, 200 already present" over a pool with no embeddings.
     """
-    conn.execute(_SCHEMA_SQL)
-    conn.commit()
     try:
+        # The index statement references summary_embedding, so on a stale table
+        # schema.sql itself now fails before the probe — same cause, same
+        # remedy, so both paths land in the one curated error below.
+        conn.execute(_SCHEMA_SQL)
+        conn.commit()
         conn.execute(f"SELECT {', '.join(_REQUIRED_COLUMNS)} FROM personas LIMIT 0")
     except psycopg.errors.UndefinedColumn as error:
         conn.rollback()
@@ -151,7 +154,7 @@ _ORDERINGS = {"id": "ORDER BY id", "random": "ORDER BY random()"}
 
 # Everything a persona query binds: scalars for equality and range, trait scores for
 # the level bounds, and lists for the ANY(...) filters.
-type SqlParam = str | int | float | list[str] | list[int]
+type SqlParam = str | int | float | list[str] | list[int] | np.ndarray
 
 
 def _fetch_personas(
@@ -250,6 +253,32 @@ def retrieve_panel(
         f"WHERE {' AND '.join(conditions)} "
         "ORDER BY md5(id || %s::text), id LIMIT %s",
         params,
+    )
+
+
+def nearest_panelists(
+    conn: psycopg.Connection,
+    *,
+    embedding: Sequence[float],
+    panel_ids: Sequence[str],
+    limit: int,
+) -> list[Persona]:
+    """The panelists whose summaries are nearest to `embedding`, nearest first.
+
+    Panel-only by contract: `panel_ids` are the voters of the current test, and
+    nobody outside them may appear — the analyst talks about the people in the
+    report, not the whole pool (012 decision log). An empty `panel_ids` returns
+    nobody, never everybody.
+    """
+    # `<=>` is cosine distance; the index opclass in schema.sql must agree
+    # (vector_cosine_ops), or the planner quietly ignores the index.
+    return _fetch_personas(
+        conn,
+        f"SELECT {_PERSONA_COLUMNS} FROM personas "
+        "WHERE id = ANY(%s) "
+        "ORDER BY summary_embedding <=> %s "
+        "LIMIT %s",
+        [list(panel_ids), np.array(embedding), limit],
     )
 
 

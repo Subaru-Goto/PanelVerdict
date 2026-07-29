@@ -1,11 +1,14 @@
 import json
 
+import psycopg
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.analyst import _SYSTEM_PROMPT, analysis_facts, stream_analyst
+from app.assembly import Embedder
+from app.persistence import persist_pool
 from app.schemas import (
     EvaluateResponse,
     PanelCounts,
@@ -16,7 +19,16 @@ from app.schemas import (
     VoteTally,
 )
 from app.verdict import panel_verdict
-from tests.factories import ScriptedChatModel, ndjson_events
+from tests.factories import (
+    FixedEmbedder,
+    ScriptedChatModel,
+    make_assembled,
+    make_panel_vote,
+    make_persona,
+    ndjson_events,
+    pointing,
+    tool_call_message,
+)
 
 
 def _result(*, preferring_b: int = 14, total: int = 50) -> EvaluateResponse:
@@ -59,13 +71,6 @@ def _result(*, preferring_b: int = 14, total: int = 50) -> EvaluateResponse:
     )
 
 
-def _tool_call_message(name: str = "analyze_results") -> AIMessage:
-    return AIMessage(
-        content="",
-        tool_calls=[{"name": name, "args": {}, "id": "c1", "type": "tool_call"}],
-    )
-
-
 class TestAnalysisFacts:
     def test_the_verdict_is_recomputed_from_the_tally_not_trusted(self) -> None:
         facts = analysis_facts(_result())
@@ -93,62 +98,102 @@ class TestAnalysisFacts:
 def _run(
     model: ScriptedChatModel,
     *,
+    conn: psycopg.Connection,
     checkpointer: InMemorySaver | None = None,
     thread_id: str = "t-1",
     message: str = "Why did it stop early?",
+    result: EvaluateResponse | None = None,
+    embedder: Embedder | None = None,
 ) -> str:
     """One turn's answer, reassembled from the stream — these tests are about
     the agent's behavior, and the stream is the only transport it has."""
     events = ndjson_events(
         stream_analyst(
             model=model,
-            result=_result(),
+            result=result or _result(),
             thread_id=thread_id,
             message=message,
             checkpointer=checkpointer or InMemorySaver(),
+            conn=conn,
+            embedder=embedder or FixedEmbedder(pointing(0)),
         )
     )
     return "".join(e["text"] for e in events if e["type"] == "token")
 
 
 class TestAnalystAgent:
-    def test_the_agent_runs_our_tool_and_returns_the_final_reply(self) -> None:
+    def test_the_agent_runs_our_tool_and_returns_the_final_reply(self, conn) -> None:
         """The one wiring fact worth pinning about create_agent: a ToolMessage
         carrying OUR recomputed facts only appears in the second prompt if the
         agent bound and executed the real analyze_results."""
         model = ScriptedChatModel(
             responses=[
-                _tool_call_message(),
+                tool_call_message(),
                 AIMessage(content="The interval cleared the band."),
             ]
         )
 
-        reply = _run(model)
+        reply = _run(model, conn=conn)
 
         assert reply == "The interval cleared the band."
         fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
         assert len(fed_back) == 1
         assert json.loads(str(fed_back[0].content))["stop_reason"] == "decisive"
 
-    def test_a_hallucinated_tool_name_does_not_crash_the_run(self) -> None:
+    def test_the_agent_searches_only_this_tests_panel(self, conn) -> None:
+        """search_personas end to end: the query text is embedded, the panel
+        scope comes from result.votes, and the ToolMessage lists panelists
+        nearest first. The outsider matches the query PERFECTLY and still may
+        not appear — scope beats similarity (012 decision log)."""
+        persist_pool(
+            conn,
+            [
+                make_assembled(make_persona(id_="US-00000"), embedding=pointing(1)),
+                make_assembled(make_persona(id_="US-00001"), embedding=pointing(0)),
+                make_assembled(make_persona(id_="US-00002"), embedding=pointing(0)),
+            ],
+        )
         model = ScriptedChatModel(
             responses=[
-                _tool_call_message(name="drop_the_database"),
+                tool_call_message(name="search_personas", args={"query": "thrifty"}),
+                AIMessage(content="Two panelists match."),
+            ]
+        )
+        result = _result().model_copy(
+            update={"votes": [make_panel_vote("US-00000"), make_panel_vote("US-00001")]}
+        )
+
+        reply = _run(
+            model,
+            conn=conn,
+            result=result,
+            embedder=FixedEmbedder(pointing(0)),
+        )
+
+        assert reply == "Two panelists match."
+        fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
+        found = json.loads(str(fed_back[0].content))
+        assert [p["id"] for p in found] == ["US-00001", "US-00000"]
+
+    def test_a_hallucinated_tool_name_does_not_crash_the_run(self, conn) -> None:
+        model = ScriptedChatModel(
+            responses=[
+                tool_call_message(name="drop_the_database"),
                 AIMessage(content="Sorry, I cannot do that."),
             ]
         )
 
-        reply = _run(model)
+        reply = _run(model, conn=conn)
 
         assert reply == "Sorry, I cannot do that."
         # The framework replies to the bad call id itself; the pinned fact is
         # only that the run survives and the model gets *some* ToolMessage.
         assert any(isinstance(m, ToolMessage) for m in model.seen[1])
 
-    def test_the_agent_owns_the_system_prompt_and_it_stays_constant(self) -> None:
+    def test_the_agent_owns_the_system_prompt_and_it_stays_constant(self, conn) -> None:
         model = ScriptedChatModel(responses=[AIMessage(content="ok")])
 
-        _run(model)
+        _run(model, conn=conn)
 
         first = model.seen[0][0]
         assert isinstance(first, SystemMessage)
@@ -157,20 +202,20 @@ class TestAnalystAgent:
         # the instructions sit in.
         assert "{" not in _SYSTEM_PROMPT
 
-    def test_a_thread_remembers_its_tool_results_across_turns(self) -> None:
+    def test_a_thread_remembers_its_tool_results_across_turns(self, conn) -> None:
         """The reason the checkpointer exists: turn two's prompt still carries
         turn one's ToolMessage, so a follow-up needs no repeat tool call."""
         checkpointer = InMemorySaver()
         model = ScriptedChatModel(
             responses=[
-                _tool_call_message(),
+                tool_call_message(),
                 AIMessage(content="98% for A."),
                 AIMessage(content="Because the interval cleared the band."),
             ]
         )
 
-        _run(model, checkpointer=checkpointer, message="How sure are we?")
-        reply = _run(model, checkpointer=checkpointer, message="Why?")
+        _run(model, conn=conn, checkpointer=checkpointer, message="How sure are we?")
+        reply = _run(model, conn=conn, checkpointer=checkpointer, message="Why?")
 
         assert reply == "Because the interval cleared the band."
         third_prompt = model.seen[2]
@@ -180,17 +225,24 @@ class TestAnalystAgent:
             for m in third_prompt
         )
 
-    def test_threads_do_not_share_memory(self) -> None:
+    def test_threads_do_not_share_memory(self, conn) -> None:
         checkpointer = InMemorySaver()
         model = ScriptedChatModel(responses=[AIMessage(content="ok")])
 
         _run(
             model,
+            conn=conn,
             checkpointer=checkpointer,
             thread_id="t-1",
             message="secret question",
         )
-        _run(model, checkpointer=checkpointer, thread_id="t-2", message="hello")
+        _run(
+            model,
+            conn=conn,
+            checkpointer=checkpointer,
+            thread_id="t-2",
+            message="hello",
+        )
 
         second_thread_prompt = model.seen[1]
         assert not any(
