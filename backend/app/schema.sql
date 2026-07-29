@@ -23,6 +23,14 @@ CREATE TABLE IF NOT EXISTS personas (
     summary_embedding vector(1536) NOT NULL       -- text-embedding-3-small dims
 );
 
+-- Similarity index for the analyst's persona search. HNSW rather than IVFFlat:
+-- IVFFlat trains its cluster centers from rows already present, and this file
+-- runs before every seed — on an empty table it would build degenerate. The
+-- opclass must match the search's `<=>` operator (cosine), or the planner
+-- quietly ignores the index.
+CREATE INDEX IF NOT EXISTS personas_summary_embedding_idx
+    ON personas USING hnsw (summary_embedding vector_cosine_ops);
+
 -- One row per vote ever paid for, keyed on the fingerprint of the exact question
 -- asked (app/vote.py: vote_fingerprint), so a changed prompt, headline, question,
 -- or model can never be served a stale answer. persona_id/test_id/order are

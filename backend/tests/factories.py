@@ -18,14 +18,68 @@ from app.schemas import (
     EducationLevel,
     Gender,
     Locale,
+    PanelVote,
     PanelVoteOutput,
     Persona,
     RequestedRegion,
     TargetRequest,
+    VoterSummary,
 )
 from app.vote import VoteResponse
 
 DIM = 1536
+
+
+def pointing(*axes: int) -> list[float]:
+    """A vector along one axis, or between two — hand-placed points whose cosine
+    order is checkable in your head: same direction (distance 0) beats a 45°
+    blend (≈0.29) beats an orthogonal one (1.0)."""
+    vector = [0.0] * DIM
+    for axis in axes:
+        vector[axis] = 1.0
+    return vector
+
+
+class FixedEmbedder:
+    """One canned vector for every text — the query half of a search test.
+    A real embedding is a paid call, and no agent or endpoint test makes one."""
+
+    def __init__(self, vector: list[float]) -> None:
+        self._vector = vector
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        return [self._vector for _ in texts]
+
+
+def make_panel_vote(persona_id: str) -> PanelVote:
+    """A vote whose only load-bearing field is who cast it — for tests where
+    votes exist to define the panel, not to carry opinions."""
+    return PanelVote(
+        persona_id=persona_id,
+        chosen_variant_id="a",
+        reason="stub",
+        voter=VoterSummary(
+            country="US",
+            age=34,
+            gender="female",
+            education="tertiary",
+            income_band="middle",
+            traits={},
+        ),
+    )
+
+
+def tool_call_message(
+    name: str = "analyze_results", args: dict[str, str] | None = None
+) -> AIMessage:
+    """A scripted model turn that calls one tool — the shape every agent and
+    endpoint test scripts when it wants a tool round."""
+    return AIMessage(
+        content="",
+        tool_calls=[
+            {"name": name, "args": args or {}, "id": "c1", "type": "tool_call"}
+        ],
+    )
 
 
 def ndjson_events(lines: Iterable[str]) -> list[dict[str, str]]:
