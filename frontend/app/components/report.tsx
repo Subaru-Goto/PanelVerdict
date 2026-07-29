@@ -1,11 +1,15 @@
 import type { ReactNode } from "react";
 
 import type {
+  EducationLevel,
   EvaluateResponse,
   Notice,
   PanelVerdict,
+  TraitLevel,
+  TraitName,
   TraitRequest,
   Vote,
+  VoterSummary,
 } from "../lib/api";
 import { formatPercent, formatPoints } from "../lib/format";
 import PosteriorChart from "./posterior-chart";
@@ -117,11 +121,12 @@ function NoticeList({ notices }: { notices: Notice[] }) {
   );
 }
 
+const formatLevel = (level: TraitLevel): string => level.replace("_", " ");
+
 function TraitChip({ trait }: { trait: TraitRequest }) {
   return (
     <Chip>
-      {trait.trait}: {trait.level.replace("_", " ")} — from “
-      {trait.source_phrase}”
+      {trait.trait}: {formatLevel(trait.level)} — from “{trait.source_phrase}”
     </Chip>
   );
 }
@@ -163,21 +168,63 @@ function PanelCard({ result }: { result: EvaluateResponse }) {
   );
 }
 
+// Mirrors BigFive's field order — the one trait order the whole product speaks
+// (backend schemas.py pins it). The Record check keeps this copy exhaustive:
+// dropping or misspelling a trait fails the build.
+const TRAIT_ORDER = Object.keys({
+  openness: true,
+  conscientiousness: true,
+  extraversion: true,
+  agreeableness: true,
+  neuroticism: true,
+} satisfies Record<TraitName, true>) as TraitName[];
+
+// Compact forms of the education phrases the vote prompt renders (backend
+// panel.py). "Below secondary" is someone who left before finishing — not
+// someone who never attended.
+const EDUCATION_LABEL: Record<EducationLevel, string> = {
+  below_secondary: "didn’t finish secondary school",
+  secondary: "secondary school",
+  tertiary: "university degree",
+};
+
+const voterLine = (voter: VoterSummary): string =>
+  `${voter.age} · ${voter.gender} · ${voter.country} · ` +
+  `${EDUCATION_LABEL[voter.education]} · ${voter.income_band} income`;
+
 function VoteList({ votes }: { votes: Vote[] }) {
   return (
-    <ul className="flex flex-col gap-2">
-      {votes.map((vote) => (
-        <li
-          key={vote.persona_id}
-          className="rounded border border-zinc-200 p-3 text-sm dark:border-zinc-800"
-        >
-          <span className="font-medium">
-            {vote.persona_id} → {vote.chosen_variant_id.toUpperCase()}
-          </span>
-          <p className="text-zinc-600 dark:text-zinc-400">{vote.reason}</p>
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-2">
+      <p className="text-xs text-zinc-500">
+        Reasons from synthetic panelists — sampled personas, not real people.
+      </p>
+      <ul className="flex flex-col gap-2">
+        {votes.map((vote) => (
+          <li
+            key={vote.persona_id}
+            className="flex flex-col gap-1 rounded border border-zinc-200 p-3 text-sm dark:border-zinc-800"
+          >
+            <span className="font-medium">
+              Chose {vote.chosen_variant_id.toUpperCase()}
+            </span>
+            <p className="text-zinc-600 dark:text-zinc-400">{vote.reason}</p>
+            <p className="text-xs text-zinc-500">{voterLine(vote.voter)}</p>
+            <details className="text-xs">
+              <summary className="cursor-pointer text-zinc-500">
+                personality
+              </summary>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {TRAIT_ORDER.map((trait) => (
+                  <Chip key={trait}>
+                    {trait}: {formatLevel(vote.voter.traits[trait])}
+                  </Chip>
+                ))}
+              </div>
+            </details>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

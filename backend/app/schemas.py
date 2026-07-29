@@ -160,6 +160,41 @@ class VoteRecord(BaseModel):
     reason: str
 
 
+class VoterSummary(BaseModel):
+    """The voter as a person: demographics verbatim, traits as rendered levels.
+
+    What makes a reason worth reading is who gives it (023). Trait scores travel
+    as `TraitLevel`s, not z-scores, and income as the band, not the quintile —
+    both are the words the vote prompt was rendered from, so what the report
+    shows about a voter cannot drift from what the panelist enacted.
+
+    Every voter is synthetic — a sampled persona, not a person — and the UI says
+    so where these fields are shown, because they look real enough to ask.
+    """
+
+    country: Locale
+    age: int
+    gender: Gender
+    education: EducationLevel
+    income_band: IncomeBand
+    traits: dict[TraitName, TraitLevel]
+
+
+class PanelVote(BaseModel):
+    """One vote as the report shows it: the choice, the reason, and who gave it.
+
+    Deliberately not `VoteRecord`, which is the ledger's row: `test_id` and
+    `presentation_order` are provenance for replay and belong there, not on the
+    wire. `persona_id` stays for reproducibility — the report just stops leading
+    with it, because an id identifies a row, not a reader.
+    """
+
+    persona_id: str
+    chosen_variant_id: str
+    reason: str
+    voter: VoterSummary
+
+
 class VoteTally(BaseModel):
     """Descriptive per-variant counts. Deliberately no `winner` field.
 
@@ -395,4 +430,4 @@ class EvaluateResponse(BaseModel):
     # distinguish "stopped because answered" from a shortfall without parsing prose.
     stop_reason: StopReason | None
     variants: dict[str, str]
-    votes: list[VoteRecord]
+    votes: list[PanelVote]

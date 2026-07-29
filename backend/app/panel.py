@@ -4,9 +4,12 @@ from app.schemas import (
     COUNTRY_NAME,
     EducationLevel,
     INCOME_BAND_QUINTILES,
+    PanelVote,
     Persona,
     TraitLevel,
     TraitName,
+    VoteRecord,
+    VoterSummary,
 )
 
 # Five intensities per trait, phrased without pronouns so the vote prompt (second
@@ -206,3 +209,42 @@ FIXED_PANEL: list[Persona] = [
         ),
     ),
 ]
+
+
+def voter_summary(persona: Persona) -> VoterSummary:
+    """The persona as the report's voter: demographics verbatim, scores as levels.
+
+    The same `bucketize` and the same income band the vote prompt is rendered
+    through, so what a reader sees is what the panelist was asked to enact — the
+    prompt never mentions a quintile, so neither does the feed.
+    """
+    return VoterSummary(
+        country=persona.country,
+        age=persona.age,
+        gender=persona.gender,
+        education=persona.education,
+        income_band=_BAND_OF_QUINTILE[persona.income_quintile],
+        traits={trait: bucketize(score) for trait, score in persona.big_five},
+    )
+
+
+def votes_with_voters(
+    records: list[VoteRecord], panel: list[Persona]
+) -> list[PanelVote]:
+    """Join each vote to its voter at assembly time.
+
+    The pipeline still holds the matched personas when the response is built, so
+    this is enrichment, not a query (023). A record's persona is always on the
+    panel — the run fingerprinted the question per panelist — so a miss here is
+    a bug worth crashing on, not a row to skip.
+    """
+    personas = {persona.id: persona for persona in panel}
+    return [
+        PanelVote(
+            persona_id=record.persona_id,
+            chosen_variant_id=record.chosen_variant_id,
+            reason=record.reason,
+            voter=voter_summary(personas[record.persona_id]),
+        )
+        for record in records
+    ]

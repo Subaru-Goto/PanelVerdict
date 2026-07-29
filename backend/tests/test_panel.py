@@ -6,8 +6,10 @@ from app.panel import (
     _income_band,
     persona_summary,
     render_persona_prompt,
+    voter_summary,
+    votes_with_voters,
 )
-from app.schemas import COUNTRY_NAME, BigFive, TraitLevel
+from app.schemas import COUNTRY_NAME, BigFive, TraitLevel, VoteRecord
 from tests.factories import make_persona
 
 _TRAITS = tuple(BigFive.model_fields)
@@ -173,3 +175,84 @@ def test_a_stronger_trait_score_reads_differently() -> None:
     assert persona_summary(mild) != persona_summary(intense)
     assert _TRAIT_PHRASES["openness"][TraitLevel.HIGH] in persona_summary(mild)
     assert _TRAIT_PHRASES["openness"][TraitLevel.VERY_HIGH] in persona_summary(intense)
+
+
+class TestVoterSummary:
+    """The voter as the report shows them: demographics verbatim, traits as the
+    rendered levels — the same bucketize the vote prompt already speaks (023)."""
+
+    def test_it_carries_the_demographics_verbatim(self) -> None:
+        persona = make_persona(
+            "DE-00007",
+            country="DE",
+            age=61,
+            gender="male",
+            income_quintile=2,
+            education="secondary",
+        )
+
+        summary = voter_summary(persona)
+
+        assert summary.country == persona.country
+        assert summary.age == 61
+        assert summary.gender == "male"
+        # Quintile 2 renders as the lower band — the word the vote prompt used,
+        # which is why the summary never carries the quintile itself.
+        assert summary.income_band == "lower"
+        assert summary.education == persona.education
+
+    def test_it_renders_every_trait_at_its_bucketized_level(self) -> None:
+        """Levels from the bucketize spec, not recomputed: -1.6 is past the outer
+        cutoff, -1.0 past the inner, 0.0 the middle, 1.0 and 2.0 the mirrors."""
+        persona = make_persona().model_copy(
+            update={
+                "big_five": BigFive(
+                    openness=-1.6,
+                    conscientiousness=-1.0,
+                    extraversion=0.0,
+                    agreeableness=1.0,
+                    neuroticism=2.0,
+                )
+            }
+        )
+
+        summary = voter_summary(persona)
+
+        assert summary.traits == {
+            "openness": TraitLevel.VERY_LOW,
+            "conscientiousness": TraitLevel.LOW,
+            "extraversion": TraitLevel.MEDIUM,
+            "agreeableness": TraitLevel.HIGH,
+            "neuroticism": TraitLevel.VERY_HIGH,
+        }
+
+
+class TestVotesWithVoters:
+    def test_each_vote_is_joined_to_its_own_voter(self) -> None:
+        """The pairing is the point: a feed that attached the right fields to the
+        wrong panelist would still render beautifully."""
+        young = make_persona("US-00001", age=22)
+        old = make_persona("US-00002", age=83)
+        records = [
+            VoteRecord(
+                persona_id="US-00002",
+                test_id="t",
+                chosen_variant_id="b",
+                presentation_order=["a", "b"],
+                reason="second reads clearer",
+            ),
+            VoteRecord(
+                persona_id="US-00001",
+                test_id="t",
+                chosen_variant_id="a",
+                presentation_order=["a", "b"],
+                reason="the discount is concrete",
+            ),
+        ]
+
+        votes = votes_with_voters(records, [young, old])
+
+        assert [vote.persona_id for vote in votes] == ["US-00002", "US-00001"]
+        assert [vote.voter.age for vote in votes] == [83, 22]
+        assert votes[0].chosen_variant_id == "b"
+        assert votes[0].reason == "second reads clearer"
