@@ -10,7 +10,7 @@ from pgvector.psycopg import register_vector
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.analyst import analysis_facts, stream_analyst
+from app.analyst import ToolDeps, analysis_facts, stream_analyst
 from app.assembly import Embedder
 from app.config import USD_PER_VOTE, settings
 from app.db import check_connection
@@ -191,6 +191,8 @@ def chat(
     analyst: BaseChatModel = Depends(get_analyst),
     conn: psycopg.Connection = Depends(get_conn),
     embedder: Embedder = Depends(get_embedder),
+    translator: TargetTranslator = Depends(get_translator),
+    panel_llm: PanelLLM = Depends(get_panel_llm),
 ) -> StreamingResponse:
     # Validated before the stream starts, so a malformed tally costs a 422 and
     # no model call — this is the last moment a status code can still say it.
@@ -207,8 +209,13 @@ def chat(
             thread_id=request.thread_id,
             message=request.message,
             checkpointer=_CHECKPOINTER,
-            conn=conn,
-            embedder=embedder,
+            deps=ToolDeps(
+                conn=conn,
+                embedder=embedder,
+                translator=translator,
+                panel_llm=panel_llm,
+                panel_size=settings.panel.size,
+            ),
         ),
         media_type="application/x-ndjson",
     )

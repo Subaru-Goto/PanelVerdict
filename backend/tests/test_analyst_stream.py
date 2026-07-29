@@ -12,20 +12,24 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.analyst import stream_analyst
+from app.analyst import ToolDeps, stream_analyst
+from app.vote import OutOfCredit, VoteResponse
 from tests.factories import (
-    FixedEmbedder,
     ScriptedChatModel,
     StreamingScriptedChatModel,
     ndjson_events,
-    pointing,
+    seed_japanese,
     tool_call_message,
 )
-from tests.test_analyst import _result
+from tests.test_analyst import _deps, _result
 
 
 def _lines(
-    model: ScriptedChatModel, *, conn: psycopg.Connection, thread_id: str
+    model: ScriptedChatModel,
+    *,
+    conn: psycopg.Connection,
+    thread_id: str,
+    deps: ToolDeps | None = None,
 ) -> list[str]:
     """One streamed turn with the shared fixture result and question — every
     test here varies only the model and what it asserts about the wire."""
@@ -36,8 +40,7 @@ def _lines(
             thread_id=thread_id,
             message="Why did it stop early?",
             checkpointer=InMemorySaver(),
-            conn=conn,
-            embedder=FixedEmbedder(pointing(0)),
+            deps=deps or _deps(conn),
         )
     )
 
@@ -74,12 +77,12 @@ class TestStreamAnalyst:
         events = ndjson_events(_lines(model, conn=conn, thread_id="s-2"))
 
         errors = [e for e in events if e["type"] == "error"]
-        # 6 = 2 * len(tools) + 2 with two tools — the pinned sentence tracks
+        # 8 = 2 * len(tools) + 2 with three tools — the pinned sentence tracks
         # the derived budget, so it moves when the tool list does.
         assert errors == [
             {
                 "type": "error",
-                "message": "analyst was still calling tools after 6 steps",
+                "message": "analyst was still calling tools after 8 steps",
             }
         ]
         assert events[-1]["type"] == "error"
@@ -111,6 +114,44 @@ class TestStreamAnalyst:
             "message": "analyst failed: RuntimeError",
         }
         assert all("sk-secret" not in line for line in lines)
+
+    def test_credit_exhaustion_mid_tool_speaks_its_own_sentence(self, conn) -> None:
+        """OutOfCredit's message is codebase-authored and names its remedy
+        (top up, re-run resumes free) — worth more on the wire than
+        'analyst failed: OutOfCredit'. Terminal like every error event: the
+        analyst's own next call would 402 anyway. The stub's message must
+        still never leak — only the pipeline's fresh sentence travels."""
+
+        class BrokeLLM:
+            configuration = "broke"
+
+            def vote(
+                self, *, system_prompt: str, option_1: str, option_2: str
+            ) -> VoteResponse:
+                raise OutOfCredit("stub-provider-text")
+
+        seed_japanese(conn, 2)
+        model = ScriptedChatModel(
+            responses=[
+                tool_call_message(
+                    name="run_panel_test",
+                    args={"target_description": "Japanese homeowners"},
+                )
+            ]
+        )
+
+        lines = _lines(
+            model,
+            conn=conn,
+            thread_id="s-5",
+            deps=_deps(conn, panel_llm=BrokeLLM()),
+        )
+        events = ndjson_events(lines)
+
+        assert events[-1]["type"] == "error"
+        assert events[-1]["message"].startswith("OpenRouter credit is exhausted")
+        assert {"type": "done"} not in events
+        assert all("stub-provider-text" not in line for line in lines)
 
     def test_tokens_arrive_incrementally_not_as_one_block(self, conn) -> None:
         """The worked example above tolerates one whole-message token (the
