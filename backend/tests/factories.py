@@ -1,8 +1,13 @@
 """Shared builders and doubles for pool- and panel-pipeline tests."""
 
+from collections.abc import Sequence
 from typing import Literal
 
 import psycopg
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.tools import BaseTool
 
 from app.assembly import AssembledPersona
 from app.persistence import persist_pool
@@ -104,3 +109,44 @@ def seed_japanese(conn: psycopg.Connection, count: int) -> None:
             for i in range(count)
         ],
     )
+
+
+class ScriptedChatModel(BaseChatModel):
+    """A tool-calling-capable fake for `create_agent`: pops scripted AIMessages
+    in order and records every prompt it was shown.
+
+    The last response repeats forever, so a script ending in a tool call models
+    an agent that never answers — which is how the step budget gets tested.
+    """
+
+    responses: list[AIMessage]
+    seen: list[list[BaseMessage]] = []
+
+    def bind_tools(
+        self, tools: Sequence[BaseTool], **kwargs: object
+    ) -> "ScriptedChatModel":
+        # The binding is observable through the transcript (a real ToolMessage
+        # only appears if the agent executed a real tool), so recording the
+        # schemas here would duplicate what the tests already prove.
+        return self
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: object = None,
+        **kwargs: object,
+    ) -> ChatResult:
+        self.seen.append(list(messages))
+        message = (
+            self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
+        )
+        # A fresh, id-less copy every time: langgraph's add_messages reducer
+        # upserts by message id, so returning the same object twice would
+        # replace the first occurrence instead of appending a second.
+        message = message.model_copy(deep=True, update={"id": None})
+        return ChatResult(generations=[ChatGeneration(message=message)])
+
+    @property
+    def _llm_type(self) -> str:
+        return "scripted"

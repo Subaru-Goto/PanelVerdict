@@ -411,6 +411,10 @@ class EvaluateRequest(BaseModel):
     headline_b: str
 
 
+class ChatResponse(BaseModel):
+    reply: str
+
+
 class EvaluateResponse(BaseModel):
     """One panel test as the report renders it.
 
@@ -431,3 +435,22 @@ class EvaluateResponse(BaseModel):
     stop_reason: StopReason | None
     variants: dict[str, str]
     votes: list[PanelVote]
+
+
+class ChatRequest(BaseModel):
+    """One analyst turn: the new message, the thread it continues, and the test.
+
+    History lives server-side under `thread_id` (012, user decision): the
+    checkpointed transcript keeps ToolMessages, so a follow-up is answered from
+    context instead of re-buying the tool calls a text-only replay would drop.
+    The client mints the id — one per rendered report.
+
+    The whole result still travels rather than a test id, because nothing
+    persists a finished test today — the votes ledger stores votes, not
+    verdicts. The payload is context, not testimony: every number the analyst
+    cites is recomputed server-side from the tally (`analyst.analysis_facts`).
+    """
+
+    thread_id: str = Field(min_length=1)
+    message: str = Field(min_length=1)
+    result: EvaluateResponse

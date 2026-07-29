@@ -5,12 +5,27 @@ import psycopg
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from langchain_core.language_models import BaseChatModel
+from langgraph.checkpoint.memory import InMemorySaver
+
+from app.analyst import AnalystLoopOverrun, analysis_facts, run_analyst
 from app.config import USD_PER_VOTE, settings
 from app.db import check_connection
-from app.llm import OpenRouterPanelLLM, OpenRouterTargetTranslator, remaining_credit
+from app.llm import (
+    OpenRouterPanelLLM,
+    OpenRouterTargetTranslator,
+    analyst_chat_model,
+    remaining_credit,
+)
 from app.panel import votes_with_voters
 from app.pipeline import EmptyPanel, NoVotes, run_panel_test
-from app.schemas import EvaluateRequest, EvaluateResponse, Notice
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    EvaluateRequest,
+    EvaluateResponse,
+    Notice,
+)
 from app.targeting import TargetTranslator
 from app.vote import OutOfCredit, PanelLLM
 
@@ -42,10 +57,19 @@ def get_panel_llm() -> PanelLLM:
 
 
 def get_translator() -> TargetTranslator:
+    """Translate target description into structured output for the panel"""
     return OpenRouterTargetTranslator(
         api_key=_require_api_key(),
         base_url=settings.openrouter_base_url,
         model=settings.targeting_model,
+    )
+
+
+def get_analyst() -> BaseChatModel:
+    return analyst_chat_model(
+        api_key=_require_api_key(),
+        base_url=settings.openrouter_base_url,
+        model=settings.analyst_model,
     )
 
 
@@ -138,3 +162,35 @@ def evaluate(
         variants=variants,
         votes=votes_with_voters(result.votes.records, result.selection.panel),
     )
+
+
+# One saver for the process lifetime — threads must outlive requests, which is
+# the whole point of a checkpointer. In-memory: a restart forgets every thread,
+# accepted at v1 demo scale (the report the chat is scoped to lives client-side).
+_CHECKPOINTER = InMemorySaver()
+
+
+@app.post("/chat")
+def chat(
+    request: ChatRequest, analyst: BaseChatModel = Depends(get_analyst)
+) -> ChatResponse:
+    # Validated before the agent runs, so a malformed tally costs a 422 and no
+    # model call — inside the run it would surface only after a paid step.
+    try:
+        analysis_facts(request.result)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    try:
+        reply = run_analyst(
+            model=analyst,
+            result=request.result,
+            thread_id=request.thread_id,
+            message=request.message,
+            checkpointer=_CHECKPOINTER,
+        )
+    except AnalystLoopOverrun as error:
+        # The agent's own fixed sentence — nothing the model produced travels.
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except OutOfCredit as error:
+        raise HTTPException(status_code=402, detail=str(error)) from error
+    return ChatResponse(reply=reply)

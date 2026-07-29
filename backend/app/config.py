@@ -68,6 +68,9 @@ class Settings(BaseSettings):
     # forgetting to choose should cost a cent rather than a tenth of the credit cap.
     profile: ProfileName = "dev"
     targeting_model: str = "openai/gpt-5-mini"
+    # 003 deferred the analyst's reasoning-model pick to 012; decided 2026-07-29:
+    # mini for v1 like every other role — consistency over a flagship, and at chat
+    # volume the difference is pennies. Config, so revisiting is a one-line change.
     analyst_model: str = "openai/gpt-5-mini"
     embedding_model: str = "openai/text-embedding-3-small"
     judge_model: str = "openai/gpt-5-mini"
