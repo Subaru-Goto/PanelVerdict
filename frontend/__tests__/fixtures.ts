@@ -11,7 +11,7 @@ const BASE: EvaluateResponse = {
     credible_interval: [0.173, 0.418],
     credible_mass: 0.95,
     rope: [0.43, 0.57],
-    probability_worth_acting_on: { shipping_a: 0.0, shipping_b: 0.984 },
+    probability_meaningfully_preferred: { a: 0.984, b: 0.0 },
     probability_practical_tie: 0.016,
     detectable_gap: 0.167,
     expected_preference_shortfall: { shipping_a: 0.004, shipping_b: 0.212 },

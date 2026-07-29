@@ -12,10 +12,10 @@ import PosteriorChart from "./posterior-chart";
 
 /** Max, not B's: either direction can be the one worth acting on and the payload does not
  *  say which leads. */
-const actionableProbability = (verdict: PanelVerdict): number =>
+const strongestPreference = (verdict: PanelVerdict): number =>
   Math.max(
-    verdict.probability_worth_acting_on.shipping_a,
-    verdict.probability_worth_acting_on.shipping_b,
+    verdict.probability_meaningfully_preferred.a,
+    verdict.probability_meaningfully_preferred.b,
   );
 
 type Recommendation = "lean" | "tie" | "no_call";
@@ -25,7 +25,7 @@ type Recommendation = "lean" | "tie" | "no_call";
  *  everything else in the report is already stated at, so no second number is introduced
  *  that a reader would have to be told about separately. */
 const recommend = (verdict: PanelVerdict): Recommendation => {
-  if (actionableProbability(verdict) >= verdict.credible_mass) return "lean";
+  if (strongestPreference(verdict) >= verdict.credible_mass) return "lean";
   if (verdict.probability_practical_tie >= verdict.credible_mass) return "tie";
   return "no_call";
 };
@@ -210,16 +210,14 @@ export default function Report({ result }: { result: EvaluateResponse }) {
           value={formatPercent(verdict.share_preferring_b)}
           detail={`true share is between ${formatPercent(verdict.credible_interval[0])} and ${formatPercent(verdict.credible_interval[1])} (${formatPercent(verdict.credible_mass)} sure)`}
         />
-        {/* Crossed on purpose: the chance shipping B is wrong IS the chance the
-            panel prefers A by more than the tie band. */}
         <StatTile
           label="Chance A is preferred"
-          value={formatPercent(verdict.probability_worth_acting_on.shipping_b)}
+          value={formatPercent(verdict.probability_meaningfully_preferred.a)}
           detail="by more than the tie zone"
         />
         <StatTile
           label="Chance B is preferred"
-          value={formatPercent(verdict.probability_worth_acting_on.shipping_a)}
+          value={formatPercent(verdict.probability_meaningfully_preferred.b)}
           detail="by more than the tie zone"
         />
         <StatTile

@@ -10,8 +10,8 @@ from app.verdict import (
     expected_preference_shortfall,
     panel_verdict,
     posterior,
+    probability_meaningfully_preferred,
     probability_practical_tie,
-    probability_worth_acting_on,
     rope_verdict,
     stopping_decision,
     tally_votes,
@@ -289,8 +289,8 @@ class TestPanelVerdictPayload:
         narrow = panel_verdict(preferring_b=128, total=200, rope=(0.47, 0.53))
         assert narrow.rope == (0.47, 0.53)
         assert (
-            narrow.probability_worth_acting_on.shipping_a
-            > result.probability_worth_acting_on.shipping_a
+            narrow.probability_meaningfully_preferred.b
+            > result.probability_meaningfully_preferred.b
         )
 
     def test_it_reports_the_posterior_and_both_exposures(self) -> None:
@@ -314,15 +314,15 @@ class TestPanelVerdictPayload:
         than as calls to the same functions, so a mis-wired argument cannot agree."""
         result = panel_verdict(preferring_b=65, total=100)
 
-        assert result.probability_worth_acting_on.shipping_a == pytest.approx(
+        assert result.probability_meaningfully_preferred.b == pytest.approx(
             0.946, abs=5e-4
         )
         assert result.detectable_gap == pytest.approx(0.1667, abs=5e-4)
         # The three regions partition one posterior, so the payload's own numbers must
         # close — the only check that they came from the same split and the same band.
         assert (
-            result.probability_worth_acting_on.shipping_a
-            + result.probability_worth_acting_on.shipping_b
+            result.probability_meaningfully_preferred.a
+            + result.probability_meaningfully_preferred.b
             + result.probability_practical_tie
         ) == pytest.approx(1.0)
 
@@ -330,31 +330,31 @@ class TestPanelVerdictPayload:
         assert "winner" not in panel_verdict(preferring_b=200, total=200).model_dump()
 
 
-class TestActionableProbability:
+class TestMeaningfulPreference:
     """P(the share falls outside the band), which is what the three-way label replaced.
 
     The label collapses everything between dead-even and near-certain into `undecided`;
     these are the numbers it was collapsing.
     """
 
-    def test_a_symmetric_split_risks_each_direction_equally(self) -> None:
-        outside = probability_worth_acting_on(preferring_b=50, total=100)
+    def test_a_symmetric_split_leans_each_direction_equally(self) -> None:
+        outside = probability_meaningfully_preferred(preferring_b=50, total=100)
 
-        assert outside.shipping_a == pytest.approx(outside.shipping_b)
+        assert outside.a == pytest.approx(outside.b)
 
     def test_the_three_regions_account_for_the_whole_posterior(self) -> None:
         """Independent of how either tail is computed: whatever mass is not above the
         band or below it must be inside it, so the two tails cannot both drift."""
-        outside = probability_worth_acting_on(preferring_b=63, total=100)
+        outside = probability_meaningfully_preferred(preferring_b=63, total=100)
         inside = probability_practical_tie(preferring_b=63, total=100)
 
-        assert outside.shipping_a + outside.shipping_b + inside == pytest.approx(1.0)
+        assert outside.a + outside.b + inside == pytest.approx(1.0)
 
     def test_it_separates_splits_the_label_calls_identical(self) -> None:
         """The whole point. `rope_verdict` reads `undecided` at both of these, which is
         why a report built on the label cannot tell a coin-flip from a near-certainty."""
-        even = probability_worth_acting_on(preferring_b=50, total=100)
-        leaning = probability_worth_acting_on(preferring_b=65, total=100)
+        even = probability_meaningfully_preferred(preferring_b=50, total=100)
+        leaning = probability_meaningfully_preferred(preferring_b=65, total=100)
 
         assert (
             rope_verdict(posterior(preferring_b=50, total=100).interval) == "undecided"
@@ -362,14 +362,14 @@ class TestActionableProbability:
         assert (
             rope_verdict(posterior(preferring_b=65, total=100).interval) == "undecided"
         )
-        assert even.shipping_a < 0.1
-        assert leaning.shipping_a > 0.9
+        assert even.b < 0.1
+        assert leaning.b > 0.9
 
     def test_a_lopsided_panel_is_near_certain_in_one_direction_only(self) -> None:
-        outside = probability_worth_acting_on(preferring_b=90, total=100)
+        outside = probability_meaningfully_preferred(preferring_b=90, total=100)
 
-        assert outside.shipping_a > 0.99
-        assert outside.shipping_b < 0.01
+        assert outside.b > 0.99
+        assert outside.a < 0.01
 
 
 class TestDetectableGap:
@@ -407,20 +407,20 @@ class TestDetectableGap:
     def test_below_five_votes_no_split_is_decisive(self, total: int) -> None:
         """The floor 010b decided *not* to legislate, shown to exist as arithmetic:
         below n=5 even a unanimous panel's interval cannot clear the band, so the
-        gap is None — and a unanimous panel's actionable probability stays under
+        gap is None — and a unanimous panel's preference probability stays under
         the 95% bar, so the render-time recommendation reads "no call" without any
         rule saying so. If either stops holding — a narrower band, a lower mass —
         the no-threshold decision needs relitigating, which is what this failing
         would signal."""
         assert detectable_gap(total=total) is None
-        unanimous = probability_worth_acting_on(preferring_b=total, total=total)
-        assert unanimous.shipping_a < 0.95
+        unanimous = probability_meaningfully_preferred(preferring_b=total, total=total)
+        assert unanimous.b < 0.95
 
     def test_five_votes_is_where_a_verdict_first_becomes_reachable(self) -> None:
         """The edge accepted on the ticket, pinned from both sides: unanimous
         five-of-five is the smallest panel that clears the bar."""
         assert detectable_gap(total=5) is not None
-        assert probability_worth_acting_on(preferring_b=5, total=5).shipping_a > 0.95
+        assert probability_meaningfully_preferred(preferring_b=5, total=5).b > 0.95
 
     def test_a_bigger_panel_detects_a_smaller_gap(self) -> None:
         """Sampled across doublings, not consecutive sizes. The boundary moves in whole

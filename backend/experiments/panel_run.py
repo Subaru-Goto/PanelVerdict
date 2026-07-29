@@ -146,13 +146,11 @@ def _print_result(result: PanelTestResult) -> None:
     print(f"counts: {result.counts}")
     print(f"stop_reason: {result.stop_reason}")
     print(f"tally: {result.tally.counts}")
-    worth = verdict.probability_worth_acting_on
-    # The fields name the mistake, not the winner: `shipping_a` is the probability
-    # that shipping A costs a gap worth having — high shipping_a argues FOR B.
+    preferred = verdict.probability_meaningfully_preferred
     print(
         "verdict: "
-        f"P(shipping A is the mistake)={worth.shipping_a:.3f} "
-        f"P(shipping B is the mistake)={worth.shipping_b:.3f} "
+        f"P(A meaningfully preferred)={preferred.a:.3f} "
+        f"P(B meaningfully preferred)={preferred.b:.3f} "
         f"P(practical tie)={verdict.probability_practical_tie:.3f}"
     )
     for notice in result.notices:
