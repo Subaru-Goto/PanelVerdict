@@ -1,5 +1,7 @@
+import httpx
 import pytest
 from fastapi.testclient import TestClient
+from openai import APIStatusError
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult
 
@@ -20,6 +22,7 @@ from tests.factories import (
     StubTranslator,
     make_assembled,
     make_persona,
+    ndjson_events,
     seed_japanese,
     voted,
 )
@@ -282,7 +285,7 @@ _CHAT_RESULT = {
 }
 
 
-def test_chat_returns_the_analysts_reply(client) -> None:
+def test_chat_streams_the_analysts_reply_as_ndjson(client) -> None:
     response = client.post(
         "/chat",
         json={
@@ -293,7 +296,11 @@ def test_chat_returns_the_analysts_reply(client) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"reply": "The interval cleared the band."}
+    assert response.headers["content-type"].startswith("application/x-ndjson")
+    events = ndjson_events(response.text.splitlines())
+    tokens = [e["text"] for e in events if e["type"] == "token"]
+    assert "".join(tokens) == "The interval cleared the band."
+    assert events[-1] == {"type": "done"}
 
 
 def test_chat_refuses_a_tally_naming_other_variants(client) -> None:
@@ -322,7 +329,11 @@ def test_chat_requires_a_message_and_a_thread(client) -> None:
     assert empty_thread.status_code == 422
 
 
-def test_chat_exhausted_credit_is_a_402(client) -> None:
+def test_chat_exhausted_credit_is_an_in_band_error_event(client) -> None:
+    """Once the stream starts the 200 is committed, so the 402's meaning
+    arrives as an `error` event carrying the same fixed sentence — and none
+    of the provider's own words."""
+
     class Broke(ScriptedChatModel):
         def _generate(
             self,
@@ -331,7 +342,12 @@ def test_chat_exhausted_credit_is_a_402(client) -> None:
             run_manager: object = None,
             **kwargs: object,
         ) -> ChatResult:
-            raise OutOfCredit("OpenRouter credit exhausted (402)")
+            request = httpx.Request("POST", "http://openrouter.invalid")
+            raise APIStatusError(
+                "provider text that must not travel",
+                response=httpx.Response(402, request=request),
+                body=None,
+            )
 
     app.dependency_overrides[get_analyst] = lambda: Broke(responses=[])
 
@@ -340,4 +356,10 @@ def test_chat_exhausted_credit_is_a_402(client) -> None:
         json={"thread_id": "t-main-4", "message": "hi", "result": _CHAT_RESULT},
     )
 
-    assert response.status_code == 402
+    assert response.status_code == 200
+    events = ndjson_events(response.text.splitlines())
+    assert events[-1] == {
+        "type": "error",
+        "message": "OpenRouter credit exhausted (402)",
+    }
+    assert "provider text" not in response.text

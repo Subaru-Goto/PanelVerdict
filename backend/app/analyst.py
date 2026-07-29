@@ -1,17 +1,16 @@
-"""The 'Ask the analyst' agent: LangChain's `create_agent` over our tools (012).
+"""The 'Ask the analyst' agent: LangChain's `create_agent` over our tools.
 
 The LLM decides *when* to call a tool; deterministic code decides *how* — every
 number the analyst can cite comes out of `verdict.py`, recomputed from the
-tally. Conversation memory is a server-side checkpointer keyed by `thread_id`
-(user decision, on the ticket): the checkpointed transcript keeps ToolMessages,
-so a follow-up is answered from context instead of re-buying tool calls a
-text-only replay would drop. In-memory in v1 — a restart forgets threads and a
-second worker would not share them, both acceptable at demo scale; the Postgres
-checkpointer is the scale-up path, not a redesign.
-
-`create_agent` replaced a hand-rolled loop on 2026-07-29 (user decision, on the
-ticket): graph *authoring* stays v2, the modern API does not.
+tally. Conversation memory is a server-side checkpointer keyed by `thread_id`:
+the checkpointed transcript keeps ToolMessages, so a follow-up is answered from
+context instead of re-buying tool calls a text-only replay would drop.
+In-memory in v1 — a restart forgets threads and a second worker would not
+share them, both acceptable at demo scale; the Postgres checkpointer is the
+scale-up path, not a redesign.
 """
+
+from collections.abc import Iterator
 
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
@@ -23,23 +22,24 @@ from openai import APIStatusError
 from pydantic import BaseModel
 
 from app.schemas import (
+    ChatStreamEvent,
     CoverageRung,
+    DoneEvent,
+    ErrorEvent,
     EvaluateResponse,
     PanelCounts,
     PanelVerdict,
     StopReason,
+    TokenEvent,
+    ToolEvent,
 )
 from app.verdict import panel_verdict
-from app.vote import OutOfCredit
 
 
-class AnalystLoopOverrun(Exception):
-    """The agent was still calling tools when the step budget ran out.
-
-    Every step is a paid call, so a run that never answers converts into a
-    visible failure instead of an invisible bill. Fixed text only — nothing the
-    model produced travels in the message.
-    """
+def _failure_sentence(error: Exception) -> str:
+    """The exception *type* is the only part of a failure safe to forward:
+    messages can carry provider responses and the model's own output."""
+    return f"analyst failed: {type(error).__name__}"
 
 
 # A constant with zero interpolation, so no request content — not the user's
@@ -108,52 +108,83 @@ def build_tools(result: EvaluateResponse) -> list[BaseTool]:
     return [analyze_results]
 
 
-def run_analyst(
+def stream_analyst(
     *,
     model: BaseChatModel,
     result: EvaluateResponse,
     thread_id: str,
     message: str,
     checkpointer: BaseCheckpointSaver,
-) -> str:
-    """Run the agent one turn further and return its answer.
+) -> Iterator[str]:
+    """Yield the agent's turn as NDJSON lines — one `ChatStreamEvent` each.
 
     The agent is rebuilt per request because the tools close over the request's
     test; the *thread* survives in the shared checkpointer, so the rebuilt
     agent resumes the same transcript — including its earlier ToolMessages.
-    The step budget is per turn, derived, not tuned: one model-then-tools round
-    per available tool (two supersteps each, in langgraph's currency) plus the
-    closing model step, plus one — the limit must exceed the steps executed,
-    measured: a one-tool round errors at 3 and passes at 4. A model still
-    calling tools past the budget is looping, and the budget converts runaway
-    spend into a visible failure.
+    A stream cannot change its HTTP status after the first byte, so every
+    failure becomes one in-band `error` event carrying the fixed sentence a
+    status code would otherwise have carried. Nothing the model or provider
+    wrote may ever appear in an error event.
     """
     tools = build_tools(result)
-    agent = create_agent(
-        model, tools, system_prompt=_SYSTEM_PROMPT, checkpointer=checkpointer
-    )
-    # 2n + 1 executed steps (n tool rounds + closing answer), +1 because the
-    # limit must strictly exceed the steps executed — see the docstring.
+
+    # The step budget, per turn, derived not tuned: one model-then-tools round
+    # per available tool (two supersteps each, in langgraph's currency) plus
+    # the closing model step, plus one — the limit must strictly exceed the
+    # steps executed, measured: a one-tool round errors at 3 and passes at 4.
+    # A model still calling tools past the budget is looping, and the budget
+    # converts runaway spend into a visible failure.
     limit = 2 * len(tools) + 2
+
+    agent = create_agent(
+        model=model,
+        tools=tools,
+        system_prompt=_SYSTEM_PROMPT,
+        checkpointer=checkpointer,
+    )
+
+    def line(event: ChatStreamEvent) -> str:
+        return event.model_dump_json() + "\n"
+
     try:
-        state = agent.invoke(
+        stream = agent.stream_events(
             {"messages": [HumanMessage(content=message)]},
-            {
-                "configurable": {"thread_id": thread_id},
-                "recursion_limit": limit,
-            },
+            {"configurable": {"thread_id": thread_id}, "recursion_limit": limit},
+            version="v3",
         )
-    except GraphRecursionError as error:
-        raise AnalystLoopOverrun(
-            f"analyst was still calling tools after {limit} steps"
-        ) from error
+        for event in stream:
+            data = event["params"]["data"]
+            if event["method"] == "tools" and data.get("event") == "tool-started":
+                yield line(ToolEvent(name=data["tool_name"]))
+            elif event["method"] == "messages":
+                payload = data[0] if isinstance(data, tuple) else data
+
+                if isinstance(payload, AIMessage):
+                    if payload.text:
+                        yield line(TokenEvent(text=payload.text))
+                elif (
+                    isinstance(payload, dict)
+                    and payload.get("event") == "content-block-delta"
+                ):
+                    delta = payload.get("delta", {})
+                    if delta.get("type") == "text-delta" and delta.get("text"):
+                        yield line(TokenEvent(text=delta["text"]))
+    except GraphRecursionError:
+        yield line(
+            ErrorEvent(message=f"analyst was still calling tools after {limit} steps")
+        )
+        return
     except APIStatusError as error:
-        # A 402 is the account's fault and terminal; fixed text only — the
-        # provider's message never travels. Same mapping as the vote path.
-        if error.status_code == 402:
-            raise OutOfCredit("OpenRouter credit exhausted (402)") from error
-        raise
-    reply = state["messages"][-1]
-    if not isinstance(reply, AIMessage):
-        raise RuntimeError(f"agent ended on a {type(reply).__name__}, not an answer")
-    return str(reply.content)
+        yield line(
+            ErrorEvent(
+                message="OpenRouter credit exhausted (402)"
+                if error.status_code == 402
+                else _failure_sentence(error)
+            )
+        )
+        return
+    except Exception as error:
+        # Broad on purpose — the stream is the only channel left.
+        yield line(ErrorEvent(message=_failure_sentence(error)))
+        return
+    yield line(DoneEvent())
