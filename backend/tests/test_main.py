@@ -1,10 +1,13 @@
 import pytest
 from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatResult
 
 from app.config import settings
 from app.main import (
     app,
     budget_notice,
+    get_analyst,
     get_conn,
     get_panel_llm,
     get_remaining_credit,
@@ -13,6 +16,7 @@ from app.main import (
 from app.persistence import persist_pool
 from app.vote import OutOfCredit
 from tests.factories import (
+    ScriptedChatModel,
     StubTranslator,
     make_assembled,
     make_persona,
@@ -46,6 +50,10 @@ def client(conn, stub_llm):
     )
     # No network in tests: the credit check is a live GET when not overridden.
     app.dependency_overrides[get_remaining_credit] = lambda: None
+    # Answers without tools — the agent's tool mechanics are test_analyst's.
+    app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
+        responses=[AIMessage(content="The interval cleared the band.")]
+    )
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -240,3 +248,96 @@ def test_the_preflight_warning_reaches_the_response(client, conn) -> None:
     assert response.status_code == 200
     messages = [n["message"] for n in response.json()["notices"]]
     assert any("credit" in m and "re-run" in m for m in messages)
+
+
+_CHAT_RESULT = {
+    "verdict": {
+        "share_preferring_b": 0.288,
+        "probability_majority_prefers_b": 0.001,
+        "credible_interval": [0.173, 0.418],
+        "credible_mass": 0.95,
+        "rope": [0.43, 0.57],
+        "probability_meaningfully_preferred": {"a": 0.984, "b": 0.0},
+        "probability_practical_tie": 0.016,
+        "detectable_gap": 0.167,
+        "expected_preference_shortfall": {"shipping_a": 0.004, "shipping_b": 0.212},
+    },
+    "tally": {"counts": {"a": 36, "b": 14}, "total": 50},
+    "counts": {"requested": 200, "matched": 200, "voted": 50},
+    "query": {
+        "countries": ["US"],
+        "coverage": "requested",
+        "min_age": 18,
+        "max_age": 100,
+        "gender": None,
+        "income_quintiles": [],
+        "education": [],
+        "traits": [],
+        "notices": [],
+    },
+    "notices": [],
+    "stop_reason": "decisive",
+    "variants": {"a": "Save 50% today", "b": "Members save half"},
+    "votes": [],
+}
+
+
+def test_chat_returns_the_analysts_reply(client) -> None:
+    response = client.post(
+        "/chat",
+        json={
+            "thread_id": "t-main-1",
+            "message": "Why did it stop early?",
+            "result": _CHAT_RESULT,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"reply": "The interval cleared the band."}
+
+
+def test_chat_refuses_a_tally_naming_other_variants(client) -> None:
+    """422 before any model call: the guard runs ahead of the paid agent."""
+    broken = {**_CHAT_RESULT, "tally": {"counts": {"x": 50}, "total": 50}}
+
+    response = client.post(
+        "/chat",
+        json={"thread_id": "t-main-2", "message": "hi", "result": broken},
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_requires_a_message_and_a_thread(client) -> None:
+    empty_message = client.post(
+        "/chat",
+        json={"thread_id": "t-main-3", "message": "", "result": _CHAT_RESULT},
+    )
+    empty_thread = client.post(
+        "/chat",
+        json={"thread_id": "", "message": "hi", "result": _CHAT_RESULT},
+    )
+
+    assert empty_message.status_code == 422
+    assert empty_thread.status_code == 422
+
+
+def test_chat_exhausted_credit_is_a_402(client) -> None:
+    class Broke(ScriptedChatModel):
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: object = None,
+            **kwargs: object,
+        ) -> ChatResult:
+            raise OutOfCredit("OpenRouter credit exhausted (402)")
+
+    app.dependency_overrides[get_analyst] = lambda: Broke(responses=[])
+
+    response = client.post(
+        "/chat",
+        json={"thread_id": "t-main-4", "message": "hi", "result": _CHAT_RESULT},
+    )
+
+    assert response.status_code == 402

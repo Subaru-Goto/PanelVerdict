@@ -295,6 +295,23 @@ class OpenRouterPanelLLM:
         return _vote_response(result, seconds=seconds)
 
 
+def analyst_chat_model(*, api_key: str, base_url: str, model: str) -> ChatOpenAI:
+    """The bare chat model `create_agent` drives for the analyst (012).
+
+    Just construction: tool binding, the loop, and error shaping all belong to
+    the agent in `app.analyst`. Same timeout as a vote, not a new constant —
+    same model, same provider, and a chat turn is the same order of work as a
+    reasoned vote.
+    """
+    return ChatOpenAI(
+        model=model,
+        base_url=base_url,
+        api_key=api_key,
+        max_retries=2,
+        timeout=VOTE_READ_TIMEOUT_SECONDS,
+    )
+
+
 def remaining_credit(*, api_key: str, base_url: str) -> float | None:
     """What is left on the key (`GET /key`, same units as the vote costs), or None
     when unknown — an unlimited key reports null, and a failed check reports

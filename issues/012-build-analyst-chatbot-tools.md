@@ -16,7 +16,65 @@ The chatbot + tool-calling requirement, embedded in the report and **scoped to t
 
 The exact chip set is fog until this ticket is worked (see map Notes).
 
-## Amended 2026-07-27 (010) — the tool loop is LangChain in v1
+## Decided 2026-07-29 — analyst model and slicing (user)
+
+- **Analyst model: `openai/gpt-5-mini` for v1** — the same model as every other
+  role. 003 deferred the reasoning-model pick here; the user chose consistency
+  and cost over a flagship, at chat volume the difference is pennies either
+  way, and it stays config (`settings.analyst_model`) so revisiting is a
+  one-line change if answer quality disappoints.
+- **Chat surface: the floating launcher (prototype variant C), decided by the
+  user 2026-07-29.** Three variants ran on the live page against fixture data
+  (A: persistent side column, B: inline Q&A appendix, C: floating launcher
+  opening an overlay dock); the user picked C — the report stays a document,
+  the analyst is a helper you summon. Chips live inside the dock, shown while
+  the thread is empty. Candidate chip set from the prototype (final copy is
+  012c's): "Why did the test stop after 50 of 200 votes?", "How sure are we
+  that <headline A> wins?", "Who was on this panel?", "What would 200 more
+  votes change?". Known trade recorded at the decision: the chips demo the
+  tool-calling requirement and C hides them behind a click — 012c should make
+  the launcher unmissable (and may consider opening the dock once, on first
+  render of a fresh report).
+- **The reply streams (user, 2026-07-29).** Real token streaming, not a typing
+  animation over a completed reply — the first words show while the model is
+  still writing. Tool rounds have no streamable text, so the stream carries a
+  status signal while a tool runs and token deltas for the closing answer.
+  Lands in **012b** (the transport is the endpoint's contract, and it must be
+  settled before 012c consumes it): `/chat` becomes a streaming response,
+  frontend reads it via fetch + ReadableStream (EventSource cannot POST).
+  012a's loop stays the engine — only the transport changes.
+- **Agent middleware: not adopted in 012a.** The hand-rolled loop is ~30 lines
+  and needed neither effort escalation nor per-turn model swaps; the question
+  stays open per the 010 amendment and gets its final answer when this ticket
+  closes, informed by whether 012b's multi-tool loop ever wants either.
+- **Three PRs**: 012a — `/chat` endpoint + hand-rolled LangChain tool loop +
+  `analyze_results` (pure function over the tally, no new paid calls);
+  012b — `search_personas` (pgvector index + query) and `run_panel_test` as
+  tools; 012c — chat panel in the report + suggested-question chips, then the
+  user's end-to-end UI test. A chat turn that triggers `run_panel_test` spends
+  real money, so the UI must make that a deliberate act (012c's problem).
+
+## Amended 2026-07-29 — the loop is `create_agent`; the v1/v2 line is redrawn (user)
+
+The user clarified what 010's deferral was actually protecting v1 from: **authoring
+graphs** — nodes, edges, human-in-the-loop — not the langgraph *runtime* as a
+transitive dependency. `create_agent` is LangChain 1.x's front door and the API a
+working engineer meets everywhere, so v1 uses it; the hand-rolled loop below is
+**superseded** after one afternoon of life. Its evidence is on the record: the loop
+cost ~30 lines and was not painful — the framework is adopted for idiom and
+learning value, not necessity. What `create_agent` absorbs: ToolMessage plumbing,
+the unknown-tool reply, the round cap (its recursion limit), and the middleware
+question (middleware is its native mechanism). What stays ours: the tools, the
+recompute-don't-trust facts, and the zero-interpolation system prompt.
+**Conversation memory is a server-side checkpointer** (user, same day,
+reversing the first draft's client-replay design): `InMemorySaver` keyed by a
+client-minted `thread_id`. The deciding argument is cost, not convenience — a
+text-only replay drops ToolMessages, so every follow-up re-buys the tool
+calls; a checkpointed thread remembers them. Accepted with eyes open: a
+restart forgets threads and a second worker would not share them — fine at
+demo scale; the Postgres checkpointer is the scale-up path, not a redesign.
+
+## Superseded 2026-07-29 — amended 2026-07-27 (010): the tool loop was LangChain-by-hand in v1
 
 [010](010-assemble-orchestrator-graph.md) dropped LangGraph from v1, so this ticket does
 not get to reach for it either: v1 builds the tool loop on LangChain's tool calling with the

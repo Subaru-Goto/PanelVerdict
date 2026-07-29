@@ -1,0 +1,206 @@
+import json
+
+import pytest
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+from langgraph.checkpoint.memory import InMemorySaver
+
+from app.analyst import (
+    _SYSTEM_PROMPT,
+    AnalystLoopOverrun,
+    analysis_facts,
+    run_analyst,
+)
+from app.schemas import (
+    EvaluateResponse,
+    PanelCounts,
+    PanelVerdict,
+    PreferenceExposure,
+    PreferenceProbability,
+    TargetQuery,
+    VoteTally,
+)
+from app.verdict import panel_verdict
+from tests.factories import ScriptedChatModel
+
+
+def _result(*, preferring_b: int = 14, total: int = 50) -> EvaluateResponse:
+    """A response whose verdict field is deliberately absurd, so any test that
+    finds real numbers in the facts proves they were recomputed, not trusted."""
+    bogus = PanelVerdict(
+        share_preferring_b=0.99,
+        probability_majority_prefers_b=0.99,
+        credible_interval=(0.98, 1.0),
+        credible_mass=0.95,
+        rope=(0.43, 0.57),
+        probability_meaningfully_preferred=PreferenceProbability(a=0.0, b=0.99),
+        probability_practical_tie=0.01,
+        detectable_gap=None,
+        expected_preference_shortfall=PreferenceExposure(
+            shipping_a=0.5, shipping_b=0.0
+        ),
+    )
+    return EvaluateResponse(
+        verdict=bogus,
+        tally=VoteTally(
+            counts={"a": total - preferring_b, "b": preferring_b}, total=total
+        ),
+        counts=PanelCounts(requested=200, matched=200, voted=total),
+        query=TargetQuery(
+            countries=("US",),
+            coverage="requested",
+            min_age=18,
+            max_age=100,
+            gender=None,
+            income_quintiles=(),
+            education=(),
+            traits=(),
+            notices=(),
+        ),
+        notices=(),
+        stop_reason="decisive",
+        variants={"a": "Save 50% today", "b": "Members save half"},
+        votes=[],
+    )
+
+
+def _tool_call_message(name: str = "analyze_results") -> AIMessage:
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": name, "args": {}, "id": "c1", "type": "tool_call"}],
+    )
+
+
+class TestAnalysisFacts:
+    def test_the_verdict_is_recomputed_from_the_tally_not_trusted(self) -> None:
+        facts = analysis_facts(_result())
+        reference = panel_verdict(preferring_b=14, total=50)
+
+        assert facts.verdict.share_preferring_b == reference.share_preferring_b
+        assert facts.verdict.credible_interval == reference.credible_interval
+
+    def test_it_carries_the_run_facts_beside_the_math(self) -> None:
+        facts = analysis_facts(_result())
+
+        assert facts.variants == {"a": "Save 50% today", "b": "Members save half"}
+        assert facts.counts == PanelCounts(requested=200, matched=200, voted=50)
+        assert facts.stop_reason == "decisive"
+        assert facts.coverage == "requested"
+
+    def test_a_tally_without_both_variants_is_refused(self) -> None:
+        broken = _result().model_copy(
+            update={"tally": VoteTally(counts={"x": 50}, total=50)}
+        )
+        with pytest.raises(ValueError):
+            analysis_facts(broken)
+
+
+def _run(
+    model: ScriptedChatModel,
+    *,
+    checkpointer: InMemorySaver | None = None,
+    thread_id: str = "t-1",
+    message: str = "Why did it stop early?",
+) -> str:
+    return run_analyst(
+        model=model,
+        result=_result(),
+        thread_id=thread_id,
+        message=message,
+        checkpointer=checkpointer or InMemorySaver(),
+    )
+
+
+class TestRunAnalyst:
+    def test_the_agent_runs_our_tool_and_returns_the_final_reply(self) -> None:
+        """The one wiring fact worth pinning about create_agent: a ToolMessage
+        carrying OUR recomputed facts only appears in the second prompt if the
+        agent bound and executed the real analyze_results."""
+        model = ScriptedChatModel(
+            responses=[
+                _tool_call_message(),
+                AIMessage(content="The interval cleared the band."),
+            ]
+        )
+
+        reply = _run(model)
+
+        assert reply == "The interval cleared the band."
+        fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
+        assert len(fed_back) == 1
+        assert json.loads(str(fed_back[0].content))["stop_reason"] == "decisive"
+
+    def test_a_hallucinated_tool_name_does_not_crash_the_run(self) -> None:
+        model = ScriptedChatModel(
+            responses=[
+                _tool_call_message(name="drop_the_database"),
+                AIMessage(content="Sorry, I cannot do that."),
+            ]
+        )
+
+        reply = _run(model)
+
+        assert reply == "Sorry, I cannot do that."
+        # The framework replies to the bad call id itself; the pinned fact is
+        # only that the run survives and the model gets *some* ToolMessage.
+        assert any(isinstance(m, ToolMessage) for m in model.seen[1])
+
+    def test_a_model_that_never_answers_hits_the_step_budget(self) -> None:
+        # A one-message script repeats forever (see ScriptedChatModel).
+        model = ScriptedChatModel(responses=[_tool_call_message()])
+
+        with pytest.raises(AnalystLoopOverrun):
+            _run(model)
+
+    def test_the_agent_owns_the_system_prompt_and_it_stays_constant(self) -> None:
+        model = ScriptedChatModel(responses=[AIMessage(content="ok")])
+
+        _run(model)
+
+        first = model.seen[0][0]
+        assert isinstance(first, SystemMessage)
+        assert first.content == _SYSTEM_PROMPT
+        # Zero interpolation, pinned: no request content can reach the seat
+        # the instructions sit in.
+        assert "{" not in _SYSTEM_PROMPT
+
+    def test_a_thread_remembers_its_tool_results_across_turns(self) -> None:
+        """The reason the checkpointer exists: turn two's prompt still carries
+        turn one's ToolMessage, so a follow-up needs no repeat tool call."""
+        checkpointer = InMemorySaver()
+        model = ScriptedChatModel(
+            responses=[
+                _tool_call_message(),
+                AIMessage(content="98% for A."),
+                AIMessage(content="Because the interval cleared the band."),
+            ]
+        )
+
+        _run(model, checkpointer=checkpointer, message="How sure are we?")
+        reply = _run(model, checkpointer=checkpointer, message="Why?")
+
+        assert reply == "Because the interval cleared the band."
+        third_prompt = model.seen[2]
+        assert any(isinstance(m, ToolMessage) for m in third_prompt)
+        assert any(
+            isinstance(m, HumanMessage) and m.content == "How sure are we?"
+            for m in third_prompt
+        )
+
+    def test_threads_do_not_share_memory(self) -> None:
+        checkpointer = InMemorySaver()
+        model = ScriptedChatModel(responses=[AIMessage(content="ok")])
+
+        _run(
+            model,
+            checkpointer=checkpointer,
+            thread_id="t-1",
+            message="secret question",
+        )
+        _run(model, checkpointer=checkpointer, thread_id="t-2", message="hello")
+
+        second_thread_prompt = model.seen[1]
+        assert not any(
+            isinstance(m, HumanMessage) and "secret" in str(m.content)
+            for m in second_thread_prompt
+        )
