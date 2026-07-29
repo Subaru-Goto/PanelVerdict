@@ -3,9 +3,16 @@ title: "Rename probability_worth_acting_on — the wire should speak the report'
 labels: [wayfinder:task]
 parent: 000-map
 blocked_by: [011-build-report-ui]
-assignee: null
-status: open
+assignee: Subaru-Goto
+status: closed
 ---
+
+**Delivered 2026-07-29** in PR #65. The field is `probability_meaningfully_preferred`
+with keys `a`/`b` as proposed; the report.tsx crossover and its guard comment are
+gone, the pairing test pins the straight read, and `expected_preference_shortfall`
+kept its shipping keys. `docs/reading-the-posterior.md` never named the field, so
+no doc edit was needed; `vote.py` untouched, fingerprints unaffected. Both suites
+green at merge (backend 447, frontend 25).
 
 ## Goal
 
