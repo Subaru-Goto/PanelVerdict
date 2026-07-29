@@ -132,7 +132,9 @@ def run_analyst(
     agent = create_agent(
         model, tools, system_prompt=_SYSTEM_PROMPT, checkpointer=checkpointer
     )
-    limit = 2 * len(tools) + 2 # 2n + 1 where n = num tools
+    # 2n + 1 executed steps (n tool rounds + closing answer), +1 because the
+    # limit must strictly exceed the steps executed — see the docstring.
+    limit = 2 * len(tools) + 2
     try:
         state = agent.invoke(
             {"messages": [HumanMessage(content=message)]},
