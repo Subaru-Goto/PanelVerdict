@@ -131,21 +131,21 @@ def expected_preference_shortfall(
 
 
 @dataclass(frozen=True)
-class ActionableProbability:
-    """How likely each choice is to be the wrong one, both directions.
+class MeaningfulPreference:
+    """How likely each variant is to be preferred by more than the band.
 
-    The same two field names `PreferenceShortfall` uses for the same two branches, and a
-    separate type because the units differ: probability in 0-1 against preference-share
-    points. Structural identity is what makes mixing them up easy.
+    Key `a` is about variant A, deliberately unlike `PreferenceShortfall`'s
+    `shipping_*` keys — the differing key sets guard the units, which differ too:
+    probability in 0-1 against preference-share points.
     """
 
-    shipping_a: float
-    shipping_b: float
+    a: float
+    b: float
 
 
-def probability_worth_acting_on(
+def probability_meaningfully_preferred(
     *, preferring_b: int, total: int, rope: tuple[float, float] = _ROPE
-) -> ActionableProbability:
+) -> MeaningfulPreference:
     """How probable it is that each variant wins by an amount worth acting on.
 
     The band's own question, answered as a probability instead of a bucket. A three-way
@@ -153,15 +153,20 @@ def probability_worth_acting_on(
     65/100 it says `undecided` about something this puts near 0.95 — because comparing an
     interval to a band throws away where inside the interval the mass actually sits.
 
-    Named for what a reader does with it, not for the geometry: `shipping_a` is the
-    probability that shipping A costs a gap the band would call worth having.
+    Was `probability_worth_acting_on` with `shipping_*` keys, "named for what a
+    reader does with it, not for the geometry". 011b overturned that premise: the
+    reader-facing sentence became "Chance A is preferred", and the decision-named
+    wire forced the frontend to cross `shipping_b` onto A's tile (022). Now the
+    name follows the sentence: `a` is the mass below the band, where A leads.
     """
-    a, b = _checked_split(preferring_b, total)
+    # Not the file's usual `a, b` locals: here those names are the *variant* keys
+    # being constructed, and the Beta parameters must not share them.
+    alpha, beta = _checked_split(preferring_b, total)
     low, high = rope
-    distribution = stats.beta(a, b)
-    return ActionableProbability(
-        shipping_a=float(1 - distribution.cdf(high)),
-        shipping_b=float(distribution.cdf(low)),
+    distribution = stats.beta(alpha, beta)
+    return MeaningfulPreference(
+        a=float(distribution.cdf(low)),
+        b=float(1 - distribution.cdf(high)),
     )
 
 
@@ -199,10 +204,10 @@ def stopping_decision(
     the stop a label-agreement rule could never take, because the label fires on
     ~5.6% of genuinely tied splits and three in a row effectively never.
     """
-    worth = probability_worth_acting_on(
+    preferred = probability_meaningfully_preferred(
         preferring_b=preferring_b, total=total, rope=rope
     )
-    if max(worth.shipping_a, worth.shipping_b) >= credible_mass:
+    if max(preferred.a, preferred.b) >= credible_mass:
         return "decisive"
     if (
         probability_practical_tie(preferring_b=preferring_b, total=total, rope=rope)
@@ -350,7 +355,7 @@ def panel_verdict(
         preferring_b=preferring_b, total=total, credible_mass=credible_mass
     )
     shortfall = expected_preference_shortfall(preferring_b=preferring_b, total=total)
-    worth_acting_on = probability_worth_acting_on(
+    meaningfully_preferred = probability_meaningfully_preferred(
         preferring_b=preferring_b, total=total, rope=rope
     )
     return PanelVerdict(
@@ -359,7 +364,9 @@ def panel_verdict(
         credible_interval=summary.interval,
         credible_mass=credible_mass,
         rope=rope,
-        probability_worth_acting_on=PreferenceProbability(**asdict(worth_acting_on)),
+        probability_meaningfully_preferred=PreferenceProbability(
+            **asdict(meaningfully_preferred)
+        ),
         probability_practical_tie=probability_practical_tie(
             preferring_b=preferring_b, total=total, rope=rope
         ),

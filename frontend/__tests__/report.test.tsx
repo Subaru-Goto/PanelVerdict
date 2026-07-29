@@ -17,9 +17,8 @@ describe("verdict line", () => {
 
 describe("stat tiles", () => {
   it("states both preference probabilities and the tie", () => {
-    // The 98% is probability_worth_acting_on.shipping_b: the chance shipping B
-    // is wrong is the chance A is meaningfully preferred, so it must sit under
-    // A's label — a swap here is the bug this test exists to catch.
+    // The 98% is probability_meaningfully_preferred.a, read straight onto A's
+    // tile — a swap here is the bug this test exists to catch.
     render(<Report result={makeResponse()} />);
 
     const tileA = screen.getByText("Chance A is preferred");

@@ -186,15 +186,17 @@ class PreferenceExposure(BaseModel):
 
 
 class PreferenceProbability(BaseModel):
-    """How likely each choice is to be the wrong one, both directions.
+    """How likely each variant is to be preferred by more than the band.
 
-    Structurally identical to `PreferenceExposure` and deliberately not it: one is a
-    probability in 0-1, the other a count of preference-share points, and a reader that
-    formatted 0.95 as "95 points" would be off by the width of the whole scale.
+    Key `a` is about variant A — unlike `PreferenceExposure`, whose `shipping_*`
+    keys survive because that number genuinely is about the shipping decision
+    (022). The differing key sets also guard the units: one is a probability in
+    0-1, the other preference-share points, and a reader that formatted 0.95 as
+    "95 points" would be off by the width of the whole scale.
     """
 
-    shipping_a: float
-    shipping_b: float
+    a: float
+    b: float
 
 
 class PanelVerdict(BaseModel):
@@ -225,7 +227,7 @@ class PanelVerdict(BaseModel):
     credible_interval: tuple[float, float]
     credible_mass: float
     rope: tuple[float, float]
-    probability_worth_acting_on: PreferenceProbability
+    probability_meaningfully_preferred: PreferenceProbability
     probability_practical_tie: float
     detectable_gap: float | None
     expected_preference_shortfall: PreferenceExposure

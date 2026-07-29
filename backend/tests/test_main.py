@@ -89,7 +89,7 @@ def test_evaluate_returns_the_full_panel_test_payload(client, conn) -> None:
     assert verdict["rope"] == [0.43, 0.57]
     assert 0.0 <= verdict["share_preferring_b"] <= 1.0
     assert 0.0 <= verdict["probability_majority_prefers_b"] <= 1.0
-    assert set(verdict["probability_worth_acting_on"]) == {"shipping_a", "shipping_b"}
+    assert set(verdict["probability_meaningfully_preferred"]) == {"a", "b"}
     assert 0.0 <= verdict["probability_practical_tie"] <= 1.0
     assert set(verdict["expected_preference_shortfall"]) == {"shipping_a", "shipping_b"}
     assert "winner" not in verdict
