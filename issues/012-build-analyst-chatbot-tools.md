@@ -4,7 +4,7 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: [010-assemble-orchestrator-graph, 011-build-report-ui]
 assignee: null
-status: open
+status: closed
 ---
 
 ## Goal
@@ -15,6 +15,31 @@ The chatbot + tool-calling requirement, embedded in the report and **scoped to t
 - **suggested-question chips** rather than free composition (each chip maps to a requirement and demos reliably).
 
 The exact chip set is fog until this ticket is worked (see map Notes).
+
+## Closed 2026-07-29 — all three slices delivered
+
+012a (agent + analyze_results), 012b (streaming transport, `search_personas`,
+`run_panel_test`), and 012c (dock + chips + stream consumption) are merged or
+in PR. Closing decisions:
+
+- **Chip copy (final):** "Why did the test stop early?", "How sure are we
+  about the winner?", "Who was on this panel?" — the first two demo
+  `analyze_results`, the third `search_personas`. Deliberately NO chip for
+  `run_panel_test`: a new panel run spends real money, so that ask must be
+  typed, never one accidental click away — that is 012c's share of the spend
+  deliberateness split.
+- **Dock behavior:** opens once on first render of a fresh report (the
+  recorded variant-C trade: the launcher hides the chips, so a fresh report
+  shows them unprompted); the launcher is a labeled button, not an icon;
+  `thread_id` is minted per mounted report via `crypto.randomUUID()`.
+- **Agent middleware: final answer (question held open since 010).** 012b's
+  three-tool loop never wanted effort escalation or per-turn model swaps —
+  middleware stays unadopted in v1. The one genuine future case surfaced:
+  human-in-the-loop approval of `run_panel_test` spend, if honest-client
+  gating (tool description + no spend chip) stops being enough.
+- Small known gap, accepted: the `run_panel_test` tool result carries the
+  run's own notices but not `/evaluate`'s credit-preflight notice, so the
+  analyst cannot warn about a thin balance before a re-run.
 
 ## Decided 2026-07-29 — analyst model and slicing (user)
 
@@ -77,6 +102,25 @@ The exact chip set is fog until this ticket is worked (see map Notes).
   not measurement: ~40 tokens per persona summary keeps a search around 200
   tokens while giving the model enough names to answer concretely. Revisit if
   answers feel starved or bloated once real chats run.
+- **`run_panel_test` tool: same variants, new audience (2026-07-29).** The
+  model contributes only `target_description`; the tool re-tests the current
+  test's two headlines on the newly drawn panel at `settings.panel.size`.
+  Inventing new headline variants is the main form's job, not the chat's —
+  the chips that motivate this tool ("what would another audience say?")
+  all re-test the same A/B. Failure split: `EmptyPanel`/`NoVotes` return to
+  the model as tool results (codebase-authored sentences; a bad target
+  should end as an answer, not kill the turn); `OutOfCredit` ends the turn
+  via a dedicated stream handler carrying the pipeline's own remedy
+  sentence. Spend deliberateness is split: the tool description tells the
+  model to call only on an explicit user ask; making the *user's* ask
+  deliberate is 012c's UI job. Known soft spot, accepted: after a re-test,
+  `analyze_results` still reports the ORIGINAL test (the request's result
+  is the thread's anchor); the new run's numbers live only in its
+  ToolMessage, and the wrapper labels them with the target description so
+  the model can tell the two apart.
+- **`ToolDeps` bundle (2026-07-29).** The 069 review's data-clump call came
+  due: conn/embedder/translator/panel_llm/panel_size now travel as one
+  frozen dataclass through `/chat` → `stream_analyst` → `build_tools`.
 - **Agent middleware: not adopted in 012a.** The hand-rolled loop is ~30 lines
   and needed neither effort escalation nor per-turn model swaps; the question
   stays open per the 010 amendment and gets its final answer when this ticket

@@ -6,9 +6,10 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.analyst import _SYSTEM_PROMPT, analysis_facts, stream_analyst
+from app.analyst import _SYSTEM_PROMPT, ToolDeps, analysis_facts, stream_analyst
 from app.assembly import Embedder
 from app.persistence import persist_pool
+from app.vote import PanelLLM, VoteResponse
 from app.schemas import (
     EvaluateResponse,
     PanelCounts,
@@ -19,14 +20,17 @@ from app.schemas import (
     VoteTally,
 )
 from app.verdict import panel_verdict
+from tests.conftest import StubLLM
 from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
+    StubTranslator,
     make_assembled,
     make_panel_vote,
     make_persona,
     ndjson_events,
     pointing,
+    seed_japanese,
     tool_call_message,
 )
 
@@ -95,6 +99,24 @@ class TestAnalysisFacts:
             analysis_facts(broken)
 
 
+def _deps(
+    conn: psycopg.Connection,
+    *,
+    embedder: Embedder | None = None,
+    panel_llm: PanelLLM | None = None,
+    panel_size: int = 3,
+) -> ToolDeps:
+    """Tool dependencies with every paid half stubbed — a test opts into a
+    specific double only when its scenario is about that double."""
+    return ToolDeps(
+        conn=conn,
+        embedder=embedder or FixedEmbedder(pointing(0)),
+        translator=StubTranslator(),
+        panel_llm=panel_llm or StubLLM(chosen="option_1"),
+        panel_size=panel_size,
+    )
+
+
 def _run(
     model: ScriptedChatModel,
     *,
@@ -103,7 +125,7 @@ def _run(
     thread_id: str = "t-1",
     message: str = "Why did it stop early?",
     result: EvaluateResponse | None = None,
-    embedder: Embedder | None = None,
+    deps: ToolDeps | None = None,
 ) -> str:
     """One turn's answer, reassembled from the stream — these tests are about
     the agent's behavior, and the stream is the only transport it has."""
@@ -114,8 +136,7 @@ def _run(
             thread_id=thread_id,
             message=message,
             checkpointer=checkpointer or InMemorySaver(),
-            conn=conn,
-            embedder=embedder or FixedEmbedder(pointing(0)),
+            deps=deps or _deps(conn),
         )
     )
     return "".join(e["text"] for e in events if e["type"] == "token")
@@ -167,13 +188,96 @@ class TestAnalystAgent:
             model,
             conn=conn,
             result=result,
-            embedder=FixedEmbedder(pointing(0)),
+            deps=_deps(conn, embedder=FixedEmbedder(pointing(0))),
         )
 
         assert reply == "Two panelists match."
         fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
         found = json.loads(str(fed_back[0].content))
         assert [p["id"] for p in found] == ["US-00001", "US-00000"]
+
+    def test_the_agent_can_run_a_new_panel_test(self, conn) -> None:
+        """run_panel_test end to end on stubs: the model contributes only a
+        target description; the pipeline runs with THIS test's variants, and
+        the ToolMessage carries the new run's recomputed facts — the same
+        shape analyze_results speaks, so the model compares like with like."""
+        seed_japanese(conn, 3)
+        model = ScriptedChatModel(
+            responses=[
+                tool_call_message(
+                    name="run_panel_test",
+                    args={"target_description": "Japanese homeowners"},
+                ),
+                AIMessage(content="The new panel agrees."),
+            ]
+        )
+
+        reply = _run(model, conn=conn, message="What would Japanese readers say?")
+
+        assert reply == "The new panel agrees."
+        fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
+        run = json.loads(str(fed_back[0].content))
+        assert run["target_description"] == "Japanese homeowners"
+        # Three seeded panelists, all voting via the stub — a real tally, not
+        # an echo of the request's numbers (the fixture's tally is 36/14).
+        assert sum(run["facts"]["tally"].values()) == 3
+        assert run["facts"]["variants"] == _result().variants
+        assert "verdict" in run["facts"]
+
+    def test_a_target_nobody_matches_is_an_answer_not_a_crash(self, conn) -> None:
+        """EmptyPanel's sentence is codebase-authored (the 422 path forwards
+        it for the same reason), so it goes back to the model as a tool
+        result — the user hears 'nobody matches that target' and the
+        conversation survives."""
+        model = ScriptedChatModel(
+            responses=[
+                tool_call_message(
+                    name="run_panel_test",
+                    args={"target_description": "left-handed astronauts"},
+                ),
+                AIMessage(content="Nobody in the pool matches that."),
+            ]
+        )
+
+        reply = _run(model, conn=conn)
+
+        assert reply == "Nobody in the pool matches that."
+        fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
+        answer = json.loads(str(fed_back[0].content))
+        assert "no persona matches" in answer["error"]
+
+    def test_a_run_where_nobody_votes_answers_without_provider_text(self, conn) -> None:
+        """NoVotes takes the same return-to-the-model path as EmptyPanel, and
+        its sentence carries exception TYPE names only — the provider text a
+        real failure wraps must never enter the transcript the model reads."""
+
+        class Failing:
+            configuration = "failing"
+
+            def vote(
+                self, *, system_prompt: str, option_1: str, option_2: str
+            ) -> VoteResponse:
+                raise RuntimeError("provider text sk-secret")
+
+        seed_japanese(conn, 2)
+        model = ScriptedChatModel(
+            responses=[
+                tool_call_message(
+                    name="run_panel_test",
+                    args={"target_description": "Japanese homeowners"},
+                ),
+                AIMessage(content="The re-run collected no votes."),
+            ]
+        )
+
+        reply = _run(model, conn=conn, deps=_deps(conn, panel_llm=Failing()))
+
+        assert reply == "The re-run collected no votes."
+        fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
+        answer = json.loads(str(fed_back[0].content))
+        assert "0 of 2 panelists voted" in answer["error"]
+        assert "RuntimeError" in answer["error"]
+        assert all("sk-secret" not in str(m.content) for m in model.seen[1])
 
     def test_a_hallucinated_tool_name_does_not_crash_the_run(self, conn) -> None:
         model = ScriptedChatModel(

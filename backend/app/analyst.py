@@ -12,6 +12,7 @@ scale-up path, not a redesign.
 
 import json
 from collections.abc import Iterator
+from dataclasses import dataclass
 
 import psycopg
 from langchain.agents import create_agent
@@ -23,9 +24,11 @@ from langgraph.errors import GraphRecursionError
 from openai import APIStatusError
 from pydantic import BaseModel
 
+from app import pipeline
 from app.assembly import Embedder
 from app.panel import persona_summary
 from app.persistence import nearest_panelists
+from app.pipeline import EmptyPanel, NoVotes
 from app.schemas import (
     ChatStreamEvent,
     CoverageRung,
@@ -38,7 +41,9 @@ from app.schemas import (
     TokenEvent,
     ToolEvent,
 )
+from app.targeting import TargetTranslator
 from app.verdict import panel_verdict
+from app.vote import OutOfCredit, PanelLLM
 
 
 def _failure_sentence(error: Exception) -> str:
@@ -106,12 +111,23 @@ def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
 _SEARCH_LIMIT = 5
 
 
-def build_tools(
-    result: EvaluateResponse,
-    *,
-    conn: psycopg.Connection,
-    embedder: Embedder,
-) -> list[BaseTool]:
+@dataclass(frozen=True)
+class ToolDeps:
+    """Everything the tools need at call time that is not the test itself.
+
+    One bundle rather than a growing kwargs list: these five always travel
+    together from the request into the closures, and a tool that needs a new
+    runtime dependency should have to show up here, visibly.
+    """
+
+    conn: psycopg.Connection
+    embedder: Embedder
+    translator: TargetTranslator
+    panel_llm: PanelLLM
+    panel_size: int
+
+
+def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
     """The tools for one request, closed over that request's test."""
 
     @tool
@@ -128,8 +144,8 @@ def build_tools(
         which panelists are price-sensitive, and so on. The query is a
         description of people, not SQL."""
         found = nearest_panelists(
-            conn,
-            embedding=embedder.embed([query])[0],
+            deps.conn,
+            embedding=deps.embedder.embed([query])[0],
             panel_ids=[vote.persona_id for vote in result.votes],
             limit=_SEARCH_LIMIT,
         )
@@ -140,7 +156,47 @@ def build_tools(
             ]
         )
 
-    return [analyze_results, search_personas]
+    @tool
+    def run_panel_test(target_description: str) -> str:
+        """Run this test's two headlines against a NEW panel drawn from a
+        different target audience. This spends real money — one paid model
+        vote per matched panelist — so call it only when the user explicitly
+        asks to test another audience or run the test again. Returns the new
+        run's numbers in the same shape analyze_results reports; the original
+        test's numbers stay with analyze_results."""
+        try:
+            run = pipeline.run_panel_test(
+                deps.conn,
+                description=target_description,
+                variants=result.variants,
+                size=deps.panel_size,
+                translator=deps.translator,
+                llm=deps.panel_llm,
+            )
+        except (EmptyPanel, NoVotes) as error:
+            # Both sentences are this codebase's own (the /evaluate handlers
+            # forward them for the same reason), and a failed re-test should
+            # end as an answer, not kill the turn.
+            return json.dumps({"error": str(error)})
+        facts = AnalysisFacts(
+            variants=result.variants,
+            tally=run.tally.counts,
+            counts=run.counts,
+            stop_reason=run.stop_reason,
+            coverage=run.selection.query.coverage,
+            notices=[notice.message for notice in run.notices],
+            # Trusted as-is: this verdict came out of our own pipeline one
+            # line up, unlike the request's, which analysis_facts recomputes.
+            verdict=run.verdict,
+        )
+        return json.dumps(
+            {
+                "target_description": target_description,
+                "facts": facts.model_dump(mode="json"),
+            }
+        )
+
+    return [analyze_results, search_personas, run_panel_test]
 
 
 def stream_analyst(
@@ -150,8 +206,7 @@ def stream_analyst(
     thread_id: str,
     message: str,
     checkpointer: BaseCheckpointSaver,
-    conn: psycopg.Connection,
-    embedder: Embedder,
+    deps: ToolDeps,
 ) -> Iterator[str]:
     """Yield the agent's turn as NDJSON lines — one `ChatStreamEvent` each.
 
@@ -163,14 +218,17 @@ def stream_analyst(
     status code would otherwise have carried. Nothing the model or provider
     wrote may ever appear in an error event.
     """
-    tools = build_tools(result, conn=conn, embedder=embedder)
+    tools = build_tools(result, deps)
 
     # The step budget, per turn, derived not tuned: one model-then-tools round
     # per available tool (two supersteps each, in langgraph's currency) plus
     # the closing model step, plus one — the limit must strictly exceed the
     # steps executed, measured: a one-tool round errors at 3 and passes at 4.
     # A model still calling tools past the budget is looping, and the budget
-    # converts runaway spend into a visible failure.
+    # converts runaway spend into a visible failure. Note what the cap now
+    # admits: up to three tool rounds may each be a run_panel_test — a full
+    # paid panel run — so the budget is a tripwire, not the spend gate; the
+    # gate is the tool description's only-on-explicit-ask rule plus 012c's UI.
     limit = 2 * len(tools) + 2
 
     agent = create_agent(
@@ -219,6 +277,12 @@ def stream_analyst(
                 else _failure_sentence(error)
             )
         )
+        return
+    except OutOfCredit as error:
+        # The pipeline's own sentence, never the provider's (main.py's 402
+        # handler forwards it for the same reason) — it names the remedy,
+        # which "analyst failed: OutOfCredit" would throw away.
+        yield line(ErrorEvent(message=str(error)))
         return
     except Exception as error:
         # Broad on purpose — the stream is the only channel left.
