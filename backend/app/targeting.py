@@ -311,14 +311,35 @@ def select_panel(
 ) -> PanelSelection:
     """Natural-language target description → the panel that will vote on it.
 
-    Translate, resolve onto the pool's coverage, then retrieve. One model call, and
-    it is the only paid step: everything the description asked for is served by the
-    pool's own columns.
+    Translate, resolve onto the pool's coverage, then retrieve. At most one model
+    call, and it is the only paid step: everything the description asked for is
+    served by the pool's own columns.
+
+    A blank description skips that call rather than buying the model's reading of
+    "": the empty request already resolves to the whole pool by the documented
+    path, so there is nothing to translate and no result in doubt.
     """
-    query = resolve_target(translator.translate(description=description))
+    described = description.strip() != ""
+    query = resolve_target(
+        translator.translate(description=description) if described else TargetRequest()
+    )
     panel = retrieve_panel(conn, query, size=size, seed=seed)
+    # Said here rather than in `resolve_target`, which sees only the request: a
+    # description of "anyone" also resolves to an empty request, and telling that
+    # customer no audience was described would be false. Only this layer knows
+    # the field was left blank.
+    untargeted = (
+        ()
+        if described
+        else (
+            _reading(
+                "No audience was described, so the panel is a cross-section of "
+                "the whole pool rather than a match to anyone in particular."
+            ),
+        )
+    )
     return PanelSelection(
         panel=panel,
         query=query,
-        notices=query.notices + _shortfall_notices(panel, size),
+        notices=untargeted + query.notices + _shortfall_notices(panel, size),
     )

@@ -55,27 +55,27 @@ export default function EvaluateForm() {
     void submit({ targetDescription, headlineA, headlineB });
   }
 
+  // The audience is deliberately absent: two headlines against a cross-section
+  // of the whole pool is a real test, and blank is a choice rather than an
+  // omission. The backend skips the translator entirely when it is empty.
   const disabled =
-    !targetDescription.trim() ||
-    !headlineA.trim() ||
-    !headlineB.trim() ||
-    state.phase === "loading";
+    !headlineA.trim() || !headlineB.trim() || state.phase === "loading";
 
   return (
     <div className="flex flex-col gap-6">
       <form onSubmit={onSubmit} className="flex flex-col gap-3">
         <Field
-          label="Who should judge these?"
+          label="Who should judge these? (optional)"
           value={targetDescription}
           onChange={setTargetDescription}
-          placeholder="Japanese homeowners in their 40s who research before buying"
+          placeholder="Japanese males in their 30s"
           multiline
         />
         <Field
           label="Headline A"
           value={headlineA}
           onChange={setHeadlineA}
-          placeholder="Save 50% today"
+          placeholder="Save 50% this week"
         />
         <Field
           label="Headline B"

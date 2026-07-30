@@ -634,3 +634,26 @@ def test_the_countries_the_panel_came_from_are_always_stated() -> None:
     assert query.countries == (Locale.US,)
     assert "Ohio" in _warnings(query)[0]
     assert [m for m in _readings(query) if "United States" in m]
+
+
+def test_a_blank_target_never_reaches_the_translator(conn) -> None:
+    """The one paid step in selection, skipped when there is nothing to
+    translate: an empty description already resolves to the whole pool by the
+    documented path, so buying the model's opinion of "" spends money on a
+    result that was never in doubt."""
+    translator = StubTranslator(_JAPAN)
+
+    selection = select_panel(conn, "   ", size=5, translator=translator)
+
+    assert translator.descriptions == []
+    assert selection.query.countries == tuple(Locale)
+    assert selection.query.coverage == "requested"
+
+
+def test_an_untargeted_run_says_so(conn) -> None:
+    """A blank target resolves to every country, which is indistinguishable on
+    the report from a target that asked for everywhere — and the report's job
+    is telling what was asked apart from what was served."""
+    selection = select_panel(conn, "", size=5, translator=StubTranslator(_JAPAN))
+
+    assert any("no audience" in notice.message.lower() for notice in selection.notices)
