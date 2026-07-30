@@ -11,6 +11,7 @@ from app.assembly import Embedder
 from app.persistence import persist_pool
 from app.vote import PanelLLM, VoteResponse
 from app.schemas import (
+    CoverageRung,
     EvaluateResponse,
     Locale,
     PanelCounts,
@@ -103,8 +104,61 @@ class TestAnalysisFacts:
 
         assert facts.variants == {"a": "Save 50% today", "b": "Members save half"}
         assert facts.counts == PanelCounts(requested=200, matched=200, voted=50)
-        assert facts.stop_reason == "decisive"
-        assert facts.coverage == "requested"
+
+    def test_a_run_that_polled_everyone_says_so_in_words(self) -> None:
+        """`stop_reason: null` was the one fact in the payload with no sayable
+        form — `_stopped_early_notice` composes nothing when a run doesn't stop
+        early — so the analyst quoted the field name at the reader instead. The
+        field is withheld rather than forbidden: 025's move, since a model
+        cannot quote a handle it was never given."""
+        facts = analysis_facts(_result().model_copy(update={"stop_reason": None}))
+
+        assert "stop_reason" not in facts.model_dump()
+        assert facts.polling == "Polling ran through every matched panelist."
+
+    def test_an_early_stop_gives_its_reason_in_the_report_s_own_words(self) -> None:
+        """The clauses are `_stopped_early_notice`'s, so a reader who saw the
+        report hears the same explanation from the analyst. The frame is
+        weaker on purpose: a stop firing on the last chunk left nobody
+        unpolled, and `EvaluateResponse` carries no `asked` to tell."""
+        decisive = analysis_facts(_result()).polling
+        tie = analysis_facts(
+            _result().model_copy(update={"stop_reason": "practical_tie"})
+        ).polling
+
+        assert decisive == "Polling stopped once the panel had already decided."
+        assert tie == (
+            "Polling stopped once the difference was already credibly too small "
+            "to matter."
+        )
+
+    def test_the_coverage_rung_ships_as_a_sentence_about_places(self) -> None:
+        """Two bugs in one enum. `"requested"` is unsayable, so the analyst
+        quoted it — and it reads like a verdict on the whole target when it
+        only ever spoke about regions, which is the over-read the live reply
+        made. Under 024 a target that silently drops "young" still rates
+        `requested`, so the wording says places and nothing else."""
+
+        def region_match(rung: CoverageRung) -> str:
+            result = _result()
+            return analysis_facts(
+                result.model_copy(
+                    update={"query": result.query.model_copy(update={"coverage": rung})}
+                )
+            ).region_match
+
+        assert "coverage" not in analysis_facts(_result()).model_dump()
+        assert region_match("requested") == (
+            "No place the target named had to be substituted."
+        )
+        assert region_match("approximated") == (
+            "At least one place the target named was served by a stand-in "
+            "region; a notice names which."
+        )
+        assert region_match("unmatched") == (
+            "No place the target named could be matched: the panel spans the "
+            "whole pool and carries no geographic targeting."
+        )
 
     def test_it_summarizes_who_actually_voted(self) -> None:
         """The gap that cost a whole turn in live use: asked why a panel
@@ -205,7 +259,9 @@ class TestAnalystAgent:
         assert reply == "The interval cleared the band."
         fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
         assert len(fed_back) == 1
-        assert json.loads(str(fed_back[0].content))["stop_reason"] == "decisive"
+        assert json.loads(str(fed_back[0].content))["polling"] == (
+            "Polling stopped once the panel had already decided."
+        )
 
     def test_one_tool_call_can_answer_why_the_panel_looks_wrong(self, conn) -> None:
         """This ticket's whole pin, end to end: the live incident asked why a
@@ -327,6 +383,14 @@ class TestAnalystAgent:
         assert run["facts"]["variants"] == _result().variants
         assert "verdict" in run["facts"]
         assert run["facts"]["panel"]["countries"] == {"JP": 3}
+        # Same shape means the same *vocabulary*: this path builds AnalysisFacts
+        # itself, so a fix applied only to analysis_facts would leave a re-test
+        # answering in machinery while the original test answered in English.
+        assert {"stop_reason", "coverage"}.isdisjoint(run["facts"])
+        assert run["facts"]["polling"] == "Polling ran through every matched panelist."
+        assert run["facts"]["region_match"] == (
+            "No place the target named had to be substituted."
+        )
 
     def test_a_target_nobody_matches_is_an_answer_not_a_crash(self, conn) -> None:
         """EmptyPanel's sentence is codebase-authored (the 422 path forwards
