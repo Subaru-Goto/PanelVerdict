@@ -50,13 +50,17 @@ export function useAnalyst(result: EvaluateResponse) {
   const goneRef = useRef(false);
   const revealRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Set on every setup, not just at `useRef`'s initial value: refs survive
+    // React's dev-only mount→cleanup→mount, so a cleanup-only effect leaves
+    // this stuck true for the component's whole life — which froze the dock
+    // in dev while the suite, which renders without StrictMode, stayed green.
+    goneRef.current = false;
+    return () => {
       goneRef.current = true;
       if (revealRef.current !== null) clearInterval(revealRef.current);
-    },
-    [],
-  );
+    };
+  }, []);
 
   async function send(message: string): Promise<void> {
     const text = message.trim();
