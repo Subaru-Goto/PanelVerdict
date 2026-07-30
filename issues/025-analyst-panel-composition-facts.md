@@ -57,6 +57,27 @@ quality-with-degrees question, i.e. judge territory (see the map's
 DeepEval/CI note). What ships tested is the mechanical half: the id is
 absent from the tool result. The prose half is verified by using it.
 
+## Second cause of the same loop (user, 2026-07-30)
+
+The problem statement above blamed the loop on a capability gap alone. The
+user identified a second cause, in the prompt: the first rule read **"answer
+only from tool results"**, flatly. A model asked something no tool covers
+had therefore been *told* it may not answer from its own knowledge — so
+calling another tool was the obedient move, not a malfunction. The escape
+hatch ("say so when they cannot answer") was one clause competing against a
+blanket prohibition, and lost.
+
+The boundary the rule was missing, and now states: **facts about this test
+come from tools every time — never memory, never estimate, never inference
+from earlier turns — while general questions are answered directly, with no
+tool call at all.** Hallucinated statistics are the cardinal sin here; a
+hallucinated definition of "credible interval" is just an answer.
+
+So the fix for the incident is really three-part: give the tools the missing
+facts, tell the model those facts exist (the blind spot below), and stop
+forbidding the model from thinking. Only the first was in the original
+diagnosis.
+
 ## The suite's blind spot, found by review 2026-07-30
 
 The first cut of this fix added the composition facts but left both tool

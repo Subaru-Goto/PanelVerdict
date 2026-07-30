@@ -383,6 +383,32 @@ class TestAnalystAgent:
         assert "RuntimeError" in answer["error"]
         assert all("sk-secret" not in str(m.content) for m in model.seen[1])
 
+    def test_a_question_needing_no_tool_is_answered_without_one(self, conn) -> None:
+        """ "What does a credible interval mean?" has no tool and needs none.
+        The agent must not require a tool round to produce a turn — the
+        prompt's licence to answer general questions directly is worthless if
+        the loop cannot carry a tool-free answer."""
+        model = ScriptedChatModel(
+            responses=[AIMessage(content="It is the range the true share sits in.")]
+        )
+
+        events = ndjson_events(
+            stream_analyst(
+                model=model,
+                result=_result(),
+                thread_id="t-direct",
+                message="What does a credible interval mean?",
+                checkpointer=InMemorySaver(),
+                deps=_deps(conn),
+            )
+        )
+
+        assert [e for e in events if e["type"] == "tool"] == []
+        assert "".join(e["text"] for e in events if e["type"] == "token") == (
+            "It is the range the true share sits in."
+        )
+        assert events[-1] == {"type": "done"}
+
     def test_a_hallucinated_tool_name_does_not_crash_the_run(self, conn) -> None:
         model = ScriptedChatModel(
             responses=[
