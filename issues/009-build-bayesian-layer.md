@@ -4,7 +4,7 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: [002-decide-vote-schema]
 assignee: null
-status: open
+status: closed
 ---
 
 ## Goal
@@ -15,6 +15,31 @@ Pure-Python, deterministic — **no LLM** touches the statistics:
 - full posterior report: **P(B>A)**, preference share + 95% credible interval, **expected preference shortfall** (both directions — never "expected loss"; see the naming amendment), **ROPE** verdict (±7 pts → "practical tie — pick either or test a bolder variant"; widened from ±3, see the amendment),
 - **adaptive stopping**: update posterior per batch, stop at the P-threshold or the budget cap,
 - ~~neither-rate passed through descriptively~~ — struck 2026-07-27: [002](002-decide-vote-schema.md) settled on a **forced binary {A, B}** with no `neither`, so there is no rate to pass through. Revisit only if that schema decision changes.
+
+## Closed 2026-07-30 — delivered, and every "not yet wired" item discharged
+
+The layer shipped as `verdict.py` (flat Beta-Binomial, SciPy conjugate, no
+sampler) and is what every report renders. The three items the 2026-07-27
+amendment recorded as *not done* have all since landed elsewhere, which is
+why this ticket can close without them being re-listed here:
+
+- **Per-batch sequence in the payload** → [010d](010d-adaptive-stopping.md)
+  owns the batching and [011](011-build-report-ui.md) consumes it; the
+  report shows the early stop as a fact about the run.
+- **n = 200 unreachable** → dead with the hardcoded five personas;
+  [007](007-build-targeting-query-translation.md) selects the panel and
+  [010c](010c-panel-test-pipeline.md) runs it.
+- **`_CONFIRMATIONS = 3` "wants a fresh look if stopping is ever switched on
+  in production"** → that look happened, and changed the answer.
+  [010d](010d-adaptive-stopping.md) re-derived it against the real chunk size
+  (`VOTE_CONCURRENCY` = 25, not the simulation's 20) and settled on
+  `_STOP_CONFIRMATIONS = 2`. This ticket's 3-at-batches-of-20 figure is
+  **superseded**, not merely inherited — check 010d before citing it.
+
+One later reversal worth following from here: `rope_verdict`'s three-way
+label, specified in this ticket, was replaced by continuous probabilities in
+[020](020-probability-not-label.md) after it withheld a recommendation the
+evidence supported. The band survived; the label did not.
 
 ## Amended 2026-07-26 — the design is a paired comparison, and "lift" must be renamed
 
