@@ -29,22 +29,29 @@ function fillAndSubmit() {
 }
 
 describe("EvaluateForm", () => {
-  it("keeps submit disabled until the target description is filled too", () => {
+  it("runs on headlines alone — the audience is optional", () => {
+    // Two headlines against a cross-section of the whole pool is the simplest
+    // thing the product does, and the gate here was the only reason it could
+    // not be asked for. The previous version of this test asserted the bug.
+    evaluateMock.mockResolvedValue(RESPONSE);
     render(<EvaluateForm />);
     const button = screen.getByRole("button", { name: /evaluate/i });
 
+    expect(button.hasAttribute("disabled")).toBe(true);
     fireEvent.change(screen.getByLabelText(/headline a/i), {
       target: { value: "Save 50% today" },
     });
     fireEvent.change(screen.getByLabelText(/headline b/i), {
       target: { value: "Members save half" },
     });
-    expect(button.hasAttribute("disabled")).toBe(true);
 
-    fireEvent.change(screen.getByLabelText(/who should judge/i), {
-      target: { value: "US adults" },
-    });
     expect(button.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(button);
+    expect(evaluateMock).toHaveBeenCalledWith({
+      targetDescription: "",
+      headlineA: "Save 50% today",
+      headlineB: "Members save half",
+    });
   });
 
   it("sends all three fields to evaluate", async () => {
