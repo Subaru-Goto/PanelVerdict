@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type SubmitEvent } from "react";
+import { useEffect, useState, type SubmitEvent } from "react";
 
 import { useEvaluate } from "../lib/use-evaluate";
 import Report from "./report";
@@ -41,6 +41,39 @@ function Field({
         />
       )}
     </label>
+  );
+}
+
+/** Proof that a run is alive, not frozen.
+ *
+ *  A disabled button looks identical whether the panel is voting or the
+ *  request died, which is exactly how a slow run gets read as a broken one. A
+ *  number that keeps moving settles it, and it costs the backend nothing — no
+ *  streaming, no progress endpoint, no estimate that could be wrong.
+ *
+ *  Deliberately not a percentage: nothing here knows how far along the run is,
+ *  and a bar that guesses would be a worse lie than no bar at all. */
+function Waiting() {
+  const [seconds, setSeconds] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <p
+      role="status"
+      className="flex items-center gap-2 text-sm text-zinc-500"
+      aria-live="polite"
+    >
+      <span
+        aria-hidden
+        className="h-2 w-2 animate-pulse rounded-full bg-zinc-500"
+      />
+      Each panelist is reading both headlines and picking one — {seconds}s so
+      far.
+    </p>
   );
 }
 
@@ -108,6 +141,8 @@ export default function EvaluateForm() {
           {state.phase === "loading" ? "Asking the panel…" : "Evaluate"}
         </button>
       </form>
+
+      {state.phase === "loading" && <Waiting />}
 
       {state.phase === "error" && (
         <p className="text-red-600">Error: {state.message}</p>

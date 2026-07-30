@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import EvaluateForm from "../app/components/evaluate-form";
@@ -15,7 +16,7 @@ afterEach(() => {
   evaluateMock.mockReset();
 });
 
-function fillAndSubmit() {
+async function fillAndSubmit() {
   fireEvent.change(screen.getByLabelText(/who should judge/i), {
     target: { value: "Japanese homeowners" },
   });
@@ -58,7 +59,7 @@ describe("EvaluateForm", () => {
     evaluateMock.mockResolvedValue(RESPONSE);
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
 
     expect(evaluateMock).toHaveBeenCalledWith({
       targetDescription: "Japanese homeowners",
@@ -71,7 +72,7 @@ describe("EvaluateForm", () => {
     evaluateMock.mockResolvedValue(RESPONSE);
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
 
     const warning = await screen.findByText(/did not vote/);
     const reading = screen.getByText(/Stopped after 50/);
@@ -83,7 +84,7 @@ describe("EvaluateForm", () => {
     evaluateMock.mockResolvedValue(RESPONSE);
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
 
     expect(
       await screen.findByText(/50 of 200 matched panelists voted/),
@@ -99,7 +100,7 @@ describe("EvaluateForm", () => {
     evaluateMock.mockResolvedValue(RESPONSE);
     const { container } = render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
 
     expect(
       await screen.findByText(/<b>50% off<\/b> is the only thing/),
@@ -113,7 +114,7 @@ describe("coverage", () => {
     evaluateMock.mockResolvedValue(RESPONSE);
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
 
     expect(await screen.findByText("US")).toBeTruthy();
     expect(screen.getByText("JP")).toBeTruthy();
@@ -128,7 +129,7 @@ describe("coverage", () => {
     });
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
 
     expect(await screen.findByText(/stand-in region was used/)).toBeTruthy();
   });
@@ -143,7 +144,7 @@ describe("coverage", () => {
     });
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
 
     const flag = await screen.findByText(/no geographic targeting/);
     expect(flag.className).toContain("text-red");
@@ -157,7 +158,7 @@ describe("after a run", () => {
     evaluateMock.mockResolvedValue(RESPONSE);
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
     await screen.findByRole("button", { name: /test again/i });
 
     expect(screen.queryByLabelText(/headline a/i)).toBeNull();
@@ -169,7 +170,7 @@ describe("after a run", () => {
     evaluateMock.mockResolvedValue(RESPONSE);
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
     fireEvent.click(await screen.findByRole("button", { name: /test again/i }));
 
     expect(
@@ -179,11 +180,11 @@ describe("after a run", () => {
 });
 
 describe("request lifecycle", () => {
-  it("keeps submit disabled while a run is in flight", () => {
+  it("keeps submit disabled while a run is in flight", async () => {
     evaluateMock.mockReturnValue(new Promise(() => {}));
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
 
     const button = screen.getByRole("button", { name: /asking the panel/i });
     expect(button.hasAttribute("disabled")).toBe(true);
@@ -195,11 +196,43 @@ describe("request lifecycle", () => {
     );
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
 
     expect(
       await screen.findByText(/Error: OpenRouter credit is exhausted/),
     ).toBeTruthy();
+  });
+});
+
+describe("while the panel is voting", () => {
+  it("keeps proving it is alive rather than looking frozen", async () => {
+    // The complaint this answers: a long run and a dead one looked identical,
+    // because a disabled button is the same pixels either way. A number that
+    // moves is proof of life that costs the backend nothing.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      evaluateMock.mockReturnValue(new Promise(() => {}));
+      render(<EvaluateForm />, { wrapper: StrictMode });
+      await fillAndSubmit();
+
+      const status = screen.getByRole("status");
+      expect(status.textContent).toContain("0s");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(screen.getByRole("status").textContent).toContain("3s");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says what the wait is for, not just that there is one", async () => {
+    evaluateMock.mockReturnValue(new Promise(() => {}));
+    render(<EvaluateForm />);
+    await fillAndSubmit();
+
+    expect(screen.getByRole("status").textContent).toMatch(/panelist/i);
   });
 });
 
@@ -211,7 +244,7 @@ describe("units", () => {
     evaluateMock.mockResolvedValue(RESPONSE);
     render(<EvaluateForm />);
 
-    fillAndSubmit();
+    await fillAndSubmit();
 
     const sentence = await screen.findByText(/Shipping A anyway would give up/);
     expect(sentence.textContent).toContain("0.4 points");

@@ -32,6 +32,15 @@ from app.schemas import (
 from app.targeting import TargetTranslator
 from app.vote import OutOfCredit, PanelLLM
 
+# Uvicorn configures its own loggers and leaves the root one alone, so every
+# `logger.info` in this package propagated to a handler-less root and was
+# dropped at WARNING. The effect was that a run's usage line — what it cost,
+# and since 033 how long it took — has never been readable from a running
+# server, only from tests, which capture at the logger and so could not see the
+# gap. Configured here because this module is the server's entry point; the
+# seed script does the same for the same reason.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="PanelVerdict API")

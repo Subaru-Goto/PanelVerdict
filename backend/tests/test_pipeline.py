@@ -289,6 +289,22 @@ def test_usage_is_logged_even_when_no_verdict_comes_out(conn, caplog) -> None:
     assert any("usage" in record.message for record in caplog.records)
 
 
+def test_the_run_records_its_own_wall_time(conn, caplog) -> None:
+    """The one figure no per-vote number can give. Votes fan out concurrently,
+    so their seconds do not add up to the run's; and only the wall clock says
+    whether a slow run was one straggler holding its wave or every vote being
+    slow at once. Without it a "why was that slow" question has no evidence
+    but guesswork (033)."""
+    seed_japanese(conn, 3)
+
+    with caplog.at_level(logging.INFO, logger="app.pipeline"):
+        _run(conn)
+
+    (line,) = [r.message for r in caplog.records if "panel usage" in r.message]
+    assert "wall=" in line
+    assert "seconds_slowest" in line
+
+
 class TestVoteCache:
     """010e: every vote is stored keyed on the fingerprint of the question asked,
     and the ledger is read before the model is — a re-run replays, a broken run
