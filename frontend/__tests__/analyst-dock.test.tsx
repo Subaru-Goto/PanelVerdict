@@ -64,6 +64,26 @@ describe("AnalystDock", () => {
     ).toBeNull();
   });
 
+  it("says it is thinking from the first instant, before any event arrives", async () => {
+    // The silent seconds between send and the first stream event were real
+    // dead air in live use — the draft bubble existed but showed nothing.
+    const stream = manualStream();
+    mockFetch(stream.response);
+    render(<AnalystDock result={RESULT} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Who was on this panel?" }),
+    );
+
+    expect(await screen.findByText("Thinking…")).toBeDefined();
+
+    stream.push({ type: "token", text: "Here." });
+    stream.push({ type: "done" });
+    stream.close();
+    await screen.findByText("Here.");
+    expect(screen.queryByText("Thinking…")).toBeNull();
+  });
+
   it("shows what the analyst is doing while a tool runs, then the answer", async () => {
     const stream = manualStream();
     mockFetch(stream.response);
@@ -84,6 +104,30 @@ describe("AnalystDock", () => {
       await screen.findByText("It stopped because it was decisive."),
     ).toBeDefined();
     expect(screen.queryByText("Checking the numbers…")).toBeNull();
+  });
+
+  it("reveals the answer at typing speed, not as one paste", async () => {
+    // gpt-5-mini writes faster than a human reads: even a genuine stream
+    // lands as a paste. The pin: right after the stream closes, the full
+    // sentence must NOT yet be on screen — it types its way there.
+    const sentence =
+      "The interval cleared the practical tie band, so the panel's lead " +
+      "is wide enough to act on without waiting for more votes.";
+    const stream = manualStream();
+    mockFetch(stream.response);
+    render(<AnalystDock result={RESULT} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Who was on this panel?" }),
+    );
+    stream.push({ type: "token", text: sentence });
+    stream.push({ type: "done" });
+    stream.close();
+
+    await screen.findByText(/The interval/);
+    expect(screen.queryByText(sentence)).toBeNull();
+
+    expect(await screen.findByText(sentence)).toBeDefined();
   });
 
   it("renders an in-band error event as the turn's outcome", async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { EvaluateResponse } from "../lib/api";
 import { useAnalyst, type AnalystTurn } from "../lib/use-analyst";
@@ -49,6 +49,18 @@ export default function AnalystDock({ result }: { result: EvaluateResponse }) {
   const [draft, setDraft] = useState("");
   const { turns, busy, send } = useAnalyst(result);
 
+  const listRef = useRef<HTMLDivElement | null>(null);
+  // Follow the conversation only while the reader is at (or near) the
+  // bottom — scrolling up to reread must not be fought by the typewriter.
+  // 48px ≈ one message row of slack. Untestable in jsdom (no layout), so
+  // this carries no unit test; the check is your own scroll wheel.
+  const pinnedRef = useRef(true);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (list && pinnedRef.current) list.scrollTop = list.scrollHeight;
+  }, [turns]);
+
   if (!open) {
     return (
       <button
@@ -84,7 +96,17 @@ export default function AnalystDock({ result }: { result: EvaluateResponse }) {
       </header>
 
       {turns.length > 0 && (
-        <div className="flex flex-col gap-2 overflow-y-auto">
+        <div
+          ref={listRef}
+          onScroll={() => {
+            const list = listRef.current;
+            if (list) {
+              pinnedRef.current =
+                list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+            }
+          }}
+          className="flex flex-col gap-2 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {turns.map((turn, index) => (
             <Turn key={index} turn={turn} />
           ))}
