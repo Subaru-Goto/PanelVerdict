@@ -11,7 +11,8 @@ from app.schemas import PanelVoteOutput, Persona, VoteRecord
 
 # A cap on requests in flight, not a barrier between groups of 25: a group that waits
 # for its slowest member leaves the other workers idle, and a reasoning model's latency
-# varies enough for that to cost real time.
+# varies enough for that to cost real time. 25 is a chosen cap rather than a
+# measured one — no run has yet been throttled by it.
 VOTE_CONCURRENCY = 25
 
 # Fixed by default, so one test pairs the same panelists with the same positions run
@@ -78,8 +79,9 @@ class UsageTotals:
     The two time figures answer different questions and both are needed. A wave
     finishes with its slowest member, so `seconds_slowest` is what a run's wall
     time is actually made of; `seconds_total` beside it says how much of that
-    Both were measured per vote long before anything summed them here, which is
-    why a slow run could not be explained from the log.
+    work happened at once. Both were measured per vote long before anything
+    summed them here, which is why a slow run could not be explained from a log
+    that reported only cost.
     """
 
     votes: int
@@ -182,7 +184,8 @@ def presentation_orders(
 
     Both halves are load-bearing and they fix different things.
 
-    The split is exact because the model picks the first-shown option 0.66 of the time,
+    The split is exact because the model picks the first-shown option 0.66 of the
+    time (measured in docs/research/manipulation-check.md),
     so a surplus of one order is a bias on the top line rather than noise that
     averages out. An odd panel is off by one, which is as close as whole votes get.
 

@@ -464,7 +464,7 @@ def test_search_returns_panelists_nearest_first(conn):
 
 
 def test_search_never_returns_personas_outside_the_panel(conn):
-    """The decided scope (012): the analyst talks about this report's voters.
+    """The decided scope: the analyst talks about this report's voters.
     The outsider's embedding is IDENTICAL to the query — the strongest possible
     match still loses to the panel filter, so ranking can never widen scope."""
     persist_pool(
@@ -534,7 +534,8 @@ def test_load_returns_only_the_fingerprints_that_exist(conn):
 
 def test_the_ledger_is_append_only(conn):
     """Votes are paid model output — the one table not regenerable from a seed
-    (010e's ruling). A colliding write must leave the original untouched, never
+    by the ledger's append-only rule. A colliding write must leave the original
+    untouched, never
     replace it: the first vote under a fingerprint is THE vote for that question."""
     store_votes(conn, {"fp1": _vote_record(reason="first")})
 

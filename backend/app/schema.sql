@@ -3,8 +3,9 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- One row per persona. Big Five are the continuous sampled scores; levels are
--- derived at render, never stored. summary_embedding is the vector 007 retrieves
--- on: one per persona, of the templated summary in app/panel.py.
+-- derived at render, never stored. summary_embedding is the vector the analyst's
+-- panelist search matches against: one per persona, of the templated summary in
+-- app/panel.py.
 --
 -- IF NOT EXISTS cannot migrate an out-of-date table; app.persistence.apply_schema
 -- detects that case and says what to do.
@@ -37,8 +38,8 @@ CREATE INDEX IF NOT EXISTS personas_summary_embedding_idx
 -- queryable provenance, not the key.
 --
 -- Append-only ledger: votes are paid model output — the one table NOT regenerable
--- from a seed — so the pool's drop-and-reseed convention does not apply (010e's
--- ruling). No foreign key to personas for the same reason: reseeding the pool must
+-- from a seed — so the pool's drop-and-reseed convention does not apply. No
+-- foreign key to personas for the same reason: reseeding the pool must
 -- not cascade into the ledger.
 CREATE TABLE IF NOT EXISTS votes (
     request_fingerprint text PRIMARY KEY,

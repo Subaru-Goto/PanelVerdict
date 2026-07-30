@@ -120,7 +120,7 @@ class TestPairs:
         assert {pair.trait for pair in PAIRS if pair.trait} == set(TRAITS)
 
     def test_the_comprehension_control_is_found_by_role_not_by_absent_trait(self):
-        """015's four published-lever pairs also carry no trait.
+        """The four published-lever pairs also carry no trait.
 
         CONTROL_PAIR used to resolve as "the pair without a trait", which with more
         than one untraited pair returns whichever happens to be listed first. The

@@ -115,7 +115,7 @@ class TestAnalysisFacts:
         """`stop_reason: null` was the one fact in the payload with no sayable
         form — `_stopped_early_notice` composes nothing when a run doesn't stop
         early — so the analyst quoted the field name at the reader instead. The
-        field is withheld rather than forbidden: 025's move, since a model
+        field is withheld rather than forbidden, since a model
         cannot quote a handle it was never given."""
         facts = analysis_facts(_result().model_copy(update={"stop_reason": None}))
 
@@ -142,7 +142,7 @@ class TestAnalysisFacts:
         """Two bugs in one enum. `"requested"` is unsayable, so the analyst
         quoted it — and it reads like a verdict on the whole target when it
         only ever spoke about regions, which is the over-read the live reply
-        made. Under 024 a target that silently drops "young" still rates
+        made. A target that silently drops "young" still rates
         `requested`, so the wording says places and nothing else."""
 
         def region_match(rung: CoverageRung) -> str:
@@ -342,7 +342,7 @@ class TestAnalystAgent:
         """search_personas end to end: the query text is embedded, the panel
         scope comes from result.votes, and the ToolMessage lists panelists
         nearest first. The outsider matches the query PERFECTLY and still may
-        not appear — scope beats similarity (012 decision log)."""
+        not appear — scope beats similarity."""
         persist_pool(
             conn,
             [
@@ -386,7 +386,7 @@ class TestAnalystAgent:
         assert found[1].startswith("A 61-year-old")
 
     def test_a_search_never_hands_the_model_a_persona_id(self, conn) -> None:
-        """023's lesson, which the analyst was breaking in live use: an id
+        """The lesson the analyst was breaking in live use: an id
         identifies a row, not a reader. Enforced by absence — the model
         cannot quote a handle it was never given."""
         persist_pool(
@@ -443,7 +443,7 @@ class TestAnalystAgent:
         )
 
     def test_the_analyst_can_read_what_the_panel_said(self, conn) -> None:
-        """The 029 gap end to end: asked why the panel leaned, the analyst had
+        """The gap this closes, end to end: asked why the panel leaned, the analyst had
         nothing to read — every other tool serves figures or profiles, and the
         reasons rode unserved in the request all along."""
         result = _result().model_copy(

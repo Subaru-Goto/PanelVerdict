@@ -10,7 +10,7 @@
       "A",
       "N"
     ],
-    "note": "Shared across all countries (001 decision (i): country does not condition Big Five mu). Raw inputs: docs/research/donnellan-lucas-2008-table1.md. Regenerate: python -m pipeline.derive_bigfive_norms."
+    "note": "Shared across all countries: country does not condition Big Five mu. Raw inputs: docs/research/donnellan-lucas-2008-table1.md. Regenerate: python -m pipeline.derive_bigfive_norms."
   },
   "mu": {
     "16-19|female": [

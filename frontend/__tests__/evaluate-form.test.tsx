@@ -94,7 +94,7 @@ describe("EvaluateForm", () => {
   });
 
   it("renders model output as literal text, never as markup", async () => {
-    // The exfiltration defense from the 011 ticket: a reason carrying HTML must
+    // The exfiltration defense: a reason carrying HTML must
     // reach the reader as characters. If this ever renders a <b> element, model
     // output has found a markup sink.
     evaluateMock.mockResolvedValue(RESPONSE);
@@ -135,7 +135,7 @@ describe("coverage", () => {
   });
 
   it("says plainly when the panel carries no geographic targeting", async () => {
-    // The 007 amendment: unmatched coverage resolves to the whole pool,
+    // Unmatched coverage resolves to the whole pool,
     // byte-identical to a deliberate global panel — only this flag can tell
     // the customer the difference, so it must sit with the verdict.
     evaluateMock.mockResolvedValue({

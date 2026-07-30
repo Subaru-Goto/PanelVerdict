@@ -13,7 +13,8 @@ from app.schemas import (
 )
 
 # ±7 preference-share points around even: within it, a difference is too small to
-# act on. Two reasons for the width, both measured: a ±3 band cannot contain
+# act on. Two reasons for the width, both measured in
+# docs/research/adaptive-stopping.md: a ±3 band cannot contain
 # the HDI until ~1,100 votes, so `practical_tie` would never have been reachable at
 # an affordable panel size; and 7 points sits inside the panel's own 11-20% flip
 # rate, so calling it a tie is honesty rather than laxity. It cannot be derived from
@@ -154,10 +155,10 @@ def probability_meaningfully_preferred(
     interval to a band throws away where inside the interval the mass actually sits.
 
     Was `probability_worth_acting_on` with `shipping_*` keys, "named for what a
-    reader does with it, not for the geometry". Reading it with fresh eyes
-    overturned that premise: the
-    reader-facing sentence became "Chance A is preferred", and the decision-named
-    wire forced the frontend to cross `shipping_b` onto A's tile. Now the
+    reader does with it, not for the geometry". The reader decided otherwise:
+    the reader-facing sentence became "Chance A is preferred", and the
+    decision-named wire forced the frontend to cross `shipping_b` onto A's
+    tile. Now the
     name follows the sentence: `a` is the mass below the band, where A leads.
     """
     # Not the file's usual `a, b` locals: here those names are the *variant* keys

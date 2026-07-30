@@ -243,8 +243,8 @@ class TestExpectedPreferenceShortfall:
 
 
 class TestStoppingDecision:
-    """The continuous rule 010d chose over label agreement: stop when the report
-    would already make a call. Expected values are 020's published table plus the
+    """The continuous rule chosen over label agreement: stop when the report
+    would already make a call. Expected values are the published table plus the
     verified tie readings, not recomputations."""
 
     def test_a_clear_lead_stops_as_decisive(self) -> None:
@@ -309,9 +309,10 @@ class TestPanelVerdictPayload:
         assert result.expected_preference_shortfall.shipping_b == exposure.shipping_b
 
     def test_it_reports_the_band_as_probabilities_and_a_resolution(self) -> None:
-        """The 65/100 row of 020's table, which is the split the three-way label got
-        wrong: 0.946 reported as `undecided`. Written as the published numbers rather
-        than as calls to the same functions, so a mis-wired argument cannot agree."""
+        """The 65/100 row of the published table, the split the three-way label
+        got wrong: 0.946 reported as `undecided`. Written as the published
+        numbers rather than as calls to the same functions, so a mis-wired
+        argument cannot agree."""
         result = panel_verdict(preferring_b=65, total=100)
 
         assert result.probability_meaningfully_preferred.b == pytest.approx(
@@ -405,7 +406,7 @@ class TestDetectableGap:
 
     @pytest.mark.parametrize("total", [1, 2, 3, 4])
     def test_below_five_votes_no_split_is_decisive(self, total: int) -> None:
-        """The floor 010b decided *not* to legislate, shown to exist as arithmetic:
+        """The floor deliberately *not* legislated, shown to exist as arithmetic:
         below n=5 even a unanimous panel's interval cannot clear the band, so the
         gap is None — and a unanimous panel's preference probability stays under
         the 95% bar, so the render-time recommendation reads "no call" without any

@@ -114,7 +114,8 @@ def render_persona_prompt(persona: Persona) -> str:
 
 
 def persona_summary(persona: Persona) -> str:
-    """Render a persona as third-person prose, for the embedding targeting retrieves on.
+    """Render a persona as third-person prose, and embed that text so the
+    analyst's panelist search can match a description against it.
 
     Shares the vote prompt's phrasing on purpose: a target description is matched
     against this text, so anything it claims that the prompt does not say would
@@ -145,7 +146,8 @@ FIXED_PANEL: list[Persona] = [
             neuroticism=TraitLevel.LOW,
         ),
     ),
-    # Traits deliberately cross-cut demographics (anti-stereotype): a
+    # Traits deliberately cross-cut demographics, so no age or gender implies a
+    # personality: a
     # conventional young man, a curious 61-year-old, an anxious/disorganized
     # midlifer, a driven woman with mainstream tastes.
     Persona(

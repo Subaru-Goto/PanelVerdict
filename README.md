@@ -34,9 +34,11 @@ target description ──▶ translator ──▶ structured query ──▶ poo
    picks the panel. Filtering rather than ranking is what makes it an audience
    rather than a handful of extremes.
 3. **Vote.** Each panelist reads both headlines and picks one, with a reason.
-   Votes fan out concurrently and are cached, so re-running the same question is
-   free. Presentation order is split exactly 50/50, because the model favours
-   whatever it sees first about two-thirds of the time.
+   Votes fan out concurrently and are cached on the exact question asked, so
+   re-running the same headlines against the same panel buys no votes — only
+   the targeting call, which is not cached. Presentation order is split exactly
+   50/50, because the model favours whatever it sees first about two-thirds of
+   the time.
 4. **Decide.** A Beta posterior over the panel's preference gives a share, a
    credible interval, and the probability the lead is big enough to act on. It
    can stop early when the answer is already clear.
@@ -92,9 +94,12 @@ One vote is roughly **$0.0007**, and the panel size comes from `PROFILE` in
 | `demo` | 100 | $0.073 |
 | `prod` | 200 | $0.145 |
 
-The default is the cheapest on purpose: forgetting to choose should cost a cent,
-not a tenth of your credit. Repeat runs of the same question hit the vote cache
-and cost nothing.
+`PROFILE` is not in `.example.env` — it defaults to `dev`, and the default is
+the cheapest on purpose: forgetting to choose should cost a cent, not a tenth of
+your credit. Add `PROFILE=demo` or `PROFILE=prod` to `.env` to change it.
+
+Repeat runs of the same headlines against the same panel reuse the cached votes,
+so they cost only the one targeting call.
 
 ## Tests
 

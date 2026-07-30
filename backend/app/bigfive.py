@@ -51,7 +51,8 @@ def sample_big_five(
     )
 
 
-# Round z-values, one half-sigma apart. The cutoffs are a choice; what
+# Round z-values, one half-sigma apart (docs/research/persona-seed-data.md).
+# The cutoffs are a choice; what
 # follows from the normal distribution — and is what makes them defensible — is
 # the population split they produce: 6.7 / 24.2 / 38.3 / 24.2 / 6.7, so no level
 # is so rare it never renders. A demographically conditioned cell skews off those

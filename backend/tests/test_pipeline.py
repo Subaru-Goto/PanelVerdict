@@ -180,8 +180,9 @@ def test_a_clear_winner_stops_after_two_confirming_chunks(conn) -> None:
 
 
 def test_an_early_stop_reads_as_an_answer_not_a_shortfall(conn) -> None:
-    """010d's sharpest warning: stopping because the answer is clear and stopping
-    because votes failed are opposite situations with the same arithmetic. The
+    """The sharpest warning about early stopping: stopping because the answer is
+    clear and stopping because votes failed are opposite situations with the
+    same arithmetic. The
     early stop is a reading; only failures are a warning."""
     seed_japanese(conn, 75)
 
@@ -277,7 +278,7 @@ def test_a_panel_with_no_votes_is_refused_with_types_not_messages(conn) -> None:
 def test_usage_is_logged_even_when_no_verdict_comes_out(conn, caplog) -> None:
     """The refusal path still paid for its failures' retries and for nothing else —
     but the log line must exist either way, because a run whose cost is unrecoverable
-    is the thing 010a exists to prevent."""
+    is the thing this instrumentation exists to prevent."""
     seed_japanese(conn, 3)
 
     with (
@@ -294,7 +295,7 @@ def test_the_run_records_its_own_wall_time(conn, caplog) -> None:
     so their seconds do not add up to the run's; and only the wall clock says
     whether a slow run was one straggler holding its wave or every vote being
     slow at once. Without it a "why was that slow" question has no evidence
-    but guesswork (033)."""
+    but guesswork."""
     seed_japanese(conn, 3)
 
     with caplog.at_level(logging.INFO, logger="app.pipeline"):
@@ -306,7 +307,7 @@ def test_the_run_records_its_own_wall_time(conn, caplog) -> None:
 
 
 class TestVoteCache:
-    """010e: every vote is stored keyed on the fingerprint of the question asked,
+    """Every vote is stored keyed on the fingerprint of the question asked,
     and the ledger is read before the model is — a re-run replays, a broken run
     resumes, and nothing downstream can tell a cached vote from a paid one."""
 
@@ -398,7 +399,7 @@ class OutOfCreditLLM:
 
 
 class TestOutOfCredit:
-    """010f: a mid-run 402 is terminal for the run but not for the test — the cache
+    """A mid-run 402 is terminal for the run but not for the test — the cache
     holds what was paid for, so the stop's message is 'top up and resume', and the
     endpoint's code says whose fault it is (the account's, not the server's)."""
 

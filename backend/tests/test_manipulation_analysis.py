@@ -280,7 +280,7 @@ class TestFramingIsPartOfTheCell:
 
         Without framing in the cell key, replicates of *different* framings group as
         identical re-runs: the floor absorbs the entire framing effect, every flip
-        rate then sits at the floor, and 015 reports "framings are interchangeable"
+        rate then sits at the floor, and the run reports "framings are interchangeable"
         no matter what the model actually did.
         """
         rows = [
@@ -358,8 +358,8 @@ class TestLeverResults:
 
 
 class TestFormatReport:
-    # 014 collected three arms under one framing and 015 collects three framings
-    # under one arm, so reading both leaves most of the grid empty.
+    # The earlier check collected three arms under one framing; this collects
+    # three framings under one arm, so reading both leaves most of the grid empty.
     _DISJOINT = sweep_rows(
         {level: 2 for level in TraitLevel},
         n=4,

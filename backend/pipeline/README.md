@@ -44,7 +44,7 @@ logic (`parse → combine → attach_income → rake` all run by country code):
 4. `uv run python -m pipeline.build_oecd FR` → commit the generated `fr.csv` + `fr.meta.json`.
 
 Income and Big Five cost nothing per country: income is a country-agnostic prior
-raked per-country automatically; Big Five (006c) is country-agnostic norms.
+raked per-country automatically; Big Five is country-agnostic norms.
 
 Three cases need more than the enum:
 

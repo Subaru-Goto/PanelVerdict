@@ -10,7 +10,7 @@ class TraitLevel(str, Enum):
     Five levels rather than three because three cannot express the continuous
     score the sampler draws: a z of 0.51 and a z of 2.3 would render identically,
     which both flattens the vote prompt and leaves retrieval unable to rank within
-    a bucket.
+    a bucket, one half-sigma wide (docs/research/persona-seed-data.md).
     """
 
     VERY_LOW = "very_low"

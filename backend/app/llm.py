@@ -374,7 +374,8 @@ class OpenRouterEmbedder:
 
 
 class OpenRouterJudge:
-    """Judge backed by an OpenRouter chat model via LangChain (G-Eval)."""
+    """Judge backed by an OpenRouter chat model via LangChain: it scores an
+    output against written criteria rather than a reference answer (G-Eval)."""
 
     def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         self._model = ChatOpenAI(

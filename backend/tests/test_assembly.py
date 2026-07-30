@@ -145,7 +145,8 @@ def test_dev_subset_is_a_prefix_of_the_full_pool(joint_dir) -> None:
 
 
 def test_the_embedded_text_is_the_persona_summary() -> None:
-    # what 007 retrieves on must be the rendered summary, not some other framing
+    # what the panelist search matches against must be the rendered summary,
+    # not some other framing
     embedder = StubEmbedder()
 
     result = assemble_persona(Locale.US, 0, _CELLS, master_seed=7, embedder=embedder)
