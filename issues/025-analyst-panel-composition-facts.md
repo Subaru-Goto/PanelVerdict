@@ -4,8 +4,30 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
 assignee: null
-status: open
+status: closed
 ---
+
+## Closed 2026-07-30 — delivered in PR #75, and the diagnosis grew twice
+
+One incident turned out to have **three** causes, only the first of which
+this ticket originally named:
+
+1. **The tools lacked the facts** — fixed by `PanelComposition` on
+   `analyze_results` (age min/median/max, spread by country, gender,
+   education level and income band, from votes the request already carries;
+   no new paid call).
+2. **Nothing told the model those facts existed** — `analyze_results`'
+   description never mentioned the panel while `search_personas` advertised
+   "who was on the panel" and returns profiles, not a distribution. Found by
+   review; see the blind-spot section below.
+3. **The prompt forbade the model to think** — "answer only from tool
+   results" made looping the obedient response when no tool fit. Found by
+   the user; see the second-cause section below.
+
+The step budget was never touched, as this ticket demanded. It now has a
+clean job again: if looping recurs *after* all three fixes, that is real
+evidence about the budget rather than about a gap it was hiding — and it
+would need a sourced number, not a guess.
 
 ## Problem (found in real use, 2026-07-30)
 
