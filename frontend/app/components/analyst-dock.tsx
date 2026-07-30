@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { EvaluateResponse } from "../lib/api";
 import { useAnalyst, type AnalystTurn } from "../lib/use-analyst";
@@ -9,6 +9,10 @@ import { useAnalyst, type AnalystTurn } from "../lib/use-analyst";
  *  show — the first two to analyze_results, the third to search_personas.
  *  Deliberately no chip triggers run_panel_test: a new panel run spends real
  *  money, so that ask must be typed, never one accidental click away. */
+/** PENDING USER SIGN-OFF (not yet approved): how close to the bottom still
+ *  counts as "following along". A feel parameter, judged in a browser. */
+const PINNED_SLACK_PX = 48;
+
 const CHIPS = [
   "Why did the test stop early?",
   "How sure are we about the winner?",
@@ -49,6 +53,17 @@ export default function AnalystDock({ result }: { result: EvaluateResponse }) {
   const [draft, setDraft] = useState("");
   const { turns, busy, send } = useAnalyst(result);
 
+  const listRef = useRef<HTMLDivElement | null>(null);
+  // Follow the conversation only while the reader is near the bottom, so
+  // scrolling up to reread is not fought by the typewriter. jsdom does no
+  // layout, so nothing here is unit-testable — verified in a browser.
+  const pinnedRef = useRef(true);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (list && pinnedRef.current) list.scrollTop = list.scrollHeight;
+  }, [turns]);
+
   if (!open) {
     return (
       <button
@@ -84,7 +99,18 @@ export default function AnalystDock({ result }: { result: EvaluateResponse }) {
       </header>
 
       {turns.length > 0 && (
-        <div className="flex flex-col gap-2 overflow-y-auto">
+        <div
+          ref={listRef}
+          onScroll={() => {
+            const list = listRef.current;
+            if (list) {
+              pinnedRef.current =
+                list.scrollHeight - list.scrollTop - list.clientHeight <
+                PINNED_SLACK_PX;
+            }
+          }}
+          className="flex flex-col gap-2 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
           {turns.map((turn, index) => (
             <Turn key={index} turn={turn} />
           ))}

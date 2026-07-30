@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { EvaluateResponse } from "./api";
 import { streamChat } from "./chat";
@@ -8,8 +8,9 @@ import { streamChat } from "./chat";
 export type AnalystReply = {
   role: "analyst";
   text: string;
-  /** What the analyst is doing right now — the tool front edge. Cleared the
-   *  moment the first token arrives. */
+  /** What the analyst is doing right now — "Thinking…" from the first
+   *  instant, a tool's sentence while one runs, cleared once the reader can
+   *  actually see text arriving. */
   status: string | null;
   error: string | null;
 };
@@ -24,6 +25,13 @@ const TOOL_STATUS: Record<string, string> = {
   run_panel_test: "Running a new panel test — this can take minutes…",
 };
 
+/** One tick per frame at 60Hz — the browser's own repaint budget. */
+const REVEAL_TICK_MS = 16;
+/** PENDING USER SIGN-OFF (not yet approved): reveal speed is a feel
+ *  parameter with no derivation — it needs judging in a browser, not in a
+ *  test. Placeholder until then. */
+const REVEAL_CHARS_PER_SECOND = 180;
+
 export function useAnalyst(result: EvaluateResponse) {
   // Minted client-side, once per mounted report: the server treats an unseen
   // id as a fresh conversation, so no registration round-trip exists.
@@ -33,69 +41,119 @@ export function useAnalyst(result: EvaluateResponse) {
   const [turns, setTurns] = useState<AnalystTurn[]>([]);
   const [busy, setBusy] = useState(false);
 
-  const patchReply = (patch: (reply: AnalystReply) => Partial<AnalystReply>) =>
-    setTurns((current) =>
-      current.map((turn, index) =>
-        index === current.length - 1 && turn.role === "analyst"
-          ? { ...turn, ...patch(turn) }
-          : turn,
-      ),
-    );
+  // A ref, not the `busy` state: two clicks landing in one frame both read
+  // the same pre-render `busy === false` and would both open a turn, each
+  // painting over the other's transcript.
+  const busyRef = useRef(false);
+  // The dock unmounts mid-stream whenever a new evaluate starts, so the
+  // reveal timer has to be reachable from cleanup.
+  const goneRef = useRef(false);
+  const revealRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(
+    () => () => {
+      goneRef.current = true;
+      if (revealRef.current !== null) clearInterval(revealRef.current);
+    },
+    [],
+  );
 
   async function send(message: string): Promise<void> {
     const text = message.trim();
-    if (busy || text === "") return;
+    if (busyRef.current || text === "") return;
+    busyRef.current = true;
     setBusy(true);
-    setTurns((current) => [
-      ...current,
-      { role: "user", text },
-      { role: "analyst", text: "", status: null, error: null },
-    ]);
+
+    const history: AnalystTurn[] = [...turns, { role: "user", text }];
+
+    // `received` is everything the stream has delivered, `shown` how much of
+    // it the reader has been given — the gap between them is the typewriter.
+    let received = "";
+    let shown = 0;
+    let status: string | null = "Thinking…";
+    let error: string | null = null;
+    let streamed = false;
+
+    const paint = () => {
+      if (goneRef.current) return;
+      setTurns([
+        ...history,
+        { role: "analyst", text: received.slice(0, shown), status, error },
+      ]);
+    };
+    paint();
+
+    // Paced by the clock rather than by tick count: a background tab throttles
+    // setInterval to about 1s, and counting characters per tick would stretch
+    // a long answer into minutes with the composer still locked.
+    const revealed = new Promise<void>((resolve) => {
+      let tickedAt = Date.now();
+      const timer = setInterval(() => {
+        const now = Date.now();
+        const budget = ((now - tickedAt) * REVEAL_CHARS_PER_SECOND) / 1000;
+        tickedAt = now;
+        if (goneRef.current) {
+          clearInterval(timer);
+          resolve();
+          return;
+        }
+        if (shown < received.length) {
+          shown = Math.min(received.length, shown + Math.ceil(budget));
+          // Cleared here rather than on arrival: the wait is over when the
+          // reader can see the answer, not when the socket saw it.
+          status = null;
+          paint();
+        }
+        if (streamed && shown >= received.length) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, REVEAL_TICK_MS);
+      revealRef.current = timer;
+    });
+
     // `done` is what separates a finished turn from a dropped connection —
     // a stream can end cleanly at the transport level and still be truncated.
-    let terminal = false;
+    let finished = false;
     try {
-      for await (const event of streamChat({
-        threadId,
-        message: text,
-        result,
-      })) {
+      for await (const event of streamChat({ threadId, message: text, result })) {
+        if (goneRef.current) break;
         switch (event.type) {
           case "tool":
-            patchReply(() => ({
-              status: TOOL_STATUS[event.name] ?? "Working…",
-            }));
+            status = TOOL_STATUS[event.name] ?? "Working…";
             break;
           case "token":
-            patchReply((reply) => ({
-              text: reply.text + event.text,
-              status: null,
-            }));
+            received += event.text;
             break;
           case "error":
-            patchReply(() => ({ error: event.message, status: null }));
-            terminal = true;
+            error = event.message;
+            status = null;
+            finished = true;
             break;
           case "done":
-            terminal = true;
+            finished = true;
             break;
         }
+        paint();
       }
-    } catch (error) {
-      patchReply(() => ({
-        error:
-          error instanceof Error ? error.message : "The request failed.",
-        status: null,
-      }));
-      terminal = true;
+    } catch (caught) {
+      error = caught instanceof Error ? caught.message : "The request failed.";
+      status = null;
+      finished = true;
     }
-    if (!terminal) {
-      patchReply(() => ({
-        error: "The connection was lost before the answer finished.",
-        status: null,
-      }));
+    if (!finished) {
+      error = "The connection was lost before the answer finished.";
+      status = null;
     }
-    setBusy(false);
+    streamed = true;
+
+    // The stream ends long before a reader could have kept up with it, so the
+    // composer unlocks when the typewriter does, not when the socket closes.
+    await revealed;
+    revealRef.current = null;
+    paint();
+    busyRef.current = false;
+    if (!goneRef.current) setBusy(false);
   }
 
   return { turns, busy, send };
