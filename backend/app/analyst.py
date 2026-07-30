@@ -131,7 +131,7 @@ _POLLING: dict[StopReason | None, str] = {
 
 # Every rung speaks about *places* and nothing else — `_resolve_regions` sets
 # it from regions alone, so a target whose age or personality was quietly
-# dropped still rates `requested` (024). The bare enum name read like a verdict
+# dropped still rates `requested`. The bare enum name read like a verdict
 # on the whole target, and in live use it was cited as one; the sentences and
 # the field name both narrow it back to what it actually claims. `requested` is
 # phrased as a substitution that didn't happen, since no region named is also
@@ -244,8 +244,7 @@ def vote_reasons(result: EvaluateResponse) -> dict[str, ChosenReasons]:
     to report rather than a headline nobody picked.
 
     This is the first thing the analyst reads that another model wrote — every
-    other tool serves recomputed figures or code-composed prose. See 029 for
-    where that boundary now sits.
+    other tool serves recomputed figures or code-composed prose.
     """
     return {
         variant_id: ChosenReasons(
@@ -312,7 +311,7 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
             limit=_SEARCH_LIMIT,
         )
         # Summaries only: a persona id is a database handle, not a name a
-        # reader can use (023's ruling for the report). Withheld rather than
+        # reader can use. Withheld rather than
         # forbidden — the model cannot quote what it was never given.
         return json.dumps([persona_summary(persona) for persona in found])
 
@@ -408,7 +407,7 @@ def stream_analyst(
     # converts runaway spend into a visible failure. Note what the cap now
     # admits: up to three tool rounds may each be a run_panel_test — a full
     # paid panel run — so the budget is a tripwire, not the spend gate; the
-    # gate is the tool description's only-on-explicit-ask rule plus 012c's UI.
+    # gate is the tool description's only-on-explicit-ask rule plus the dock's own UI.
     limit = 2 * len(tools) + 2
 
     agent = create_agent(

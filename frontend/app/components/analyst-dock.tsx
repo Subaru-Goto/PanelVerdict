@@ -8,7 +8,7 @@ import {
   type AnalystTurn,
 } from "../lib/use-analyst";
 
-/** The final chip copy (012c's decision). Each maps to a tool the demo has to
+/** The final chip copy. Each maps to a tool the demo has to
  *  show — the first two to analyze_results, the third to search_personas.
  *  Deliberately no chip triggers run_panel_test: a new panel run spends real
  *  money, so that ask must be typed, never one accidental click away. */

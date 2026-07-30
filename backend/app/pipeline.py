@@ -145,7 +145,7 @@ def _vote_shortfall_notice(votes: PanelVotes, matched: int) -> tuple[Notice, ...
 
     Worded for its remedy, which is what separates it from retrieval's shortfall: the
     pool cannot give more matched personas, but a failed vote is transient — the
-    panelist exists and a re-run may recover them (resume is 010e).
+    panelist exists and a re-run may recover them (a resume serves it from the ledger).
 
     Credit refusals are excluded: their story belongs to the credit notice, and
     "transient — a re-run may recover them" beside "credit ran out" would read as a
@@ -178,7 +178,7 @@ def _chunk_votes(
 
     Orders are fixed for the whole chunk *before* the hit/miss split — a fresh draw
     over the misses alone would re-pair panelists with positions, and every
-    would-be hit on the next run would fingerprint as a new question (010e).
+    would-be hit on the next run would fingerprint as a new question.
 
     Cached and fresh votes merge back in panel order, the records' documented
     ordering, with a None usage entry per cached vote so usage stays parallel to
@@ -246,8 +246,8 @@ def run_panel_test(
     The stopping bar is `credible_mass` itself — the run stops exactly when the
     render-time recommendation would fire, so there is no second threshold to
     source. A run that loses some votes reports the counts and offers the verdict;
-    only a run with *no* votes has nothing to report (010b decided no partial-run
-    rule beyond that).
+    only a run with *no* votes has nothing to report, and there is no
+    partial-run rule beyond that.
     """
     selection = select_panel(conn, description, size=size, translator=translator)
     # Refused before the panel model is touched: nothing has been spent yet on a
@@ -308,7 +308,7 @@ def run_panel_test(
     # Wall time is logged beside the per-vote figures because neither can be
     # derived from the other: votes fan out, so their seconds do not add to the
     # run's, and only the two together say whether a slow run was one straggler
-    # holding its wave or every vote being slow at once (033).
+    # holding its wave or every vote being slow at once.
     logger.info(
         "panel usage test_id=%s: wall=%.1fs %s",
         test_id,

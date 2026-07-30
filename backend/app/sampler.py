@@ -67,7 +67,7 @@ def sample_one(
     """Draw one record from pre-loaded `cells`: a weighted cell, then a concrete age.
 
     Split out from `sample_demographics` so a caller that seeds per persona (the
-    pool assembler, 006f) reuses the exact cell-choice + age-resolution logic
+    pool assembler) reuses the exact cell-choice + age-resolution logic
     without reloading the table each draw. No country-specific logic here — the
     heterogeneity was all resolved offline into the joint table.
     """

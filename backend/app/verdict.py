@@ -13,7 +13,7 @@ from app.schemas import (
 )
 
 # ±7 preference-share points around even: within it, a difference is too small to
-# act on. Two reasons for the width, both measured (009): a ±3 band cannot contain
+# act on. Two reasons for the width, both measured: a ±3 band cannot contain
 # the HDI until ~1,100 votes, so `practical_tie` would never have been reachable at
 # an affordable panel size; and 7 points sits inside the panel's own 11-20% flip
 # rate, so calling it a tie is honesty rather than laxity. It cannot be derived from
@@ -154,9 +154,10 @@ def probability_meaningfully_preferred(
     interval to a band throws away where inside the interval the mass actually sits.
 
     Was `probability_worth_acting_on` with `shipping_*` keys, "named for what a
-    reader does with it, not for the geometry". 011b overturned that premise: the
+    reader does with it, not for the geometry". Reading it with fresh eyes
+    overturned that premise: the
     reader-facing sentence became "Chance A is preferred", and the decision-named
-    wire forced the frontend to cross `shipping_b` onto A's tile (022). Now the
+    wire forced the frontend to cross `shipping_b` onto A's tile. Now the
     name follows the sentence: `a` is the mass below the band, where A leads.
     """
     # Not the file's usual `a, b` locals: here those names are the *variant* keys
@@ -194,7 +195,7 @@ def stopping_decision(
 ) -> StopReason | None:
     """Whether more votes would change what the report says — None means keep buying.
 
-    The rule 010d chose over three agreeing labels: stop when the report would
+    The rule chosen over three agreeing labels: stop when the report would
     already make a call, at the report's own bar. `credible_mass` is the only
     threshold, so the run stops exactly when the render-time recommendation would
     fire — no second constant to source, and no gap where the run stops before the
@@ -270,9 +271,9 @@ def rope_verdict(
 
     Not what a report carries — a verdict states the band as probabilities, since a label
     reads `undecided` from a coin flip all the way to a near-certainty. And no longer the
-    stopping rule either: 010d stops on the probabilities crossing `credible_mass`
-    directly. What keeps this alive is `detectable_gap`, whose boundary is defined by
-    this comparison going decisive.
+    stopping rule either, which now fires on the probabilities crossing
+    `credible_mass` directly. What keeps this alive is `detectable_gap`, whose
+    boundary is defined by this comparison going decisive.
 
     Three outcomes, and the third is the point of the method: `undecided` is a
     statement about the data, where `practical_tie` is a *positive* finding — the

@@ -221,13 +221,14 @@ class OpenRouterPanelLLM:
     ) -> None:
         # One test asks one question of everybody, so the question is panel
         # configuration rather than vote data. Binding it here keeps it off the
-        # PanelLLM protocol, which every caller but 015 would carry for nothing.
+        # PanelLLM protocol, which every caller but the wording experiment
+        # would carry for nothing.
         # Reasoning effort is the same kind of thing: one panel deliberates one way, and
         # an experimental arm is a separate instance rather than a per-call argument.
         self._question = question
-        # The whole ask, declared where it is bound: 015 showed the verdict moves
-        # with the question's wording, so a vote cached under one question must not
-        # answer another (010e). The scaffold is rendered by the real message
+        # The whole ask, declared where it is bound: rewording the question was
+        # measured to move the verdict, so a vote cached under one question must not
+        # answer another. The scaffold is rendered by the real message
         # builder with blank inputs — the blanks are what the fingerprint itself
         # carries — so an edit to the template or the answer instruction changes
         # this string without anyone remembering to mirror it here. JSON framing
@@ -296,7 +297,7 @@ class OpenRouterPanelLLM:
 
 
 def analyst_chat_model(*, api_key: str, base_url: str, model: str) -> ChatOpenAI:
-    """The bare chat model `create_agent` drives for the analyst (012).
+    """The bare chat model `create_agent` drives for the analyst.
 
     Just construction: tool binding, the loop, and error shaping all belong to
     the agent in `app.analyst`. Same timeout as a vote, not a new constant —
@@ -373,7 +374,7 @@ class OpenRouterEmbedder:
 
 
 class OpenRouterJudge:
-    """Judge backed by an OpenRouter chat model via LangChain (006e G-Eval)."""
+    """Judge backed by an OpenRouter chat model via LangChain (G-Eval)."""
 
     def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         self._model = ChatOpenAI(

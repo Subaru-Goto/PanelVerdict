@@ -1,6 +1,6 @@
-"""Pool QC (006g): does the persisted pool match the priors it was drawn from?
+"""Pool QC: does the persisted pool match the priors it was drawn from?
 
-Population-level only, never per-persona (001). Two panels, and both compare the
+Population-level only, never per-persona. Two panels, and both compare the
 pool against **our own** seed distributions, so they catch a broken sampler rather
 than an unrealistic pool.
 

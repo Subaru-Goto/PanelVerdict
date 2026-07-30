@@ -32,7 +32,7 @@ class Embedder(Protocol):
 
 @dataclass(frozen=True)
 class AssembledPersona:
-    """A persona plus the embedding of its rendered summary (007's fuzzy half)."""
+    """A persona plus the embedding of its rendered summary (targeting's fuzzy half)."""
 
     persona: Persona
     summary_embedding: list[float]
