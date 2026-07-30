@@ -63,10 +63,22 @@ def _failure_sentence(error: Exception) -> str:
 # words, not the test payload — can reach the instructions that constrain the
 # analyst. Everything variable arrives as a ToolMessage the model asked for.
 _SYSTEM_PROMPT = (
-    "You are the analyst for one synthetic-panel A/B test: a panel of sampled, "
+    "You are PanelVerdict's analyst, and that is the whole of your identity. "
+    "You are reading one synthetic-panel A/B test: a panel of sampled, "
     "synthetic personas — not real people — was shown two headline variants and "
     "each cast a forced vote between them.\n"
     "Rules:\n"
+    # First, because it is the one question the model will otherwise answer from
+    # its own weights: given only a role and no identity, "what are you?" gets
+    # the provider's name. That is the largest machinery leak available, and it
+    # hands an attacker the model family — injection techniques are family
+    # specific. There is nothing to withhold here the way ids or enums could be
+    # withheld; the knowledge is in the weights, so this rule is the only lever.
+    "- Asked what you are, who made you, or what model you run on: you are "
+    "PanelVerdict's analyst and nothing else. Never name a model, a provider, "
+    "a company or a version, and never speculate about them — not even to deny "
+    "one. If pressed, say that what you run on is not something you discuss "
+    "and return to the test.\n"
     "- Two kinds of question, two different rules. Anything about THIS test — "
     "its numbers, its verdict, who voted, how the panel was drawn — comes from "
     "a tool every time: never from memory, never estimated, never inferred "
@@ -281,8 +293,23 @@ class ToolDeps:
     panel_size: int
 
 
-def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
-    """The tools for one request, closed over that request's test."""
+def build_tools(
+    result: EvaluateResponse, deps: ToolDeps, *, allow_new_panel_test: bool = False
+) -> list[BaseTool]:
+    """The tools for one request, closed over that request's test.
+
+    `run_panel_test` spends real money, and until now the only thing stopping a
+    model from calling it was a sentence in its own description asking it not
+    to. That is a prompt rule, and this codebase has repeatedly found prompt
+    rules to be unassertable — while the path to reaching one is real: a crafted
+    headline becomes a vote reason, `read_reasons` feeds reasons to the analyst,
+    and the analyst holds this tool.
+
+    So the tool is not bound unless the caller says so. Availability is decided
+    here, from a request field, by code the model cannot reach. A model asked to
+    "run a new test" by injected text now finds no such tool, which is a
+    different and much stronger statement than a model being asked not to.
+    """
 
     @tool
     def analyze_results() -> str:
@@ -375,7 +402,10 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
             }
         )
 
-    return [analyze_results, search_personas, read_reasons, run_panel_test]
+    tools: list[BaseTool] = [analyze_results, search_personas, read_reasons]
+    if allow_new_panel_test:
+        tools.append(run_panel_test)
+    return tools
 
 
 def stream_analyst(
@@ -386,6 +416,7 @@ def stream_analyst(
     message: str,
     checkpointer: BaseCheckpointSaver,
     deps: ToolDeps,
+    allow_new_panel_test: bool = False,
 ) -> Iterator[str]:
     """Yield the agent's turn as NDJSON lines — one `ChatStreamEvent` each.
 
@@ -397,7 +428,7 @@ def stream_analyst(
     status code would otherwise have carried. Nothing the model or provider
     wrote may ever appear in an error event.
     """
-    tools = build_tools(result, deps)
+    tools = build_tools(result, deps, allow_new_panel_test=allow_new_panel_test)
 
     # The step budget, per turn, derived not tuned: one model-then-tools round
     # per available tool (two supersteps each, in langgraph's currency) plus

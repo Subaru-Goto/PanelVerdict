@@ -405,10 +405,26 @@ class PanelCounts(BaseModel):
     voted: int
 
 
+# Caps on the two untrusted fields, chosen from what the product is rather than
+# from a threat model: a headline is a headline — the longest in the seeded
+# examples runs to a few dozen characters — and a target description is a
+# sentence or two of prose. Both are generous multiples of that, because the
+# cost of being slightly too tight is refusing a real customer while the cost of
+# being slightly too loose is a few hundred wasted tokens.
+#
+# The size matters more here than in an ordinary API: a headline is rendered
+# into every panelist's prompt, so an unbounded field is not one oversized
+# request but a whole run of them, and the same text reaches the report, the
+# analyst's context and the vote cache key.
+MAX_HEADLINE_CHARS = 500
+MAX_TARGET_DESCRIPTION_CHARS = 2000
+
+
 class EvaluateRequest(BaseModel):
-    target_description: str
-    headline_a: str
-    headline_b: str
+    # Unbounded below: blank is a real choice, and means the whole pool.
+    target_description: str = Field(max_length=MAX_TARGET_DESCRIPTION_CHARS)
+    headline_a: str = Field(min_length=1, max_length=MAX_HEADLINE_CHARS)
+    headline_b: str = Field(min_length=1, max_length=MAX_HEADLINE_CHARS)
 
 
 class ToolEvent(BaseModel):
@@ -491,4 +507,11 @@ class ChatRequest(BaseModel):
 
     thread_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
+    # Whether this turn may buy a whole new panel. Default False, and decided
+    # here rather than by the model: `run_panel_test` spends real money, and the
+    # only thing that used to stand between injected text and that spend was a
+    # sentence in the tool's own description asking it not to. A request field
+    # is not forgeable by anything the model reads — including a vote reason
+    # written by another model from a headline a stranger wrote.
+    allow_new_panel_test: bool = False
     result: EvaluateResponse

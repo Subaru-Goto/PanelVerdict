@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     analyst_model: str = "openai/gpt-5-mini"
     embedding_model: str = "openai/text-embedding-3-small"
     judge_model: str = "openai/gpt-5-mini"
+    # Policy-conditioned rather than a fixed harm taxonomy, which is what makes
+    # it fit: the risk here is text addressed to the model instead of to a
+    # reader, and no published taxonomy names that. Reached with the key the
+    # product already has, so screening adds no second provider.
+    screening_model: str = "openai/gpt-oss-safeguard-20b"
 
     @property
     def panel(self) -> PanelProfile:

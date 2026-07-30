@@ -30,6 +30,7 @@ def _lines(
     conn: psycopg.Connection,
     thread_id: str,
     deps: ToolDeps | None = None,
+    allow_new_panel_test: bool = False,
 ) -> list[str]:
     """One streamed turn with the shared fixture result and question — every
     test here varies only the model and what it asserts about the wire."""
@@ -39,6 +40,7 @@ def _lines(
             result=_result(),
             thread_id=thread_id,
             message="Why did it stop early?",
+            allow_new_panel_test=allow_new_panel_test,
             checkpointer=InMemorySaver(),
             deps=deps or _deps(conn),
         )
@@ -77,13 +79,14 @@ class TestStreamAnalyst:
         events = ndjson_events(_lines(model, conn=conn, thread_id="s-2"))
 
         errors = [e for e in events if e["type"] == "error"]
-        # 10 = 2 * len(tools) + 2 with four tools — the pinned sentence tracks
-        # the derived budget, so it moves when the tool list does. It moved here
-        # because read_reasons earns a round, not to buy a looping model room.
+        # 8 = 2 * len(tools) + 2 with the three tools a default request binds.
+        # `run_panel_test` is not among them — it spends money, so it is bound
+        # only when the caller opts in — and the budget tightened with the tool
+        # surface, which is the formula doing exactly what it is for.
         assert errors == [
             {
                 "type": "error",
-                "message": "analyst was still calling tools after 10 steps",
+                "message": "analyst was still calling tools after 8 steps",
             }
         ]
         assert events[-1]["type"] == "error"
@@ -146,6 +149,9 @@ class TestStreamAnalyst:
             conn=conn,
             thread_id="s-5",
             deps=_deps(conn, panel_llm=BrokeLLM()),
+            # The paid tool, so the caller has to ask for it — which is the
+            # point of the opt-in: nothing a model says can bind it.
+            allow_new_panel_test=True,
         )
         events = ndjson_events(lines)
 

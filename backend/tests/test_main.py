@@ -14,9 +14,12 @@ from app.main import (
     get_embedder,
     get_panel_llm,
     get_remaining_credit,
+    get_screener,
     get_translator,
 )
 from app.persistence import nearest_panelists, persist_pool
+from app.schemas import EvaluateRequest
+from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
 from tests.factories import (
     FixedEmbedder,
@@ -64,6 +67,8 @@ def client(conn, stub_llm):
     )
     # A real embedding is a paid call; the canned vector keeps /chat free.
     app.dependency_overrides[get_embedder] = lambda: FixedEmbedder(pointing(0))
+    # The screener is a model too. None means 'advisory checks do not run'.
+    app.dependency_overrides[get_screener] = lambda: None
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -386,6 +391,10 @@ def test_chat_can_run_a_new_panel_test_over_http(client, conn) -> None:
         "/chat",
         json={
             "thread_id": "t-main-6",
+            # The paid tool is not bound unless the request asks for it. This
+            # is the whole guard: a field the client sets, which nothing the
+            # model reads can forge.
+            "allow_new_panel_test": True,
             "message": "What would Japanese readers say?",
             "result": _CHAT_RESULT,
         },
@@ -460,3 +469,93 @@ def test_chat_exhausted_credit_is_an_in_band_error_event(client) -> None:
         "message": "OpenRouter credit exhausted (402)",
     }
     assert "provider text" not in response.text
+
+
+class TestInputLimits:
+    """Untrusted text is bounded before it is copied 25 times.
+
+    A headline is rendered into every panelist's prompt, so an unbounded field
+    is not one oversized request but a whole run of them — and the same text
+    reaches the report, the analyst's context and the vote cache key. The cap
+    is what lets every later guardrail reason about a bounded input.
+    """
+
+    def _payload(self, **over: str) -> dict[str, str]:
+        return {
+            "target_description": "US adults",
+            "headline_a": "Save 50%",
+            "headline_b": "Half price",
+        } | over
+
+    def test_an_oversized_headline_is_refused(self, client) -> None:
+        assert (
+            client.post("/evaluate", json=self._payload(headline_a="x" * 5000))
+        ).status_code == 422
+
+    def test_an_oversized_target_is_refused(self, client) -> None:
+        assert (
+            client.post("/evaluate", json=self._payload(target_description="x" * 5000))
+        ).status_code == 422
+
+    def test_an_empty_headline_is_refused(self, client) -> None:
+        """Blank is meaningful for the target and meaningless for a headline:
+        there is nothing for a panel to prefer."""
+        assert (
+            client.post("/evaluate", json=self._payload(headline_a=""))
+        ).status_code == 422
+
+    def test_the_caps_are_not_tighter_than_the_product(self) -> None:
+        """Asserted on the schema rather than the endpoint, because this is
+        about the cap being generous enough for real copy — not about anything
+        the endpoint then does with it."""
+        EvaluateRequest(
+            target_description="Japanese homeowners in their 40s who research "
+            "carefully before buying anything expensive. " * 3,
+            headline_a="Members save half price this week — ends Sunday",
+            headline_b="Save 50% today",
+        )
+
+
+def test_every_untrusted_field_reaches_the_screener_before_the_panel(
+    client, conn
+) -> None:
+    """The wiring, which nothing else asserts: both headlines and the target are
+    screened, and screening happens before any panelist is bought."""
+    seen: list[str] = []
+
+    class Recording:
+        def screen(self, text: str) -> ScreeningVerdict:
+            seen.append(text)
+            return ScreeningVerdict(flagged=False, reason="clean")
+
+    seed_japanese(conn, 3)
+    app.dependency_overrides[get_screener] = lambda: Recording()
+
+    response = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 200
+    assert set(seen) == {
+        _REQUEST_BODY["target_description"],
+        _REQUEST_BODY["headline_a"],
+        _REQUEST_BODY["headline_b"],
+    }
+
+
+def test_a_detected_injection_is_refused_and_costs_no_votes(client, conn) -> None:
+    """The refusal, and the reason it is cheap: screening runs before the panel,
+    so a blocked run buys nothing. The message names the remedy and never
+    repeats what the screener said."""
+
+    class Flagging:
+        def screen(self, text: str) -> ScreeningVerdict:
+            return ScreeningVerdict(flagged=True, reason="<script>alert(1)</script>")
+
+    seed_japanese(conn, 3)
+    app.dependency_overrides[get_screener] = lambda: Flagging()
+
+    response = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "Rephrase" in detail
+    assert "<script>" not in detail

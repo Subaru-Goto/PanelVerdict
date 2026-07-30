@@ -9,6 +9,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from app.analyst import (
     _SYSTEM_PROMPT,
     ToolDeps,
+    build_tools,
     analysis_facts,
     stream_analyst,
     vote_reasons,
@@ -249,6 +250,36 @@ class TestVoteReasons:
         assert reasons["a"].headline == "Save 50% today"
 
 
+class TestSpendGuard:
+    """The paid tool is unavailable unless the caller asked for it.
+
+    Until now the only thing between injected text and a paid panel run was a
+    sentence in `run_panel_test`'s own description asking the model not to call
+    it unprompted — a prompt rule, which this codebase has repeatedly found to
+    be unassertable. The path to reaching it is real: a crafted headline becomes
+    a vote reason, `read_reasons` hands reasons to the analyst, and the analyst
+    holds the tool.
+
+    Binding decided by a request field is a different kind of statement. A model
+    asked by injected text to "run a new test" finds no such tool.
+    """
+
+    def test_the_paid_tool_is_absent_by_default(self, conn) -> None:
+        names = {tool.name for tool in build_tools(_result(), _deps(conn))}
+
+        assert "run_panel_test" not in names
+        # The unpaid three are untouched: this closes a spend path, not a feature.
+        assert names == {"analyze_results", "search_personas", "read_reasons"}
+
+    def test_it_appears_only_when_the_caller_opts_in(self, conn) -> None:
+        names = {
+            tool.name
+            for tool in build_tools(_result(), _deps(conn), allow_new_panel_test=True)
+        }
+
+        assert "run_panel_test" in names
+
+
 def _deps(
     conn: psycopg.Connection,
     *,
@@ -276,9 +307,15 @@ def _run(
     message: str = "Why did it stop early?",
     result: EvaluateResponse | None = None,
     deps: ToolDeps | None = None,
+    allow_new_panel_test: bool = False,
 ) -> str:
     """One turn's answer, reassembled from the stream — these tests are about
-    the agent's behavior, and the stream is the only transport it has."""
+    the agent's behavior, and the stream is the only transport it has.
+
+    `allow_new_panel_test` defaults to False because the endpoint's default is
+    False: the paid tool is bound only when a caller asks for it, so a test that
+    wants it has to say so, exactly as a request does.
+    """
     events = ndjson_events(
         stream_analyst(
             model=model,
@@ -287,6 +324,7 @@ def _run(
             message=message,
             checkpointer=checkpointer or InMemorySaver(),
             deps=deps or _deps(conn),
+            allow_new_panel_test=allow_new_panel_test,
         )
     )
     return "".join(e["text"] for e in events if e["type"] == "token")
@@ -421,7 +459,12 @@ class TestAnalystAgent:
             ]
         )
 
-        reply = _run(model, conn=conn, message="What would Japanese readers say?")
+        reply = _run(
+            model,
+            conn=conn,
+            message="What would Japanese readers say?",
+            allow_new_panel_test=True,
+        )
 
         assert reply == "The new panel agrees."
         fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
@@ -484,7 +527,7 @@ class TestAnalystAgent:
             ]
         )
 
-        reply = _run(model, conn=conn)
+        reply = _run(model, conn=conn, allow_new_panel_test=True)
 
         assert reply == "Nobody in the pool matches that."
         fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
@@ -515,7 +558,12 @@ class TestAnalystAgent:
             ]
         )
 
-        reply = _run(model, conn=conn, deps=_deps(conn, panel_llm=Failing()))
+        reply = _run(
+            model,
+            conn=conn,
+            deps=_deps(conn, panel_llm=Failing()),
+            allow_new_panel_test=True,
+        )
 
         assert reply == "The re-run collected no votes."
         fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
