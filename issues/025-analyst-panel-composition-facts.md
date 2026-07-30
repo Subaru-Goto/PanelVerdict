@@ -57,6 +57,27 @@ quality-with-degrees question, i.e. judge territory (see the map's
 DeepEval/CI note). What ships tested is the mechanical half: the id is
 absent from the tool result. The prose half is verified by using it.
 
+## The suite's blind spot, found by review 2026-07-30
+
+The first cut of this fix added the composition facts but left both tool
+**descriptions** untouched — so `search_personas` still advertised "who was
+on the panel" while `analyze_results` never mentioned the panel at all. On
+this ticket's own motivating question the model would still have been
+steered to the tool that returns five profiles and no distribution, i.e.
+straight back into the loop 025 exists to kill. The data was there; the
+signpost pointed the other way.
+
+**The suite could not have caught it, and still cannot.** `ScriptedChatModel`
+chooses the tool on the model's behalf, so every agent test proves what
+happens *after* a tool is called and nothing about which tool a real model
+would reach for. Tool routing is therefore the same kind of unassertable
+question as prompt obedience: quality-with-degrees, judge territory.
+
+Practical consequence, worth remembering beyond this ticket: **whenever a
+tool gains a capability, its description is part of the change** — the
+description is the only thing the model actually reads. A capability the
+description doesn't mention is a capability the model doesn't have.
+
 ## Deliberately NOT changing (yet)
 
 The step budget `2 * len(tools) + 2` encodes "each tool used about once per

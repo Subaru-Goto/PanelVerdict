@@ -273,6 +273,9 @@ class TestAnalystAgent:
         assert reply == "Two panelists match."
         fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
         found = json.loads(str(fed_back[0].content))
+        # Length is half the assertion: the off-panel persona is a perfect
+        # query match, so it would arrive as a third result if scope failed.
+        assert len(found) == 2
         assert found[0].startswith("A 27-year-old")
         assert found[1].startswith("A 61-year-old")
 
@@ -323,8 +326,6 @@ class TestAnalystAgent:
         assert sum(run["facts"]["tally"].values()) == 3
         assert run["facts"]["variants"] == _result().variants
         assert "verdict" in run["facts"]
-        # A re-run is as describable as the original test, which is what lets
-        # the model compare two audiences rather than just two numbers.
         assert run["facts"]["panel"]["countries"] == {"JP": 3}
 
     def test_a_target_nobody_matches_is_an_answer_not_a_crash(self, conn) -> None:

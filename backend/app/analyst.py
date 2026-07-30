@@ -97,7 +97,7 @@ class PanelComposition(BaseModel):
     age_max: int
     countries: dict[Locale, int]
     genders: dict[Gender, int]
-    education: dict[EducationLevel, int]
+    education_levels: dict[EducationLevel, int]
     income_bands: dict[IncomeBand, int]
 
 
@@ -123,7 +123,8 @@ def _grouped[Attribute: str](values: Iterable[Attribute]) -> dict[Attribute, int
 
     Generic rather than `dict[str, int]`: the keys stay the enums and literals
     the voter carries, so a mistyped attribute is a type error here rather
-    than a silently empty group on the wire.
+    than a silently empty group on the wire. The `str` bound is load-bearing,
+    not decoration — the tie-break compares keys, which a bare Enum refuses.
     """
     counts = Counter(values)
     return dict(sorted(counts.items(), key=lambda pair: (-pair[1], pair[0])))
@@ -142,17 +143,18 @@ def _composition(votes: Sequence[PanelVote]) -> PanelComposition | None:
         age_max=ages[-1],
         countries=_grouped(voter.country for voter in voters),
         genders=_grouped(voter.gender for voter in voters),
-        education=_grouped(voter.education for voter in voters),
+        education_levels=_grouped(voter.education for voter in voters),
         income_bands=_grouped(voter.income_band for voter in voters),
     )
 
 
 def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
-    """Every number of the current test, recomputed from the tally.
+    """The current test as the analyst may cite it.
 
-    Recomputed rather than read off the request's verdict, so every figure the
-    analyst cites was derived by our own math from one input — a client that
-    doctored the verdict fields cannot make the analyst repeat them.
+    Every *verdict* figure is recomputed rather than read off the request, so
+    a client that doctored those fields cannot make the analyst repeat them.
+    The panel's composition is the one part that cannot be recomputed — who
+    voted is only knowable from the votes the request carries.
     """
     counts = result.tally.counts
     if set(counts) != {"a", "b"}:
@@ -197,17 +199,21 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
 
     @tool
     def analyze_results() -> str:
-        """All the numbers of this test: the verdict recomputed from the vote
-        tally, plus counts, stop reason, coverage and notices. Call this before
-        citing any figure."""
+        """Everything known about this test: the verdict recomputed from the
+        vote tally, plus counts, stop reason, coverage and notices — and who
+        the panel was, as the voters' age range and their spread across
+        country, gender, education and income. Call this before citing any
+        figure, and to answer anything about the panel's make-up or whether
+        it matched the audience that was asked for."""
         return analysis_facts(result).model_dump_json()
 
     @tool
     def search_personas(query: str) -> str:
-        """The panelists of THIS test whose profiles best match a
-        plain-language description, nearest first — who was on the panel,
-        which panelists are price-sensitive, and so on. The query is a
-        description of people, not SQL."""
+        """Individual panelists of THIS test whose profiles best match a
+        plain-language description, nearest first — for characterizing or
+        quoting particular people. For the panel's overall make-up call
+        analyze_results instead: this returns a handful of profiles, never a
+        distribution. The query describes people, not SQL."""
         found = nearest_panelists(
             deps.conn,
             embedding=deps.embedder.embed([query])[0],
