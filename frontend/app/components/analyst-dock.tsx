@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
-  OPENING_REQUEST,
+  isOpeningRequest,
   type Analyst,
   type AnalystTurn,
 } from "../lib/use-analyst";
@@ -115,13 +115,15 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
           }}
           className="flex flex-col gap-2 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {turns.map((turn, index) => (
-            <Turn key={index} turn={turn} />
-          ))}
+          {turns
+            .filter((turn) => !isOpeningRequest(turn))
+            .map((turn, index) => (
+              <Turn key={index} turn={turn} />
+            ))}
         </div>
       )}
 
-      {!turns.some((turn) => turn.role === "user" && turn.text !== OPENING_REQUEST) && (
+      {!turns.some((turn) => turn.role === "user" && !isOpeningRequest(turn)) && (
         <div className="flex flex-wrap gap-2">
           {CHIPS.map((chip) => (
             <button

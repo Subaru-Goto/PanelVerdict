@@ -62,6 +62,33 @@ what dev always runs ([027](027-dock-frozen-in-dev.md)). `send`'s existing
 this needs a guard that survives the remount and a test that renders through
 `StrictMode`, as the dock suite now does.
 
+## Two changes this ticket did not originally ask for
+
+Recorded here rather than left to a code comment, since neither is derivable
+from the sections above.
+
+- **The dock starts closed.** [012](012-build-analyst-chatbot-tools.md)'s
+  variant C traded an open dock for the chips being visible once on a fresh
+  report. With a summary card in the page that trade no longer holds: an open
+  dock would print the same paragraph a second time, a hand's breadth away.
+- **The chips' render condition** moves from "no turns" to "no turn the reader
+  typed". Not a preference — with an auto-sent opening, `turns.length === 0` is
+  false forever and the chips would never appear again.
+
+## The opening question is not the reader's message
+
+Found in review. The dock renders every turn, so the machine-authored opening
+was printed as the reader's own bubble — words attributed to someone who never
+typed them, in a transcript they are about to add to. `isOpeningRequest` is one
+predicate used by both readings: the transcript hides that turn, and the chips
+do not count it as the reader having started anything. The dock's transcript
+therefore opens with the analyst, which is what the summary card already shows.
+
+`TOOL_STATUS` gained `read_reasons` in the same pass. The summary card's whole
+purpose is that one tool call, and it was showing the generic "Working…" —
+[029](029-serve-vote-reasons-to-the-analyst.md)'s rule that a capability ships
+with its description, applied to the half a reader actually sees.
+
 ## Honest limit
 
 The summary is a model's prose about a corpus, so its faithfulness is

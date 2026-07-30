@@ -23,11 +23,18 @@ export const OPENING_REQUEST =
 
 export type AnalystTurn = { role: "user"; text: string } | AnalystReply;
 
+/** The opening turn is the report's question, not the reader's — so the dock
+ *  neither prints it as their message nor counts it as them having started the
+ *  conversation. One predicate, because both readings must agree. */
+export const isOpeningRequest = (turn: AnalystTurn): boolean =>
+  turn.role === "user" && turn.text === OPENING_REQUEST;
+
 /** The dock never shows a raw tool name; it says what the wait feels like.
  *  An unknown name (a tool added later) degrades to the generic sentence. */
 const TOOL_STATUS: Record<string, string> = {
   analyze_results: "Checking the numbers…",
   search_personas: "Looking through the panel…",
+  read_reasons: "Reading what the panel said…",
   run_panel_test: "Running a new panel test — this can take minutes…",
 };
 

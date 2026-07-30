@@ -1,9 +1,10 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import Report from "../app/components/report";
 import { makeResponse, manualStream } from "./fixtures";
+import { OPENING_REQUEST } from "../app/lib/use-analyst";
 
 /** The report opens a conversation on mount, so every render here would reach
  *  the network. Each test gets a stream it can drive, and StrictMode because
@@ -221,6 +222,27 @@ describe("the opening summary", () => {
     ).toBeTruthy();
     // Detail is a click away, not a scroll past.
     expect(container.querySelector("details[open]")).toBeNull();
+  });
+
+  it("hands the same thread to the dock, without a message nobody typed", async () => {
+    // The dock continues the conversation the report opened, so its transcript
+    // starts with the analyst. The opening question was asked on the reader's
+    // behalf; printing it as their own message would attribute words to them.
+    renderReport();
+    stream.push({ type: "token", text: "They liked belonging." });
+    stream.push({ type: "done" });
+    stream.close();
+    await screen.findByText("They liked belonging.");
+
+    fireEvent.click(screen.getByRole("button", { name: /ask the analyst/i }));
+
+    const dock = screen.getByRole("region", { name: /analyst chat/i });
+    expect(dock.textContent).toContain("They liked belonging.");
+    expect(dock.textContent).not.toContain(OPENING_REQUEST);
+    // One thread, so no second call was bought to fill the dock.
+    expect(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls,
+    ).toHaveLength(1);
   });
 
   it("keeps the synthetic caveat out of the collapsed half", async () => {
