@@ -372,43 +372,6 @@ def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None
     assert events[-1] == {"type": "done"}
 
 
-def test_chat_can_run_a_new_panel_test_over_http(client, conn) -> None:
-    """The whole loop at the outermost seam: a chat turn triggers a real
-    (stubbed) panel run, the tool announces itself on the wire, and the new
-    votes land in the ledger through the request's own connection."""
-    seed_japanese(conn, 3)
-    app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
-        responses=[
-            tool_call_message(
-                name="run_panel_test",
-                args={"target_description": "Japanese homeowners"},
-            ),
-            AIMessage(content="The new panel agrees."),
-        ]
-    )
-
-    response = client.post(
-        "/chat",
-        json={
-            "thread_id": "t-main-6",
-            # The paid tool is not bound unless the request asks for it. This
-            # is the whole guard: a field the client sets, which nothing the
-            # model reads can forge.
-            "allow_new_panel_test": True,
-            "message": "What would Japanese readers say?",
-            "result": _CHAT_RESULT,
-        },
-    )
-
-    assert response.status_code == 200
-    events = ndjson_events(response.text.splitlines())
-    assert {"type": "tool", "name": "run_panel_test"} in events
-    tokens = [e["text"] for e in events if e["type"] == "token"]
-    assert "".join(tokens) == "The new panel agrees."
-    assert events[-1] == {"type": "done"}
-    assert conn.execute("SELECT count(*) FROM votes").fetchone()[0] == 3
-
-
 def test_chat_refuses_a_tally_naming_other_variants(client) -> None:
     """422 before any model call: the guard runs ahead of the paid agent."""
     broken = {**_CHAT_RESULT, "tally": {"counts": {"x": 50}, "total": 50}}

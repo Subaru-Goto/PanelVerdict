@@ -128,21 +128,40 @@ availability is our problem and a screening outage must not become a product
 outage. Collapsing detection and availability gives a layer that is neither safe
 when it works nor available when it does not.
 
-## The spend path is a binding decision now, not a request
+## The spend path was deleted, not gated
 
-`run_panel_test` buys a whole new panel. Its only guard was a sentence in its
+`run_panel_test` bought a whole new panel. Its only guard was a sentence in its
 own description asking the model not to call it unprompted — a prompt rule, in a
 codebase that elsewhere calls prompt rules unassertable — while the route to it
 was real: headline → vote reason → `read_reasons` → analyst → tool.
 
-`build_tools` now takes `allow_new_panel_test`, and `ChatRequest` carries it,
-defaulting to `False`. **A model asked by injected text to run a new test finds
-no such tool.** That is categorically stronger than asking it not to, and the
-step budget tightened from 10 to 8 with the tool surface — the derived formula
-working, not a number being tuned.
+The first fix bound the tool only when a request field said so. It worked, and
+it was still the weaker answer: a flag is a thing a later change can get wrong.
+**The tool is now gone.** Every tool the analyst holds reads; none spends, none
+writes. `/chat` no longer constructs a panel model at all, so the absence shows
+in the endpoint's signature rather than living in a boolean.
 
-Who sets the field is now the only question, and it is a human action in a
-client, which is where a decision to spend money belongs.
+Three things fell out of it, each worth more than the feature:
+
+- `ToolDeps` lost its translator, panel model and panel size. What a reader
+  needs is a connection and an embedder.
+- `stream_analyst`'s `except OutOfCredit` handler became **unreachable** and was
+  removed. `OutOfCredit` is raised only by the vote path and the pipeline,
+  neither of which the analyst can now touch; a 402 from the embedder still
+  lands on the `APIStatusError` arm.
+- The step budget went 10 → 8 with the tool surface, the derived formula
+  working rather than a number being tuned.
+
+Nothing was lost: [030](030-report-reading-order.md) already gave the report a
+**Test again** control, which goes through `/evaluate` where the screening, the
+caps and the delimiting live.
+
+**Found by using it.** The first fix left the analyst unable to re-run and the
+client unable to grant permission, so the capability was simply dead — and worse,
+the analyst confabulated around the gap, offering to collect a panel size and
+country quotas for a run it could not make, using parameters the tool never had.
+A prompt rule now states what it can and cannot do, so it names Test again
+instead of inventing the shape of a thing it cannot do.
 
 ## The boundary that moved after this ticket was written
 

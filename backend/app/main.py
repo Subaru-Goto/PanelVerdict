@@ -226,9 +226,10 @@ def chat(
     analyst: BaseChatModel = Depends(get_analyst),
     conn: psycopg.Connection = Depends(get_conn),
     embedder: Embedder = Depends(get_embedder),
-    translator: TargetTranslator = Depends(get_translator),
-    panel_llm: PanelLLM = Depends(get_panel_llm),
 ) -> StreamingResponse:
+    # No translator and no panel model: with `run_panel_test` gone, this
+    # endpoint has nothing that could buy a vote. The absence is the guarantee —
+    # a spend path cannot be reintroduced here without a visible new dependency.
     # Validated before the stream starts, so a malformed tally costs a 422 and
     # no model call — this is the last moment a status code can still say it.
     # Every later failure is the stream's to report, as an in-band `error`
@@ -240,18 +241,11 @@ def chat(
     return StreamingResponse(
         stream_analyst(
             model=analyst,
-            allow_new_panel_test=request.allow_new_panel_test,
             result=request.result,
             thread_id=request.thread_id,
             message=request.message,
             checkpointer=_CHECKPOINTER,
-            deps=ToolDeps(
-                conn=conn,
-                embedder=embedder,
-                translator=translator,
-                panel_llm=panel_llm,
-                panel_size=settings.panel.size,
-            ),
+            deps=ToolDeps(conn=conn, embedder=embedder),
         ),
         media_type="application/x-ndjson",
     )

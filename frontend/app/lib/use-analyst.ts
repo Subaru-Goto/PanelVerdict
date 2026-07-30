@@ -35,7 +35,6 @@ const TOOL_STATUS: Record<string, string> = {
   analyze_results: "Checking the numbers…",
   search_personas: "Looking through the panel…",
   read_reasons: "Reading what the panel said…",
-  run_panel_test: "Running a new panel test — this can take minutes…",
 };
 
 /** One tick per frame at 60Hz — the browser's own repaint budget. */

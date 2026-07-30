@@ -26,11 +26,9 @@ from langgraph.errors import GraphRecursionError
 from openai import APIStatusError
 from pydantic import BaseModel
 
-from app import pipeline
 from app.assembly import Embedder
-from app.panel import persona_summary, votes_with_voters
+from app.panel import persona_summary
 from app.persistence import nearest_panelists
-from app.pipeline import EmptyPanel, NoVotes
 from app.schemas import (
     ChatStreamEvent,
     CoverageRung,
@@ -48,9 +46,7 @@ from app.schemas import (
     TokenEvent,
     ToolEvent,
 )
-from app.targeting import TargetTranslator
 from app.verdict import panel_verdict
-from app.vote import OutOfCredit, PanelLLM
 
 
 def _failure_sentence(error: Exception) -> str:
@@ -89,6 +85,16 @@ _SYSTEM_PROMPT = (
     "- If a question about this test is one the tools cannot answer, say so "
     "plainly in one sentence. Do not keep calling tools hoping a later one "
     "will cover it.\n"
+    # Written after a live reply that said it could not re-run a test, then
+    # offered to collect a panel size and country quotas and run one anyway —
+    # parameters that never existed. Saying "I cannot" is easy; the failure mode
+    # is inventing the shape of the thing you cannot do, so this names the real
+    # alternative instead of leaving a blank the model will fill.
+    "- You read one finished test. You cannot start another, change who was on "
+    "the panel, or alter anything about this one — and you must not offer to, "
+    "or ask for details for a run you cannot make. Asked for a new or different "
+    "test, say in one sentence that a new test is started from the report "
+    "itself, using Test again, and leave it there.\n"
     # Third rather than second-to-last, deliberately: the two rules above are
     # what make machinery salient, so the ban on speaking it belongs against
     # them rather than five rules downstream where it lost in live use.
@@ -281,34 +287,34 @@ _SEARCH_LIMIT = 5
 class ToolDeps:
     """Everything the tools need at call time that is not the test itself.
 
-    One bundle rather than a growing kwargs list: these five always travel
-    together from the request into the closures, and a tool that needs a new
-    runtime dependency should have to show up here, visibly.
+    One bundle rather than a growing kwargs list: both travel together from the
+    request into the closures, and a tool that needs a new runtime dependency
+    should have to show up here, visibly.
+
+    It held a translator, a panel model and a panel size until the analyst
+    stopped being able to start tests. What is left is what a reader needs: a
+    connection and an embedder, neither of which can spend anything.
     """
 
     conn: psycopg.Connection
     embedder: Embedder
-    translator: TargetTranslator
-    panel_llm: PanelLLM
-    panel_size: int
 
 
-def build_tools(
-    result: EvaluateResponse, deps: ToolDeps, *, allow_new_panel_test: bool = False
-) -> list[BaseTool]:
+def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
     """The tools for one request, closed over that request's test.
 
-    `run_panel_test` spends real money, and until now the only thing stopping a
-    model from calling it was a sentence in its own description asking it not
-    to. That is a prompt rule, and this codebase has repeatedly found prompt
-    rules to be unassertable — while the path to reaching one is real: a crafted
-    headline becomes a vote reason, `read_reasons` feeds reasons to the analyst,
-    and the analyst holds this tool.
+    Every one of them reads. None of them spends, and none of them writes.
 
-    So the tool is not bound unless the caller says so. Availability is decided
-    here, from a request field, by code the model cannot reach. A model asked to
-    "run a new test" by injected text now finds no such tool, which is a
-    different and much stronger statement than a model being asked not to.
+    The analyst used to hold `run_panel_test`, which bought a whole new panel,
+    and that made it the only path by which a model could spend money — reached,
+    in principle, by a crafted headline becoming a vote reason that
+    `read_reasons` hands back. Gating it behind a request field would have
+    closed that path; removing the tool deletes it, and there is no flag left
+    for a later change to get wrong.
+
+    Nothing is lost, because re-running was never the analyst's job: the report
+    has a "Test again" control, and it goes through /evaluate, where the
+    screening, the size caps and the delimiting already live.
     """
 
     @tool
@@ -356,56 +362,7 @@ def build_tools(
             }
         )
 
-    @tool
-    def run_panel_test(target_description: str) -> str:
-        """Run this test's two headlines against a NEW panel drawn from a
-        different target audience. This spends real money — one paid model
-        vote per matched panelist — so call it only when the user explicitly
-        asks to test another audience or run the test again. Returns the new
-        run's numbers in the same shape analyze_results reports; the original
-        test's numbers stay with analyze_results."""
-        try:
-            run = pipeline.run_panel_test(
-                deps.conn,
-                description=target_description,
-                variants=result.variants,
-                size=deps.panel_size,
-                translator=deps.translator,
-                llm=deps.panel_llm,
-            )
-        except (EmptyPanel, NoVotes) as error:
-            # Both sentences are this codebase's own (the /evaluate handlers
-            # forward them for the same reason), and a failed re-test should
-            # end as an answer, not kill the turn.
-            return json.dumps({"error": str(error)})
-        facts = AnalysisFacts(
-            variants=result.variants,
-            tally=run.tally.counts,
-            counts=run.counts,
-            polling=_POLLING[run.stop_reason],
-            region_match=_REGION_MATCH[run.selection.query.coverage],
-            notices=[notice.message for notice in run.notices],
-            # Trusted as-is: this verdict came out of our own pipeline one
-            # line up, unlike the request's, which analysis_facts recomputes.
-            verdict=run.verdict,
-            # The same voter join the report does — a fresh run's panel is as
-            # describable as the original's, which is what lets the model
-            # compare the two audiences rather than just their numbers.
-            panel=_composition(
-                votes_with_voters(run.votes.records, run.selection.panel)
-            ),
-        )
-        return json.dumps(
-            {
-                "target_description": target_description,
-                "facts": facts.model_dump(mode="json"),
-            }
-        )
-
-    tools: list[BaseTool] = [analyze_results, search_personas, read_reasons]
-    if allow_new_panel_test:
-        tools.append(run_panel_test)
-    return tools
+    return [analyze_results, search_personas, read_reasons]
 
 
 def stream_analyst(
@@ -416,7 +373,6 @@ def stream_analyst(
     message: str,
     checkpointer: BaseCheckpointSaver,
     deps: ToolDeps,
-    allow_new_panel_test: bool = False,
 ) -> Iterator[str]:
     """Yield the agent's turn as NDJSON lines — one `ChatStreamEvent` each.
 
@@ -428,7 +384,7 @@ def stream_analyst(
     status code would otherwise have carried. Nothing the model or provider
     wrote may ever appear in an error event.
     """
-    tools = build_tools(result, deps, allow_new_panel_test=allow_new_panel_test)
+    tools = build_tools(result, deps)
 
     # The step budget, per turn, derived not tuned: one model-then-tools round
     # per available tool (two supersteps each, in langgraph's currency) plus
@@ -488,12 +444,6 @@ def stream_analyst(
                 else _failure_sentence(error)
             )
         )
-        return
-    except OutOfCredit as error:
-        # The pipeline's own sentence, never the provider's (main.py's 402
-        # handler forwards it for the same reason) — it names the remedy,
-        # which "analyst failed: OutOfCredit" would throw away.
-        yield line(ErrorEvent(message=str(error)))
         return
     except Exception as error:
         # Broad on purpose — the stream is the only channel left.

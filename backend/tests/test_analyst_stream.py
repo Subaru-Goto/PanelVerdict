@@ -13,12 +13,10 @@ from langchain_core.outputs import ChatGenerationChunk
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.analyst import ToolDeps, stream_analyst
-from app.vote import OutOfCredit, VoteResponse
 from tests.factories import (
     ScriptedChatModel,
     StreamingScriptedChatModel,
     ndjson_events,
-    seed_japanese,
     tool_call_message,
 )
 from tests.test_analyst import _deps, _result
@@ -30,7 +28,6 @@ def _lines(
     conn: psycopg.Connection,
     thread_id: str,
     deps: ToolDeps | None = None,
-    allow_new_panel_test: bool = False,
 ) -> list[str]:
     """One streamed turn with the shared fixture result and question — every
     test here varies only the model and what it asserts about the wire."""
@@ -40,7 +37,6 @@ def _lines(
             result=_result(),
             thread_id=thread_id,
             message="Why did it stop early?",
-            allow_new_panel_test=allow_new_panel_test,
             checkpointer=InMemorySaver(),
             deps=deps or _deps(conn),
         )
@@ -118,47 +114,6 @@ class TestStreamAnalyst:
             "message": "analyst failed: RuntimeError",
         }
         assert all("sk-secret" not in line for line in lines)
-
-    def test_credit_exhaustion_mid_tool_speaks_its_own_sentence(self, conn) -> None:
-        """OutOfCredit's message is codebase-authored and names its remedy
-        (top up, re-run resumes free) — worth more on the wire than
-        'analyst failed: OutOfCredit'. Terminal like every error event: the
-        analyst's own next call would 402 anyway. The stub's message must
-        still never leak — only the pipeline's fresh sentence travels."""
-
-        class BrokeLLM:
-            configuration = "broke"
-
-            def vote(
-                self, *, system_prompt: str, option_1: str, option_2: str
-            ) -> VoteResponse:
-                raise OutOfCredit("stub-provider-text")
-
-        seed_japanese(conn, 2)
-        model = ScriptedChatModel(
-            responses=[
-                tool_call_message(
-                    name="run_panel_test",
-                    args={"target_description": "Japanese homeowners"},
-                )
-            ]
-        )
-
-        lines = _lines(
-            model,
-            conn=conn,
-            thread_id="s-5",
-            deps=_deps(conn, panel_llm=BrokeLLM()),
-            # The paid tool, so the caller has to ask for it — which is the
-            # point of the opt-in: nothing a model says can bind it.
-            allow_new_panel_test=True,
-        )
-        events = ndjson_events(lines)
-
-        assert events[-1]["type"] == "error"
-        assert events[-1]["message"].startswith("OpenRouter credit is exhausted")
-        assert {"type": "done"} not in events
-        assert all("stub-provider-text" not in line for line in lines)
 
     def test_tokens_arrive_incrementally_not_as_one_block(self, conn) -> None:
         """The worked example above tolerates one whole-message token (the

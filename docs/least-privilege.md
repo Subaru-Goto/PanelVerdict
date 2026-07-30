@@ -147,26 +147,32 @@ The structural blocker to notice first: **`ChatRequest` carries the entire
 nothing but their own data. With tenants, the server must load the result under
 the session's tenant and ignore what the body claimed.
 
-### 2. Injected text cannot reach a spend path — now enforced, not requested
+### 2. No model in this system can spend money — the path is gone, not gated
 
-The path is real: a crafted headline goes into the panel's prompt, the panel
+The path was real: a crafted headline goes into the panel's prompt, the panel
 model writes it into a vote *reason*,
 [029](../issues/029-serve-vote-reasons-to-the-analyst.md) hands reasons to the
-analyst, and the analyst holds `run_panel_test`, which buys a whole new panel.
+analyst, and the analyst held `run_panel_test`, which bought a whole new panel.
 
-What used to stand there was the tool description's only-on-explicit-ask rule —
-a **prompt rule**, i.e. asking the model nicely, in a codebase that elsewhere
+What stood there was the tool description's only-on-explicit-ask rule — a
+**prompt rule**, i.e. asking the model nicely, in a codebase that elsewhere
 calls prompt rules unassertable.
 
-It is now a binding decision. `build_tools` takes `allow_new_panel_test` and
-`ChatRequest` carries it, defaulting to `False`. A model asked by injected text
-to run a new test **finds no such tool** — categorically stronger than a model
-being asked not to use one. The step budget tightened with the tool surface as a
-side effect, which is the derived formula working.
+Gating it behind a request field would have closed the path. **Removing the tool
+deletes it**, and leaves no flag for a later change to get wrong. Every tool the
+analyst now holds reads; none spends and none writes. `/chat` does not even
+construct a panel model, so the absence is visible in the endpoint's signature:
+a spend path cannot reappear there without a new dependency somebody has to add
+on purpose.
 
-The open question is no longer "can the model be persuaded" but "who sets the
-field", and that is a human action in a client — which is where a decision to
-spend money belongs.
+Nothing was lost. Re-running was never the analyst's job — the report has a
+**Test again** control, which goes through `/evaluate`, where the screening, the
+size caps and the delimiting already live. A human clicking a button is where a
+decision to spend money belongs.
+
+This is the assumption to watch: the moment any agent in this system gains a
+tool that costs money or writes anything, the reasoning above stops applying and
+the guard has to be designed rather than inherited.
 
 ### 3. Panels have no memory and no shared state
 

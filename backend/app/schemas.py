@@ -507,11 +507,4 @@ class ChatRequest(BaseModel):
 
     thread_id: str = Field(min_length=1)
     message: str = Field(min_length=1)
-    # Whether this turn may buy a whole new panel. Default False, and decided
-    # here rather than by the model: `run_panel_test` spends real money, and the
-    # only thing that used to stand between injected text and that spend was a
-    # sentence in the tool's own description asking it not to. A request field
-    # is not forgeable by anything the model reads — including a vote reason
-    # written by another model from a headline a stranger wrote.
-    allow_new_panel_test: bool = False
     result: EvaluateResponse
