@@ -4,7 +4,7 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: [007-build-targeting-query-translation, 008-build-panel-evaluation, 009-build-bayesian-layer]
 assignee: null
-status: open
+status: closed
 ---
 
 ## Goal
@@ -12,6 +12,31 @@ status: open
 Wire the real pieces into one pipeline, replacing the tracer bullet's stubs:
 
 parse target (007) → retrieve + sample personas → fan out panel batches (008) → update posterior (009) → **adaptive stopping** back to fan-out → aggregate & build the report payload.
+
+## Closed 2026-07-30 — all six children closed, on this ticket's own terms
+
+"This ticket closes when every child does" — 010a through 010f are all
+closed, and the pipeline they add up to is what `/evaluate` runs: target
+description in, chunked voting with adaptive stopping, per-vote cache,
+budget guard, verdict out.
+
+**The v1/v2 line this ticket drew was itself revisited, and moved once.**
+010 deferred LangGraph to v2 and told [012](012-build-analyst-chatbot-tools.md)
+it could not reach for it either. 012 then established what the deferral was
+actually protecting v1 from — **authoring graphs** (nodes, edges,
+human-in-the-loop), not the langgraph *runtime* as a transitive dependency —
+and adopted `create_agent` for the analyst on that basis. The hand-rolled
+loop's own evidence is on the record: ~30 lines, not painful, so the
+framework was taken for idiom and learning value rather than necessity.
+Graph authoring remains v2, and the evidence for it is now concrete rather
+than anticipated: both of the recorded v2 wants — an `interrupt()` spend
+gate before `run_panel_test`, and carrying the current test in graph state
+so `analyze_results` follows a re-run — are edge-level problems that
+authoring solves and `create_agent` cannot.
+
+**Agent middleware, the question this branch left open**, got its final
+answer at 012's close: never needed. The three-tool loop wanted neither
+effort escalation nor per-turn model swaps.
 
 ## Split into children 2026-07-27
 
