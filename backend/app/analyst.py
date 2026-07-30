@@ -77,14 +77,20 @@ _SYSTEM_PROMPT = (
     "- If a question about this test is one the tools cannot answer, say so "
     "plainly in one sentence. Do not keep calling tools hoping a later one "
     "will cover it.\n"
+    # Third rather than second-to-last, deliberately: the two rules above are
+    # what make machinery salient, so the ban on speaking it belongs against
+    # them rather than five rules downstream where it lost in live use.
+    "- Answer as an analyst, not as a program. Open with the finding, never "
+    "with how you came by it. Never name a tool, a function, a field or a step "
+    "you took, never quote a raw value such as null or an internal label, and "
+    "never say you are looking something up. If a sentence lets the reader see "
+    "there was a program involved, rewrite it — the reader wants the finding, "
+    "not the machinery.\n"
     "- The headline number is a preference share of the panel, never a "
     "click-through rate: real readers mostly see one variant, and the panel is "
     "unvalidated where two variants say the same thing differently.\n"
     "- Plain language: prefer 'tie zone' over ROPE and spell out what an "
     "interval means; keep replies to a few sentences.\n"
-    "- Answer as an analyst, not as a program: never name a tool, a function, "
-    "a field or a step you took, and never say you are looking something up. "
-    "The reader wants the finding, not the machinery.\n"
     "- Describe panelists as people — their age, country and circumstances. "
     "Never quote an id or any other internal handle."
 )
@@ -109,15 +115,58 @@ class PanelComposition(BaseModel):
     income_bands: dict[IncomeBand, int]
 
 
+# The clauses are `_stopped_early_notice`'s own, so the analyst and the report
+# explain a stop the same way. The frame deliberately is not: that notice may
+# say panelists went unpolled because the pipeline knows how many it asked,
+# while an EvaluateResponse carries no `asked` — and a stop firing on the last
+# chunk leaves nobody unpolled. Hence "stopped once", never "stopped early".
+_POLLING: dict[StopReason | None, str] = {
+    None: "Polling ran through every matched panelist.",
+    "decisive": "Polling stopped once the panel had already decided.",
+    "practical_tie": (
+        "Polling stopped once the difference was already credibly too small to matter."
+    ),
+}
+
+
+# Every rung speaks about *places* and nothing else — `_resolve_regions` sets
+# it from regions alone, so a target whose age or personality was quietly
+# dropped still rates `requested` (024). The bare enum name read like a verdict
+# on the whole target, and in live use it was cited as one; the sentences and
+# the field name both narrow it back to what it actually claims. `requested` is
+# phrased as a substitution that didn't happen, since no region named is also
+# `requested` and "every place was matched" would imply places were named.
+_REGION_MATCH: dict[CoverageRung, str] = {
+    "requested": "No place the target named had to be substituted.",
+    "approximated": (
+        "At least one place the target named was served by a stand-in region; "
+        "a notice names which."
+    ),
+    "unmatched": (
+        "No place the target named could be matched: the panel spans the whole "
+        "pool and carries no geographic targeting."
+    ),
+}
+
+
 class AnalysisFacts(BaseModel):
     """What `analyze_results` hands the model, spelled out rather than a loose
-    dict — the shape is the tool's contract with the prompt."""
+    dict — the shape is the tool's contract with the prompt.
+
+    `polling` is a sentence rather than the `stop_reason` enum it replaces.
+    A value of `null` has no sayable form, and the payload composed no English
+    about it, so the model quoted the field name at the reader — machinery the
+    prompt forbids but the tool supplied. Withheld beats forbidden, the same
+    move that took persona ids off `search_personas`. `region_match` replaces
+    the `coverage` rung for the same reason, plus one of its own: the enum name
+    read like a verdict on the whole target when it only ever spoke of places.
+    """
 
     variants: dict[str, str]
     tally: dict[str, int]
     counts: PanelCounts
-    stop_reason: StopReason | None
-    coverage: CoverageRung
+    polling: str
+    region_match: str
     notices: list[str]
     verdict: PanelVerdict
     # None when the request carried no votes: an age range of 0–0 would be a
@@ -171,8 +220,8 @@ def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
         variants=result.variants,
         tally=counts,
         counts=result.counts,
-        stop_reason=result.stop_reason,
-        coverage=result.query.coverage,
+        polling=_POLLING[result.stop_reason],
+        region_match=_REGION_MATCH[result.query.coverage],
         # Backend-composed sentences (never provider text), so safe to forward.
         notices=[notice.message for notice in result.notices],
         panel=_composition(result.votes),
@@ -208,11 +257,13 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
     @tool
     def analyze_results() -> str:
         """Everything known about this test: the verdict recomputed from the
-        vote tally, plus counts, stop reason, coverage and notices — and who
-        the panel was, as the voters' age range and their spread across
-        country, gender, education and income. Call this before citing any
-        figure, and to answer anything about the panel's make-up or whether
-        it matched the audience that was asked for."""
+        vote tally, plus counts, how far polling ran, how the places named in
+        the target were matched, and notices — and who the panel was, as the
+        voters' age range and their spread across country, gender, education
+        and income. Call this before citing any figure, and to answer anything
+        about the panel's make-up or whether it matched the audience that was
+        asked for. Its wording is already reader-facing: say it, don't decode
+        it."""
         return analysis_facts(result).model_dump_json()
 
     @tool
@@ -259,8 +310,8 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
             variants=result.variants,
             tally=run.tally.counts,
             counts=run.counts,
-            stop_reason=run.stop_reason,
-            coverage=run.selection.query.coverage,
+            polling=_POLLING[run.stop_reason],
+            region_match=_REGION_MATCH[run.selection.query.coverage],
             notices=[notice.message for notice in run.notices],
             # Trusted as-is: this verdict came out of our own pipeline one
             # line up, unlike the request's, which analysis_facts recomputes.
