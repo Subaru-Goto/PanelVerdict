@@ -26,11 +26,9 @@ from langgraph.errors import GraphRecursionError
 from openai import APIStatusError
 from pydantic import BaseModel
 
-from app import pipeline
 from app.assembly import Embedder
-from app.panel import persona_summary, votes_with_voters
+from app.panel import persona_summary
 from app.persistence import nearest_panelists
-from app.pipeline import EmptyPanel, NoVotes
 from app.schemas import (
     ChatStreamEvent,
     CoverageRung,
@@ -48,9 +46,7 @@ from app.schemas import (
     TokenEvent,
     ToolEvent,
 )
-from app.targeting import TargetTranslator
 from app.verdict import panel_verdict
-from app.vote import OutOfCredit, PanelLLM
 
 
 def _failure_sentence(error: Exception) -> str:
@@ -63,10 +59,22 @@ def _failure_sentence(error: Exception) -> str:
 # words, not the test payload — can reach the instructions that constrain the
 # analyst. Everything variable arrives as a ToolMessage the model asked for.
 _SYSTEM_PROMPT = (
-    "You are the analyst for one synthetic-panel A/B test: a panel of sampled, "
+    "You are PanelVerdict's analyst, and that is the whole of your identity. "
+    "You are reading one synthetic-panel A/B test: a panel of sampled, "
     "synthetic personas — not real people — was shown two headline variants and "
     "each cast a forced vote between them.\n"
     "Rules:\n"
+    # First, because it is the one question the model will otherwise answer from
+    # its own weights: given only a role and no identity, "what are you?" gets
+    # the provider's name. That is the largest machinery leak available, and it
+    # hands an attacker the model family — injection techniques are family
+    # specific. There is nothing to withhold here the way ids or enums could be
+    # withheld; the knowledge is in the weights, so this rule is the only lever.
+    "- Asked what you are, who made you, or what model you run on: you are "
+    "PanelVerdict's analyst and nothing else. Never name a model, a provider, "
+    "a company or a version, and never speculate about them — not even to deny "
+    "one. If pressed, say that what you run on is not something you discuss "
+    "and return to the test.\n"
     "- Two kinds of question, two different rules. Anything about THIS test — "
     "its numbers, its verdict, who voted, how the panel was drawn — comes from "
     "a tool every time: never from memory, never estimated, never inferred "
@@ -77,6 +85,16 @@ _SYSTEM_PROMPT = (
     "- If a question about this test is one the tools cannot answer, say so "
     "plainly in one sentence. Do not keep calling tools hoping a later one "
     "will cover it.\n"
+    # Written after a live reply that said it could not re-run a test, then
+    # offered to collect a panel size and country quotas and run one anyway —
+    # parameters that never existed. Saying "I cannot" is easy; the failure mode
+    # is inventing the shape of the thing you cannot do, so this names the real
+    # alternative instead of leaving a blank the model will fill.
+    "- You read one finished test. You cannot start another, change who was on "
+    "the panel, or alter anything about this one — and you must not offer to, "
+    "or ask for details for a run you cannot make. Asked for a new or different "
+    "test, say in one sentence that a new test is started from the report "
+    "itself, using Test again, and leave it there.\n"
     # Third rather than second-to-last, deliberately: the two rules above are
     # what make machinery salient, so the ban on speaking it belongs against
     # them rather than five rules downstream where it lost in live use.
@@ -269,20 +287,35 @@ _SEARCH_LIMIT = 5
 class ToolDeps:
     """Everything the tools need at call time that is not the test itself.
 
-    One bundle rather than a growing kwargs list: these five always travel
-    together from the request into the closures, and a tool that needs a new
-    runtime dependency should have to show up here, visibly.
+    One bundle rather than a growing kwargs list: both travel together from the
+    request into the closures, and a tool that needs a new runtime dependency
+    should have to show up here, visibly.
+
+    It held a translator, a panel model and a panel size until the analyst
+    stopped being able to start tests. What is left is what a reader needs: a
+    connection and an embedder, neither of which can spend anything.
     """
 
     conn: psycopg.Connection
     embedder: Embedder
-    translator: TargetTranslator
-    panel_llm: PanelLLM
-    panel_size: int
 
 
 def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
-    """The tools for one request, closed over that request's test."""
+    """The tools for one request, closed over that request's test.
+
+    Every one of them reads. None of them spends, and none of them writes.
+
+    The analyst used to hold `run_panel_test`, which bought a whole new panel,
+    and that made it the only path by which a model could spend money — reached,
+    in principle, by a crafted headline becoming a vote reason that
+    `read_reasons` hands back. Gating it behind a request field would have
+    closed that path; removing the tool deletes it, and there is no flag left
+    for a later change to get wrong.
+
+    Nothing is lost, because re-running was never the analyst's job: the report
+    has a "Test again" control, and it goes through /evaluate, where the
+    screening, the size caps and the delimiting already live.
+    """
 
     @tool
     def analyze_results() -> str:
@@ -329,53 +362,7 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
             }
         )
 
-    @tool
-    def run_panel_test(target_description: str) -> str:
-        """Run this test's two headlines against a NEW panel drawn from a
-        different target audience. This spends real money — one paid model
-        vote per matched panelist — so call it only when the user explicitly
-        asks to test another audience or run the test again. Returns the new
-        run's numbers in the same shape analyze_results reports; the original
-        test's numbers stay with analyze_results."""
-        try:
-            run = pipeline.run_panel_test(
-                deps.conn,
-                description=target_description,
-                variants=result.variants,
-                size=deps.panel_size,
-                translator=deps.translator,
-                llm=deps.panel_llm,
-            )
-        except (EmptyPanel, NoVotes) as error:
-            # Both sentences are this codebase's own (the /evaluate handlers
-            # forward them for the same reason), and a failed re-test should
-            # end as an answer, not kill the turn.
-            return json.dumps({"error": str(error)})
-        facts = AnalysisFacts(
-            variants=result.variants,
-            tally=run.tally.counts,
-            counts=run.counts,
-            polling=_POLLING[run.stop_reason],
-            region_match=_REGION_MATCH[run.selection.query.coverage],
-            notices=[notice.message for notice in run.notices],
-            # Trusted as-is: this verdict came out of our own pipeline one
-            # line up, unlike the request's, which analysis_facts recomputes.
-            verdict=run.verdict,
-            # The same voter join the report does — a fresh run's panel is as
-            # describable as the original's, which is what lets the model
-            # compare the two audiences rather than just their numbers.
-            panel=_composition(
-                votes_with_voters(run.votes.records, run.selection.panel)
-            ),
-        )
-        return json.dumps(
-            {
-                "target_description": target_description,
-                "facts": facts.model_dump(mode="json"),
-            }
-        )
-
-    return [analyze_results, search_personas, read_reasons, run_panel_test]
+    return [analyze_results, search_personas, read_reasons]
 
 
 def stream_analyst(
@@ -404,11 +391,10 @@ def stream_analyst(
     # the closing model step, plus one — the limit must strictly exceed the
     # steps executed, measured: a one-tool round errors at 3 and passes at 4.
     # A model still calling tools past the budget is looping, and the budget
-    # converts runaway spend into a visible failure. Note what the cap now
-    # admits: up to three tool rounds may each be a run_panel_test — a full
-    # paid panel run — so the budget is a tripwire, not the spend gate; the
-    # gate is the tool description's only-on-explicit-ask rule, plus the fact
-    # that no suggestion chip in the dock can trigger a paid run.
+    # converts a runaway turn into a visible failure. It is a tripwire and
+    # nothing more: it used to be described as one half of a spend gate, back
+    # when a tool could buy a panel. None can now, so what the budget bounds is
+    # tokens and patience.
     limit = 2 * len(tools) + 2
 
     agent = create_agent(
@@ -457,12 +443,6 @@ def stream_analyst(
                 else _failure_sentence(error)
             )
         )
-        return
-    except OutOfCredit as error:
-        # The pipeline's own sentence, never the provider's (main.py's 402
-        # handler forwards it for the same reason) — it names the remedy,
-        # which "analyst failed: OutOfCredit" would throw away.
-        yield line(ErrorEvent(message=str(error)))
         return
     except Exception as error:
         # Broad on purpose — the stream is the only channel left.

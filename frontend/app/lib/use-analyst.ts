@@ -23,11 +23,30 @@ export const OPENING_REQUEST =
 
 export type AnalystTurn = { role: "user"; text: string } | AnalystReply;
 
-/** The opening turn is the report's question, not the reader's — so the dock
- *  neither prints it as their message nor counts it as them having started the
- *  conversation. One predicate, because both readings must agree. */
-export const isOpeningRequest = (turn: AnalystTurn): boolean =>
+const isOpeningRequest = (turn: AnalystTurn): boolean =>
   turn.role === "user" && turn.text === OPENING_REQUEST;
+
+/** The turns the reader is actually part of.
+ *
+ *  The opening exchange belongs to the report: its question was asked on the
+ *  reader's behalf, and its answer is already on the page as the summary card.
+ *  The dock therefore starts after it — printing either half a hand's breadth
+ *  below the card is duplication, not context.
+ *
+ *  Hidden from the transcript, never dropped from the thread. The analyst still
+ *  holds the summary in context, which is what "which of them said that?"
+ *  resolves against instead of re-buying the tool calls. */
+export const readerTurns = (turns: AnalystTurn[]): AnalystTurn[] => {
+  if (turns.length === 0 || !isOpeningRequest(turns[0])) return turns;
+  // Drop up to the reader's first message rather than a fixed two. `send`
+  // appends a user turn and an analyst turn together, so two is right today —
+  // but that is an invariant of `send`, enforced nowhere, and a slice would
+  // silently eat a real message the day it changed.
+  const first = turns.findIndex(
+    (turn) => turn.role === "user" && !isOpeningRequest(turn),
+  );
+  return first === -1 ? [] : turns.slice(first);
+};
 
 /** The dock never shows a raw tool name; it says what the wait feels like.
  *  An unknown name (a tool added later) degrades to the generic sentence. */
@@ -35,7 +54,6 @@ const TOOL_STATUS: Record<string, string> = {
   analyze_results: "Checking the numbers…",
   search_personas: "Looking through the panel…",
   read_reasons: "Reading what the panel said…",
-  run_panel_test: "Running a new panel test — this can take minutes…",
 };
 
 /** One tick per frame at 60Hz — the browser's own repaint budget. */

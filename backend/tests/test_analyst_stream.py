@@ -13,12 +13,10 @@ from langchain_core.outputs import ChatGenerationChunk
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.analyst import ToolDeps, stream_analyst
-from app.vote import OutOfCredit, VoteResponse
 from tests.factories import (
     ScriptedChatModel,
     StreamingScriptedChatModel,
     ndjson_events,
-    seed_japanese,
     tool_call_message,
 )
 from tests.test_analyst import _deps, _result
@@ -77,13 +75,14 @@ class TestStreamAnalyst:
         events = ndjson_events(_lines(model, conn=conn, thread_id="s-2"))
 
         errors = [e for e in events if e["type"] == "error"]
-        # 10 = 2 * len(tools) + 2 with four tools — the pinned sentence tracks
-        # the derived budget, so it moves when the tool list does. It moved here
-        # because read_reasons earns a round, not to buy a looping model room.
+        # 8 = 2 * len(tools) + 2 with the three tools a default request binds.
+        # `run_panel_test` is not among them — it spends money, so it is bound
+        # only when the caller opts in — and the budget tightened with the tool
+        # surface, which is the formula doing exactly what it is for.
         assert errors == [
             {
                 "type": "error",
-                "message": "analyst was still calling tools after 10 steps",
+                "message": "analyst was still calling tools after 8 steps",
             }
         ]
         assert events[-1]["type"] == "error"
@@ -115,44 +114,6 @@ class TestStreamAnalyst:
             "message": "analyst failed: RuntimeError",
         }
         assert all("sk-secret" not in line for line in lines)
-
-    def test_credit_exhaustion_mid_tool_speaks_its_own_sentence(self, conn) -> None:
-        """OutOfCredit's message is codebase-authored and names its remedy
-        (top up, re-run resumes free) — worth more on the wire than
-        'analyst failed: OutOfCredit'. Terminal like every error event: the
-        analyst's own next call would 402 anyway. The stub's message must
-        still never leak — only the pipeline's fresh sentence travels."""
-
-        class BrokeLLM:
-            configuration = "broke"
-
-            def vote(
-                self, *, system_prompt: str, option_1: str, option_2: str
-            ) -> VoteResponse:
-                raise OutOfCredit("stub-provider-text")
-
-        seed_japanese(conn, 2)
-        model = ScriptedChatModel(
-            responses=[
-                tool_call_message(
-                    name="run_panel_test",
-                    args={"target_description": "Japanese homeowners"},
-                )
-            ]
-        )
-
-        lines = _lines(
-            model,
-            conn=conn,
-            thread_id="s-5",
-            deps=_deps(conn, panel_llm=BrokeLLM()),
-        )
-        events = ndjson_events(lines)
-
-        assert events[-1]["type"] == "error"
-        assert events[-1]["message"].startswith("OpenRouter credit is exhausted")
-        assert {"type": "done"} not in events
-        assert all("stub-provider-text" not in line for line in lines)
 
     def test_tokens_arrive_incrementally_not_as_one_block(self, conn) -> None:
         """The worked example above tolerates one whole-message token (the

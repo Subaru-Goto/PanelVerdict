@@ -23,6 +23,7 @@ from app.llm import (
 )
 from app.panel import votes_with_voters
 from app.pipeline import EmptyPanel, NoVotes, run_panel_test
+from app.screening import OpenRouterScreener, Screener, UnsafeInput, screen_inputs
 from app.schemas import (
     ChatRequest,
     EvaluateRequest,
@@ -65,6 +66,20 @@ def get_panel_llm() -> PanelLLM:
         api_key=_require_api_key(),
         base_url=settings.openrouter_base_url,
         model=settings.panel.model,
+    )
+
+
+def get_screener() -> Screener | None:
+    """None when no key is configured, because screening is advisory and a
+    missing key already means "advisory checks do not run" rather than "the
+    product is down" — the same reading the credit pre-flight takes."""
+    key = settings.openrouter_api_key
+    if key is None:
+        return None
+    return OpenRouterScreener(
+        api_key=key.get_secret_value(),
+        base_url=settings.openrouter_base_url,
+        model=settings.screening_model,
     )
 
 
@@ -152,8 +167,19 @@ def evaluate(
     translator: TargetTranslator = Depends(get_translator),
     conn: psycopg.Connection = Depends(get_conn),
     credit: float | None = Depends(get_remaining_credit),
+    screener: Screener | None = Depends(get_screener),
 ) -> EvaluateResponse:
     variants = {"a": request.headline_a, "b": request.headline_b}
+    # Before the panel, because this is the last moment the customer's text has
+    # been copied only once — and before a single vote is bought, so a refused
+    # run costs nothing.
+    try:
+        screen_inputs(screener, [request.target_description, *variants.values()])
+    except UnsafeInput as error:
+        # 400 and not 422: the text is well-formed, it is what it says that was
+        # refused. The sentence is this codebase's own and names the remedy;
+        # the screener's own words never travel.
+        raise HTTPException(status_code=400, detail=str(error)) from error
     # Both refusal messages are safe to forward by construction: `EmptyPanel` is this
     # codebase's own sentence, and `NoVotes` carries exception types only — never the
     # failure text, which can include provider responses and the model's own output.
@@ -200,9 +226,10 @@ def chat(
     analyst: BaseChatModel = Depends(get_analyst),
     conn: psycopg.Connection = Depends(get_conn),
     embedder: Embedder = Depends(get_embedder),
-    translator: TargetTranslator = Depends(get_translator),
-    panel_llm: PanelLLM = Depends(get_panel_llm),
 ) -> StreamingResponse:
+    # No translator and no panel model: with `run_panel_test` gone, this
+    # endpoint has nothing that could buy a vote. The absence is the guarantee —
+    # a spend path cannot be reintroduced here without a visible new dependency.
     # Validated before the stream starts, so a malformed tally costs a 422 and
     # no model call — this is the last moment a status code can still say it.
     # Every later failure is the stream's to report, as an in-band `error`
@@ -218,13 +245,7 @@ def chat(
             thread_id=request.thread_id,
             message=request.message,
             checkpointer=_CHECKPOINTER,
-            deps=ToolDeps(
-                conn=conn,
-                embedder=embedder,
-                translator=translator,
-                panel_llm=panel_llm,
-                panel_size=settings.panel.size,
-            ),
+            deps=ToolDeps(conn=conn, embedder=embedder),
         ),
         media_type="application/x-ndjson",
     )
