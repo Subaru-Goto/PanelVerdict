@@ -15,7 +15,7 @@ from app.schemas import (
 # Five intensities per trait, phrased without pronouns so the vote prompt (second
 # person) and the summary embedded for retrieval (third person) can share one
 # table — the persona a query matches has to be the persona that votes. Wording
-# is BFI-2-Expanded-style descriptions of the sampled level, never numbers (006).
+# is BFI-2-Expanded-style descriptions of the sampled level, never numbers.
 _TRAIT_PHRASES: dict[TraitName, dict[TraitLevel, str]] = {
     "openness": {
         TraitLevel.VERY_HIGH: "restlessly curious, forever chasing the new and the unconventional",
@@ -89,7 +89,7 @@ def _dispositions(big_five: BigFive) -> str:
 def render_demographics_prompt(persona: Persona) -> str:
     """The demographic half of the vote prompt, on its own.
 
-    Public because 014's manipulation check needs a trait-free arm, and deriving
+    Public because the manipulation check needs a trait-free arm, and deriving
     it here rather than re-typing the sentence is what keeps that arm identical
     to the real prompt minus temperament — a reworded copy would ablate wording
     and traits together.
@@ -114,7 +114,8 @@ def render_persona_prompt(persona: Persona) -> str:
 
 
 def persona_summary(persona: Persona) -> str:
-    """Render a persona as third-person prose, for the embedding 007 retrieves on.
+    """Render a persona as third-person prose, and embed that text so the
+    analyst's panelist search can match a description against it.
 
     Shares the vote prompt's phrasing on purpose: a target description is matched
     against this text, so anything it claims that the prompt does not say would
@@ -145,7 +146,8 @@ FIXED_PANEL: list[Persona] = [
             neuroticism=TraitLevel.LOW,
         ),
     ),
-    # Traits deliberately cross-cut demographics (001 anti-stereotype): a
+    # Traits deliberately cross-cut demographics, so no age or gender implies a
+    # personality: a
     # conventional young man, a curious 61-year-old, an anxious/disorganized
     # midlifer, a driven woman with mainstream tastes.
     Persona(
@@ -234,7 +236,7 @@ def votes_with_voters(
     """Join each vote to its voter at assembly time.
 
     The pipeline still holds the matched personas when the response is built, so
-    this is enrichment, not a query (023). A record's persona is always on the
+    this is enrichment, not a query. A record's persona is always on the
     panel — the run fingerprinted the question per panelist — so a miss here is
     a bug worth crashing on, not a row to skip.
     """

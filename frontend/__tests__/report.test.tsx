@@ -8,7 +8,7 @@ import { OPENING_REQUEST } from "../app/lib/use-analyst";
 
 /** The report opens a conversation on mount, so every render here would reach
  *  the network. Each test gets a stream it can drive, and StrictMode because
- *  the dev server always mounts twice (027). */
+ *  the dev server always mounts twice. */
 let stream: ReturnType<typeof manualStream>;
 
 beforeEach(() => {
@@ -62,7 +62,7 @@ describe("stat tiles", () => {
 });
 
 describe("posterior chart", () => {
-  // The 011 prototype principle, learned over three consecutive "what is this
+  // The prototype principle, learned over three consecutive "what is this
   // line?" questions: every visible mark carries an on-screen name and number,
   // or it is deleted.
   it("names every mark in the legend with its number", () => {
@@ -120,7 +120,7 @@ describe("posterior chart", () => {
 
 describe("vote feed", () => {
   it("shows the voter as a person, never their database handle", () => {
-    // 023: a persona id identifies a row, not a reader. The demographic line is
+    // A persona id identifies a row, not a reader. The demographic line is
     // what makes the reason beside it evidence.
     renderReport();
 
@@ -151,7 +151,7 @@ describe("vote feed", () => {
 
 describe("panel card", () => {
   it("shows each trait as a chip carrying its source phrase", () => {
-    // The 017 amendment: the source phrase is the only part of the trait
+    // The source phrase is the only part of the trait
     // reading a customer can check, so the chip must carry it.
     const base = makeResponse();
     render(

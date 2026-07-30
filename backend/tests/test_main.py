@@ -88,7 +88,7 @@ def test_evaluate_returns_the_full_panel_test_payload(client, conn) -> None:
 
     # each vote carries its voter as a person — demographics plus the five trait
     # levels — while the ledger's provenance (test_id, presentation_order) stays
-    # off the wire (023)
+    # off the wire
     vote = body["votes"][0]
     assert set(vote) == {"persona_id", "chosen_variant_id", "reason", "voter"}
     assert vote["voter"]["country"] == "JP"
@@ -179,7 +179,7 @@ def test_a_panel_with_no_votes_is_a_bad_gateway_naming_types_only(client, conn) 
 def test_a_partial_run_returns_a_verdict_with_the_shortfall_in_the_counts(
     client, conn
 ) -> None:
-    """The 5-persona all-or-nothing refusal is retired, and by 010b's decision no
+    """The 5-persona all-or-nothing refusal is retired, and no
     threshold replaces it: every run with at least one vote gets a verdict, and the
     customer is informed through the counts and a notice rather than refused."""
     seed_japanese(conn, 3)
@@ -228,7 +228,7 @@ def test_exhausted_credit_is_a_402_naming_the_remedy(client, conn) -> None:
 
 
 class TestBudgetNotice:
-    """010f's pre-flight, decided as warn-and-proceed: a run the credit cannot
+    """The credit pre-flight, decided as warn-and-proceed: a run the credit cannot
     finish is still worth starting, because every vote it casts is saved and a
     re-run after top-up resumes free. So the check informs; it never refuses."""
 

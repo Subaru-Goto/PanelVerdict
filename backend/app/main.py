@@ -35,7 +35,7 @@ from app.vote import OutOfCredit, PanelLLM
 # Uvicorn configures its own loggers and leaves the root one alone, so every
 # `logger.info` in this package propagated to a handler-less root and was
 # dropped at WARNING. The effect was that a run's usage line — what it cost,
-# and since 033 how long it took — has never been readable from a running
+# and how long it took — has never been readable from a running
 # server, only from tests, which capture at the logger and so could not see the
 # gap. Configured here because this module is the server's entry point; the
 # seed script does the same for the same reason.
@@ -105,7 +105,7 @@ def get_remaining_credit() -> float | None:
 
 
 def budget_notice(remaining: float | None, *, size: int) -> tuple[Notice, ...]:
-    """Warn-and-proceed, never refuse (010f's decision): a run the credit cannot
+    """Warn-and-proceed, never refuse: a run the credit cannot
     finish is still worth starting, because every vote it casts lands in the ledger
     and a re-run after top-up resumes free. None never warns — an unknown balance
     is an unlimited key or a failed check, not evidence of a thin one."""

@@ -179,7 +179,7 @@ def test_a_stronger_trait_score_reads_differently() -> None:
 
 class TestVoterSummary:
     """The voter as the report shows them: demographics verbatim, traits as the
-    rendered levels — the same bucketize the vote prompt already speaks (023)."""
+    rendered levels — the same bucketize the vote prompt already speaks."""
 
     def test_it_carries_the_demographics_verbatim(self) -> None:
         persona = make_persona(

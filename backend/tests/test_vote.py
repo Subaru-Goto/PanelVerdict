@@ -379,7 +379,7 @@ def test_totals_report_how_many_votes_each_sum_covers() -> None:
     assert totals.cost_reported == 1
     # A wave costs its slowest member, so the slowest vote is the one number
     # that explains a run's wall time; the sum next to it says how much of that
-    # was concurrent. Both were measured per vote and dropped here until 033.
+    # was concurrent. Both were measured per vote long before anything summed them.
     assert totals.seconds_slowest == 2.0
     assert totals.seconds_total == 3.0
 
@@ -397,7 +397,7 @@ def test_totals_of_a_run_that_reported_nothing_are_zero_not_absent() -> None:
 
 
 class TestVoteFingerprint:
-    """The cache key is the question itself (010e): any change to what the model
+    """The cache key is the question itself: any change to what the model
     would be asked must change the fingerprint, or a stored vote silently answers a
     question it was never asked. The ingredients are the exact request strings plus
     the adapter's configuration — not persona/test ids, which can stay equal across
@@ -439,7 +439,7 @@ class TestVoteFingerprint:
 
 
 def test_the_request_shows_the_variants_in_presentation_order() -> None:
-    """option_1 is whatever the order puts first — the position bias (014) lives or
+    """option_1 is whatever the order puts first — the position bias lives or
     dies on this mapping, so the request builder gets its own check."""
     request = build_vote_request(
         _persona("p0"),
@@ -453,7 +453,7 @@ def test_the_request_shows_the_variants_in_presentation_order() -> None:
 
 
 def test_pre_assigned_orders_are_honoured() -> None:
-    """010e fixes each chunk's orders before splitting it into cache hits and
+    """Each chunk's orders are fixed before it is split into cache hits and
     misses, so the misses must arrive with their positions already assigned — a
     fresh draw over the smaller panel would re-pair panelists with positions and
     turn every would-be cache hit into a paid miss on the next run."""

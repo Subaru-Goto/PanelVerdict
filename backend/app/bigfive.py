@@ -1,7 +1,7 @@
 """Big Five sampling: draw correlated (O,C,E,A,N) z-scores conditioned on age+gender.
 
 Scores are the source of truth; `TraitLevel` is derived at render via `bucketize`.
-Design + seed-data provenance: issues/006c, docs/research/persona-seed-data.md.
+Design + seed-data provenance: docs/research/persona-seed-data.md.
 """
 
 import json
@@ -13,8 +13,8 @@ import numpy as np
 from app.schemas import BigFive, TraitLevel
 
 # The empirical μ/Σ live in the loaded artifact — one home for the numbers,
-# carrying their own provenance. Shared across all countries (001 decision (i):
-# country does not condition the Big Five μ).
+# carrying their own provenance. Shared across all countries: country
+# does not condition the Big Five μ.
 _NORMS = json.loads((Path(__file__).parent / "data" / "bigfive_norms.json").read_text())
 MU: dict[str, list[float]] = _NORMS["mu"]
 SIGMA: list[list[float]] = _NORMS["sigma"]
@@ -51,7 +51,8 @@ def sample_big_five(
     )
 
 
-# Round z-values, one half-sigma apart (006j D1b). The cutoffs are a choice; what
+# Round z-values, one half-sigma apart (docs/research/persona-seed-data.md).
+# The cutoffs are a choice; what
 # follows from the normal distribution — and is what makes them defensible — is
 # the population split they produce: 6.7 / 24.2 / 38.3 / 24.2 / 6.7, so no level
 # is so rare it never renders. A demographically conditioned cell skews off those
@@ -95,7 +96,7 @@ def bucketize(score: float) -> TraitLevel:
 # asking for cautious people means at least cautious, so a level is a direction from a
 # threshold — except at the middle, where "average" genuinely means the middle. The
 # consequence is deliberate: `high` admits everyone `very_high` does, so the outer
-# levels nest rather than partition (017).
+# levels nest rather than partition.
 #
 # The comparison travels with the number because `bucketize`'s boundaries belong to the
 # inner band, which makes every threshold exclusive on its outer side while the middle's

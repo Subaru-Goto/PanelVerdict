@@ -35,7 +35,7 @@ def test_the_shipped_task_text_is_unchanged() -> None:
 
 
 def test_a_custom_question_cannot_reach_the_answer_instruction() -> None:
-    """015 varies the question sentence and nothing else.
+    """This varies the question sentence and nothing else.
 
     The positional and content-based-reason instructions are outside the
     parameter, so an experimental arm cannot reword them even by accident —
@@ -295,9 +295,10 @@ def test_the_default_arm_sends_no_reasoning_parameter_at_all() -> None:
 
 
 def test_configuration_declares_everything_the_adapter_binds() -> None:
-    """The vote cache keys on `configuration` (010e), so every constructor knob that
-    changes what the model is asked must change it — 015 measured the verdict moving
-    with the question's wording, and a cached vote must not answer a reworded one."""
+    """The vote cache keys on `configuration`, so every constructor knob that
+    changes what the model is asked must change it — rewording the question was
+    measured to move the verdict, and a cached vote must not answer a reworded
+    one."""
 
     base = {"api_key": "test", "base_url": "http://openrouter.invalid"}
     configurations = [

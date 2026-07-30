@@ -54,9 +54,10 @@ def apply_schema(conn: psycopg.Connection) -> None:
     """Create the pool schema if absent (idempotent), then refuse a stale one.
 
     `CREATE … IF NOT EXISTS` silently accepts an out-of-date table, and the
-    resulting failure is invisible rather than loud: a full pre-006j pool makes
-    every id a resume-skip, so no insert ever names the missing column and the run
-    reports "0 written, 200 already present" over a pool with no embeddings.
+    resulting failure is invisible rather than loud: a pool seeded before the
+    embedding column existed makes every id a resume-skip, so no insert ever
+    names the missing column and the run reports "0 written, 200 already
+    present" over a pool with no embeddings.
     """
     try:
         # The index statement references summary_embedding, so on a stale table
@@ -200,7 +201,7 @@ def retrieve_panel(
     """Retrieve a panel: every requested attribute filters, then a uniform sample.
 
     Filtering rather than ranking is what makes the panel an audience instead of a
-    tail (017). The pool is distributionally grounded by construction — demographics
+    tail. The pool is distributionally grounded by construction — demographics
     from the OECD joint tables, Big Five from age- and gender-conditioned norms — so a
     uniform draw inside the filter already carries a realistic spread, where taking
     the top `size` by any score returns the extremes of it.
@@ -267,7 +268,7 @@ def nearest_panelists(
 
     Panel-only by contract: `panel_ids` are the voters of the current test, and
     nobody outside them may appear — the analyst talks about the people in the
-    report, not the whole pool (012 decision log). An empty `panel_ids` returns
+    report, not the whole pool. An empty `panel_ids` returns
     nobody, never everybody.
     """
     # `<=>` is cosine distance; the index opclass in schema.sql must agree
@@ -301,8 +302,8 @@ def store_votes(conn: psycopg.Connection, votes: Mapping[str, VoteRecord]) -> in
     """Append newly cast votes to the ledger; return how many were new.
 
     `ON CONFLICT DO NOTHING`, never update: votes are paid model output, and the
-    first vote stored under a fingerprint is *the* vote for that question (010e's
-    append-only ruling). A colliding write is a concurrent run that paid twice for
+    first vote stored under a fingerprint is *the* vote for that question, by the
+    ledger's append-only rule. A colliding write is a concurrent run that paid twice for
     the same answer — regrettable, but not a reason to rewrite history.
     """
     written = 0

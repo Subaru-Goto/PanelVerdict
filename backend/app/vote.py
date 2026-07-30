@@ -11,7 +11,8 @@ from app.schemas import PanelVoteOutput, Persona, VoteRecord
 
 # A cap on requests in flight, not a barrier between groups of 25: a group that waits
 # for its slowest member leaves the other workers idle, and a reasoning model's latency
-# varies enough for that to cost real time. 25 is 008's figure.
+# varies enough for that to cost real time. 25 is a chosen cap rather than a
+# measured one — no run has yet been throttled by it.
 VOTE_CONCURRENCY = 25
 
 # Fixed by default, so one test pairs the same panelists with the same positions run
@@ -78,8 +79,9 @@ class UsageTotals:
     The two time figures answer different questions and both are needed. A wave
     finishes with its slowest member, so `seconds_slowest` is what a run's wall
     time is actually made of; `seconds_total` beside it says how much of that
-    work happened at once. Measured per vote since 010a and discarded here until
-    033, which is why a slow run could never be explained from the log.
+    work happened at once. Both were measured per vote long before anything
+    summed them here, which is why a slow run could not be explained from a log
+    that reported only cost.
     """
 
     votes: int
@@ -123,7 +125,7 @@ def total_usage(usage: Sequence[VoteUsage | None]) -> UsageTotals:
 class PanelLLM(Protocol):
     # Everything the adapter itself contributes to what is asked — the model id
     # plus whatever it binds (the vote question, reasoning effort). It lives on the
-    # adapter rather than travelling as separate parameters so the cache key (010e)
+    # adapter rather than travelling as separate parameters so the cache key
     # is fingerprinted against the ask that actually happens: a caller cannot hand
     # the pipeline one description and vote with another, and a knob added to the
     # adapter joins the key by extending this string, not the protocol.
@@ -165,7 +167,7 @@ def vote_fingerprint(request: VoteRequest, *, configuration: str) -> str:
     Keying on the request's own strings plus the adapter's configuration is what
     makes invalidation automatic — change the persona template, a headline, the
     vote question's wording, or the model, and the key changes with it, so a stale
-    entry cannot be served (010e). The presentation order is already inside: a
+    entry cannot be served. The presentation order is already inside: a
     swapped order swaps option_1/option_2. JSON framing so no separator convention
     is needed for strings that may contain anything.
     """
@@ -182,8 +184,9 @@ def presentation_orders(
 
     Both halves are load-bearing and they fix different things.
 
-    The split is exact because the model picks the first-shown option 0.66 of the time
-    (014), so a surplus of one order is a bias on the top line rather than noise that
+    The split is exact because the model picks the first-shown option 0.66 of the
+    time (measured in docs/research/manipulation-check.md),
+    so a surplus of one order is a bias on the top line rather than noise that
     averages out. An odd panel is off by one, which is as close as whole votes get.
 
     The shuffle is because assigning by index parity — balanced as it is — ties
@@ -307,7 +310,7 @@ def collect_panel_votes(
     position is resolved back to a variant id.
 
     `orders` overrides the internal draw for callers that fixed the pairing before
-    narrowing the panel — the cache split (010e) assigns orders to a whole chunk,
+    narrowing the panel — the cache split assigns orders to a whole chunk,
     then sends only the misses here, and a fresh draw over the smaller panel would
     re-pair panelists with positions.
 

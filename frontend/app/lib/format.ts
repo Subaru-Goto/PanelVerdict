@@ -2,7 +2,7 @@
  *  bound, all strictly inside (0, 1) by construction — so a rendered 0% or
  *  100% is always rounding claiming a certainty the panel cannot have. A live
  *  23-2 of 25 put P(A preferred) at 0.99999 and the report said "100%", which
- *  is 020's overclaim in a different disguise.
+ *  is the same overclaim in a different disguise.
  *
  *  Only the artifact is rewritten: an exact 0 or 1 still renders as itself, so
  *  the guard states a fact about the value rather than an assumption about

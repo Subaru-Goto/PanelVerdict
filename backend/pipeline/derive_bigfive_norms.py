@@ -103,7 +103,7 @@ def derive() -> _Norms:
             "mu_derivation": "per age band x domain: z = ((T_BHPS + T_GSOEP)/2 - 50)/10; gender split mu(female)=z+d/2, mu(male)=z-d/2 from pooled per-domain Cohen's d",
             "sigma_source": "van der Linden, te Nijenhuis & Bakker 2010, J. Research in Personality 44:315-327, Table 2 observed r (K=212, N=144117); Neuroticism sign convention",
             "trait_order": TRAIT_ORDER,
-            "note": "Shared across all countries (001 decision (i): country does not condition Big Five mu). Raw inputs: docs/research/donnellan-lucas-2008-table1.md. Regenerate: python -m pipeline.derive_bigfive_norms.",
+            "note": "Shared across all countries: country does not condition Big Five mu. Raw inputs: docs/research/donnellan-lucas-2008-table1.md. Regenerate: python -m pipeline.derive_bigfive_norms.",
         },
         "mu": mu,
         "sigma": _SIGMA,

@@ -2,7 +2,8 @@
 
 One keyless API, queried by country code. `age × gender × education` come as
 direct OECD cross-tabs (education native ISCED-2011); income attaches as an
-imputed marginal (declared). Design: issues/006b.
+imputed marginal (declared). Data provenance:
+docs/research/oecd-demographic-data.md.
 """
 
 import csv

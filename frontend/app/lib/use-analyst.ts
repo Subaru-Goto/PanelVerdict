@@ -90,7 +90,7 @@ export function useAnalyst(
   // Deliberately never reset in a setup, unlike `goneRef` above: this asks
   // "has this thread ever been opened", and a ref surviving React's dev-only
   // remount is precisely what stops one conversation becoming two paid ones.
-  // The property that made `goneRef` a bug (027) is the one that fixes this.
+  // The property that made `goneRef` a bug is the one that fixes this.
   const openedRef = useRef(false);
 
   useEffect(() => {

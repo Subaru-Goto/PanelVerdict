@@ -10,7 +10,7 @@ class TraitLevel(str, Enum):
     Five levels rather than three because three cannot express the continuous
     score the sampler draws: a z of 0.51 and a z of 2.3 would render identically,
     which both flattens the vote prompt and leaves retrieval unable to rank within
-    a bucket (006j D1b).
+    a bucket, one half-sigma wide (docs/research/persona-seed-data.md).
     """
 
     VERY_LOW = "very_low"
@@ -114,7 +114,7 @@ class Persona(PersonaDemographics):
     """One panelist, stored as structured typed fields — no free text at all.
 
     Every field is sampled or derived, so a persona is a pure function of the
-    master seed (006j): the database is a cache of that function, not a system
+    master seed: the database is a cache of that function, not a system
     of record.
 
     `extra="forbid"` because pydantic's default would silently swallow a field
@@ -163,7 +163,7 @@ class VoteRecord(BaseModel):
 class VoterSummary(BaseModel):
     """The voter as a person: demographics verbatim, traits as rendered levels.
 
-    What makes a reason worth reading is who gives it (023). Trait scores travel
+    What makes a reason worth reading is who gives it. Trait scores travel
     as `TraitLevel`s, not z-scores, and income as the band, not the quintile —
     both are the words the vote prompt was rendered from, so what the report
     shows about a voter cannot drift from what the panelist enacted.
@@ -224,8 +224,8 @@ class PreferenceProbability(BaseModel):
     """How likely each variant is to be preferred by more than the band.
 
     Key `a` is about variant A — unlike `PreferenceExposure`, whose `shipping_*`
-    keys survive because that number genuinely is about the shipping decision
-    (022). The differing key sets also guard the units: one is a probability in
+    keys survive because that number genuinely is about the shipping decision.
+    The differing key sets also guard the units: one is a probability in
     0-1, the other preference-share points, and a reader that formatted 0.95 as
     "95 points" would be off by the width of the whole scale.
     """

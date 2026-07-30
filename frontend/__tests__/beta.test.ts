@@ -31,7 +31,7 @@ describe("posteriorDensity", () => {
   it("stays finite at tallies where the raw pdf underflows to zero", () => {
     // At 5000 votes the unnormalized density is ~e^-3300 everywhere — a
     // direct p^b(1−p)^a underflows to an all-zero curve and 0/0 = NaN. This
-    // pins the log-space construction the 011 ticket decided.
+    // pins the log-space construction the report's chart needs.
     const points = posteriorDensity(3000, 2000, 101);
 
     const peak = Math.max(...points.map((point) => point.density));
