@@ -29,6 +29,7 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from langchain_openai import ChatOpenAI
+from openai import APIStatusError
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,19 @@ _POLICY = (
 )
 
 
+# A screener that is unreachable for these reasons is not having a bad day: the
+# model is not available to this account, and nothing improves until a person
+# changes something. Everything else is treated as an outage.
+_CONFIGURATION_STATUSES = frozenset({401, 403, 404})
+
+
+def self_model_name(screener: object) -> str:
+    """The screener's model if it will say, for a log line that has to name
+    what is switched off. Any screener may be a double, so this asks rather
+    than requiring the protocol to carry it."""
+    return getattr(screener, "model_name", "unknown")
+
+
 class ScreeningVerdict(BaseModel):
     """One judgement about one piece of customer text.
 
@@ -94,6 +108,7 @@ class OpenRouterScreener:
     """
 
     def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
+        self.model_name = model
         self._model = ChatOpenAI(
             model=model,
             base_url=base_url,
@@ -157,7 +172,28 @@ def screen_inputs(screener: Screener | None, texts: Sequence[str]) -> None:
             # one need not. Returning here meant one transient failure on the
             # target description silently skipped both headlines — a wider hole
             # than the fail-open this is supposed to be.
-            logger.warning("screening unavailable: %s", type(error).__name__)
+            #
+            # Two very different situations arrive here and used to read alike.
+            # A timeout is an outage and fail-open is the right answer. A 404 or
+            # a 401 is a *configuration* error: the model is not available to
+            # this account and never will be without someone changing something,
+            # so the control is not degraded, it is off. That was found by
+            # running it — both purpose-built safety models 404 on this account,
+            # every call raised, and the suite stayed green because every test
+            # doubles the screener. It is logged as an error so the next reader
+            # sees a control that is switched off rather than a blip.
+            level = (
+                logging.ERROR
+                if isinstance(error, APIStatusError)
+                and error.status_code in _CONFIGURATION_STATUSES
+                else logging.WARNING
+            )
+            logger.log(
+                level,
+                "screening did not run for one input (%s): model=%s",
+                type(error).__name__,
+                self_model_name(screener),
+            )
             continue
         if verdict.flagged:
             # Logged as evidence before it is refused, with the text itself:

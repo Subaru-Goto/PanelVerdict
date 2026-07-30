@@ -74,11 +74,18 @@ class Settings(BaseSettings):
     analyst_model: str = "openai/gpt-5-mini"
     embedding_model: str = "openai/text-embedding-3-small"
     judge_model: str = "openai/gpt-5-mini"
-    # Policy-conditioned rather than a fixed harm taxonomy, which is what makes
-    # it fit: the risk here is text addressed to the model instead of to a
-    # reader, and no published taxonomy names that. Reached with the key the
-    # product already has, so screening adds no second provider.
-    screening_model: str = "openai/gpt-oss-safeguard-20b"
+    # The same model as every other role, and not for consistency: the two
+    # purpose-built safety classifiers OpenRouter serves — gpt-oss-safeguard-20b
+    # and llama-guard-4-12b — both answer 404 "No endpoints available matching
+    # your guardrail restrictions and data policy" on this account. Measured, by
+    # calling them; the account is not ours to reconfigure.
+    #
+    # Nothing is really lost, because the policy was always the detector and the
+    # model only the engine: a general model reading the same policy flags the
+    # injection and passes "Members save half price this week", which is the
+    # pair that matters. A safety model would be cheaper and faster, not better,
+    # and it is the first thing to revisit if the account policy ever changes.
+    screening_model: str = "openai/gpt-5-mini"
 
     @property
     def panel(self) -> PanelProfile:

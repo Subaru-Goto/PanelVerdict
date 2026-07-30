@@ -1,6 +1,8 @@
 import logging
 
+import httpx
 import pytest
+from openai import APIStatusError
 
 from app.screening import ScreeningVerdict, UnsafeInput, screen_inputs
 
@@ -64,7 +66,7 @@ def test_a_broken_screener_cannot_cost_a_customer_their_run(caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="app.screening"):
         screen_inputs(BrokenScreener(), ["anything"])
 
-    assert any("unavailable" in record.message for record in caplog.records)
+    assert any("did not run" in record.message for record in caplog.records)
 
 
 def test_a_screening_failure_never_logs_provider_text(caplog) -> None:
@@ -75,6 +77,35 @@ def test_a_screening_failure_never_logs_provider_text(caplog) -> None:
 
     assert all("sk-secret" not in record.getMessage() for record in caplog.records)
     assert any("RuntimeError" in record.getMessage() for record in caplog.records)
+
+
+def test_an_unavailable_model_is_an_error_not_a_warning(caplog) -> None:
+    """A timeout is an outage and fail-open is right. A 404 means the model is
+    not available to this account and never will be without someone changing
+    something — the control is not degraded, it is off.
+
+    Found by running it: both purpose-built safety classifiers answered 404 on
+    this account's data policy, every call raised, the run proceeded unscreened,
+    and the suite stayed green because every test here doubles the screener.
+    """
+
+    class Unavailable:
+        model_name = "openai/gpt-oss-safeguard-20b"
+
+        def screen(self, text: str) -> ScreeningVerdict:
+            raise APIStatusError(
+                "no endpoints",
+                response=httpx.Response(404, request=httpx.Request("POST", "http://x")),
+                body=None,
+            )
+
+    with caplog.at_level(logging.WARNING, logger="app.screening"):
+        screen_inputs(Unavailable(), ["anything"])
+
+    (record,) = [r for r in caplog.records if "did not run" in r.message]
+    assert record.levelno == logging.ERROR
+    # Names what is switched off, so the reader can act on it.
+    assert "gpt-oss-safeguard" in record.getMessage()
 
 
 def test_every_untrusted_field_is_screened_and_blanks_are_skipped() -> None:

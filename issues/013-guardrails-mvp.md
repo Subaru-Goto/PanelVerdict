@@ -194,6 +194,41 @@ Worth listing, because most of it was documents claiming more than the code did:
   `PENDING USER SIGN-OFF` marker two files away.
 - `ChatRequest.message` had no ceiling while the evaluate fields did.
 
+## The screener was inert, and only a live run could have shown it
+
+The suite was green and the control did nothing. Every test doubles the
+screener — deliberately, because it is a paid model — so nothing in CI could
+observe that **both** purpose-built classifiers OpenRouter serves answer:
+
+```
+404 - No endpoints available matching your guardrail restrictions and data policy
+```
+
+`gpt-oss-safeguard-20b` and `llama-guard-4-12b` are both unreachable on this
+account, so every screening call raised, the fail-open path swallowed it, and a
+blatant injection ran a full paid panel. Confirmed by posting one to a running
+server and watching it return 200.
+
+Two things came out of that.
+
+**The model changed to `openai/gpt-5-mini`** — what every other role uses, and
+therefore known reachable. It flags the injection and passes "Members save half
+price this week", which is the pair that matters. Nothing much is lost, because
+the policy was always the detector and the model only the engine; a safety model
+would be cheaper and faster, not better. First thing to revisit if the account's
+data policy ever changes.
+
+**A configuration error is no longer logged like an outage.** A timeout is a bad
+day and fail-open is right; a 404 or a 401 means the model is not available to
+this account and never will be until a person changes something — the control is
+not degraded, it is *off*. Those now log at ERROR, naming the model, so the next
+reader sees a switch in the off position rather than a blip.
+
+Verified end to end afterwards: the injection is refused with 400 in ~9s and
+buys no votes, and ordinary marketing copy still runs. The general lesson is the
+one the ticket already half-knew — **a control whose every test doubles it has
+not been tested** — and the cost of learning it was one unscreened paid run.
+
 ## Honest limit
 
 The identity rule — added because the analyst answered "I am ChatGPT" when asked
