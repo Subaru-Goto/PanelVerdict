@@ -12,6 +12,7 @@ from app.persistence import persist_pool
 from app.vote import PanelLLM, VoteResponse
 from app.schemas import (
     EvaluateResponse,
+    Locale,
     PanelCounts,
     PanelVerdict,
     PreferenceExposure,
@@ -75,6 +76,20 @@ def _result(*, preferring_b: int = 14, total: int = 50) -> EvaluateResponse:
     )
 
 
+def _result_with_voters() -> EvaluateResponse:
+    """The live incident's own panel: a target asking for young Japanese
+    people that seated a 91-year-old American."""
+    return _result().model_copy(
+        update={
+            "votes": [
+                make_panel_vote("a", age=23, country=Locale.JP, gender="female"),
+                make_panel_vote("b", age=40, country=Locale.JP, gender="male"),
+                make_panel_vote("c", age=91, country=Locale.US, gender="male"),
+            ]
+        }
+    )
+
+
 class TestAnalysisFacts:
     def test_the_verdict_is_recomputed_from_the_tally_not_trusted(self) -> None:
         facts = analysis_facts(_result())
@@ -90,6 +105,37 @@ class TestAnalysisFacts:
         assert facts.counts == PanelCounts(requested=200, matched=200, voted=50)
         assert facts.stop_reason == "decisive"
         assert facts.coverage == "requested"
+
+    def test_it_summarizes_who_actually_voted(self) -> None:
+        """The gap that cost a whole turn in live use: asked why a panel
+        targeted at young people held a 90-year-old, no tool could say. These
+        are that incident's own numbers — the spread is the answer."""
+        panel = analysis_facts(_result_with_voters()).panel
+
+        assert panel is not None
+        assert (panel.age_min, panel.age_median, panel.age_max) == (23, 40, 91)
+        # Biggest group first, so the model reads the panel's shape in order.
+        assert list(panel.countries.items()) == [(Locale.JP, 2), (Locale.US, 1)]
+        assert panel.genders == {"male": 2, "female": 1}
+
+    def test_the_median_age_is_an_age_somebody_actually_is(self) -> None:
+        """An even panel has no middle voter, and half a year of age would be
+        a number no panelist could be asked about."""
+        result = _result().model_copy(
+            update={
+                "votes": [make_panel_vote("a", age=30), make_panel_vote("b", age=41)]
+            }
+        )
+
+        panel = analysis_facts(result).panel
+
+        assert panel is not None
+        assert panel.age_median in (30, 41)
+
+    def test_a_result_carrying_no_votes_has_no_panel_summary(self) -> None:
+        """Absent, not zeroed: an age range of 0–0 would be a claim about a
+        panel, and there is no panel to claim anything about."""
+        assert analysis_facts(_result()).panel is None
 
     def test_a_tally_without_both_variants_is_refused(self) -> None:
         broken = _result().model_copy(
@@ -161,6 +207,31 @@ class TestAnalystAgent:
         assert len(fed_back) == 1
         assert json.loads(str(fed_back[0].content))["stop_reason"] == "decisive"
 
+    def test_one_tool_call_can_answer_why_the_panel_looks_wrong(self, conn) -> None:
+        """This ticket's whole pin, end to end: the live incident asked why a
+        young-Japanese target seated a 90-year-old and the analyst looped
+        until the budget killed the turn. One analyze_results call now
+        carries the spread that answers it."""
+        model = ScriptedChatModel(
+            responses=[
+                tool_call_message(),
+                AIMessage(content="Ages ran 23 to 91."),
+            ]
+        )
+
+        reply = _run(
+            model,
+            conn=conn,
+            result=_result_with_voters(),
+            message="Why does a young Japanese panel include a 90-year-old?",
+        )
+
+        assert reply == "Ages ran 23 to 91."
+        fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
+        panel = json.loads(str(fed_back[0].content))["panel"]
+        assert (panel["age_min"], panel["age_max"]) == (23, 91)
+        assert panel["countries"] == {"JP": 2, "US": 1}
+
     def test_the_agent_searches_only_this_tests_panel(self, conn) -> None:
         """search_personas end to end: the query text is embedded, the panel
         scope comes from result.votes, and the ToolMessage lists panelists
@@ -169,9 +240,17 @@ class TestAnalystAgent:
         persist_pool(
             conn,
             [
-                make_assembled(make_persona(id_="US-00000"), embedding=pointing(1)),
-                make_assembled(make_persona(id_="US-00001"), embedding=pointing(0)),
-                make_assembled(make_persona(id_="US-00002"), embedding=pointing(0)),
+                # Distinct ages so the rendered summaries differ — the panel
+                # is described by who these people are, never by their ids.
+                make_assembled(
+                    make_persona(id_="US-00000", age=61), embedding=pointing(1)
+                ),
+                make_assembled(
+                    make_persona(id_="US-00001", age=27), embedding=pointing(0)
+                ),
+                make_assembled(
+                    make_persona(id_="US-00002", age=44), embedding=pointing(0)
+                ),
             ],
         )
         model = ScriptedChatModel(
@@ -194,7 +273,28 @@ class TestAnalystAgent:
         assert reply == "Two panelists match."
         fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
         found = json.loads(str(fed_back[0].content))
-        assert [p["id"] for p in found] == ["US-00001", "US-00000"]
+        assert found[0].startswith("A 27-year-old")
+        assert found[1].startswith("A 61-year-old")
+
+    def test_a_search_never_hands_the_model_a_persona_id(self, conn) -> None:
+        """023's lesson, which the analyst was breaking in live use: an id
+        identifies a row, not a reader. Enforced by absence — the model
+        cannot quote a handle it was never given."""
+        persist_pool(
+            conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
+        )
+        model = ScriptedChatModel(
+            responses=[
+                tool_call_message(name="search_personas", args={"query": "thrifty"}),
+                AIMessage(content="One panelist matches."),
+            ]
+        )
+        result = _result().model_copy(update={"votes": [make_panel_vote("US-00000")]})
+
+        _run(model, conn=conn, result=result)
+
+        fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
+        assert "US-00000" not in str(fed_back[0].content)
 
     def test_the_agent_can_run_a_new_panel_test(self, conn) -> None:
         """run_panel_test end to end on stubs: the model contributes only a
@@ -223,6 +323,9 @@ class TestAnalystAgent:
         assert sum(run["facts"]["tally"].values()) == 3
         assert run["facts"]["variants"] == _result().variants
         assert "verdict" in run["facts"]
+        # A re-run is as describable as the original test, which is what lets
+        # the model compare two audiences rather than just two numbers.
+        assert run["facts"]["panel"]["countries"] == {"JP": 3}
 
     def test_a_target_nobody_matches_is_an_answer_not_a_crash(self, conn) -> None:
         """EmptyPanel's sentence is codebase-authored (the 422 path forwards

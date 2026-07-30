@@ -33,6 +33,30 @@ calls. Sketch: voter age min/max/median, counts by country and gender,
 education spread. Shape is the implementer's; the pin is that "why does the
 panel include 90-year-olds?" becomes a one-tool-call answer.
 
+## Amended 2026-07-30 — a second live finding, folded in
+
+Same session, same surface: the analyst was **quoting persona ids** at the
+user and **narrating its own machinery** ("I ran the test-results tool for
+this panel…"). Both are about what the analyst says rather than what it
+knows, so they ship with the composition facts rather than as a second
+one-file PR.
+
+- **Ids are gone by construction, not by instruction.** `search_personas`
+  now returns summaries only. [023](023-vote-feed-voter-details.md) already
+  ruled for the report that "an id identifies a row, not a reader"; the
+  analyst was breaking that rule because the tool handed it ids. A model
+  cannot quote a handle it was never given — the same unconstructible-by-
+  design move as 012b's event union.
+- **Two prompt rules added:** never name a tool, function, field or step;
+  describe panelists as people, never as handles.
+
+**Honest limit on the second one:** a prompt rule's *effect* cannot be
+asserted — asserting the constant contains the sentence would be
+tautological, and whether the model actually obeys is a
+quality-with-degrees question, i.e. judge territory (see the map's
+DeepEval/CI note). What ships tested is the mechanical half: the id is
+absent from the tool result. The prose half is verified by using it.
+
 ## Deliberately NOT changing (yet)
 
 The step budget `2 * len(tools) + 2` encodes "each tool used about once per

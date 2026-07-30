@@ -482,8 +482,11 @@ class ChatRequest(BaseModel):
 
     The whole result still travels rather than a test id, because nothing
     persists a finished test today — the votes ledger stores votes, not
-    verdicts. The payload is context, not testimony: every number the analyst
-    cites is recomputed server-side from the tally (`analyst.analysis_facts`).
+    verdicts. The payload is context, not testimony: every *verdict* number
+    the analyst cites is recomputed server-side from the tally
+    (`analyst.analysis_facts`). Who the voters were is the one thing that
+    cannot be — the panel's demographics are forwarded from `votes[].voter`
+    as given, because nothing server-side remembers a finished panel.
     """
 
     thread_id: str = Field(min_length=1)

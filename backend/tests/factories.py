@@ -17,6 +17,7 @@ from app.schemas import (
     BigFive,
     EducationLevel,
     Gender,
+    IncomeBand,
     Locale,
     PanelVote,
     PanelVoteOutput,
@@ -51,19 +52,27 @@ class FixedEmbedder:
         return [self._vector for _ in texts]
 
 
-def make_panel_vote(persona_id: str) -> PanelVote:
-    """A vote whose only load-bearing field is who cast it — for tests where
-    votes exist to define the panel, not to carry opinions."""
+def make_panel_vote(
+    persona_id: str,
+    *,
+    age: int = 34,
+    country: Locale = Locale.US,
+    gender: Gender = "female",
+    education: EducationLevel = EducationLevel.TERTIARY,
+    income_band: IncomeBand = "middle",
+) -> PanelVote:
+    """A vote for tests about who was on the panel rather than what they
+    chose — the demographics are the load-bearing part, the opinion is stub."""
     return PanelVote(
         persona_id=persona_id,
         chosen_variant_id="a",
         reason="stub",
         voter=VoterSummary(
-            country="US",
-            age=34,
-            gender="female",
-            education="tertiary",
-            income_band="middle",
+            country=country,
+            age=age,
+            gender=gender,
+            education=education,
+            income_band=income_band,
             traits={},
         ),
     )

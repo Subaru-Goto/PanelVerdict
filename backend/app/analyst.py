@@ -11,8 +11,10 @@ scale-up path, not a redesign.
 """
 
 import json
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from statistics import median_low
 
 import psycopg
 from langchain.agents import create_agent
@@ -26,17 +28,22 @@ from pydantic import BaseModel
 
 from app import pipeline
 from app.assembly import Embedder
-from app.panel import persona_summary
+from app.panel import persona_summary, votes_with_voters
 from app.persistence import nearest_panelists
 from app.pipeline import EmptyPanel, NoVotes
 from app.schemas import (
     ChatStreamEvent,
     CoverageRung,
     DoneEvent,
+    EducationLevel,
     ErrorEvent,
     EvaluateResponse,
+    Gender,
+    IncomeBand,
+    Locale,
     PanelCounts,
     PanelVerdict,
+    PanelVote,
     StopReason,
     TokenEvent,
     ToolEvent,
@@ -66,8 +73,32 @@ _SYSTEM_PROMPT = (
     "click-through rate: real readers mostly see one variant, and the panel is "
     "unvalidated where two variants say the same thing differently.\n"
     "- Plain language: prefer 'tie zone' over ROPE and spell out what an "
-    "interval means; keep replies to a few sentences."
+    "interval means; keep replies to a few sentences.\n"
+    "- Answer as an analyst, not as a program: never name a tool, a function, "
+    "a field or a step you took, and never say you are looking something up. "
+    "The reader wants the finding, not the machinery.\n"
+    "- Describe panelists as people — their age, country and circumstances. "
+    "Never quote an id or any other internal handle."
 )
+
+
+class PanelComposition(BaseModel):
+    """Who voted, counted from the votes themselves.
+
+    Deliberately carries no total: `counts.voted` already says how many, and a
+    second count recomputed from a different field of the same request would
+    put two disagreeing answers in one payload with no rule for which to cite.
+    This says who they were, which is what can answer why a target's panel
+    looks wrong.
+    """
+
+    age_min: int
+    age_median: int
+    age_max: int
+    countries: dict[Locale, int]
+    genders: dict[Gender, int]
+    education: dict[EducationLevel, int]
+    income_bands: dict[IncomeBand, int]
 
 
 class AnalysisFacts(BaseModel):
@@ -81,6 +112,39 @@ class AnalysisFacts(BaseModel):
     coverage: CoverageRung
     notices: list[str]
     verdict: PanelVerdict
+    # None when the request carried no votes: an age range of 0–0 would be a
+    # claim about a panel that isn't there.
+    panel: PanelComposition | None
+
+
+def _grouped[Attribute: str](values: Iterable[Attribute]) -> dict[Attribute, int]:
+    """Counts, biggest group first so the panel's shape reads in order; ties
+    break on the name, so the same panel always renders identically.
+
+    Generic rather than `dict[str, int]`: the keys stay the enums and literals
+    the voter carries, so a mistyped attribute is a type error here rather
+    than a silently empty group on the wire.
+    """
+    counts = Counter(values)
+    return dict(sorted(counts.items(), key=lambda pair: (-pair[1], pair[0])))
+
+
+def _composition(votes: Sequence[PanelVote]) -> PanelComposition | None:
+    if not votes:
+        return None
+    voters = [vote.voter for vote in votes]
+    ages = sorted(voter.age for voter in voters)
+    return PanelComposition(
+        age_min=ages[0],
+        # median_low, not median: an even panel has no middle voter, and half
+        # a year of age would be a number no panelist could be asked about.
+        age_median=median_low(ages),
+        age_max=ages[-1],
+        countries=_grouped(voter.country for voter in voters),
+        genders=_grouped(voter.gender for voter in voters),
+        education=_grouped(voter.education for voter in voters),
+        income_bands=_grouped(voter.income_band for voter in voters),
+    )
 
 
 def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
@@ -101,6 +165,7 @@ def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
         coverage=result.query.coverage,
         # Backend-composed sentences (never provider text), so safe to forward.
         notices=[notice.message for notice in result.notices],
+        panel=_composition(result.votes),
         verdict=panel_verdict(preferring_b=counts["b"], total=result.tally.total),
     )
 
@@ -149,12 +214,10 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
             panel_ids=[vote.persona_id for vote in result.votes],
             limit=_SEARCH_LIMIT,
         )
-        return json.dumps(
-            [
-                {"id": persona.id, "summary": persona_summary(persona)}
-                for persona in found
-            ]
-        )
+        # Summaries only: a persona id is a database handle, not a name a
+        # reader can use (023's ruling for the report). Withheld rather than
+        # forbidden — the model cannot quote what it was never given.
+        return json.dumps([persona_summary(persona) for persona in found])
 
     @tool
     def run_panel_test(target_description: str) -> str:
@@ -188,6 +251,12 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
             # Trusted as-is: this verdict came out of our own pipeline one
             # line up, unlike the request's, which analysis_facts recomputes.
             verdict=run.verdict,
+            # The same voter join the report does — a fresh run's panel is as
+            # describable as the original's, which is what lets the model
+            # compare the two audiences rather than just their numbers.
+            panel=_composition(
+                votes_with_voters(run.votes.records, run.selection.panel)
+            ),
         )
         return json.dumps(
             {
