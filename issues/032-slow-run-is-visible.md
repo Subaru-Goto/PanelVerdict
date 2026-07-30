@@ -60,6 +60,29 @@ if you were told it would take a minute.
   submit control says how many panelists are being asked; a run that passes the
   deadline ends as a stated error rather than an unbounded spinner.
 
+## What shipped, and what is still parked
+
+**Shipped: proof the run is alive.** A pulsing dot and a ticking elapsed
+counter under the form — "Each panelist is reading both headlines and picking
+one — 4s so far." A disabled button looks identical whether the panel is voting
+or the request died, which is exactly how a slow run gets read as a broken one;
+a number that keeps moving settles it, and it costs the backend nothing.
+
+Deliberately **not** a progress bar. Nothing on the client knows how far along
+a run is, and a bar that guesses would be a worse lie than no bar at all. Real
+progress needs streaming, which is [021](021-progress-ux.md).
+
+**Parked: the deadline and the estimate.** Both were built and reverted. They
+depend on the client learning the panel size from `/health`, and they were
+started *before* anyone knew why a run was slow — dressing a symptom whose
+cause was still unknown. [033](033-a-run-records-its-own-time.md) then measured
+it: a cold run of 25 fresh votes takes **11.6s**, inside the documented p99. So
+the unbounded-request defect is real but not urgent, and the estimate would
+have been describing a wait that turns out to be brief.
+
+The one line worth keeping from that work: `fetch` still has no `AbortSignal`,
+so a genuinely dead run hangs forever. Unpark when that bites for real.
+
 ## Deliberately NOT in this ticket
 
 **`reasoning_effort` is never set in production.** It is fully plumbed —
