@@ -152,6 +152,14 @@ it can emit widens that clause. **Data access is defended by scoping, never by a
 classifier** — a classifier is a model guessing whether text looks like an
 attack, and its blind spots are ours, while a `WHERE` clause has none.
 
+Be precise about what that defends against, though: the ids are read from
+`result.votes`, and `result` is the `EvaluateResponse` **the client posted**. So
+the scope holds against the *model* and not against the *caller* — a client can
+name any persona in the pool. Today those are the same party and the pool is
+synthetic, so nothing leaks; the moment they are not, this is the first thing
+that breaks, and it will break quietly because the code looks right.
+[035](../issues/035-panel-scope-comes-from-the-client.md) carries it.
+
 The structural blocker to notice first: **`ChatRequest` carries the entire
 `EvaluateResponse` from the client.** That is safe only while a caller can send
 nothing but their own data. With tenants, the server must load the result under
