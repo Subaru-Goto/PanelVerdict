@@ -3,7 +3,8 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AnalystDock from "../app/components/analyst-dock";
-import { makeResponse } from "./fixtures";
+import { useAnalyst } from "../app/lib/use-analyst";
+import { makeResponse, manualStream } from "./fixtures";
 
 const RESULT = makeResponse();
 
@@ -11,31 +12,25 @@ const RESULT = makeResponse();
  *  (App Router turns it on by default) and its extra mount→cleanup→mount is a
  *  real hazard for a hook holding refs. A plain render once froze the whole
  *  dock in dev while this suite stayed green. */
-const renderDock = () =>
-  render(<AnalystDock result={RESULT} />, { wrapper: StrictMode });
+/** The dock no longer owns its conversation — the report does, so the card and
+ *  the dock share one thread. This harness stands in for that owner, without an
+ *  opening message: these tests are about a reader starting the conversation. */
+function DockHost() {
+  return <AnalystDock analyst={useAnalyst(RESULT)} />;
+}
+
+const renderDock = () => {
+  const view = render(<DockHost />, { wrapper: StrictMode });
+  // The dock now starts closed: the report carries the analyst's opening
+  // summary, and an open dock would only print it a second time. Every test
+  // below is about the dock once a reader has reached for it.
+  fireEvent.click(screen.getByRole("button", { name: /ask the analyst/i }));
+  return view;
+};
 
 /** The reveal timer's period — how this test tells our interval apart from
  *  testing-library's own polling. Mirrors REVEAL_TICK_MS in use-analyst.ts. */
 const REVEAL_TICK_MS = 16;
-
-/** A /chat response whose NDJSON lines are fed one enqueue at a time, so a
- *  test can assert what the dock shows BETWEEN events — the transient tool
- *  status is only visible mid-stream. */
-const manualStream = () => {
-  const encoder = new TextEncoder();
-  let controller!: ReadableStreamDefaultController<Uint8Array>;
-  const body = new ReadableStream<Uint8Array>({
-    start(c) {
-      controller = c;
-    },
-  });
-  return {
-    response: new Response(body, { status: 200 }),
-    push: (event: object) =>
-      controller.enqueue(encoder.encode(JSON.stringify(event) + "\n")),
-    close: () => controller.close(),
-  };
-};
 
 const mockFetch = (response: Response) => {
   const fetchMock = vi.fn().mockResolvedValue(response);

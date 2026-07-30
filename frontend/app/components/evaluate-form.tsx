@@ -48,7 +48,7 @@ export default function EvaluateForm() {
   const [targetDescription, setTargetDescription] = useState("");
   const [headlineA, setHeadlineA] = useState("");
   const [headlineB, setHeadlineB] = useState("");
-  const { state, submit } = useEvaluate();
+  const { state, submit, reset } = useEvaluate();
 
   function onSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -60,6 +60,23 @@ export default function EvaluateForm() {
   // omission. The backend skips the translator entirely when it is empty.
   const disabled =
     !headlineA.trim() || !headlineB.trim() || state.phase === "loading";
+
+  // Once a report exists the page stops being a form: the reader wants the
+  // answer at the top rather than the inputs they already filled in.
+  if (state.phase === "done") {
+    return (
+      <div className="flex flex-col gap-6">
+        <button
+          type="button"
+          onClick={reset}
+          className="self-start rounded border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700"
+        >
+          Test again
+        </button>
+        <Report result={state.result} />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -95,8 +112,6 @@ export default function EvaluateForm() {
       {state.phase === "error" && (
         <p className="text-red-600">Error: {state.message}</p>
       )}
-
-      {state.phase === "done" && <Report result={state.result} />}
     </div>
   );
 }

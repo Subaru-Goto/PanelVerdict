@@ -15,6 +15,12 @@ export type AnalystReply = {
   error: string | null;
 };
 
+/** The question the report asks on the reader's behalf, so the page opens with
+ *  a reading of the panel rather than 25 raw reasons. Exported because the dock
+ *  has to tell it apart from something the reader actually typed. */
+export const OPENING_REQUEST =
+  "Summarise what the panel said and why they said it, in a short paragraph.";
+
 export type AnalystTurn = { role: "user"; text: string } | AnalystReply;
 
 /** The dock never shows a raw tool name; it says what the wait feels like.
@@ -32,7 +38,19 @@ const REVEAL_TICK_MS = 16;
  *  test. Placeholder until then. */
 const REVEAL_CHARS_PER_SECOND = 180;
 
-export function useAnalyst(result: EvaluateResponse) {
+/** One conversation, shared: the report renders its opening turn as a summary
+ *  and the dock continues the same thread, so a follow-up resolves against
+ *  words already in the transcript instead of re-buying the tool calls. */
+export type Analyst = {
+  turns: AnalystTurn[];
+  busy: boolean;
+  send: (message: string) => Promise<void>;
+};
+
+export function useAnalyst(
+  result: EvaluateResponse,
+  opening?: string,
+): Analyst {
   // Minted client-side, once per mounted report: the server treats an unseen
   // id as a fresh conversation, so no registration round-trip exists.
   const threadIdRef = useRef<string | null>(null);
@@ -61,6 +79,31 @@ export function useAnalyst(result: EvaluateResponse) {
       if (revealRef.current !== null) clearInterval(revealRef.current);
     };
   }, []);
+
+  // Deliberately never reset in a setup, unlike `goneRef` above: this asks
+  // "has this thread ever been opened", and a ref surviving React's dev-only
+  // remount is precisely what stops one conversation becoming two paid ones.
+  // The property that made `goneRef` a bug (027) is the one that fixes this.
+  const openedRef = useRef(false);
+
+  useEffect(() => {
+    if (opening === undefined || openedRef.current) return;
+    // Deferred a tick, and cancelled by the cleanup, so the send never begins
+    // inside a mount React is about to discard: the simulated unmount would
+    // clear that send's reveal timer while its stream kept arriving, leaving
+    // an answer that was received and never shown. The flag is set when the
+    // send fires rather than when it is scheduled, so the cancelled attempt
+    // does not count as having opened the thread.
+    const scheduled = setTimeout(() => {
+      openedRef.current = true;
+      void send(opening);
+    }, 0);
+    return () => clearTimeout(scheduled);
+    // `send` is intentionally absent: it is redefined every render, the flag
+    // above makes a re-run a no-op, and listing it would restart the opening
+    // turn on every keystroke in the composer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opening]);
 
   async function send(message: string): Promise<void> {
     const text = message.trim();

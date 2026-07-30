@@ -28,5 +28,12 @@ export function useEvaluate() {
     }
   }
 
-  return { state, submit };
+  // Back to the question without touching the answers: the fields live in the
+  // form's own state, so a second run starts from what was asked rather than
+  // from blank — changing one headline is the common one.
+  function reset(): void {
+    setState({ phase: "idle" });
+  }
+
+  return { state, submit, reset };
 }

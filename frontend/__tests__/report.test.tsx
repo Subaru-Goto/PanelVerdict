@@ -1,14 +1,31 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { StrictMode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import Report from "../app/components/report";
-import { makeResponse } from "./fixtures";
+import { makeResponse, manualStream } from "./fixtures";
 
-afterEach(cleanup);
+/** The report opens a conversation on mount, so every render here would reach
+ *  the network. Each test gets a stream it can drive, and StrictMode because
+ *  the dev server always mounts twice (027). */
+let stream: ReturnType<typeof manualStream>;
+
+beforeEach(() => {
+  stream = manualStream();
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(stream.response));
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+const renderReport = (result = makeResponse()) =>
+  render(<Report result={result} />, { wrapper: StrictMode });
 
 describe("verdict line", () => {
   it("names the leading headline with its share of the panel", () => {
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     expect(screen.getByText("Save 50% today")).toBeTruthy();
     expect(screen.getByText(/71% of the panel prefer it/)).toBeTruthy();
@@ -19,7 +36,7 @@ describe("stat tiles", () => {
   it("states both preference probabilities and the tie", () => {
     // The 98% is probability_meaningfully_preferred.a, read straight onto A's
     // tile — a swap here is the bug this test exists to catch.
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     const tileA = screen.getByText("Chance A is preferred");
     expect(tileA.parentElement?.textContent).toContain("98%");
@@ -35,7 +52,7 @@ describe("stat tiles", () => {
   });
 
   it("keeps the credible interval beside the share, in plain words", () => {
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     expect(
       screen.getByText(/true share is between 17% and 42% \(95% sure\)/),
@@ -48,7 +65,7 @@ describe("posterior chart", () => {
   // line?" questions: every visible mark carries an on-screen name and number,
   // or it is deleted.
   it("names every mark in the legend with its number", () => {
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     expect(
       screen.getByText(/^Mean — the estimated split: 29% prefer B\.$/),
@@ -64,7 +81,7 @@ describe("posterior chart", () => {
   it("annotates the mean line on the chart in both directions", () => {
     // The chart lives in B-space, so the leading side's share appeared nowhere
     // on the plot — the reader had to compute 100 − 29 at the dashed line.
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     expect(
       screen.getByText(/^estimated split: 71% prefer A · 29% prefer B/),
@@ -74,7 +91,7 @@ describe("posterior chart", () => {
   it("writes each edge's number at its mark on the chart", () => {
     // The axis has no ticks, so a number that lives only in the legend names a
     // position the eye cannot find on the plot.
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     const svg = screen.getByRole("img", { name: /posterior distribution/i });
     for (const edge of ["17%", "42%", "43%", "57%"]) {
@@ -83,7 +100,7 @@ describe("posterior chart", () => {
   });
 
   it("anchors the axis ends with the direction and the actual headline text", () => {
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     const left = screen.getByText(/^← prefer A/);
     const right = screen.getByText(/^prefer B/);
@@ -92,7 +109,7 @@ describe("posterior chart", () => {
   });
 
   it("says what the curve is, tied to this run's vote count", () => {
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     expect(
       screen.getByText(/how likely each possible split .* given these 50 votes/i),
@@ -104,7 +121,7 @@ describe("vote feed", () => {
   it("shows the voter as a person, never their database handle", () => {
     // 023: a persona id identifies a row, not a reader. The demographic line is
     // what makes the reason beside it evidence.
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     expect(screen.queryByText(/US-00042/)).toBeNull();
     expect(
@@ -113,7 +130,7 @@ describe("vote feed", () => {
   });
 
   it("keeps the Big Five behind a disclosure, in the chip vocabulary", () => {
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     expect(screen.getByText("personality")).toBeTruthy();
     expect(screen.getByText(/agreeableness: very low/)).toBeTruthy();
@@ -123,7 +140,7 @@ describe("vote feed", () => {
   it("says the voters are synthetic", () => {
     // The demographics look real enough to ask — so the copy answers before
     // anyone has to.
-    render(<Report result={makeResponse()} />);
+    renderReport();
 
     expect(
       screen.getByText(/synthetic panelists — sampled personas, not real people/),
@@ -172,5 +189,50 @@ describe("panel card", () => {
       />,
     );
     expect(screen.getByText(/coverage: unmatched/)).toBeTruthy();
+  });
+});
+
+describe("the opening summary", () => {
+  it("opens the conversation exactly once, even mounted twice", async () => {
+    // StrictMode runs the effect twice and dev always runs StrictMode, so a
+    // naive mount-effect would buy two model calls per report.
+    renderReport();
+    stream.push({ type: "token", text: "Most who picked A wanted a number." });
+    stream.push({ type: "done" });
+    stream.close();
+
+    expect(
+      await screen.findByText("Most who picked A wanted a number."),
+    ).toBeTruthy();
+    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+
+  it("puts the summary above the panelists, who start collapsed", async () => {
+    const { container } = renderReport();
+    stream.push({ type: "token", text: "They liked belonging." });
+    stream.push({ type: "done" });
+    stream.close();
+
+    const summary = await screen.findByText("They liked belonging.");
+    const panelists = screen.getByText(/what the panelists said/i);
+    expect(
+      summary.compareDocumentPosition(panelists) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // Detail is a click away, not a scroll past.
+    expect(container.querySelector("details[open]")).toBeNull();
+  });
+
+  it("keeps the synthetic caveat out of the collapsed half", async () => {
+    // A summary reads like a finding, which is exactly when a reader forgets
+    // the panel is synthetic — so the caveat cannot hide with the list.
+    renderReport();
+    stream.push({ type: "token", text: "A won on concreteness." });
+    stream.push({ type: "done" });
+    stream.close();
+
+    await screen.findByText("A won on concreteness.");
+    const caveat = screen.getByText(/synthetic/i);
+    expect(caveat.closest("details")).toBeNull();
   });
 });
