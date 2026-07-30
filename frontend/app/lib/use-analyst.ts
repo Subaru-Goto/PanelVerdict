@@ -23,11 +23,21 @@ export const OPENING_REQUEST =
 
 export type AnalystTurn = { role: "user"; text: string } | AnalystReply;
 
-/** The opening turn is the report's question, not the reader's — so the dock
- *  neither prints it as their message nor counts it as them having started the
- *  conversation. One predicate, because both readings must agree. */
-export const isOpeningRequest = (turn: AnalystTurn): boolean =>
+const isOpeningRequest = (turn: AnalystTurn): boolean =>
   turn.role === "user" && turn.text === OPENING_REQUEST;
+
+/** The turns the reader is actually part of.
+ *
+ *  The opening exchange belongs to the report: its question was asked on the
+ *  reader's behalf, and its answer is already on the page as the summary card.
+ *  The dock therefore starts after it — printing either half a hand's breadth
+ *  below the card is duplication, not context.
+ *
+ *  Hidden from the transcript, never dropped from the thread. The analyst still
+ *  holds the summary in context, which is what "which of them said that?"
+ *  resolves against instead of re-buying the tool calls. */
+export const readerTurns = (turns: AnalystTurn[]): AnalystTurn[] =>
+  turns.length > 0 && isOpeningRequest(turns[0]) ? turns.slice(2) : turns;
 
 /** The dock never shows a raw tool name; it says what the wait feels like.
  *  An unknown name (a tool added later) degrades to the generic sentence. */

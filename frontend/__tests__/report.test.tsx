@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -224,10 +230,11 @@ describe("the opening summary", () => {
     expect(container.querySelector("details[open]")).toBeNull();
   });
 
-  it("hands the same thread to the dock, without a message nobody typed", async () => {
-    // The dock continues the conversation the report opened, so its transcript
-    // starts with the analyst. The opening question was asked on the reader's
-    // behalf; printing it as their own message would attribute words to them.
+  it("does not print the summary a second time when the dock opens", async () => {
+    // The opening exchange belongs to the report, and the card above already
+    // shows it. Reprinting it a hand's breadth below is duplication rather than
+    // context — neither the question, which the reader never typed, nor the
+    // answer, which is already on the page.
     renderReport();
     stream.push({ type: "token", text: "They liked belonging." });
     stream.push({ type: "done" });
@@ -237,12 +244,36 @@ describe("the opening summary", () => {
     fireEvent.click(screen.getByRole("button", { name: /ask the analyst/i }));
 
     const dock = screen.getByRole("region", { name: /analyst chat/i });
-    expect(dock.textContent).toContain("They liked belonging.");
+    expect(dock.textContent).not.toContain("They liked belonging.");
     expect(dock.textContent).not.toContain(OPENING_REQUEST);
-    // One thread, so no second call was bought to fill the dock.
+    // Hidden from the transcript, not re-fetched: still one call.
     expect(
       (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls,
     ).toHaveLength(1);
+  });
+
+  it("still continues the report's own thread when the reader asks", async () => {
+    // Hidden is not discarded. The summary stays in the analyst's context, so
+    // a follow-up resolves against it instead of re-buying the tool calls —
+    // which is the whole reason the card and the dock share one thread.
+    renderReport();
+    stream.push({ type: "token", text: "They liked belonging." });
+    stream.push({ type: "done" });
+    stream.close();
+    await screen.findByText("They liked belonging.");
+
+    fireEvent.click(screen.getByRole("button", { name: /ask the analyst/i }));
+    fireEvent.change(screen.getByLabelText(/ask about this test/i), {
+      target: { value: "Which of them said that?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    await waitFor(() => expect(fetchMock.mock.calls).toHaveLength(2));
+    const threads = fetchMock.mock.calls.map(
+      ([, init]) => JSON.parse((init as RequestInit).body as string).thread_id,
+    );
+    expect(threads[1]).toBe(threads[0]);
   });
 
   it("keeps the synthetic caveat out of the collapsed half", async () => {

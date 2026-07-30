@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
-  isOpeningRequest,
+  readerTurns,
   type Analyst,
   type AnalystTurn,
 } from "../lib/use-analyst";
@@ -56,6 +56,10 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const { turns, busy, send } = analyst;
+  // The report's opening exchange is on the page already; the dock shows the
+  // conversation the reader is having. Both the transcript and the chips read
+  // this, so they cannot disagree about whether one has started.
+  const visible = readerTurns(turns);
 
   const listRef = useRef<HTMLDivElement | null>(null);
   // Follow the conversation only while the reader is near the bottom, so
@@ -102,7 +106,7 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
         </button>
       </header>
 
-      {turns.some((turn) => turn.role === "analyst") && (
+      {visible.length > 0 && (
         <div
           ref={listRef}
           onScroll={() => {
@@ -115,15 +119,13 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
           }}
           className="flex flex-col gap-2 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {turns
-            .filter((turn) => !isOpeningRequest(turn))
-            .map((turn, index) => (
-              <Turn key={index} turn={turn} />
-            ))}
+          {visible.map((turn, index) => (
+            <Turn key={index} turn={turn} />
+          ))}
         </div>
       )}
 
-      {!turns.some((turn) => turn.role === "user" && !isOpeningRequest(turn)) && (
+      {visible.length === 0 && (
         <div className="flex flex-wrap gap-2">
           {CHIPS.map((chip) => (
             <button

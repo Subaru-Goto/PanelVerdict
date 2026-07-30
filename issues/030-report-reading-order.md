@@ -75,6 +75,19 @@ from the sections above.
   typed". Not a preference — with an auto-sent opening, `turns.length === 0` is
   false forever and the chips would never appear again.
 
+## The opening exchange belongs to the report, not the transcript
+
+Amended after use: hiding only the machine-authored *question* was half the fix.
+The dock still reprinted the *answer* — the same summary paragraph the card
+shows, a hand's breadth below it. `readerTurns` now drops the whole opening
+exchange, and both the transcript and the chips read it, so they cannot
+disagree about whether a conversation has started.
+
+Hidden from the transcript, never dropped from the thread: the analyst still
+holds the summary in context, which is what a follow-up resolves against rather
+than re-buying the tool calls. A test pins that the second request carries the
+same `thread_id` as the first.
+
 ## The opening question is not the reader's message
 
 Found in review. The dock renders every turn, so the machine-authored opening
