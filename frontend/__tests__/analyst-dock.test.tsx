@@ -1,10 +1,18 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AnalystDock from "../app/components/analyst-dock";
 import { makeResponse } from "./fixtures";
 
 const RESULT = makeResponse();
+
+/** Every render goes through StrictMode, because the dev server always does
+ *  (App Router turns it on by default) and its extra mount→cleanup→mount is a
+ *  real hazard for a hook holding refs. A plain render once froze the whole
+ *  dock in dev while this suite stayed green. */
+const renderDock = () =>
+  render(<AnalystDock result={RESULT} />, { wrapper: StrictMode });
 
 /** The reveal timer's period — how this test tells our interval apart from
  *  testing-library's own polling. Mirrors REVEAL_TICK_MS in use-analyst.ts. */
@@ -44,7 +52,7 @@ describe("AnalystDock", () => {
   it("opens with the suggestion chips and streams a chip's answer", async () => {
     const stream = manualStream();
     const fetchMock = mockFetch(stream.response);
-    render(<AnalystDock result={RESULT} />);
+    renderDock();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Who was on this panel?" }),
@@ -73,7 +81,7 @@ describe("AnalystDock", () => {
     // dead air in live use — the draft bubble existed but showed nothing.
     const stream = manualStream();
     mockFetch(stream.response);
-    render(<AnalystDock result={RESULT} />);
+    renderDock();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Who was on this panel?" }),
@@ -91,7 +99,7 @@ describe("AnalystDock", () => {
   it("shows what the analyst is doing while a tool runs, then the answer", async () => {
     const stream = manualStream();
     mockFetch(stream.response);
-    render(<AnalystDock result={RESULT} />);
+    renderDock();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Why did the test stop early?" }),
@@ -119,7 +127,7 @@ describe("AnalystDock", () => {
     const sentence = "The interval cleared the tie band by a wide margin.";
     const stream = manualStream();
     mockFetch(stream.response);
-    render(<AnalystDock result={RESULT} />);
+    renderDock();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Who was on this panel?" }),
@@ -137,7 +145,7 @@ describe("AnalystDock", () => {
   it("renders an in-band error event as the turn's outcome", async () => {
     const stream = manualStream();
     mockFetch(stream.response);
-    render(<AnalystDock result={RESULT} />);
+    renderDock();
 
     fireEvent.click(
       screen.getByRole("button", { name: "How sure are we about the winner?" }),
@@ -156,7 +164,7 @@ describe("AnalystDock", () => {
   it("a stream that dies without done reads as a lost connection", async () => {
     const stream = manualStream();
     mockFetch(stream.response);
-    render(<AnalystDock result={RESULT} />);
+    renderDock();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Who was on this panel?" }),
@@ -178,7 +186,7 @@ describe("AnalystDock", () => {
     // called" assertion passes with no cleanup at all.
     const started = vi.spyOn(globalThis, "setInterval");
     const cleared = vi.spyOn(globalThis, "clearInterval");
-    const view = render(<AnalystDock result={RESULT} />);
+    const view = renderDock();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Who was on this panel?" }),
@@ -202,7 +210,7 @@ describe("AnalystDock", () => {
   it("can be closed back to the launcher and reopened with the thread intact", async () => {
     const stream = manualStream();
     mockFetch(stream.response);
-    render(<AnalystDock result={RESULT} />);
+    renderDock();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Who was on this panel?" }),
@@ -224,7 +232,7 @@ describe("AnalystDock", () => {
   it("sends a typed question through the same wire", async () => {
     const stream = manualStream();
     const fetchMock = mockFetch(stream.response);
-    render(<AnalystDock result={RESULT} />);
+    renderDock();
 
     fireEvent.change(
       screen.getByRole("textbox", { name: "Ask about this test" }),
