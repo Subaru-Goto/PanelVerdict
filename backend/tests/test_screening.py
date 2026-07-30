@@ -116,3 +116,27 @@ def test_the_policy_tells_the_classifier_marketing_imperatives_are_normal(
 
     assert headline.split()[0].lower() in _POLICY.lower()
     assert "Do NOT flag ordinary marketing language" in _POLICY
+
+
+def test_one_field_failing_does_not_un_screen_the_rest() -> None:
+    """`continue`, not `return`. The first version returned on any error, so a
+    transient failure while screening the target description silently skipped
+    both headlines — a wider hole than the fail-open it was meant to be."""
+
+    class FailsOnce:
+        def __init__(self) -> None:
+            self.seen: list[str] = []
+
+        def screen(self, text: str) -> ScreeningVerdict:
+            self.seen.append(text)
+            if text == "target":
+                raise RuntimeError("transient")
+            return ScreeningVerdict(flagged=text == "attack", reason="r")
+
+    screener = FailsOnce()
+
+    with pytest.raises(UnsafeInput):
+        screen_inputs(screener, ["target", "clean", "attack"])
+
+    # All three were attempted, and the detection after the failure still fired.
+    assert screener.seen == ["target", "clean", "attack"]

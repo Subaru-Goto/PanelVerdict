@@ -8,10 +8,10 @@ import {
   type AnalystTurn,
 } from "../lib/use-analyst";
 
-/** The final chip copy. Each maps to a tool the demo has to
- *  show — the first two to analyze_results, the third to search_personas.
- *  Deliberately no chip triggers run_panel_test: a new panel run spends real
- *  money, so that ask must be typed, never one accidental click away. */
+/** The final chip copy. Each maps to a tool the demo has to show — the first
+ *  two to analyze_results, the third to search_personas. None can spend
+ *  anything, and that is now true of every tool the analyst has rather than a
+ *  property of this list. */
 /** PENDING USER SIGN-OFF (not yet approved): how close to the bottom still
  *  counts as "following along". A feel parameter, judged in a browser. */
 const PINNED_SLACK_PX = 48;

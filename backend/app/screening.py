@@ -33,9 +33,11 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-# Short on purpose: screening is advisory, so a slow screener must not become a
-# slow product. A run already waits on a wave of reasoning votes; this is a
-# small classifier and anything near this bound means it is not answering.
+# PENDING USER SIGN-OFF (not yet approved): no screening call has been timed, so
+# this is a direction rather than a measurement — short, because a slow screener
+# must not become a slow product, and anything near this bound from a small
+# classifier means it is not answering. The vote timeout next door is sourced
+# from 250 timed calls; this one earns the same treatment once real calls exist.
 SCREEN_TIMEOUT_SECONDS = 10
 
 # The line this policy has to draw is specific to this product, and getting it
@@ -103,10 +105,16 @@ class OpenRouterScreener:
         ).with_structured_output(ScreeningVerdict)
 
     def screen(self, text: str) -> ScreeningVerdict:
-        result = self._model.invoke(
-            [("system", _POLICY), ("human", text)],
-        )
-        assert isinstance(result, ScreeningVerdict)
+        # The untrusted text is the human turn and never the system one, so
+        # the policy and the thing being judged cannot share a message. Passed
+        # as plain tuples rather than through a prompt template on purpose:
+        # a template would format `{...}` in the customer's own text.
+        result = self._model.invoke([("system", _POLICY), ("human", text)])
+        if not isinstance(result, ScreeningVerdict):
+            # `raise`, not `assert`: asserts are stripped under `python -O`, and
+            # a screener whose narrowing silently vanished would fail open. The
+            # vote path narrows the same way for the same reason.
+            raise RuntimeError(f"screener returned {type(result).__name__}")
         return result
 
 
@@ -144,8 +152,13 @@ def screen_inputs(screener: Screener | None, texts: Sequence[str]) -> None:
             # text and the model's own output, and this line goes to a log the
             # same way vote failures do. Availability is our problem: the run
             # continues unscreened rather than the customer losing it.
+            #
+            # `continue` and not `return`: this text went unscreened, the next
+            # one need not. Returning here meant one transient failure on the
+            # target description silently skipped both headlines — a wider hole
+            # than the fail-open this is supposed to be.
             logger.warning("screening unavailable: %s", type(error).__name__)
-            return
+            continue
         if verdict.flagged:
             # Logged as evidence before it is refused, with the text itself:
             # this is the customer's own submission, and it is the only record

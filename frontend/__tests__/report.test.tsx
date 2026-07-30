@@ -276,6 +276,32 @@ describe("the opening summary", () => {
     expect(threads[1]).toBe(threads[0]);
   });
 
+  it("shows a reader's own question even before its answer arrives", async () => {
+    // The opening exchange is dropped by finding the reader's first message,
+    // not by slicing a fixed two turns. `send` happens to append a user and an
+    // analyst turn together, so two was right — but that is an invariant of
+    // `send` enforced nowhere, and a slice would eat a real message the day it
+    // changed. This is the case that would have caught it.
+    renderReport();
+    stream.push({ type: "token", text: "They liked belonging." });
+    stream.push({ type: "done" });
+    stream.close();
+    await screen.findByText("They liked belonging.");
+
+    fireEvent.click(screen.getByRole("button", { name: /ask the analyst/i }));
+    fireEvent.change(screen.getByLabelText(/ask about this test/i), {
+      target: { value: "Which of them said that?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
+
+    const dock = screen.getByRole("region", { name: /analyst chat/i });
+    await waitFor(() =>
+      expect(dock.textContent).toContain("Which of them said that?"),
+    );
+    // And still no trace of the report's own opening exchange.
+    expect(dock.textContent).not.toContain("They liked belonging.");
+  });
+
   it("keeps the synthetic caveat out of the collapsed half", async () => {
     // A summary reads like a finding, which is exactly when a reader forgets
     // the panel is synthetic — so the caveat cannot hide with the list.

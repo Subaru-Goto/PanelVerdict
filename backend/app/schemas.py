@@ -405,19 +405,29 @@ class PanelCounts(BaseModel):
     voted: int
 
 
-# Caps on the two untrusted fields, chosen from what the product is rather than
-# from a threat model: a headline is a headline — the longest in the seeded
-# examples runs to a few dozen characters — and a target description is a
-# sentence or two of prose. Both are generous multiples of that, because the
-# cost of being slightly too tight is refusing a real customer while the cost of
-# being slightly too loose is a few hundred wasted tokens.
+# PENDING USER SIGN-OFF (not yet approved): both are judgements about what the
+# product is, not measurements. A headline is a headline — the placeholders in
+# the form run to a few dozen characters — and a target description is a
+# sentence or two of prose; each cap is a generous multiple of that, because
+# being slightly too tight refuses a real customer while being slightly too
+# loose wastes a few hundred tokens. Nobody has surveyed real submissions, so
+# there is no distribution behind these the way there is behind the vote
+# timeout.
 #
-# The size matters more here than in an ordinary API: a headline is rendered
-# into every panelist's prompt, so an unbounded field is not one oversized
-# request but a whole run of them, and the same text reaches the report, the
-# analyst's context and the vote cache key.
+# Size matters more here than in an ordinary API: a headline is rendered into
+# every panelist's prompt, so an unbounded field is not one oversized request
+# but a whole run of them, and the same text reaches the report, the analyst's
+# context and the vote cache key.
+#
+# Only size, not format. The ticket asked for "size/format limits" and format
+# is deliberately absent: a headline is free text in any language, so any
+# allowlist narrow enough to be worth having would refuse real copy.
 MAX_HEADLINE_CHARS = 500
 MAX_TARGET_DESCRIPTION_CHARS = 2000
+# The analyst's composer. A question is longer than a headline and shorter than
+# an essay; the cap exists because this text reaches a model's context and the
+# checkpointed transcript, and nothing else bounded it.
+MAX_CHAT_MESSAGE_CHARS = 2000
 
 
 class EvaluateRequest(BaseModel):
@@ -506,5 +516,5 @@ class ChatRequest(BaseModel):
     """
 
     thread_id: str = Field(min_length=1)
-    message: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
     result: EvaluateResponse

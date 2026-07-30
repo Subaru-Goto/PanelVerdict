@@ -29,11 +29,11 @@ assumed:
 
 | asked for | outcome |
 |---|---|
-| random-nonce delimiters | **built.** The gap was real: options were spliced straight into the task text. |
-| strict enum output | **already true.** `with_structured_output(PanelVoteOutput)`, and a parse failure raises rather than being filed as a vote. |
+| random-nonce delimiters around *all* interpolated content | **built where a stranger's text enters**, which is the vote prompt: options were spliced straight into the task text. Not everywhere the word "all" reaches — `read_reasons` hands the analyst panel-model prose as a bare JSON tool result, undelimited. That entry point postdates this ticket ([029](029-serve-vote-reasons-to-the-analyst.md)); it is named in `docs/least-privilege.md` rather than left implied. |
+| strict {A, B, neither} enum output | **superseded, not met.** The shape is strict — `with_structured_output(PanelVoteOutput)`, and a parse failure raises rather than being filed as a vote — but there is no `neither`: [002](002-decide-vote-schema.md) settled on a forced binary for v1 and the map defers `neither` to B-era. Recorded as superseded rather than done, because a reader of the table should not conclude the third option exists. |
 | position randomisation | **already true.** |
 | plain-text rendering | **already true**, with a test that fails if model output ever reaches a markup sink. |
-| size/format limits | **built.** Three bare `str` fields with no ceiling. |
+| size/format limits | **half built.** Sizes capped on all three untrusted fields plus the analyst's composer. **No format constraint**, deliberately: a headline is free text in any language, so any allowlist narrow enough to be useful would refuse real copy. The ask is not fully met and the reason is recorded rather than the gap being papered over. |
 | ONE screening layer | **built**, blocking on detection. |
 | absorb 006e's denylist | **moot** — grep finds no denylist anywhere. It was removed already. |
 | document least privilege | **built:** `docs/least-privilege.md`. |
@@ -170,6 +170,29 @@ into the analyst's context. Input screening structurally cannot cover it — tha
 text is generated *after* the request leaves us. The nonce delimiting and the
 recomputed-figures rule are what stand there instead; the exposure is prose
 only. Recorded in `docs/least-privilege.md` rather than solved here.
+
+## What review caught afterwards
+
+Worth listing, because most of it was documents claiming more than the code did:
+
+- `docs/least-privilege.md` still ended with "**No blocking.** revisit when flag
+  mode has produced evidence" — the opposite of what shipped, in the same file
+  that argues for blocking. A reader would have taken the stale half as current.
+- "Every verdict figure is recomputed" overstated `analysis_facts`: exactly one
+  is. `tally`, `counts`, `polling`, `region_match` and `panel` are read off the
+  client's request, which is safe only under the same assumption as everything
+  else in §1 and fails at the same moment.
+- Three comments still described the spend path this branch deleted, including
+  the step budget's "tripwire, not the spend gate".
+- `screen_inputs` returned rather than continued on a transient failure, so one
+  error while screening the target silently skipped both headlines — a wider
+  hole than the fail-open it was meant to be.
+- `assert isinstance` in the screener would vanish under `python -O`, leaving a
+  control that fails open; the vote path already narrows with a raise.
+- Four constants shipped with rationale but no source, in a repo whose README
+  requires derivation, citation or explicit sign-off — and which already has the
+  `PENDING USER SIGN-OFF` marker two files away.
+- `ChatRequest.message` had no ceiling while the evaluate fields did.
 
 ## Honest limit
 

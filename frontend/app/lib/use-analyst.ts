@@ -36,8 +36,17 @@ const isOpeningRequest = (turn: AnalystTurn): boolean =>
  *  Hidden from the transcript, never dropped from the thread. The analyst still
  *  holds the summary in context, which is what "which of them said that?"
  *  resolves against instead of re-buying the tool calls. */
-export const readerTurns = (turns: AnalystTurn[]): AnalystTurn[] =>
-  turns.length > 0 && isOpeningRequest(turns[0]) ? turns.slice(2) : turns;
+export const readerTurns = (turns: AnalystTurn[]): AnalystTurn[] => {
+  if (turns.length === 0 || !isOpeningRequest(turns[0])) return turns;
+  // Drop up to the reader's first message rather than a fixed two. `send`
+  // appends a user turn and an analyst turn together, so two is right today —
+  // but that is an invariant of `send`, enforced nowhere, and a slice would
+  // silently eat a real message the day it changed.
+  const first = turns.findIndex(
+    (turn) => turn.role === "user" && !isOpeningRequest(turn),
+  );
+  return first === -1 ? [] : turns.slice(first);
+};
 
 /** The dock never shows a raw tool name; it says what the wait feels like.
  *  An unknown name (a tool added later) degrades to the generic sentence. */

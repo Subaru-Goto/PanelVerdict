@@ -391,11 +391,10 @@ def stream_analyst(
     # the closing model step, plus one — the limit must strictly exceed the
     # steps executed, measured: a one-tool round errors at 3 and passes at 4.
     # A model still calling tools past the budget is looping, and the budget
-    # converts runaway spend into a visible failure. Note what the cap now
-    # admits: up to three tool rounds may each be a run_panel_test — a full
-    # paid panel run — so the budget is a tripwire, not the spend gate; the
-    # gate is the tool description's only-on-explicit-ask rule, plus the fact
-    # that no suggestion chip in the dock can trigger a paid run.
+    # converts a runaway turn into a visible failure. It is a tripwire and
+    # nothing more: it used to be described as one half of a spend gate, back
+    # when a tool could buy a panel. None can now, so what the budget bounds is
+    # tokens and patience.
     limit = 2 * len(tools) + 2
 
     agent = create_agent(

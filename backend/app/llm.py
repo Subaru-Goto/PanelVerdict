@@ -56,6 +56,12 @@ _ANSWER_INSTRUCTION = (
 # with blank inputs, and a fresh adapter is built per request — so a random nonce
 # reaching that render would give every request its own cache key and the vote
 # cache would silently never hit again. Fixed here, random on the wire.
+#
+# One exception to the scaffold's usual promise, worth stating: an edit to the
+# template normally changes `configuration` on its own, because the key is
+# rendered by the real builder. A change to the *nonce's shape* will not, since
+# the key always renders this sentinel. Change the delimiter format and the
+# cache must be invalidated by hand.
 CACHE_KEY_NONCE = "NONCE"
 
 
@@ -253,7 +259,13 @@ class OpenRouterPanelLLM:
         self._question = question
         # One per adapter, and `get_panel_llm` builds one per request — so the
         # marker a headline will be quoted inside does not exist yet when the
-        # customer writes it. `token_hex` and not `random`: guessable is forgeable.
+        # customer writes it. `token_hex` and not `random`: guessable is
+        # forgeable, and `random` is a Mersenne Twister whose output is
+        # predictable from enough samples.
+        #
+        # 8 bytes = 64 bits. Not a measured figure: it is the standard width for
+        # an unguessable-once token, and the thing it must survive is a customer
+        # typing a headline before the value exists, not an offline search.
         self._nonce = f"<<{secrets.token_hex(8)}>>"
         # The whole ask, declared where it is bound: rewording the question was
         # measured to move the verdict, so a vote cached under one question must not
