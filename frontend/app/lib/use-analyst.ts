@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { EvaluateResponse } from "./api";
 import { streamChat } from "./chat";
@@ -9,7 +9,8 @@ export type AnalystReply = {
   role: "analyst";
   text: string;
   /** What the analyst is doing right now — "Thinking…" from the first
-   *  instant, a tool's sentence while one runs, cleared by the first token. */
+   *  instant, a tool's sentence while one runs, cleared once the reader can
+   *  actually see text arriving. */
   status: string | null;
   error: string | null;
 };
@@ -24,13 +25,12 @@ const TOOL_STATUS: Record<string, string> = {
   run_panel_test: "Running a new panel test — this can take minutes…",
 };
 
-/** Reveal pacing: ~3 characters per 16ms tick ≈ 180 chars/second. Feel
- *  constants tuned by eye, not derived — the model writes faster than a
- *  human reads, so even a genuine stream lands as a paste without this. */
+/** One tick per frame at 60Hz — the browser's own repaint budget. */
 const REVEAL_TICK_MS = 16;
-const REVEAL_CHARS_PER_TICK = 3;
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** PENDING USER SIGN-OFF (not yet approved): reveal speed is a feel
+ *  parameter with no derivation — it needs judging in a browser, not in a
+ *  test. Placeholder until then. */
+const REVEAL_CHARS_PER_SECOND = 180;
 
 export function useAnalyst(result: EvaluateResponse) {
   // Minted client-side, once per mounted report: the server treats an unseen
@@ -41,51 +41,89 @@ export function useAnalyst(result: EvaluateResponse) {
   const [turns, setTurns] = useState<AnalystTurn[]>([]);
   const [busy, setBusy] = useState(false);
 
+  // A ref, not the `busy` state: two clicks landing in one frame both read
+  // the same pre-render `busy === false` and would both open a turn, each
+  // painting over the other's transcript.
+  const busyRef = useRef(false);
+  // The dock unmounts mid-stream whenever a new evaluate starts, so the
+  // reveal timer has to be reachable from cleanup.
+  const goneRef = useRef(false);
+  const revealRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(
+    () => () => {
+      goneRef.current = true;
+      if (revealRef.current !== null) clearInterval(revealRef.current);
+    },
+    [],
+  );
+
   async function send(message: string): Promise<void> {
     const text = message.trim();
-    if (busy || text === "") return;
+    if (busyRef.current || text === "") return;
+    busyRef.current = true;
     setBusy(true);
 
-    // Fixed for the whole turn: `busy` blocks a second send, so nothing else
-    // can grow the transcript while this one streams.
     const history: AnalystTurn[] = [...turns, { role: "user", text }];
 
-    // Plain variables accumulate; paint() renders the current snapshot.
-    // `received` is what the stream has delivered, `shown` how much of it
-    // the reader has been shown — the gap between them is the typewriter.
+    // `received` is everything the stream has delivered, `shown` how much of
+    // it the reader has been given — the gap between them is the typewriter.
     let received = "";
     let shown = 0;
     let status: string | null = "Thinking…";
     let error: string | null = null;
+    let streamed = false;
 
-    const paint = () =>
+    const paint = () => {
+      if (goneRef.current) return;
       setTurns([
         ...history,
         { role: "analyst", text: received.slice(0, shown), status, error },
       ]);
+    };
     paint();
 
-    // Reveals while the stream is still arriving — a long answer types from
-    // its first token, it does not wait for the last.
-    const reveal = setInterval(() => {
-      if (shown < received.length) {
-        shown = Math.min(received.length, shown + REVEAL_CHARS_PER_TICK);
-        paint();
-      }
-    }, REVEAL_TICK_MS);
+    // Paced by the clock rather than by tick count: a background tab throttles
+    // setInterval to about 1s, and counting characters per tick would stretch
+    // a long answer into minutes with the composer still locked.
+    const revealed = new Promise<void>((resolve) => {
+      let tickedAt = Date.now();
+      const timer = setInterval(() => {
+        const now = Date.now();
+        const budget = ((now - tickedAt) * REVEAL_CHARS_PER_SECOND) / 1000;
+        tickedAt = now;
+        if (goneRef.current) {
+          clearInterval(timer);
+          resolve();
+          return;
+        }
+        if (shown < received.length) {
+          shown = Math.min(received.length, shown + Math.ceil(budget));
+          // Cleared here rather than on arrival: the wait is over when the
+          // reader can see the answer, not when the socket saw it.
+          status = null;
+          paint();
+        }
+        if (streamed && shown >= received.length) {
+          clearInterval(timer);
+          resolve();
+        }
+      }, REVEAL_TICK_MS);
+      revealRef.current = timer;
+    });
 
     // `done` is what separates a finished turn from a dropped connection —
     // a stream can end cleanly at the transport level and still be truncated.
     let finished = false;
     try {
       for await (const event of streamChat({ threadId, message: text, result })) {
+        if (goneRef.current) break;
         switch (event.type) {
           case "tool":
             status = TOOL_STATUS[event.name] ?? "Working…";
             break;
           case "token":
             received += event.text;
-            status = null;
             break;
           case "error":
             error = event.message;
@@ -107,15 +145,15 @@ export function useAnalyst(result: EvaluateResponse) {
       error = "The connection was lost before the answer finished.";
       status = null;
     }
+    streamed = true;
 
-    // Let the typewriter catch up before unlocking the input — the stream
-    // usually ends long before a reader could have kept up with it.
-    while (shown < received.length) {
-      await sleep(REVEAL_TICK_MS);
-    }
-    clearInterval(reveal);
+    // The stream ends long before a reader could have kept up with it, so the
+    // composer unlocks when the typewriter does, not when the socket closes.
+    await revealed;
+    revealRef.current = null;
     paint();
-    setBusy(false);
+    busyRef.current = false;
+    if (!goneRef.current) setBusy(false);
   }
 
   return { turns, busy, send };

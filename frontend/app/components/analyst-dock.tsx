@@ -9,6 +9,10 @@ import { useAnalyst, type AnalystTurn } from "../lib/use-analyst";
  *  show — the first two to analyze_results, the third to search_personas.
  *  Deliberately no chip triggers run_panel_test: a new panel run spends real
  *  money, so that ask must be typed, never one accidental click away. */
+/** PENDING USER SIGN-OFF (not yet approved): how close to the bottom still
+ *  counts as "following along". A feel parameter, judged in a browser. */
+const PINNED_SLACK_PX = 48;
+
 const CHIPS = [
   "Why did the test stop early?",
   "How sure are we about the winner?",
@@ -50,10 +54,9 @@ export default function AnalystDock({ result }: { result: EvaluateResponse }) {
   const { turns, busy, send } = useAnalyst(result);
 
   const listRef = useRef<HTMLDivElement | null>(null);
-  // Follow the conversation only while the reader is at (or near) the
-  // bottom — scrolling up to reread must not be fought by the typewriter.
-  // 48px ≈ one message row of slack. Untestable in jsdom (no layout), so
-  // this carries no unit test; the check is your own scroll wheel.
+  // Follow the conversation only while the reader is near the bottom, so
+  // scrolling up to reread is not fought by the typewriter. jsdom does no
+  // layout, so nothing here is unit-testable — verified in a browser.
   const pinnedRef = useRef(true);
 
   useEffect(() => {
@@ -102,7 +105,8 @@ export default function AnalystDock({ result }: { result: EvaluateResponse }) {
             const list = listRef.current;
             if (list) {
               pinnedRef.current =
-                list.scrollHeight - list.scrollTop - list.clientHeight < 48;
+                list.scrollHeight - list.scrollTop - list.clientHeight <
+                PINNED_SLACK_PX;
             }
           }}
           className="flex flex-col gap-2 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"

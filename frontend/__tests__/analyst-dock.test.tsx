@@ -6,6 +6,10 @@ import { makeResponse } from "./fixtures";
 
 const RESULT = makeResponse();
 
+/** The reveal timer's period — how this test tells our interval apart from
+ *  testing-library's own polling. Mirrors REVEAL_TICK_MS in use-analyst.ts. */
+const REVEAL_TICK_MS = 16;
+
 /** A /chat response whose NDJSON lines are fed one enqueue at a time, so a
  *  test can assert what the dock shows BETWEEN events — the transient tool
  *  status is only visible mid-stream. */
@@ -110,9 +114,9 @@ describe("AnalystDock", () => {
     // gpt-5-mini writes faster than a human reads: even a genuine stream
     // lands as a paste. The pin: right after the stream closes, the full
     // sentence must NOT yet be on screen — it types its way there.
-    const sentence =
-      "The interval cleared the practical tie band, so the panel's lead " +
-      "is wide enough to act on without waiting for more votes.";
+    // Short on purpose: at the placeholder reveal speed this is a few
+    // hundred ms, well inside testing-library's default findBy timeout.
+    const sentence = "The interval cleared the tie band by a wide margin.";
     const stream = manualStream();
     mockFetch(stream.response);
     render(<AnalystDock result={RESULT} />);
@@ -161,6 +165,38 @@ describe("AnalystDock", () => {
     stream.close();
 
     expect(await screen.findByText(/connection was lost/i)).toBeDefined();
+  });
+
+  it("stops its reveal timer when the dock unmounts mid-stream", async () => {
+    // Reachable in two clicks: ask the analyst something, then hit Evaluate
+    // again — the report unmounts while the stream is still open, and a
+    // surviving interval would paint a dead component until the fetch ends.
+    const stream = manualStream();
+    mockFetch(stream.response);
+    // Identify OUR timer by its period and clear it by id: testing-library's
+    // own waitFor polls on an interval too, so a bare "clearInterval was
+    // called" assertion passes with no cleanup at all.
+    const started = vi.spyOn(globalThis, "setInterval");
+    const cleared = vi.spyOn(globalThis, "clearInterval");
+    const view = render(<AnalystDock result={RESULT} />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Who was on this panel?" }),
+    );
+    stream.push({ type: "token", text: "Five panelists, of whom several…" });
+    await screen.findByText(/Five/);
+
+    const revealIds = started.mock.calls
+      .map((call, index) => ({ period: call[1], id: started.mock.results[index]?.value }))
+      .filter((timer) => timer.period === REVEAL_TICK_MS)
+      .map((timer) => timer.id);
+    expect(revealIds).toHaveLength(1);
+
+    view.unmount();
+
+    expect(cleared).toHaveBeenCalledWith(revealIds[0]);
+    started.mockRestore();
+    cleared.mockRestore();
   });
 
   it("can be closed back to the launcher and reopened with the thread intact", async () => {
