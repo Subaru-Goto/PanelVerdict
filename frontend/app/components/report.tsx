@@ -1,3 +1,5 @@
+"use client";
+
 import type { ReactNode } from "react";
 
 import type {
@@ -13,6 +15,7 @@ import type {
 } from "../lib/api";
 import { formatPercent, formatPoints } from "../lib/format";
 import AnalystDock from "./analyst-dock";
+import { useAnalyst, OPENING_REQUEST, type Analyst } from "../lib/use-analyst";
 import PosteriorChart from "./posterior-chart";
 
 /** Max, not B's: either direction can be the one worth acting on and the payload does not
@@ -195,11 +198,15 @@ const voterLine = (voter: VoterSummary): string =>
 
 function VoteList({ votes }: { votes: Vote[] }) {
   return (
-    <div className="flex flex-col gap-2">
-      <p className="text-xs text-zinc-500">
-        Reasons from synthetic panelists — sampled personas, not real people.
-      </p>
-      <ul className="flex flex-col gap-2">
+    // Closed by default: the summary above is the reading, and every reason in
+    // full is detail a click away rather than a scroll past. The synthetic
+    // caveat deliberately lives on the summary card, not in here — a reader
+    // who never opens this must still meet it.
+    <details className="flex flex-col gap-2">
+      <summary className="cursor-pointer text-sm font-medium">
+        What the panelists said ({votes.length} in their own words)
+      </summary>
+      <ul className="mt-2 flex flex-col gap-2">
         {votes.map((vote) => (
           <li
             key={vote.persona_id}
@@ -225,11 +232,43 @@ function VoteList({ votes }: { votes: Vote[] }) {
           </li>
         ))}
       </ul>
+    </details>
+  );
+}
+
+/** The analyst's opening turn, rendered as the report's own reading of the
+ *  panel. It is turn 1 of the dock's thread rather than a separate call, so a
+ *  follow-up resolves against words already in the transcript. */
+function SummaryCard({ analyst }: { analyst: Analyst }) {
+  const reply = analyst.turns.find((turn) => turn.role === "analyst");
+  return (
+    <div className="flex flex-col gap-2 rounded border border-zinc-200 p-4 dark:border-zinc-800">
+      <h2 className="text-sm font-medium">What the panel said</h2>
+      {reply?.role === "analyst" && (
+        <>
+          {reply.text !== "" && (
+            <p className="whitespace-pre-wrap text-sm">{reply.text}</p>
+          )}
+          {reply.status !== null && (
+            <p className="text-sm italic text-zinc-500">{reply.status}</p>
+          )}
+          {reply.error !== null && (
+            <p className="text-sm text-red-600 dark:text-red-400">
+              {reply.error}
+            </p>
+          )}
+        </>
+      )}
+      <p className="text-xs text-zinc-500">
+        A reading of reasons written by synthetic panelists — sampled personas,
+        not real people.
+      </p>
     </div>
   );
 }
 
 export default function Report({ result }: { result: EvaluateResponse }) {
+  const analyst = useAnalyst(result, OPENING_REQUEST);
   const { verdict, tally, variants } = result;
   const copy = VERDICT_COPY[recommend(verdict)];
   return (
@@ -297,8 +336,9 @@ export default function Report({ result }: { result: EvaluateResponse }) {
         same thing differently.
       </p>
       <PanelCard result={result} />
+      <SummaryCard analyst={analyst} />
       <VoteList votes={result.votes} />
-      <AnalystDock result={result} />
+      <AnalystDock analyst={analyst} />
     </section>
   );
 }

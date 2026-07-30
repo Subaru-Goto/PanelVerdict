@@ -150,6 +150,34 @@ describe("coverage", () => {
   });
 });
 
+describe("after a run", () => {
+  it("puts the report where the form was, behind a Test again", async () => {
+    // The form is scaffolding for asking a question; once it is answered the
+    // reader wants the answer at the top, not to scroll past the inputs.
+    evaluateMock.mockResolvedValue(RESPONSE);
+    render(<EvaluateForm />);
+
+    fillAndSubmit();
+    await screen.findByRole("button", { name: /test again/i });
+
+    expect(screen.queryByLabelText(/headline a/i)).toBeNull();
+  });
+
+  it("returns to the form with the answers still in it", async () => {
+    // Changing one headline is the common second run, so a blank form would
+    // make the reader retype the two fields they meant to keep.
+    evaluateMock.mockResolvedValue(RESPONSE);
+    render(<EvaluateForm />);
+
+    fillAndSubmit();
+    fireEvent.click(await screen.findByRole("button", { name: /test again/i }));
+
+    expect(
+      (screen.getByLabelText(/headline a/i) as HTMLInputElement).value,
+    ).toBe("Save 50% today");
+  });
+});
+
 describe("request lifecycle", () => {
   it("keeps submit disabled while a run is in flight", () => {
     evaluateMock.mockReturnValue(new Promise(() => {}));

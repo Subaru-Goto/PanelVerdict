@@ -61,3 +61,24 @@ const BASE: EvaluateResponse = {
 export const makeResponse = (
   overrides: Partial<EvaluateResponse> = {},
 ): EvaluateResponse => ({ ...BASE, ...overrides });
+
+
+/** A /chat response whose NDJSON lines are fed one enqueue at a time, so a test
+ *  can assert what the UI shows BETWEEN events — a transient status is only
+ *  visible mid-stream. Shared, because the dock and the report both open
+ *  conversations now. */
+export const manualStream = () => {
+  const encoder = new TextEncoder();
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
+  return {
+    response: new Response(body, { status: 200 }),
+    push: (event: object) =>
+      controller.enqueue(encoder.encode(JSON.stringify(event) + "\n")),
+    close: () => controller.close(),
+  };
+};

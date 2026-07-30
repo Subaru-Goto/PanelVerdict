@@ -2,8 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import type { EvaluateResponse } from "../lib/api";
-import { useAnalyst, type AnalystTurn } from "../lib/use-analyst";
+import {
+  isOpeningRequest,
+  type Analyst,
+  type AnalystTurn,
+} from "../lib/use-analyst";
 
 /** The final chip copy (012c's decision). Each maps to a tool the demo has to
  *  show — the first two to analyze_results, the third to search_personas.
@@ -46,12 +49,13 @@ function Turn({ turn }: { turn: AnalystTurn }) {
   );
 }
 
-export default function AnalystDock({ result }: { result: EvaluateResponse }) {
-  // Open on first render of a fresh report (the recorded trade of variant C:
-  // the launcher hides the chips, so the fresh report shows them once).
-  const [open, setOpen] = useState(true);
+export default function AnalystDock({ analyst }: { analyst: Analyst }) {
+  // Closed on a fresh report now. Variant C traded an open dock for the chips
+  // being visible once, but the report already carries the analyst's opening
+  // summary — an open dock would only print it a second time.
+  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
-  const { turns, busy, send } = useAnalyst(result);
+  const { turns, busy, send } = analyst;
 
   const listRef = useRef<HTMLDivElement | null>(null);
   // Follow the conversation only while the reader is near the bottom, so
@@ -98,7 +102,7 @@ export default function AnalystDock({ result }: { result: EvaluateResponse }) {
         </button>
       </header>
 
-      {turns.length > 0 && (
+      {turns.some((turn) => turn.role === "analyst") && (
         <div
           ref={listRef}
           onScroll={() => {
@@ -111,13 +115,15 @@ export default function AnalystDock({ result }: { result: EvaluateResponse }) {
           }}
           className="flex flex-col gap-2 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
-          {turns.map((turn, index) => (
-            <Turn key={index} turn={turn} />
-          ))}
+          {turns
+            .filter((turn) => !isOpeningRequest(turn))
+            .map((turn, index) => (
+              <Turn key={index} turn={turn} />
+            ))}
         </div>
       )}
 
-      {turns.length === 0 && (
+      {!turns.some((turn) => turn.role === "user" && !isOpeningRequest(turn)) && (
         <div className="flex flex-wrap gap-2">
           {CHIPS.map((chip) => (
             <button
