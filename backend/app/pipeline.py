@@ -7,6 +7,7 @@ knows what a status code is.
 
 import logging
 from dataclasses import dataclass
+from time import perf_counter
 from uuid import uuid4
 
 import psycopg
@@ -258,6 +259,7 @@ def run_panel_test(
     # the run that paid for it — the ledger records provenance, and identity across
     # runs is the fingerprint's job, not this id's.
     test_id = str(uuid4())
+    started = perf_counter()
 
     # Chunks are one concurrency-load each, so no worker idles mid-chunk and the
     # dev profile (size 25) degenerates to a single fan-out. A streak is broken by
@@ -302,7 +304,17 @@ def run_panel_test(
             break
 
     # Before the refusal checks, so a fully refused run still records what it spent.
-    logger.info("panel usage test_id=%s: %s", test_id, total_usage(votes.usage))
+    #
+    # Wall time is logged beside the per-vote figures because neither can be
+    # derived from the other: votes fan out, so their seconds do not add to the
+    # run's, and only the two together say whether a slow run was one straggler
+    # holding its wave or every vote being slow at once (033).
+    logger.info(
+        "panel usage test_id=%s: wall=%.1fs %s",
+        test_id,
+        perf_counter() - started,
+        total_usage(votes.usage),
+    )
 
     if credit_exhausted and not votes.records:
         raise OutOfCredit(

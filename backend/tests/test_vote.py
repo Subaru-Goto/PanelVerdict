@@ -377,6 +377,11 @@ def test_totals_report_how_many_votes_each_sum_covers() -> None:
     assert totals.reasoning_reported == 1
     assert totals.cost == 0.001
     assert totals.cost_reported == 1
+    # A wave costs its slowest member, so the slowest vote is the one number
+    # that explains a run's wall time; the sum next to it says how much of that
+    # was concurrent. Both were measured per vote and dropped here until 033.
+    assert totals.seconds_slowest == 2.0
+    assert totals.seconds_total == 3.0
 
 
 def test_totals_of_a_run_that_reported_nothing_are_zero_not_absent() -> None:
@@ -386,6 +391,9 @@ def test_totals_of_a_run_that_reported_nothing_are_zero_not_absent() -> None:
     assert totals.usage_reported == 0
     assert totals.reasoning_tokens == 0
     assert totals.cost == 0.0
+    # Every vote was a cache hit: no model was waited on, so the honest slowest
+    # is zero rather than an absence to be explained.
+    assert totals.seconds_slowest == 0.0
 
 
 class TestVoteFingerprint:

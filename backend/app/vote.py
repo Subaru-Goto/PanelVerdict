@@ -74,6 +74,12 @@ class UsageTotals:
     so a sum over the votes that reported them is a *partial* figure, and a partial
     figure presented as a total is how a run gets planned against a number that is
     quietly too small.
+
+    The two time figures answer different questions and both are needed. A wave
+    finishes with its slowest member, so `seconds_slowest` is what a run's wall
+    time is actually made of; `seconds_total` beside it says how much of that
+    work happened at once. Measured per vote since 010a and discarded here until
+    033, which is why a slow run could never be explained from the log.
     """
 
     votes: int
@@ -86,6 +92,8 @@ class UsageTotals:
     reasoning_reported: int
     cost: float
     cost_reported: int
+    seconds_slowest: float
+    seconds_total: float
 
 
 def total_usage(usage: Sequence[VoteUsage | None]) -> UsageTotals:
@@ -105,6 +113,10 @@ def total_usage(usage: Sequence[VoteUsage | None]) -> UsageTotals:
         reasoning_reported=len(reasoning),
         cost=sum(cost),
         cost_reported=len(cost),
+        # `default=0.0` rather than a guard: a run of pure cache hits waited on
+        # no model, and zero is the honest slowest, not a missing figure.
+        seconds_slowest=max((u.seconds for u in reported), default=0.0),
+        seconds_total=sum(u.seconds for u in reported),
     )
 
 
