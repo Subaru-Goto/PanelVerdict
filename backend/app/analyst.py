@@ -11,8 +11,10 @@ scale-up path, not a redesign.
 """
 
 import json
-from collections.abc import Iterator
+from collections import Counter
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
+from statistics import median_low
 
 import psycopg
 from langchain.agents import create_agent
@@ -26,17 +28,22 @@ from pydantic import BaseModel
 
 from app import pipeline
 from app.assembly import Embedder
-from app.panel import persona_summary
+from app.panel import persona_summary, votes_with_voters
 from app.persistence import nearest_panelists
 from app.pipeline import EmptyPanel, NoVotes
 from app.schemas import (
     ChatStreamEvent,
     CoverageRung,
     DoneEvent,
+    EducationLevel,
     ErrorEvent,
     EvaluateResponse,
+    Gender,
+    IncomeBand,
+    Locale,
     PanelCounts,
     PanelVerdict,
+    PanelVote,
     StopReason,
     TokenEvent,
     ToolEvent,
@@ -60,14 +67,46 @@ _SYSTEM_PROMPT = (
     "synthetic personas — not real people — was shown two headline variants and "
     "each cast a forced vote between them.\n"
     "Rules:\n"
-    "- Call a tool before citing any number; answer only from tool results, and "
-    "say so when they cannot answer the question.\n"
+    "- Two kinds of question, two different rules. Anything about THIS test — "
+    "its numbers, its verdict, who voted, how the panel was drawn — comes from "
+    "a tool every time: never from memory, never estimated, never inferred "
+    "from what you were told earlier in the conversation. Anything general — "
+    "what a credible interval means, why a headline might land, what this "
+    "method can and cannot show — you answer yourself, directly, and do not "
+    "reach for a tool at all.\n"
+    "- If a question about this test is one the tools cannot answer, say so "
+    "plainly in one sentence. Do not keep calling tools hoping a later one "
+    "will cover it.\n"
     "- The headline number is a preference share of the panel, never a "
     "click-through rate: real readers mostly see one variant, and the panel is "
     "unvalidated where two variants say the same thing differently.\n"
     "- Plain language: prefer 'tie zone' over ROPE and spell out what an "
-    "interval means; keep replies to a few sentences."
+    "interval means; keep replies to a few sentences.\n"
+    "- Answer as an analyst, not as a program: never name a tool, a function, "
+    "a field or a step you took, and never say you are looking something up. "
+    "The reader wants the finding, not the machinery.\n"
+    "- Describe panelists as people — their age, country and circumstances. "
+    "Never quote an id or any other internal handle."
 )
+
+
+class PanelComposition(BaseModel):
+    """Who voted, counted from the votes themselves.
+
+    Deliberately carries no total: `counts.voted` already says how many, and a
+    second count recomputed from a different field of the same request would
+    put two disagreeing answers in one payload with no rule for which to cite.
+    This says who they were, which is what can answer why a target's panel
+    looks wrong.
+    """
+
+    age_min: int
+    age_median: int
+    age_max: int
+    countries: dict[Locale, int]
+    genders: dict[Gender, int]
+    education_levels: dict[EducationLevel, int]
+    income_bands: dict[IncomeBand, int]
 
 
 class AnalysisFacts(BaseModel):
@@ -81,14 +120,49 @@ class AnalysisFacts(BaseModel):
     coverage: CoverageRung
     notices: list[str]
     verdict: PanelVerdict
+    # None when the request carried no votes: an age range of 0–0 would be a
+    # claim about a panel that isn't there.
+    panel: PanelComposition | None
+
+
+def _grouped[Attribute: str](values: Iterable[Attribute]) -> dict[Attribute, int]:
+    """Counts, biggest group first so the panel's shape reads in order; ties
+    break on the name, so the same panel always renders identically.
+
+    Generic rather than `dict[str, int]`: the keys stay the enums and literals
+    the voter carries, so a mistyped attribute is a type error here rather
+    than a silently empty group on the wire. The `str` bound is load-bearing,
+    not decoration — the tie-break compares keys, which a bare Enum refuses.
+    """
+    counts = Counter(values)
+    return dict(sorted(counts.items(), key=lambda pair: (-pair[1], pair[0])))
+
+
+def _composition(votes: Sequence[PanelVote]) -> PanelComposition | None:
+    if not votes:
+        return None
+    voters = [vote.voter for vote in votes]
+    ages = sorted(voter.age for voter in voters)
+    return PanelComposition(
+        age_min=ages[0],
+        # median_low, not median: an even panel has no middle voter, and half
+        # a year of age would be a number no panelist could be asked about.
+        age_median=median_low(ages),
+        age_max=ages[-1],
+        countries=_grouped(voter.country for voter in voters),
+        genders=_grouped(voter.gender for voter in voters),
+        education_levels=_grouped(voter.education for voter in voters),
+        income_bands=_grouped(voter.income_band for voter in voters),
+    )
 
 
 def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
-    """Every number of the current test, recomputed from the tally.
+    """The current test as the analyst may cite it.
 
-    Recomputed rather than read off the request's verdict, so every figure the
-    analyst cites was derived by our own math from one input — a client that
-    doctored the verdict fields cannot make the analyst repeat them.
+    Every *verdict* figure is recomputed rather than read off the request, so
+    a client that doctored those fields cannot make the analyst repeat them.
+    The panel's composition is the one part that cannot be recomputed — who
+    voted is only knowable from the votes the request carries.
     """
     counts = result.tally.counts
     if set(counts) != {"a", "b"}:
@@ -101,6 +175,7 @@ def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
         coverage=result.query.coverage,
         # Backend-composed sentences (never provider text), so safe to forward.
         notices=[notice.message for notice in result.notices],
+        panel=_composition(result.votes),
         verdict=panel_verdict(preferring_b=counts["b"], total=result.tally.total),
     )
 
@@ -132,29 +207,31 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
 
     @tool
     def analyze_results() -> str:
-        """All the numbers of this test: the verdict recomputed from the vote
-        tally, plus counts, stop reason, coverage and notices. Call this before
-        citing any figure."""
+        """Everything known about this test: the verdict recomputed from the
+        vote tally, plus counts, stop reason, coverage and notices — and who
+        the panel was, as the voters' age range and their spread across
+        country, gender, education and income. Call this before citing any
+        figure, and to answer anything about the panel's make-up or whether
+        it matched the audience that was asked for."""
         return analysis_facts(result).model_dump_json()
 
     @tool
     def search_personas(query: str) -> str:
-        """The panelists of THIS test whose profiles best match a
-        plain-language description, nearest first — who was on the panel,
-        which panelists are price-sensitive, and so on. The query is a
-        description of people, not SQL."""
+        """Individual panelists of THIS test whose profiles best match a
+        plain-language description, nearest first — for characterizing or
+        quoting particular people. For the panel's overall make-up call
+        analyze_results instead: this returns a handful of profiles, never a
+        distribution. The query describes people, not SQL."""
         found = nearest_panelists(
             deps.conn,
             embedding=deps.embedder.embed([query])[0],
             panel_ids=[vote.persona_id for vote in result.votes],
             limit=_SEARCH_LIMIT,
         )
-        return json.dumps(
-            [
-                {"id": persona.id, "summary": persona_summary(persona)}
-                for persona in found
-            ]
-        )
+        # Summaries only: a persona id is a database handle, not a name a
+        # reader can use (023's ruling for the report). Withheld rather than
+        # forbidden — the model cannot quote what it was never given.
+        return json.dumps([persona_summary(persona) for persona in found])
 
     @tool
     def run_panel_test(target_description: str) -> str:
@@ -188,6 +265,12 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
             # Trusted as-is: this verdict came out of our own pipeline one
             # line up, unlike the request's, which analysis_facts recomputes.
             verdict=run.verdict,
+            # The same voter join the report does — a fresh run's panel is as
+            # describable as the original's, which is what lets the model
+            # compare the two audiences rather than just their numbers.
+            panel=_composition(
+                votes_with_voters(run.votes.records, run.selection.panel)
+            ),
         )
         return json.dumps(
             {
