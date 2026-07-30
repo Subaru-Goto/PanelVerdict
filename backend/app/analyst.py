@@ -229,6 +229,37 @@ def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
     )
 
 
+class ChosenReasons(BaseModel):
+    """One headline and the words the panelists who picked it gave for it."""
+
+    headline: str
+    reasons: list[str]
+
+
+def vote_reasons(result: EvaluateResponse) -> dict[str, ChosenReasons]:
+    """What the panel said, grouped by what it chose.
+
+    Keyed on every variant rather than only the ones with votes: "nobody said
+    anything for A" is a finding, and a missing key reads as a tool that failed
+    to report rather than a headline nobody picked.
+
+    This is the first thing the analyst reads that another model wrote — every
+    other tool serves recomputed figures or code-composed prose. See 029 for
+    where that boundary now sits.
+    """
+    return {
+        variant_id: ChosenReasons(
+            headline=headline,
+            reasons=[
+                vote.reason
+                for vote in result.votes
+                if vote.chosen_variant_id == variant_id
+            ],
+        )
+        for variant_id, headline in result.variants.items()
+    }
+
+
 # Top-5 per search: user sign-off 2026-07-29, convention rather than
 # measurement — ~40 tokens per summary keeps one search near 200 tokens while
 # giving the model enough names to answer concretely.
@@ -256,7 +287,8 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
 
     @tool
     def analyze_results() -> str:
-        """Everything known about this test: the verdict recomputed from the
+        """Every number and every count for this test — but not a word anyone
+        said, which is read_reasons. The verdict recomputed from the
         vote tally, plus counts, how far polling ran, how the places named in
         the target were matched, and notices — and who the panel was, as the
         voters' age range and their spread across country, gender, education
@@ -283,6 +315,20 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
         # reader can use (023's ruling for the report). Withheld rather than
         # forbidden — the model cannot quote what it was never given.
         return json.dumps([persona_summary(persona) for persona in found])
+
+    @tool
+    def read_reasons() -> str:
+        """What the panelists actually said, in their own words, grouped by the
+        headline each of them chose. Call this for anything about WHY the panel
+        leaned the way it did, what appealed about a headline, or to summarise
+        the reasoning: analyze_results holds the numbers, this holds the words,
+        and no other tool carries a reason at all."""
+        return json.dumps(
+            {
+                variant_id: chosen.model_dump()
+                for variant_id, chosen in vote_reasons(result).items()
+            }
+        )
 
     @tool
     def run_panel_test(target_description: str) -> str:
@@ -330,7 +376,7 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
             }
         )
 
-    return [analyze_results, search_personas, run_panel_test]
+    return [analyze_results, search_personas, read_reasons, run_panel_test]
 
 
 def stream_analyst(

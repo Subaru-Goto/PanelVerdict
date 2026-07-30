@@ -77,12 +77,13 @@ class TestStreamAnalyst:
         events = ndjson_events(_lines(model, conn=conn, thread_id="s-2"))
 
         errors = [e for e in events if e["type"] == "error"]
-        # 8 = 2 * len(tools) + 2 with three tools — the pinned sentence tracks
-        # the derived budget, so it moves when the tool list does.
+        # 10 = 2 * len(tools) + 2 with four tools — the pinned sentence tracks
+        # the derived budget, so it moves when the tool list does. It moved here
+        # because read_reasons earns a round, not to buy a looping model room.
         assert errors == [
             {
                 "type": "error",
-                "message": "analyst was still calling tools after 8 steps",
+                "message": "analyst was still calling tools after 10 steps",
             }
         ]
         assert events[-1]["type"] == "error"
