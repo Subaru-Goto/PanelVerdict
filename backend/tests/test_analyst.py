@@ -6,7 +6,13 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.analyst import _SYSTEM_PROMPT, ToolDeps, analysis_facts, stream_analyst
+from app.analyst import (
+    _SYSTEM_PROMPT,
+    ToolDeps,
+    analysis_facts,
+    stream_analyst,
+    vote_reasons,
+)
 from app.assembly import Embedder
 from app.persistence import persist_pool
 from app.vote import PanelLLM, VoteResponse
@@ -197,6 +203,50 @@ class TestAnalysisFacts:
         )
         with pytest.raises(ValueError):
             analysis_facts(broken)
+
+
+class TestVoteReasons:
+    def test_reasons_are_grouped_by_the_headline_that_won_them(self) -> None:
+        """The question is never "what did the panel say" — it is what the
+        B-choosers said that the A-choosers did not. An ungrouped list makes
+        the model do that join itself, from a field it has to trust."""
+        result = _result().model_copy(
+            update={
+                "votes": [
+                    make_panel_vote(
+                        "p1", chosen="a", reason="The discount is concrete."
+                    ),
+                    make_panel_vote(
+                        "p2", chosen="b", reason="Being a member feels earned."
+                    ),
+                    make_panel_vote(
+                        "p3", chosen="a", reason="Fifty percent is unmissable."
+                    ),
+                ]
+            }
+        )
+
+        reasons = vote_reasons(result)
+
+        assert reasons["a"].headline == "Save 50% today"
+        assert reasons["a"].reasons == [
+            "The discount is concrete.",
+            "Fifty percent is unmissable.",
+        ]
+        assert reasons["b"].headline == "Members save half"
+        assert reasons["b"].reasons == ["Being a member feels earned."]
+
+    def test_a_headline_nobody_chose_is_present_and_empty(self) -> None:
+        """Empty, not absent: "nobody said anything for A" is a finding, and a
+        missing key reads to the model as a tool that failed to report it."""
+        result = _result().model_copy(
+            update={"votes": [make_panel_vote("p1", chosen="b", reason="Warmer.")]}
+        )
+
+        reasons = vote_reasons(result)
+
+        assert reasons["a"].reasons == []
+        assert reasons["a"].headline == "Save 50% today"
 
 
 def _deps(
@@ -391,6 +441,33 @@ class TestAnalystAgent:
         assert run["facts"]["region_match"] == (
             "No place the target named had to be substituted."
         )
+
+    def test_the_analyst_can_read_what_the_panel_said(self, conn) -> None:
+        """The 029 gap end to end: asked why the panel leaned, the analyst had
+        nothing to read — every other tool serves figures or profiles, and the
+        reasons rode unserved in the request all along."""
+        result = _result().model_copy(
+            update={
+                "votes": [
+                    make_panel_vote("p1", chosen="b", reason="It feels like a club."),
+                    make_panel_vote("p2", chosen="a", reason="A number I can act on."),
+                ]
+            }
+        )
+        model = ScriptedChatModel(
+            responses=[
+                tool_call_message(name="read_reasons"),
+                AIMessage(content="B's readers liked belonging."),
+            ]
+        )
+
+        reply = _run(model, conn=conn, result=result, message="Why did they prefer B?")
+
+        assert reply == "B's readers liked belonging."
+        fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
+        said = json.loads(str(fed_back[0].content))
+        assert said["b"]["reasons"] == ["It feels like a club."]
+        assert said["a"]["headline"] == "Save 50% today"
 
     def test_a_target_nobody_matches_is_an_answer_not_a_crash(self, conn) -> None:
         """EmptyPanel's sentence is codebase-authored (the 422 path forwards

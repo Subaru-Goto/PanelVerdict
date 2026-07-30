@@ -55,18 +55,21 @@ class FixedEmbedder:
 def make_panel_vote(
     persona_id: str,
     *,
+    chosen: str = "a",
+    reason: str = "stub",
     age: int = 34,
     country: Locale = Locale.US,
     gender: Gender = "female",
     education: EducationLevel = EducationLevel.TERTIARY,
     income_band: IncomeBand = "middle",
 ) -> PanelVote:
-    """A vote for tests about who was on the panel rather than what they
-    chose — the demographics are the load-bearing part, the opinion is stub."""
+    """One panelist's vote, with both halves overridable: the demographics for
+    tests about who the panel was, the choice and reason for tests about what
+    it said. Every default is stub so a test varies only what it is about."""
     return PanelVote(
         persona_id=persona_id,
-        chosen_variant_id="a",
-        reason="stub",
+        chosen_variant_id=chosen,
+        reason=reason,
         voter=VoterSummary(
             country=country,
             age=age,
