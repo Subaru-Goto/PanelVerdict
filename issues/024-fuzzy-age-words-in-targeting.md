@@ -3,8 +3,8 @@ title: "Targeting drops fuzzy age words: 'young Japanese people' seated a 91-yea
 labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
-assignee: null
-status: open
+assignee: Subaru-Goto
+status: closed
 ---
 
 ## Problem (found in real use, 2026-07-30)
