@@ -175,15 +175,23 @@ words you read it from in `source_phrase`.
 4. An age word that states no numbers — "young", "middle-aged", "elderly" — DOES map. \
 Set `min_age` and/or `max_age` to the span you judge those words to mean, and put the \
 words themselves in `age_source_phrase`. Never send such a word to `unmapped`, and \
-never leave the span empty for it: rule 6 does not apply here, because the reader is \
-shown your reading and can disagree with it. When the description gives numbers \
-instead ("in their 40s", "over 50"), fill the bounds and leave `age_source_phrase` \
-empty — transcribing a number is not a reading, and reporting it as one is noise.
-5. List in `unmapped`, verbatim, every part of the description that none of the \
+never leave the span empty for it: the leave-it-empty rule at the end does not apply \
+to a reading you are asked to disclose, because the reader is shown it and can \
+disagree. When the description gives numbers instead ("in their 40s", "over 50"), \
+fill the bounds and leave `age_source_phrase` empty — transcribing a number is not a \
+reading, and reporting it as one is noise.
+5. A word about earnings or wealth that names no band — "good earners", "well off", \
+"on a tight budget" — DOES map, the same way. Set `income_bands` to the band or bands \
+you judge it to mean and put the words themselves in `income_source_phrase`. An \
+occupation is not an income word: "bankers", "nurses", "students" name jobs, and a job \
+goes in `unmapped` because a panelist carries no occupation at all. When the \
+description names a band outright ("upper income"), fill `income_bands` and leave \
+`income_source_phrase` empty.
+6. List in `unmapped`, verbatim, every part of the description that none of the \
 attributes above can express — interests, hobbies, activities, occupations, brands, \
 household composition, city, anything else. Do not approximate it with a personality \
 trait or a demographic.
-6. Leave a field empty rather than guessing.\
+7. Leave a field empty rather than guessing.\
 """
 
 

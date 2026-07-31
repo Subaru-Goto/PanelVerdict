@@ -3,7 +3,7 @@ title: "A vague income word silently excludes most of the pool"
 labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
-assignee: null
+assignee: Subaru-Goto
 status: open
 ---
 
@@ -51,7 +51,38 @@ read a value from, presence of the phrase means "I inferred this", and
 description, so phrase-presence is the only thing that can distinguish an inferred
 band from an explicit one.
 
-## The load-bearing decision: a third flat field, or generalise?
+## Decided 2026-07-31 — second flat field, and the copy names bands
+
+Recorded here rather than only in a commit, because
+[038](038-education-reading-is-never-disclosed.md) is blocked on *this ticket's*
+decision and a commit body is not where it will look.
+
+**Schema: `income_source_phrase`, a second flat field.** Not the general structure. The
+age field is already working, a general shape changes what the model must emit — a
+prompt change, which is the riskiest surface — and education is the *third* field, which
+is where the signal to generalise actually lands. So: generalise at 038, migrating all
+three at once, rather than half-generalising now.
+
+**Copy: `Read "good earners" as middle or upper income.`** Bands, not a share of the
+pool. This was decided rather than forced: a non-contiguous request ("rich and poor",
+quintiles 1, 2, 4 and 5) *does* have a percentage form, it just needs a different
+sentence from the contiguous case, and one template that always reads correctly was
+preferred to two that read better.
+
+**Not adopted: the exclusion clause** ("…which leaves out 40% of the pool"). Exact and
+computable, and arguably the most useful thing a customer could be told — it is what
+makes a thin panel explicable. Left out to keep the change small; still worth doing.
+
+**Occupations are not income words.** Jobs stay in `unmapped`, because a panelist carries
+no occupation at all. Note this does not settle whether a word can be *both* — "retirees"
+names a job and implies an age — which is an open question on the age side, and older
+than this ticket: the occupations rule predates the age rule it now competes with.
+
+Verified live: `"good earners in germany"` → bands `middle` and `upper`, phrase recorded,
+notice as above. `"bankers in germany"` → `unmapped`, no income reading. The model chose
+**two** bands on the first real description, so the plural path is ordinary, not an edge.
+
+## The load-bearing decision as originally posed: a third flat field, or generalise?
 
 [024](024-fuzzy-age-words-in-targeting.md) added `age_source_phrase`. This ticket
 would add `income_source_phrase`, and [038](038-education-reading-is-never-disclosed.md)

@@ -423,6 +423,67 @@ def test_no_income_band_means_no_income_filter() -> None:
     assert resolve_target(TargetRequest()).income_quintiles == ()
 
 
+def test_an_inferred_income_band_is_disclosed_with_the_words_it_was_read_from() -> None:
+    """Reading `"good earners"` as a band is as much a judgement as reading `"cautious"`
+    as conscientiousness, and it costs the customer 60-80% of the pool depending on which
+    bands are chosen. Traits disclose theirs; income has disclosed nothing.
+
+    Assert the disclosure, never which bands the model chose. Where the boundary falls is
+    arguable — "good earners" plainly excludes the bottom, and where the middle ends is
+    not settled — so a test pinning the bands would fail a defensible answer.
+    """
+    query = resolve_target(
+        TargetRequest(income_bands=["upper"], income_source_phrase="good earners")
+    )
+
+    # A notice, not a second filter: the quintiles are what they always were.
+    assert query.income_quintiles == (4, 5)
+
+    (reading,) = [m for m in _readings(query) if "good earners" in m]
+    assert "upper" in reading
+    # The reader gets the band. A quintile is an internal rank the prompt never
+    # mentions, so naming one would describe something no panelist was asked about.
+    assert "quintile" not in reading.lower()
+    assert _warnings(query) == []
+
+
+def test_an_income_band_with_no_phrase_discloses_nothing() -> None:
+    """Two cases share this shape and both must stay silent: a customer who named the
+    band themselves made no judgement to report back, and a model that set a band while
+    forgetting the phrase gives us nothing honest to say.
+
+    The second is a real risk rather than a hypothetical, and it is the residual hole the
+    age decision accepted on the record: a missing phrase is indistinguishable from an
+    explicit request, so code cannot tell them apart. Silence is the safe reading;
+    announcing a filter we cannot attribute would be worse.
+    """
+    query = resolve_target(TargetRequest(income_bands=["upper"]))
+
+    assert query.income_quintiles == (4, 5)
+    assert [m for m in _readings(query) if "income" in m.lower()] == []
+
+
+def test_one_phrase_covering_several_bands_reads_as_one_sentence() -> None:
+    """Bands are a set, not a span: "rich and poor" asks for quintiles 1, 2, 4 and 5, so
+    one phrase can cover bands that are not adjacent. Live, this turned out to be the
+    common case rather than an edge — the first real description tried came back with two
+    bands.
+
+    The bands are passed here in the reverse of the schema's order, because the sentence
+    is rendered in the schema's order rather than the model's — the same request has to
+    read identically every time.
+    """
+    query = resolve_target(
+        TargetRequest(
+            income_bands=["upper", "lower"], income_source_phrase="rich and poor"
+        )
+    )
+
+    assert query.income_quintiles == (1, 2, 4, 5)
+    (reading,) = [m for m in _readings(query) if "rich and poor" in m]
+    assert "lower or upper income" in reading
+
+
 def test_the_requested_traits_are_carried_as_data() -> None:
     """The query holds the trait and level themselves, not prose about them: they
     become SQL bounds, and the report has to show which reading a verdict rests on."""
