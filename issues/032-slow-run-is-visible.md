@@ -83,6 +83,20 @@ have been describing a wait that turns out to be brief.
 The one line worth keeping from that work: `fetch` still has no `AbortSignal`,
 so a genuinely dead run hangs forever. Unpark when that bites for real.
 
+**It bit, 2026-07-31 — the unpark condition is met.** A translation with no read
+timeout ran past ten minutes on the SDK's default. The backend half is fixed (the
+translator, judge and embedder are now bounded), so the specific hang that triggered
+this is gone — but the client-side hole is untouched: `fetch` still has no
+`AbortSignal`, so any *other* dead run is still indistinguishable from a slow one,
+permanently.
+
+One correction to this ticket's own reasoning, found while fixing the backend: the
+deadline derived above treated the translator as "one more request of the same family"
+as a vote, and that was **not true of the code** at the time — the translator had no
+timeout at all. The derivation was sound and the arithmetic is now correct, but it was
+resting on an unchecked assumption about a term. Worth knowing before the parked work
+is resumed, since that work is arithmetic over exactly these terms.
+
 ## Deliberately NOT in this ticket
 
 **`reasoning_effort` is never set in production.** It is fully plumbed —

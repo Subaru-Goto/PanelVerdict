@@ -144,7 +144,7 @@ def _resolve_regions(
 
 
 def _resolve_ages(
-    min_age: int | None, max_age: int | None, source_phrase: str | None = None
+    min_age: int | None, max_age: int | None, source_phrase: str | None
 ) -> tuple[int, int, list[Notice]]:
     """Clamp the requested span onto the pool's, and say so when that bites.
 

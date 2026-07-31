@@ -240,7 +240,16 @@ def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
         counts=result.counts,
         polling=_POLLING[result.stop_reason],
         region_match=_REGION_MATCH[result.query.coverage],
-        # Backend-composed sentences (never provider text), so safe to forward.
+        # Backend-composed sentences — but not free of model text, which the previous
+        # wording here claimed. A notice quotes the phrase the translator read a value
+        # from ("young", "cautious"), and `unmapped` carries the customer's own words
+        # verbatim, so a fragment of both travels in this list.
+        #
+        # Still safe to forward, for a reason that does not depend on the content: the
+        # whole `EvaluateResponse` arrives from the client, so a caller who wanted
+        # arbitrary text in here could put it there directly. Nothing is conceded by
+        # passing it on, and it reaches the model as a JSON tool result rather than as
+        # instructions.
         notices=[notice.message for notice in result.notices],
         panel=_composition(result.votes),
         verdict=panel_verdict(preferring_b=counts["b"], total=result.tally.total),
