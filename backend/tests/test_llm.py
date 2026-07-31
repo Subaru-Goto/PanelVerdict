@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -277,6 +279,7 @@ def test_a_reasoning_effort_is_sent_as_the_unified_object() -> None:
     llm = OpenRouterPanelLLM(
         api_key="test",
         base_url="http://openrouter.invalid",
+        provider="openai",
         model="openai/gpt-5-mini",
         reasoning_effort="low",
     )
@@ -294,7 +297,10 @@ def test_the_default_arm_sends_no_reasoning_parameter_at_all() -> None:
     for its cost figures to exist at all, and for the two arms to be comparable.
     """
     llm = OpenRouterPanelLLM(
-        api_key="test", base_url="http://openrouter.invalid", model="openai/gpt-5-mini"
+        api_key="test",
+        base_url="http://openrouter.invalid",
+        provider="openai",
+        model="openai/gpt-5-mini",
     )
     bound = _bound_model(llm)
 
@@ -311,7 +317,11 @@ def test_two_adapters_built_the_same_way_share_a_cache_key() -> None:
     delimiter nonce is exactly such a thing, which is why it is rendered as a
     fixed sentinel here and only randomised on the wire.
     """
-    base = {"api_key": "test", "base_url": "http://openrouter.invalid"}
+    base = {
+        "api_key": "test",
+        "base_url": "http://openrouter.invalid",
+        "provider": "openai",
+    }
 
     first = OpenRouterPanelLLM(**base, model="openai/gpt-5-mini")
     second = OpenRouterPanelLLM(**base, model="openai/gpt-5-mini")
@@ -350,7 +360,11 @@ def test_configuration_declares_everything_the_adapter_binds() -> None:
     measured to move the verdict, and a cached vote must not answer a reworded
     one."""
 
-    base = {"api_key": "test", "base_url": "http://openrouter.invalid"}
+    base = {
+        "api_key": "test",
+        "base_url": "http://openrouter.invalid",
+        "provider": "openai",
+    }
     configurations = [
         OpenRouterPanelLLM(**base, model="openai/gpt-5-mini").configuration,
         OpenRouterPanelLLM(**base, model="openai/gpt-6").configuration,
@@ -365,13 +379,53 @@ def test_configuration_declares_everything_the_adapter_binds() -> None:
     assert len(set(configurations)) == len(configurations)
 
 
+def test_how_a_vote_is_carried_is_not_part_of_its_identity() -> None:
+    """The mirror of the test above, and the more expensive one to get wrong.
+
+    `configuration` names what was *asked* — the model, the effort, the rendered
+    ask — and deliberately not what carried it: the key, the endpoint, or which
+    langchain client built the request. A vote is the same purchase whichever
+    wire delivered it, so changing the carrier must not re-key votes already
+    paid for.
+
+    Worth pinning because the tempting change is the wrong one: `provider` is a
+    constructor argument the adapter binds, and a reader working from the test
+    above would fold it in for consistency. That silently orphans every row in
+    the `votes` ledger — the next run re-buys the panel and reports success,
+    because a cache miss is indistinguishable from a first ask.
+    """
+    asked = {"model": "openai/gpt-5-mini", "provider": "openai"}
+
+    assert (
+        OpenRouterPanelLLM(
+            api_key="one", base_url="http://one.invalid", **asked
+        ).configuration
+        == OpenRouterPanelLLM(
+            api_key="two", base_url="http://two.invalid", **asked
+        ).configuration
+    )
+    # Spelled as the exact key set rather than a `not in` check: `provider`'s
+    # value is a substring of every model id here, so absence cannot be asserted
+    # on the serialized text.
+    assert set(
+        json.loads(OpenRouterPanelLLM(api_key="k", base_url="u", **asked).configuration)
+    ) == {
+        "model",
+        "effort",
+        "ask",
+    }
+
+
 def test_the_vote_call_carries_the_measured_read_timeout() -> None:
     """60s ≈ 3× the slowest of 250 timed votes and ~4× their p99
     (docs/research/first-full-scale-run.md) — no valid vote observed to date comes
     near it, and a hung request now costs a worker one minute, not the SDK
     default's ten."""
     llm = OpenRouterPanelLLM(
-        api_key="test", base_url="http://openrouter.invalid", model="openai/gpt-5-mini"
+        api_key="test",
+        base_url="http://openrouter.invalid",
+        provider="openai",
+        model="openai/gpt-5-mini",
     )
 
     assert _bound_model(llm).request_timeout == 60
@@ -397,6 +451,7 @@ class TestOutOfCreditTranslation:
         llm = OpenRouterPanelLLM(
             api_key="test",
             base_url="http://openrouter.invalid",
+            provider="openai",
             model="openai/gpt-5-mini",
         )
         llm._model = self._Raising(status)

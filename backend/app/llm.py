@@ -4,8 +4,10 @@ from time import perf_counter
 from typing import Literal, get_args
 
 import httpx
+from langchain.chat_models import init_chat_model
+from langchain.embeddings import init_embeddings
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from openai import APIStatusError
 
 from app.schemas import (
@@ -246,6 +248,7 @@ class OpenRouterPanelLLM:
         *,
         api_key: str,
         base_url: str,
+        provider: str,
         model: str,
         question: str = VOTE_QUESTION,
         reasoning_effort: ReasoningEffort | None = None,
@@ -308,8 +311,9 @@ class OpenRouterPanelLLM:
         # the object is not a way out — the request is then rejected outright.
         #
         # Left unset by default, so the default arm is the provider's own default effort.
-        self._model = ChatOpenAI(
+        self._model = init_chat_model(
             model=model,
+            model_provider=provider,
             base_url=base_url,
             api_key=api_key,
             max_retries=2,
@@ -343,7 +347,9 @@ class OpenRouterPanelLLM:
         return _vote_response(result, seconds=seconds)
 
 
-def analyst_chat_model(*, api_key: str, base_url: str, model: str) -> ChatOpenAI:
+def analyst_chat_model(
+    *, api_key: str, base_url: str, provider: str, model: str
+) -> BaseChatModel:
     """The bare chat model `create_agent` drives for the analyst.
 
     Just construction: tool binding, the loop, and error shaping all belong to
@@ -351,8 +357,9 @@ def analyst_chat_model(*, api_key: str, base_url: str, model: str) -> ChatOpenAI
     same model, same provider, and a chat turn is the same order of work as a
     reasoned vote.
     """
-    return ChatOpenAI(
+    return init_chat_model(
         model=model,
+        model_provider=provider,
         base_url=base_url,
         api_key=api_key,
         max_retries=2,
@@ -392,9 +399,12 @@ class OpenRouterTargetTranslator:
     to them.
     """
 
-    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
-        self._model = ChatOpenAI(
+    def __init__(
+        self, *, api_key: str, base_url: str, provider: str, model: str
+    ) -> None:
+        self._model = init_chat_model(
             model=model,
+            model_provider=provider,
             base_url=base_url,
             api_key=api_key,
         ).with_structured_output(TargetRequest)
@@ -409,9 +419,14 @@ class OpenRouterTargetTranslator:
 class OpenRouterEmbedder:
     """Embedder backed by OpenRouter's embeddings endpoint via LangChain."""
 
-    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
-        self._embeddings = OpenAIEmbeddings(
+    def __init__(
+        self, *, api_key: str, base_url: str, provider: str, model: str
+    ) -> None:
+        # `provider=`, not `model_provider=`: the embeddings initialiser spells the
+        # same argument differently from the chat one.
+        self._embeddings = init_embeddings(
             model=model,
+            provider=provider,
             base_url=base_url,
             api_key=api_key,
         )
@@ -424,9 +439,12 @@ class OpenRouterJudge:
     """Judge backed by an OpenRouter chat model via LangChain: it scores an
     output against written criteria rather than a reference answer (G-Eval)."""
 
-    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
-        self._model = ChatOpenAI(
+    def __init__(
+        self, *, api_key: str, base_url: str, provider: str, model: str
+    ) -> None:
+        self._model = init_chat_model(
             model=model,
+            model_provider=provider,
             base_url=base_url,
             api_key=api_key,
         ).with_structured_output(PlausibilityScore)

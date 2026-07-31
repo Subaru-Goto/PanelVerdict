@@ -64,6 +64,20 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://localhost:3000"
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Which langchain integration package builds the client — not the service being
+    # called. Every request goes to OpenRouter, which speaks the OpenAI wire
+    # protocol, so `langchain_openai` is the client that fits it; the value names
+    # the client, and `openrouter_base_url` above names the endpoint.
+    #
+    # Set rather than inferred, and that is not a style choice: `init_chat_model`
+    # infers the provider from the model id, and every id here is `vendor/model`,
+    # which it declines to guess at. Verified — omitting it raises `ValueError`
+    # listing the providers it knows, so a missing provider fails loudly instead
+    # of resolving against the wrong client.
+    #
+    # Named `langchain_provider` and not `model_provider` because pydantic reserves
+    # the `model_` prefix for its own namespace.
+    langchain_provider: str = "openai"
     # Defaults to the cheapest profile on purpose: every size here is real money, so
     # forgetting to choose should cost a cent rather than a tenth of the credit cap.
     profile: ProfileName = "dev"
