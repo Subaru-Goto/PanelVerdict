@@ -7,6 +7,10 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi[standard]>=0.139.2",
     "langchain>=1.3.14",
+    # Required at runtime even though no app module imports it any more:
+    # `init_chat_model`/`init_embeddings` resolve `model_provider` to this
+    # package and import it themselves. Dropping it as "unused" would leave the
+    # app importable and every model call broken.
     "langchain-openai>=1.3.5",
     "numpy>=2.5.1",
     "pgvector>=0.5.0",

@@ -103,6 +103,7 @@ def collect_cost_rows(
         llm = OpenRouterPanelLLM(
             api_key=api_key,
             base_url=settings.openrouter_base_url,
+            provider=settings.model_provider,
             model=settings.panel.model,
             reasoning_effort=arm,
         )

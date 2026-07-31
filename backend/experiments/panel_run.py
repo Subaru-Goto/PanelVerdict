@@ -200,11 +200,13 @@ def main() -> None:
     llm = OpenRouterPanelLLM(
         api_key=settings.openrouter_api_key.get_secret_value(),
         base_url=settings.openrouter_base_url,
+        provider=settings.model_provider,
         model=PROFILES[profile].model,
     )
     translator = OpenRouterTargetTranslator(
         api_key=settings.openrouter_api_key.get_secret_value(),
         base_url=settings.openrouter_base_url,
+        provider=settings.model_provider,
         model=settings.targeting_model,
     )
     with psycopg.connect(settings.database_url) as conn:
