@@ -343,6 +343,16 @@ class TargetRequest(BaseModel):
     # is arguable — which is the case for showing the reading rather than legislating it.
     income_source_phrase: str | None = None
     education: list[EducationLevel] = []
+    # The words a level was read from — "well-educated", "academic" — and nothing when the
+    # attainment was named outright. Presence means the model judged rather than
+    # transcribed, the same signal the two fields above carry.
+    #
+    # A third flat field rather than one general shape for all three. The general shape
+    # was expected to pay for itself here, and on arrival it does not: each field renders
+    # its reading differently — a span, a set of bands, a set of levels — so a shared
+    # carrier would unify only the phrase, while costing a prompt change to the one
+    # surface whose behaviour is hardest to re-verify.
+    education_source_phrase: str | None = None
     traits: list[TraitRequest] = []
     unmapped: list[str] = []
 

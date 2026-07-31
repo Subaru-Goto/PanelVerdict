@@ -24,6 +24,7 @@ from app.schemas import (
     MIN_PERSONA_AGE,
     CoverageRung,
     CultureTag,
+    EducationLevel,
     IncomeBand,
     Locale,
     Notice,
@@ -45,6 +46,16 @@ _SEEDED_BY_TAG: dict[CultureTag, tuple[Locale, ...]] = {
 }
 
 _NO_MATCH = "No panelists match this target, so no panel was drawn."
+
+# Reader-facing wording for the education levels, so a disclosure never prints the enum
+# a panelist was never asked about. Deliberately not panel.py's phrases: those describe a
+# person ("completed a university degree") for the vote prompt, and do not compose into a
+# list of what a filter kept.
+_EDUCATION_READING_PHRASE: dict[EducationLevel, str] = {
+    EducationLevel.BELOW_SECONDARY: "less than secondary",
+    EducationLevel.SECONDARY: "secondary",
+    EducationLevel.TERTIARY: "university-level",
+}
 
 
 class TargetTranslator(Protocol):
@@ -231,6 +242,37 @@ def _resolve_income(
     return quintiles, [_reading(f'Read "{source_phrase}" as {named} income.')]
 
 
+def _resolve_education(
+    levels: list[EducationLevel], source_phrase: str | None
+) -> tuple[tuple[EducationLevel, ...], list[Notice]]:
+    """Keep the requested levels, and disclose the reading when a vague word produced
+    them.
+
+    Most education targets are expected to say nothing here, and that is the intended
+    behaviour rather than a fix that failed: "university graduates" is a vocabulary
+    mapping onto one level, so there is no judgement to report, and the model is asked to
+    record a phrase only when it inferred. The same asymmetry as a numeric age span
+    against a vague age word.
+
+    Deduplicated because the levels become one `ANY(...)` either way, and a repeat would
+    otherwise read back as "secondary or secondary education".
+    """
+    kept = tuple(dict.fromkeys(levels))
+    # Silent unless a phrase and levels are both present, for the reasons the income
+    # reading spells out: a phrase alone filters nothing, and an absent phrase cannot be
+    # told from an attainment the customer named outright.
+    if source_phrase is None or not kept:
+        return kept, []
+
+    requested = set(kept)
+    named = " or ".join(
+        phrase
+        for level, phrase in _EDUCATION_READING_PHRASE.items()
+        if level in requested
+    )
+    return kept, [_reading(f'Read "{source_phrase}" as {named} education.')]
+
+
 def _resolve_traits(
     requested: list[TraitRequest],
 ) -> tuple[tuple[TraitRequest, ...], list[Notice]]:
@@ -281,8 +323,11 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
     income_quintiles, income_notices = _resolve_income(
         request.income_bands, request.income_source_phrase
     )
+    education, education_notices = _resolve_education(
+        request.education, request.education_source_phrase
+    )
     traits, trait_notices = _resolve_traits(request.traits)
-    notices += age_notices + income_notices + trait_notices
+    notices += age_notices + income_notices + education_notices + trait_notices
 
     if request.unmapped:
         notices.append(
@@ -309,7 +354,7 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
         max_age=max_age,
         gender=request.gender,
         income_quintiles=income_quintiles,
-        education=tuple(dict.fromkeys(request.education)),
+        education=education,
         traits=traits,
         notices=tuple(notices),
     )

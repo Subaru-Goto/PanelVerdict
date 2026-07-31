@@ -8,7 +8,7 @@ from factories import big_five, make_assembled, make_persona
 
 from app.llm import build_target_messages
 from app.persistence import persist_pool
-from app.targeting import resolve_target, select_panel
+from app.targeting import _EDUCATION_READING_PHRASE, resolve_target, select_panel
 from app.schemas import (
     COUNTRY_NAME,
     INCOME_BAND_QUINTILES,
@@ -482,6 +482,92 @@ def test_one_phrase_covering_several_bands_reads_as_one_sentence() -> None:
     assert query.income_quintiles == (1, 2, 4, 5)
     (reading,) = [m for m in _readings(query) if "rich and poor" in m]
     assert "lower or upper income" in reading
+
+
+def test_every_education_level_has_reader_facing_wording() -> None:
+    """The disclosure looks each level up in a phrase table, so a level added to the enum
+    without an entry would typecheck and then KeyError on a real target — the same drift
+    the trait-name and income-band checks above guard against."""
+    assert tuple(_EDUCATION_READING_PHRASE) == tuple(EducationLevel)
+    assert all("_" not in phrase for phrase in _EDUCATION_READING_PHRASE.values()), (
+        "an enum handle leaked into wording meant for a reader"
+    )
+
+
+def test_the_requested_education_levels_are_carried_and_deduplicated() -> None:
+    """The levels become one `education = ANY(...)`, so a repeat changes no rows — but it
+    would read back as "secondary or secondary education", so it is dropped here rather
+    than worked around in the sentence."""
+    query = resolve_target(
+        TargetRequest(education=[EducationLevel.TERTIARY, EducationLevel.TERTIARY])
+    )
+
+    assert query.education == (EducationLevel.TERTIARY,)
+
+
+def test_no_education_level_means_no_education_filter() -> None:
+    assert resolve_target(TargetRequest()).education == ()
+
+
+def test_an_inferred_education_level_is_disclosed_with_the_words_it_was_read_from() -> (
+    None
+):
+    """ "Well-educated" is a judgement — tertiary only, or secondary too? — and the pool
+    holds three levels, so acting on it drops at least a third of the panel. Until this
+    disclosure existed it dropped them with nothing said.
+
+    Assert the disclosure, never which levels the model chose: nobody has decided where
+    "well-educated" starts, so a test pinning the levels would fail a defensible answer.
+    """
+    query = resolve_target(
+        TargetRequest(
+            education=[EducationLevel.TERTIARY],
+            education_source_phrase="well-educated",
+        )
+    )
+
+    # A notice, not a second filter: the levels are what they always were.
+    assert query.education == (EducationLevel.TERTIARY,)
+
+    (reading,) = [m for m in _readings(query) if "well-educated" in m]
+    # The reader gets words a person could use. `below_secondary` and `tertiary` are
+    # internal handles, and the sentence is worthless to a stranger if it prints them.
+    assert "tertiary" not in reading
+    assert "below_secondary" not in reading
+    assert _warnings(query) == []
+
+
+def test_a_transcribed_education_level_stays_silent_on_purpose() -> None:
+    """Most education targets are expected to disclose nothing, and that is correct rather
+    than a disclosure that failed to fire. "University graduates" maps onto a level by
+    vocabulary — there is no judgement for a reader to disagree with — so the model is
+    asked to record a phrase only where it inferred.
+
+    Named this way so the silence is not later read as a bug and "fixed". A model that
+    sets a level while forgetting the phrase lands here too, and is indistinguishable from
+    this case: silence is the safe reading of both.
+    """
+    query = resolve_target(TargetRequest(education=[EducationLevel.TERTIARY]))
+
+    assert query.education == (EducationLevel.TERTIARY,)
+    assert [m for m in _readings(query) if "education" in m.lower()] == []
+
+
+def test_one_phrase_covering_several_education_levels_reads_as_one_sentence() -> None:
+    """Levels are a set, so one vague word can cover more than one — and the sentence is
+    rendered in the schema's own order rather than the order the model listed them, so the
+    same request always reads identically. Passed here in reverse to pin that."""
+    query = resolve_target(
+        TargetRequest(
+            education=[EducationLevel.TERTIARY, EducationLevel.SECONDARY],
+            education_source_phrase="finished school",
+        )
+    )
+
+    (reading,) = [m for m in _readings(query) if "finished school" in m]
+    assert (
+        reading == 'Read "finished school" as secondary or university-level education.'
+    )
 
 
 def test_the_requested_traits_are_carried_as_data() -> None:

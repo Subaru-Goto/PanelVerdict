@@ -187,11 +187,19 @@ occupation is not an income word: "bankers", "nurses", "students" name jobs, and
 goes in `unmapped` because a panelist carries no occupation at all. When the \
 description names a band outright ("upper income"), fill `income_bands` and leave \
 `income_source_phrase` empty.
-6. List in `unmapped`, verbatim, every part of the description that none of the \
+6. A word about schooling that names no level — "well-educated", "highly educated", \
+"academic" — DOES map, the same way. Set `education` to the level or levels you judge it \
+to mean and put the words themselves in `education_source_phrase`. When the description \
+names the qualification outright ("university graduates", "with a degree", "no \
+high-school diploma"), fill `education` and leave `education_source_phrase` empty: \
+naming the qualification is a transcription, not a reading. A leaving age or a stage of \
+one country's school system ("left school at 16", "did an apprenticeship") names no \
+qualification — reaching a level from it is a reading, so record the phrase.
+7. List in `unmapped`, verbatim, every part of the description that none of the \
 attributes above can express — interests, hobbies, activities, occupations, brands, \
 household composition, city, anything else. Do not approximate it with a personality \
 trait or a demographic.
-7. Leave a field empty rather than guessing.\
+8. Leave a field empty rather than guessing.\
 """
 
 
