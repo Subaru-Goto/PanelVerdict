@@ -4,8 +4,64 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
 assignee: Subaru-Goto
-status: open
+status: closed
 ---
+
+## Closed 2026-07-31 — delivered in PR #86, and four of five risks cost nothing to check
+
+The swap is **behaviour-preserving by construction**, which is what made this
+cheap: built with the same arguments, `init_chat_model` returns a `ChatOpenAI`
+whose `model_dump()` is byte-identical to the old direct call's, and
+`init_embeddings` does the same for `OpenAIEmbeddings`. Same class, same config,
+therefore the same endpoint, the same `cost` field, the same wire bytes, the same
+embedding space. Risks 1, 2, 4 and 5 all reduce to that one observation, so the
+paid live run the Done-when scheduled became a confirmation rather than the
+evidence. Risk 1 turned out to be *safe by design* rather than merely handled:
+omitting the provider raises `ValueError` listing the providers it knows, so an
+OpenRouter `vendor/model` id can never be silently resolved against the wrong
+client.
+
+**Risk 3 was settled for free and then pinned, because the dangerous change is
+the tidy-looking one.** `configuration` — the vote cache's hash input — carries
+`{model, effort, ask}` and deliberately not how the request is *carried*, so
+`provider` never entered it and no paid vote was orphaned. But `provider` *is* a
+constructor argument the adapter binds, and the existing test was named
+`test_configuration_declares_everything_the_adapter_binds`, so a later reader
+folding it in for consistency is the obvious move — and it silently re-keys the
+whole `votes` ledger, because a cache miss is indistinguishable from a first ask:
+the next run re-buys the panel and reports success.
+`test_how_a_vote_is_carried_is_not_part_of_its_identity` now pins the key set.
+
+**The user amended the ticket mid-flight — the provider lives in `Settings`, not
+a module constant — and that amendment had a consequence the ticket hadn't
+priced.** `llm.py` takes config by injection precisely so it stays import-safe
+(`config.py` instantiates `settings` at module scope), so a config-owned provider
+*cannot* be read where it is used: it has to be threaded. Fourteen mechanical
+insertions across eight files followed, which is the measurement rather than the
+complaint — `(api_key, base_url, provider, model)` is a Data Clump, and it went
+to [tech-debt](tech-debt.md) rather than into this PR, whose whole defence was a
+diff small enough to read against a bit-identical client.
+
+**One claim was made, committed, and retracted.** A comment justified naming the
+field `langchain_provider` on the grounds that pydantic reserves the `model_`
+prefix. It does not — it guards `model_` names that shadow one of its own
+attributes, and `model_provider` shadows nothing (checked under
+`-W error::UserWarning`: accepted silently, no `protected_namespaces` needed). The
+field is `model_provider`, which also vacates the `LANGCHAIN_*` env prefix the
+framework reads its own configuration from.
+
+**A dependency became invisible.** `langchain-openai` is now required at runtime
+while no app module imports it — the initialisers resolve the provider through
+LangChain's fixed `_BUILTIN_PROVIDERS` registry and import it themselves. Left
+unremarked, "nothing imports this" is a plausible reason to drop it, and the app
+would stay importable while every model call broke. Noted in `pyproject.toml`.
+
+Review found no security issues and no hard standards violations; the security
+pass added one fact worth keeping — `base_url` survives the registry unchanged,
+so the OpenRouter key is never sent to `api.openai.com`.
+
+The live verification also re-found [024](024-fuzzy-age-words-in-targeting.md)
+and answered its open question as a side effect — written up in PR #87, not here.
 
 ## Goal
 
