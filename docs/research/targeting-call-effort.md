@@ -79,11 +79,15 @@ no ground truth, so not wrong, but a change.
 | `retirees in germany` | 437 | 320 | $0.00093 | **age 65–100, phrase `retirees`** |
 | `cautious young german homeowners…` | 531 | 384 | $0.00111 | age 18–34, `cautious` → conscientiousness |
 
-Reasoning falls ~3× against default, cost lands in a tight $0.0006–0.0011 band,
-and accuracy holds — *including* the two cases `minimal` got wrong. It also does
-something the default arm did **not**: `retirees` produced an age span rather than
-landing in `unmapped`, so [024](../../issues/024-fuzzy-age-words-in-targeting.md)'s
-rule 4 fires on a word the default arm dropped.
+Cost lands in a tight $0.0006–0.0011 band. Reasoning falls against default by
+**1–3.3× depending on the description** — 64→64, 640→192, 512→320, 1088→384 — so
+"~3×" would describe the best case, not the effect. The two cases `minimal` got
+wrong are both correct here, and **no accuracy regression was observed**; that is
+weaker than "accuracy holds", and it is all five samples can support.
+
+`retirees` behaved differently from the default arm, producing an age span of
+65–100 rather than landing in `unmapped`. **This was first written up as an
+accuracy win, and that reading does not survive scrutiny** — see the next section.
 
 Adoption is cheap here in a way it is not for votes.
 [010a](../../issues/010a-vote-usage-instrumentation.md) declined `low` on the vote
@@ -91,16 +95,43 @@ path because 014's position-bias rate and 015's framing sensitivity were both
 measured at default effort. The translator has no measurement pinned to default
 effort, and it has no fingerprint, so no cached work is invalidated.
 
+Process note, on the record: 032 says a `reasoning_effort` change deserves "its own
+ticket, not a line in this one". This one shipped inside a `fix(024)` commit. The
+reasoning is written down here rather than in a ticket of its own, which is less than
+that rule asks for.
+
+## `retirees` is a rule conflict, not an accuracy win — OPEN
+
+Prompt rule 4 covers *"an age word that states no numbers"*. Rule 5 sends
+**occupations** to `unmapped`, verbatim, and names occupations explicitly.
+`"retirees"` is an occupation. **Precedence between the two rules is undefined**,
+and the arms disagree about which wins: default sent it to `unmapped`, `low` and
+`minimal` read it as an age span.
+
+Neither answer is obviously right, which is what makes this a decision rather than a
+bug. The pool holds no occupation field, so `unmapped` is the *honest* reading —
+"we cannot filter on being retired". But an age span of 65–100 is arguably what the
+customer meant, and it filters. What is not defensible is the original write-up,
+which presented the span as evidence that lower effort **improved** accuracy: it is
+the same no-ground-truth judgement call this document already labels "not wrong, but
+a change" for `cautious` → neuroticism.
+
+Needs a decision, and it generalises: the same precedence question decides whether
+`"good earners"` is an income word or an occupation
+([037](../../issues/037-income-reading-is-never-disclosed.md)).
+
 ## `TARGET_MAX_COMPLETION_TOKENS = 4096`
 
-Derived, not chosen: **~3× the largest legitimate response observed** (1,275
-tokens, the four-attribute description at default effort). It must comfortably
-exceed real work, since hitting it turns a valid translation into a failure.
+**The next power of two above 3× the largest legitimate response observed** (1,275
+tokens, the four-attribute description at default effort — 3× is 3,825). The floor it
+has to clear is real work, since hitting the cap turns a valid translation into a
+failure; the exact headroom above that floor is a round number, not a derivation.
 
 Two things it buys, both observed rather than argued: it **caught a real runaway**
 in this measurement — `young japanese people` failed at the cap instead of
-reaching 65,536 — and it bounds the worst case at roughly **$0.008 instead of
-$0.13**, a ~16× reduction.
+reaching 65,536 — and it bounds the worst case near **$0.008 instead of $0.13**.
+That figure is a **lower** bound: the failing run was billed at the cap, so $0.008 is
+what the cap costs when it fires, not a ceiling on every possible failure.
 
 Kept independent of the effort change on purpose. Five samples cannot show that
 `low` prevents runaways; the cap is what makes the tail affordable either way.

@@ -45,35 +45,36 @@ type ReasoningEffort = Literal[
 # included — the read phase is just the part that ever ran long.
 VOTE_READ_TIMEOUT_SECONDS = 60
 
-# Both sourced from docs/research/targeting-call-effort.md, measured 2026-07-31 after a
-# single translation generated 65,536 completion tokens and cost $0.13 — about a whole
-# 200-vote run — before failing to parse.
+# Both measured in docs/research/targeting-call-effort.md, after one translation
+# generated 65,536 completion tokens and cost $0.13 — about a whole 200-vote run —
+# before failing to parse.
 #
-# The cap is ~3× the largest legitimate response observed (1,275 tokens), and it must
-# stay comfortably above real work because hitting it turns a valid translation into a
-# failure. It caught that runaway in the same measurement, and it bounds the worst case
-# at ~$0.008 rather than $0.13. It is a blast-radius bound, not a fit: the runaway is
-# stochastic — the same description succeeded twice and blew the cap once — so no
-# description is safe by inspection and nothing else makes the tail affordable.
+# 4096 is the next power of two above 3× the largest legitimate response observed
+# (1,275 tokens); the floor it has to clear is real work, because hitting the cap turns
+# a valid translation into a failure. It caught that runaway in the same measurement and
+# bounds the worst case near $0.008 — a lower bound, since the failing run was billed at
+# the cap. A blast-radius bound, not a fit: the runaway is stochastic, the same
+# description having succeeded twice and blown the cap once, so no description is safe
+# by inspection.
 TARGET_MAX_COMPLETION_TOKENS = 4096
 
 # `low`, because reasoning was 40–85% of every response while the JSON it produces never
 # exceeded ~190 tokens: this call is extraction against a typed schema, not deliberation.
-# It cuts reasoning ~3× with accuracy held, and it made rule 4 fire on "retirees", which
-# the default arm dropped into `unmapped`.
+# Reasoning falls by 1–3.3× depending on the description, and no accuracy regression was
+# observed across five calls — which is weaker than "accuracy holds" and is all five
+# samples support.
 #
 # Two rungs were rejected on evidence. `none` is refused by the endpoint outright
-# ("Reasoning is mandatory for this endpoint and cannot be disabled") — loudly, unlike
-# the unrecognised-effort trap in 010a. `minimal` zeroes reasoning and is cheapest, but
-# loses the country: "young japanese people" came back with "japanese people" in
-# `unmapped` instead of Japan in `regions`, which would draw a panel from the whole pool
-# without saying so.
+# ("Reasoning is mandatory for this endpoint and cannot be disabled") — loudly, unlike an
+# unrecognised effort, which is accepted and silently does nothing. `minimal` zeroes
+# reasoning and is cheapest, but loses the country: "young japanese people" came back
+# with "japanese people" in `unmapped` instead of Japan in `regions`, which would draw a
+# panel from the whole pool without saying so.
 #
-# Adoptable here and not on the vote path: 010a declined `low` for votes because 014's
-# position-bias rate and 015's framing sensitivity were measured at default effort. No
-# measurement is pinned to this call's effort, and it has no fingerprint, so nothing
-# cached is invalidated. Rests on one sample per description — 016's golden set is what
-# would justify it properly.
+# Adoptable here and not on the vote path, where the published position-bias and framing
+# figures were both taken at default effort. Nothing is pinned to this call's effort and
+# it has no fingerprint, so no cached work is invalidated. Rests on one sample per
+# description; the write-up says what that does and does not establish.
 TARGET_REASONING_EFFORT: ReasoningEffort = "low"
 
 # Held apart from the question so that varying the question cannot reach the
@@ -440,22 +441,24 @@ class OpenRouterTargetTranslator:
     def __init__(
         self, *, api_key: str, base_url: str, provider: str, model: str
     ) -> None:
-        # Bounded like a vote, and not by a new constant: [032] derived the client's
-        # deadline treating this as "one more request of the same family" as a vote, so
-        # leaving it unbounded made a published derivation untrue rather than merely
-        # risky. Found the way it had to be found — a bare translation ran past ten
-        # minutes, the SDK's own default (600s, retried), on the critical path of every
-        # targeted run.
+        # Bounded like a vote rather than by a new constant, because the client-side
+        # deadline was already derived treating this as one more request of the same
+        # family as a vote — so an unbounded translator contradicted a derivation the
+        # repo had already written down. Found the way it had to be: a bare translation
+        # ran past ten minutes, the SDK's own default of 600s retried, on the critical
+        # path of every targeted run.
         #
         # This bounds an *idle* connection and nothing else. A model streaming output is
         # not idle, so the timeout cannot stop a runaway generation — that is what
         # TARGET_MAX_COMPLETION_TOKENS is for, and the two are deliberately independent.
         #
-        # `reasoning_effort` and not the `reasoning={"effort": ...}` object, for the same
-        # reason the vote path spells it this way: the object form switches langchain to
-        # the Responses API, whose response carries no `token_usage` and therefore no
-        # `cost` — and every figure in targeting-call-effort.md was read off exactly that
-        # field.
+        # `max_retries` matches the vote path's reasoning, not its traffic: the number is
+        # the SDK's own default stated rather than inherited, so a change to the library
+        # cannot quietly alter what a failure costs here.
+        #
+        # `reasoning_effort` and not the `reasoning={"effort": ...}` object — see the note
+        # on the vote adapter, which records why. Same trap, and it matters more here
+        # because every figure in targeting-call-effort.md came off `cost`.
         self._model = init_chat_model(
             model=model,
             model_provider=provider,
@@ -488,6 +491,11 @@ class OpenRouterEmbedder:
         # would need its own measurement, and seeding is resumable — so being generous
         # costs one slow batch, while being unbounded costs a seed run that hangs with
         # thousands of personas left to write.
+        #
+        # `max_retries` is stated rather than inherited for the same reason as elsewhere
+        # in this module. Unlike the chat clients this is a *different* initialiser, so
+        # the SDK's default is not assumed to match — it is set to the value the rest of
+        # the module uses, which is the point.
         self._embeddings = init_embeddings(
             model=model,
             provider=provider,
