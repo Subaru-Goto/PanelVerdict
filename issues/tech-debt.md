@@ -77,7 +77,7 @@ is for.
 Not to be confused with a fix for the *naming*: `provider` means "which langchain
 integration package builds the client", not "which service is called" — the value is
 `openai` while every request goes to OpenRouter. That reasoning lives on
-`Settings.langchain_provider` and should move onto the value object with the fields.
+`Settings.model_provider` and should move onto the value object with the fields.
 
 ## ~~`TargetQuery.disposition` keeps the prose, not the traits~~ (resolved 2026-07-27)
 

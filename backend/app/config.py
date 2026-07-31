@@ -74,10 +74,7 @@ class Settings(BaseSettings):
     # which it declines to guess at. Verified — omitting it raises `ValueError`
     # listing the providers it knows, so a missing provider fails loudly instead
     # of resolving against the wrong client.
-    #
-    # Named `langchain_provider` and not `model_provider` because pydantic reserves
-    # the `model_` prefix for its own namespace.
-    langchain_provider: str = "openai"
+    model_provider: str = "openai"
     # Defaults to the cheapest profile on purpose: every size here is real money, so
     # forgetting to choose should cost a cent rather than a tenth of the credit cap.
     profile: ProfileName = "dev"
