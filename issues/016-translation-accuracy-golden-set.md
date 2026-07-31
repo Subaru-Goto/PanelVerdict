@@ -61,6 +61,14 @@ failing the model for disagreeing with a guess of ours.
   model will very likely set `gender="female"` because the word is there.
 - *"a dad joke calendar"*, *"gifts for grandparents"* → same shape: a gendered or
   age-marked noun sitting in the **creative** rather than in the audience.
+- *"well-educated"*, *"academic"*, *"left school at 16"* → which levels? Added
+  2026-07-31 by [038](038-education-reading-is-never-disclosed.md), which gave education
+  the same rule. Note the split *within* education, because the table above already
+  carries its other half: *"with a university degree"* stays a **hard** requirement — it
+  names the qualification, so it is a transcription with a right answer — while
+  *"well-educated"* has none (tertiary only, or secondary too?). The leaving-age case is
+  the one worth remembering: it looks like a transcription and is not, because reaching a
+  level from an age runs through one country's school system.
 - *"young"*, *"old"*, *"middle-aged"* → which span? Added 2026-07-31, when
   [024](024-fuzzy-age-words-in-targeting.md) decided the **model** sets the bracket and
   discloses the phrase it read it from. So this is a judgement call by construction:

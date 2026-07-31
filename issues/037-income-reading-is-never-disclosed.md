@@ -4,7 +4,7 @@ labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
 assignee: Subaru-Goto
-status: open
+status: closed
 ---
 
 ## Problem (found 2026-07-31, while working [024](024-fuzzy-age-words-in-targeting.md))
@@ -62,6 +62,12 @@ age field is already working, a general shape changes what the model must emit �
 prompt change, which is the riskiest surface — and education is the *third* field, which
 is where the signal to generalise actually lands. So: generalise at 038, migrating all
 three at once, rather than half-generalising now.
+
+> **Reversed at [038](038-education-reading-is-never-disclosed.md), 2026-07-31.** The
+> third field arrived and the saving did not: each of the three renders its reading
+> differently — a span, a set of bands, a set of levels — so a shared carrier unifies only
+> the transport of the phrase and none of the sentence, while still costing the prompt
+> change. Three flat fields, and the prediction recorded here is on the record as tested.
 
 **Copy: `Read "good earners" as middle or upper income.`** Bands, not a share of the
 pool. This was decided rather than forced: a non-contiguous request ("rich and poor",
