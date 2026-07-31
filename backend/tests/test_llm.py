@@ -14,7 +14,18 @@ from langchain_core.output_parsers.pydantic import PydanticOutputParser
 from langchain_openai import ChatOpenAI
 from openai import APIStatusError
 
-from app.llm import OpenRouterPanelLLM, _vote_response, build_vote_messages
+from app.llm import (
+    TARGET_MAX_COMPLETION_TOKENS,
+    TARGET_REASONING_EFFORT,
+    VOTE_READ_TIMEOUT_SECONDS,
+    OpenRouterEmbedder,
+    OpenRouterJudge,
+    OpenRouterPanelLLM,
+    OpenRouterTargetTranslator,
+    _vote_response,
+    analyst_chat_model,
+    build_vote_messages,
+)
 from app.schemas import PanelVoteOutput
 from app.vote import OutOfCredit
 
@@ -429,6 +440,72 @@ def test_the_vote_call_carries_the_measured_read_timeout() -> None:
     )
 
     assert _bound_model(llm).request_timeout == 60
+
+
+def test_the_translator_caps_its_output_and_asks_for_little_reasoning() -> None:
+    """One call generated 65,536 completion tokens and cost $0.13 — about a whole
+    200-vote run — before failing to parse (docs/research/targeting-call-effort.md).
+
+    Both settings are asserted here and neither replaces the other: the cap bounds a
+    runaway the timeout cannot see, since a model streaming output is not idle, and the
+    effort cuts the reasoning that was 40-85% of every response. The runaway is
+    stochastic — the same description succeeded twice and blew the cap once — so five
+    samples cannot retire the cap.
+
+    `_use_responses_api` is pinned for the reason the vote path pins it: the
+    `reasoning={...}` object form switches endpoints and drops `cost`, which is the field
+    every figure in that write-up was read from.
+    """
+    translator = OpenRouterTargetTranslator(
+        api_key="test",
+        base_url="http://openrouter.invalid",
+        provider="openai",
+        model="openai/gpt-5-mini",
+    )
+    bound = translator._model.steps[0]
+
+    assert bound.max_tokens == TARGET_MAX_COMPLETION_TOKENS
+    assert bound._default_params["reasoning_effort"] == TARGET_REASONING_EFFORT
+    assert bound._use_responses_api({}) is False
+
+
+def test_every_paid_call_is_bounded_and_none_inherits_the_sdk_default() -> None:
+    """The translator, the embedder and the judge were all unbounded until a bare
+    translation hung past ten minutes — the SDK's own default, retried, on the critical
+    path of every targeted run.
+
+    Written as one table rather than three tests because the defect was *uniformity*:
+    two constructions had been given a bound and three had been missed, and nothing
+    failed when they were. A new paid client added without a timeout should break this.
+
+    Not a new constant — `VOTE_READ_TIMEOUT_SECONDS` is reused. 032 had already derived
+    the client deadline calling the translator "one more request of the same family" as
+    a vote, so an unbounded translator made a published derivation untrue.
+    """
+    transport = {
+        "api_key": "test",
+        "base_url": "http://openrouter.invalid",
+        "provider": "openai",
+    }
+    bound = {
+        "translator": OpenRouterTargetTranslator(
+            **transport, model="openai/gpt-5-mini"
+        )._model.steps[0],
+        "judge": OpenRouterJudge(**transport, model="openai/gpt-5-mini")._model.steps[
+            0
+        ],
+        "embedder": OpenRouterEmbedder(
+            **transport, model="openai/text-embedding-3-small"
+        )._embeddings,
+        "analyst": analyst_chat_model(**transport, model="openai/gpt-5-mini"),
+    }
+
+    assert {name: client.request_timeout for name, client in bound.items()} == {
+        name: float(VOTE_READ_TIMEOUT_SECONDS) for name in bound
+    }
+    assert {name: client.max_retries for name, client in bound.items()} == {
+        name: 2 for name in bound
+    }
 
 
 class TestOutOfCreditTranslation:

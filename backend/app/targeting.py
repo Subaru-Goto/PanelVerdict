@@ -144,13 +144,19 @@ def _resolve_regions(
 
 
 def _resolve_ages(
-    min_age: int | None, max_age: int | None
+    min_age: int | None, max_age: int | None, source_phrase: str | None = None
 ) -> tuple[int, int, list[Notice]]:
     """Clamp the requested span onto the pool's, and say so when that bites.
 
     Each bound is clamped independently, so a span entirely outside the pool ends up
     inverted and matches nobody. That is the honest answer — widening it back to the
     pool's own span would answer "under 18" with the whole panel.
+
+    `source_phrase` is set only when the span came from a vague word, so its presence
+    is what decides whether there is a reading to disclose. The disclosure quotes the
+    **resolved** span rather than the requested one: a clamp already emits its own
+    warning naming both, and a reading that quoted the pre-clamp numbers would sit
+    beside that warning contradicting it about what actually filtered.
     """
     low = MIN_PERSONA_AGE if min_age is None else max(min_age, MIN_PERSONA_AGE)
     high = MAX_PERSONA_AGE if max_age is None else min(max_age, MAX_PERSONA_AGE)
@@ -166,18 +172,27 @@ def _resolve_ages(
         f"-{'any' if max_age is None else max_age}"
     )
     if low > high:
+        # No reading here even when one was read: the resolved span is inverted, so
+        # 'read "teenagers" as ages 18-17' would be gibberish printed next to a warning
+        # that already names the numbers asked for.
         return low, high, [_warn(f"The pool covers {span}; nobody in it is {asked}.")]
+
+    # Guarded on a bound and not on the phrase alone: a phrase with no span narrows
+    # nothing, and "read 'young' as ages 18-100" would announce a filter that is not
+    # there. A stray phrase is a model slip, and degrading to silence beats raising —
+    # nothing in this module fails a run over a cosmetic inconsistency.
+    notices = (
+        [_reading(f'Read "{source_phrase}" as ages {low}-{high}.')]
+        if source_phrase is not None and (min_age is not None or max_age is not None)
+        else []
+    )
     if narrowed:
-        return (
-            low,
-            high,
-            [
-                _warn(
-                    f"The pool covers {span}, so the requested {asked} became {low}-{high}."
-                )
-            ],
+        notices.append(
+            _warn(
+                f"The pool covers {span}, so the requested {asked} became {low}-{high}."
+            )
         )
-    return low, high, []
+    return low, high, notices
 
 
 def _resolve_traits(
@@ -224,7 +239,9 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
     described, and only the notices distinguish those from a panel that matched.
     """
     countries, coverage, notices = _resolve_regions(request.regions)
-    min_age, max_age, age_notices = _resolve_ages(request.min_age, request.max_age)
+    min_age, max_age, age_notices = _resolve_ages(
+        request.min_age, request.max_age, request.age_source_phrase
+    )
     traits, trait_notices = _resolve_traits(request.traits)
     notices += age_notices + trait_notices
 

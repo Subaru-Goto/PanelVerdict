@@ -45,6 +45,37 @@ type ReasoningEffort = Literal[
 # included — the read phase is just the part that ever ran long.
 VOTE_READ_TIMEOUT_SECONDS = 60
 
+# Both sourced from docs/research/targeting-call-effort.md, measured 2026-07-31 after a
+# single translation generated 65,536 completion tokens and cost $0.13 — about a whole
+# 200-vote run — before failing to parse.
+#
+# The cap is ~3× the largest legitimate response observed (1,275 tokens), and it must
+# stay comfortably above real work because hitting it turns a valid translation into a
+# failure. It caught that runaway in the same measurement, and it bounds the worst case
+# at ~$0.008 rather than $0.13. It is a blast-radius bound, not a fit: the runaway is
+# stochastic — the same description succeeded twice and blew the cap once — so no
+# description is safe by inspection and nothing else makes the tail affordable.
+TARGET_MAX_COMPLETION_TOKENS = 4096
+
+# `low`, because reasoning was 40–85% of every response while the JSON it produces never
+# exceeded ~190 tokens: this call is extraction against a typed schema, not deliberation.
+# It cuts reasoning ~3× with accuracy held, and it made rule 4 fire on "retirees", which
+# the default arm dropped into `unmapped`.
+#
+# Two rungs were rejected on evidence. `none` is refused by the endpoint outright
+# ("Reasoning is mandatory for this endpoint and cannot be disabled") — loudly, unlike
+# the unrecognised-effort trap in 010a. `minimal` zeroes reasoning and is cheapest, but
+# loses the country: "young japanese people" came back with "japanese people" in
+# `unmapped` instead of Japan in `regions`, which would draw a panel from the whole pool
+# without saying so.
+#
+# Adoptable here and not on the vote path: 010a declined `low` for votes because 014's
+# position-bias rate and 015's framing sensitivity were measured at default effort. No
+# measurement is pinned to this call's effort, and it has no fingerprint, so nothing
+# cached is invalidated. Rests on one sample per description — 016's golden set is what
+# would justify it properly.
+TARGET_REASONING_EFFORT: ReasoningEffort = "low"
+
 # Held apart from the question so that varying the question cannot reach the
 # positional and content-based-reason instructions. An experiment that reworded those
 # would ablate the question and instruction-following together.
@@ -140,11 +171,18 @@ geography finer than a country and a panel drawn for the whole country is not th
 one that was asked for.
 3. Read personality only from words about temperament or disposition, and put the \
 words you read it from in `source_phrase`.
-4. List in `unmapped`, verbatim, every part of the description that none of the \
+4. An age word that states no numbers — "young", "middle-aged", "elderly" — DOES map. \
+Set `min_age` and/or `max_age` to the span you judge those words to mean, and put the \
+words themselves in `age_source_phrase`. Never send such a word to `unmapped`, and \
+never leave the span empty for it: rule 6 does not apply here, because the reader is \
+shown your reading and can disagree with it. When the description gives numbers \
+instead ("in their 40s", "over 50"), fill the bounds and leave `age_source_phrase` \
+empty — transcribing a number is not a reading, and reporting it as one is noise.
+5. List in `unmapped`, verbatim, every part of the description that none of the \
 attributes above can express — interests, hobbies, activities, occupations, brands, \
 household composition, city, anything else. Do not approximate it with a personality \
 trait or a demographic.
-5. Leave a field empty rather than guessing.\
+6. Leave a field empty rather than guessing.\
 """
 
 
@@ -402,11 +440,31 @@ class OpenRouterTargetTranslator:
     def __init__(
         self, *, api_key: str, base_url: str, provider: str, model: str
     ) -> None:
+        # Bounded like a vote, and not by a new constant: [032] derived the client's
+        # deadline treating this as "one more request of the same family" as a vote, so
+        # leaving it unbounded made a published derivation untrue rather than merely
+        # risky. Found the way it had to be found — a bare translation ran past ten
+        # minutes, the SDK's own default (600s, retried), on the critical path of every
+        # targeted run.
+        #
+        # This bounds an *idle* connection and nothing else. A model streaming output is
+        # not idle, so the timeout cannot stop a runaway generation — that is what
+        # TARGET_MAX_COMPLETION_TOKENS is for, and the two are deliberately independent.
+        #
+        # `reasoning_effort` and not the `reasoning={"effort": ...}` object, for the same
+        # reason the vote path spells it this way: the object form switches langchain to
+        # the Responses API, whose response carries no `token_usage` and therefore no
+        # `cost` — and every figure in targeting-call-effort.md was read off exactly that
+        # field.
         self._model = init_chat_model(
             model=model,
             model_provider=provider,
             base_url=base_url,
             api_key=api_key,
+            max_retries=2,
+            timeout=VOTE_READ_TIMEOUT_SECONDS,
+            max_tokens=TARGET_MAX_COMPLETION_TOKENS,
+            reasoning_effort=TARGET_REASONING_EFFORT,
         ).with_structured_output(TargetRequest)
 
     def translate(self, *, description: str) -> TargetRequest:
@@ -424,11 +482,19 @@ class OpenRouterEmbedder:
     ) -> None:
         # `provider=`, not `model_provider=`: the embeddings initialiser spells the
         # same argument differently from the chat one.
+        # The vote's timeout is reused as a **ceiling**, not an estimate: an embedding
+        # call does strictly less work than a reasoned chat completion, so a bound
+        # measured on the heavier request safely covers the lighter one. A tighter figure
+        # would need its own measurement, and seeding is resumable — so being generous
+        # costs one slow batch, while being unbounded costs a seed run that hangs with
+        # thousands of personas left to write.
         self._embeddings = init_embeddings(
             model=model,
             provider=provider,
             base_url=base_url,
             api_key=api_key,
+            max_retries=2,
+            timeout=VOTE_READ_TIMEOUT_SECONDS,
         )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -442,11 +508,16 @@ class OpenRouterJudge:
     def __init__(
         self, *, api_key: str, base_url: str, provider: str, model: str
     ) -> None:
+        # Same model and provider as a vote, so the same bound, per `analyst_chat_model`'s
+        # precedent for reusing it rather than minting a second number. This one runs
+        # inside the seed CLI, where an unbounded hang stalls a paid pool build.
         self._model = init_chat_model(
             model=model,
             model_provider=provider,
             base_url=base_url,
             api_key=api_key,
+            max_retries=2,
+            timeout=VOTE_READ_TIMEOUT_SECONDS,
         ).with_structured_output(PlausibilityScore)
 
     def score(self, *, prompt: str) -> PlausibilityScore:
