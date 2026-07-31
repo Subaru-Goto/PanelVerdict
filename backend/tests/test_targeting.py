@@ -353,6 +353,66 @@ def test_an_age_range_the_pool_cannot_reach_at_all_is_left_empty() -> None:
     assert len(_warnings(query)) == 1
 
 
+def test_a_fuzzy_age_word_is_disclosed_with_the_words_it_was_read_from() -> None:
+    """The span belongs to the model, not to us: "young" has no correct bracket, which
+    is why no bracket was legislated. What earns that freedom is saying so out loud —
+    the customer sees which of their own words produced the filter, and can disagree.
+
+    Assert the disclosure, never the numbers. Pinning 18-30 here would fail a model
+    that answered 18-35 for being reasonable, and a suite that punishes a defensible
+    answer gets silenced the first time it fires.
+    """
+    query = resolve_target(
+        TargetRequest(min_age=18, max_age=30, age_source_phrase="young")
+    )
+
+    assert (query.min_age, query.max_age) == (18, 30)
+    (reading,) = [m for m in _readings(query) if "young" in m]
+    assert "18-30" in reading
+    assert _warnings(query) == []
+
+
+def test_an_explicit_age_range_discloses_nothing() -> None:
+    """A customer who typed numbers made no judgement for us to report back.
+
+    Same lesson as `test_an_open_upper_bound_is_not_a_narrowing`, which exists because
+    a notice firing when nothing happened was caught live: it teaches the reader to
+    skip that whole category, and then the notice that matters gets skipped too.
+    """
+    query = resolve_target(TargetRequest(min_age=25, max_age=30))
+
+    assert (query.min_age, query.max_age) == (25, 30)
+    assert [m for m in _readings(query) if "25-30" in m] == []
+
+
+def test_a_clamped_reading_is_disclosed_as_what_actually_filtered() -> None:
+    """Two notices fire here and they must agree. The clamp warning names the requested
+    span and the resolved one; the reading quotes the resolved one, so the customer is
+    never told "young" meant a range the panel was not drawn from.
+    """
+    query = resolve_target(
+        TargetRequest(min_age=13, max_age=30, age_source_phrase="young")
+    )
+
+    (reading,) = [m for m in _readings(query) if "young" in m]
+    assert "18-30" in reading
+    assert "13" not in reading
+    assert len(_warnings(query)) == 1
+
+
+def test_a_reading_the_pool_cannot_reach_is_left_to_the_warning() -> None:
+    """Clamping 13-17 leaves 18-17, which matches nobody. 'Read "teenagers" as ages
+    18-17' is gibberish, and the warning already names the numbers that were asked for —
+    so the reading is withheld rather than rendered."""
+    query = resolve_target(
+        TargetRequest(min_age=13, max_age=17, age_source_phrase="teenagers")
+    )
+
+    assert query.min_age > query.max_age
+    assert [m for m in _readings(query) if "teenagers" in m] == []
+    assert len(_warnings(query)) == 1
+
+
 def test_income_bands_expand_into_the_quintiles_they_cover() -> None:
     query = resolve_target(TargetRequest(income_bands=["lower", "upper"]))
 

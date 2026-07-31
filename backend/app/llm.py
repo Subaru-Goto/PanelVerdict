@@ -140,11 +140,18 @@ geography finer than a country and a panel drawn for the whole country is not th
 one that was asked for.
 3. Read personality only from words about temperament or disposition, and put the \
 words you read it from in `source_phrase`.
-4. List in `unmapped`, verbatim, every part of the description that none of the \
+4. An age word that states no numbers — "young", "middle-aged", "elderly" — DOES map. \
+Set `min_age` and/or `max_age` to the span you judge those words to mean, and put the \
+words themselves in `age_source_phrase`. Never send such a word to `unmapped`, and \
+never leave the span empty for it: rule 6 does not apply here, because the reader is \
+shown your reading and can disagree with it. When the description gives numbers \
+instead ("in their 40s", "over 50"), fill the bounds and leave `age_source_phrase` \
+empty — transcribing a number is not a reading, and reporting it as one is noise.
+5. List in `unmapped`, verbatim, every part of the description that none of the \
 attributes above can express — interests, hobbies, activities, occupations, brands, \
 household composition, city, anything else. Do not approximate it with a personality \
 trait or a demographic.
-5. Leave a field empty rather than guessing.\
+6. Leave a field empty rather than guessing.\
 """
 
 

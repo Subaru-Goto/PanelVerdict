@@ -319,6 +319,17 @@ class TargetRequest(BaseModel):
     # span and told so, where a validation error would only say the call failed.
     min_age: int | None = Field(default=None, ge=0)
     max_age: int | None = Field(default=None, ge=0)
+    # The words a vague age span was read from — "young", "elderly" — and nothing when
+    # the customer gave numbers. Its *presence* is the signal that the model judged
+    # rather than transcribed, which is what lets `resolve_target` disclose the reading
+    # without having to tell inferred from explicit itself: it never sees the
+    # description, so it could not.
+    #
+    # No bracket for a vague word is written down anywhere in this project, on purpose —
+    # the set of such words has no end and every bracket would be a constant of ours
+    # with no source. The model's span is disclosed instead of legislated, so the reader
+    # can disagree with it. Same trade as `TraitRequest.source_phrase`.
+    age_source_phrase: str | None = None
     gender: Gender | None = None
     income_bands: list[IncomeBand] = []
     education: list[EducationLevel] = []
