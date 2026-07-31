@@ -14,7 +14,16 @@ from langchain_core.output_parsers.pydantic import PydanticOutputParser
 from langchain_openai import ChatOpenAI
 from openai import APIStatusError
 
-from app.llm import OpenRouterPanelLLM, _vote_response, build_vote_messages
+from app.llm import (
+    VOTE_READ_TIMEOUT_SECONDS,
+    OpenRouterEmbedder,
+    OpenRouterJudge,
+    OpenRouterPanelLLM,
+    OpenRouterTargetTranslator,
+    _vote_response,
+    analyst_chat_model,
+    build_vote_messages,
+)
 from app.schemas import PanelVoteOutput
 from app.vote import OutOfCredit
 
@@ -429,6 +438,45 @@ def test_the_vote_call_carries_the_measured_read_timeout() -> None:
     )
 
     assert _bound_model(llm).request_timeout == 60
+
+
+def test_every_paid_call_is_bounded_and_none_inherits_the_sdk_default() -> None:
+    """The translator, the embedder and the judge were all unbounded until a bare
+    translation hung past ten minutes — the SDK's own default, retried, on the critical
+    path of every targeted run.
+
+    Written as one table rather than three tests because the defect was *uniformity*:
+    two constructions had been given a bound and three had been missed, and nothing
+    failed when they were. A new paid client added without a timeout should break this.
+
+    Not a new constant — `VOTE_READ_TIMEOUT_SECONDS` is reused. 032 had already derived
+    the client deadline calling the translator "one more request of the same family" as
+    a vote, so an unbounded translator made a published derivation untrue.
+    """
+    transport = {
+        "api_key": "test",
+        "base_url": "http://openrouter.invalid",
+        "provider": "openai",
+    }
+    bound = {
+        "translator": OpenRouterTargetTranslator(
+            **transport, model="openai/gpt-5-mini"
+        )._model.steps[0],
+        "judge": OpenRouterJudge(**transport, model="openai/gpt-5-mini")._model.steps[
+            0
+        ],
+        "embedder": OpenRouterEmbedder(
+            **transport, model="openai/text-embedding-3-small"
+        )._embeddings,
+        "analyst": analyst_chat_model(**transport, model="openai/gpt-5-mini"),
+    }
+
+    assert {name: client.request_timeout for name, client in bound.items()} == {
+        name: float(VOTE_READ_TIMEOUT_SECONDS) for name in bound
+    }
+    assert {name: client.max_retries for name, client in bound.items()} == {
+        name: 2 for name in bound
+    }
 
 
 class TestOutOfCreditTranslation:

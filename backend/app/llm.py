@@ -409,11 +409,23 @@ class OpenRouterTargetTranslator:
     def __init__(
         self, *, api_key: str, base_url: str, provider: str, model: str
     ) -> None:
+        # Bounded like a vote, and not by a new constant: [032] derived the client's
+        # deadline treating this as "one more request of the same family" as a vote, so
+        # leaving it unbounded made a published derivation untrue rather than merely
+        # risky. Found the way it had to be found — a bare translation ran past ten
+        # minutes, the SDK's own default (600s, retried), on the critical path of every
+        # targeted run.
+        #
+        # This bounds an *idle* connection and nothing else. A model streaming output is
+        # not idle, so the timeout cannot stop a runaway generation — see
+        # TARGET_MAX_COMPLETION_TOKENS for that half.
         self._model = init_chat_model(
             model=model,
             model_provider=provider,
             base_url=base_url,
             api_key=api_key,
+            max_retries=2,
+            timeout=VOTE_READ_TIMEOUT_SECONDS,
         ).with_structured_output(TargetRequest)
 
     def translate(self, *, description: str) -> TargetRequest:
@@ -431,11 +443,19 @@ class OpenRouterEmbedder:
     ) -> None:
         # `provider=`, not `model_provider=`: the embeddings initialiser spells the
         # same argument differently from the chat one.
+        # The vote's timeout is reused as a **ceiling**, not an estimate: an embedding
+        # call does strictly less work than a reasoned chat completion, so a bound
+        # measured on the heavier request safely covers the lighter one. A tighter figure
+        # would need its own measurement, and seeding is resumable — so being generous
+        # costs one slow batch, while being unbounded costs a seed run that hangs with
+        # thousands of personas left to write.
         self._embeddings = init_embeddings(
             model=model,
             provider=provider,
             base_url=base_url,
             api_key=api_key,
+            max_retries=2,
+            timeout=VOTE_READ_TIMEOUT_SECONDS,
         )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -449,11 +469,16 @@ class OpenRouterJudge:
     def __init__(
         self, *, api_key: str, base_url: str, provider: str, model: str
     ) -> None:
+        # Same model and provider as a vote, so the same bound, per `analyst_chat_model`'s
+        # precedent for reusing it rather than minting a second number. This one runs
+        # inside the seed CLI, where an unbounded hang stalls a paid pool build.
         self._model = init_chat_model(
             model=model,
             model_provider=provider,
             base_url=base_url,
             api_key=api_key,
+            max_retries=2,
+            timeout=VOTE_READ_TIMEOUT_SECONDS,
         ).with_structured_output(PlausibilityScore)
 
     def score(self, *, prompt: str) -> PlausibilityScore:
