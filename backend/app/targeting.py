@@ -52,8 +52,8 @@ _NO_MATCH = "No panelists match this target, so no panel was drawn."
 # person ("completed a university degree") for the vote prompt, and do not compose into a
 # list of what a filter kept.
 _EDUCATION_READING_PHRASE: dict[EducationLevel, str] = {
-    EducationLevel.BELOW_SECONDARY: "less than secondary",
-    EducationLevel.SECONDARY: "secondary",
+    EducationLevel.BELOW_SECONDARY: "no secondary-school",
+    EducationLevel.SECONDARY: "secondary-school",
     EducationLevel.TERTIARY: "university-level",
 }
 
@@ -193,9 +193,12 @@ def _resolve_ages(
     # nothing, and "read 'young' as ages 18-100" would announce a filter that is not
     # there. A stray phrase is a model slip, and degrading to silence beats raising —
     # nothing in this module fails a run over a cosmetic inconsistency.
+    #
+    # Falsy and not `is not None`, because the model is told to leave the field *empty*
+    # and an empty string is what a JSON emitter reaches for when told that.
     notices = (
         [_reading(f'Read "{source_phrase}" as ages {low}-{high}.')]
-        if source_phrase is not None and (min_age is not None or max_age is not None)
+        if source_phrase and (min_age is not None or max_age is not None)
         else []
     )
     if narrowed:
@@ -234,7 +237,10 @@ def _resolve_income(
     # indistinguishable from a band the customer named outright, so silence is the only
     # honest reading of it. A model slip lands here too, and degrading to silence beats
     # raising — nothing in this module fails a run over a cosmetic gap.
-    if source_phrase is None or not bands:
+    #
+    # Falsy and not `is not None`, because the model is told to leave the field *empty*
+    # and an empty string is what a JSON emitter reaches for when told that.
+    if not source_phrase or not bands:
         return quintiles, []
 
     requested = set(bands)
@@ -261,14 +267,15 @@ def _resolve_education(
     # Silent unless a phrase and levels are both present, for the reasons the income
     # reading spells out: a phrase alone filters nothing, and an absent phrase cannot be
     # told from an attainment the customer named outright.
-    if source_phrase is None or not kept:
+    #
+    # Falsy rather than `is not None`, because the instruction the model is given is to
+    # leave the field *empty* — and an empty string is what a JSON emitter reaches for
+    # when told that. `Read "" as …` is the one rendering worse than silence.
+    if not source_phrase or not kept:
         return kept, []
 
-    requested = set(kept)
     named = " or ".join(
-        phrase
-        for level, phrase in _EDUCATION_READING_PHRASE.items()
-        if level in requested
+        phrase for level, phrase in _EDUCATION_READING_PHRASE.items() if level in kept
     )
     return kept, [_reading(f'Read "{source_phrase}" as {named} education.')]
 

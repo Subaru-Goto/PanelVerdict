@@ -485,13 +485,24 @@ def test_one_phrase_covering_several_bands_reads_as_one_sentence() -> None:
 
 
 def test_every_education_level_has_reader_facing_wording() -> None:
-    """The disclosure looks each level up in a phrase table, so a level added to the enum
-    without an entry would typecheck and then KeyError on a real target — the same drift
-    the trait-name and income-band checks above guard against."""
+    """The disclosure looks each level up in a phrase table, and a level added to the enum
+    without an entry would not raise — the lookup iterates the table, so that level would
+    simply go **unmentioned** while still filtering the panel. A silent under-disclosure is
+    the exact defect this whole mechanism exists to remove, which is why the drift is worth
+    a test at all — the same reason the trait-name and income-band checks above exist.
+
+    The second assertion is the one with teeth. `tertiary` and `secondary` are ordinary
+    strings, so a table that just echoed the enum would satisfy any check for shape — and
+    "as tertiary education" is exactly the sentence the reader must never get. Each level
+    is named by the institution a person would name, so no wording can equal its own
+    handle.
+    """
     assert tuple(_EDUCATION_READING_PHRASE) == tuple(EducationLevel)
-    assert all("_" not in phrase for phrase in _EDUCATION_READING_PHRASE.values()), (
-        "an enum handle leaked into wording meant for a reader"
-    )
+    handles = {level.value for level in EducationLevel}
+    echoed = [
+        phrase for phrase in _EDUCATION_READING_PHRASE.values() if phrase in handles
+    ]
+    assert echoed == [], "wording meant for a reader is echoing the enum handle"
 
 
 def test_the_requested_education_levels_are_carried_and_deduplicated() -> None:
@@ -565,9 +576,37 @@ def test_one_phrase_covering_several_education_levels_reads_as_one_sentence() ->
     )
 
     (reading,) = [m for m in _readings(query) if "finished school" in m]
-    assert (
-        reading == 'Read "finished school" as secondary or university-level education.'
+    assert reading == (
+        'Read "finished school" as secondary-school or university-level education.'
     )
+
+
+def test_an_empty_source_phrase_is_silence_on_every_field_that_takes_one() -> None:
+    """One hole in three places, so one test says so. The prompt tells the model to leave
+    the field *empty* when it transcribed rather than judged, and an empty string is what a
+    JSON emitter reaches for when told that — so `is not None` would let `Read "" as ages
+    18-30.` through, which is the one rendering worse than saying nothing.
+
+    Asserted on all three fields together because a guard fixed on one and not the others
+    would read as a deliberate distinction between them. There is none.
+    """
+    query = resolve_target(
+        TargetRequest(
+            min_age=25,
+            max_age=35,
+            age_source_phrase="",
+            income_bands=["upper"],
+            income_source_phrase="",
+            education=[EducationLevel.TERTIARY],
+            education_source_phrase="",
+        )
+    )
+
+    # The filters still applied — this is about the sentence, not about what was matched.
+    assert (query.min_age, query.max_age) == (25, 35)
+    assert query.income_quintiles == (4, 5)
+    assert query.education == (EducationLevel.TERTIARY,)
+    assert [m for m in _readings(query) if 'Read ""' in m] == []
 
 
 def test_the_requested_traits_are_carried_as_data() -> None:

@@ -71,18 +71,31 @@ because a repeat would have read back as "secondary or secondary education".
 **The generalise-at-the-third-field prediction was checked here and reversed.**
 [037](037-income-reading-is-never-disclosed.md) recorded that three flat fields would be
 the signal to replace them with one general carrier, and left the migration to this
-ticket deliberately. Standing at the third field, the saving turns out to be small: each
-field renders its reading differently — a span, a set of bands, a set of levels — so a
-shared carrier would unify only the *transport* of the phrase, never the sentence. What
-it would cost is a change to the prompt, the one surface whose behaviour cannot be
-re-verified without paying, against two fields already live and verified. So: three flat
-fields, and the prediction is on the record as tested rather than quietly dropped.
+ticket deliberately. Standing at the third field, the saving turns out to be small — but
+not for the reason first written down here. What a general carrier replaces is how the
+*phrase* travels, which is the cheap part; what it costs is a change to what the model must
+emit, on the one surface whose behaviour cannot be re-verified without paying, against two
+fields already live. That is the whole argument, and it is about the prompt.
+
+The first draft of this paragraph said instead that the three "render their readings
+differently, so a shared carrier would unify only the transport" — and **review showed that
+is false for two of the three.** Income and education render almost identically: an ordered
+table, a joined list, one `Read "X" as … <noun>.` sentence. A shared *renderer* for those
+two is arguable on its own merits and costs no prompt change; it is only the age span that
+shares nothing. The field count and the sentence duplication are separate questions, and
+the first draft used one to dismiss the other. Not extracted here — income's ordering table
+doubles as its wording and education's does not, so the shared helper needs a contrived
+identity map — but recorded as a real duplication rather than argued away.
 
 **Copy: `Read "well-educated" as university-level education.`** A dedicated phrase table
 in `targeting.py`, *not* `panel.py`'s — those describe a person ("completed a university
-degree") for the vote prompt and do not compose into a list of what a filter kept. A test
-asserts the table covers every enum member and that no wording contains an underscore,
-which is the cheapest available proxy for "no internal handle leaked".
+degree") for the vote prompt and do not compose into a list of what a filter kept. Each
+level is named by the **institution** a person would name, which is what makes the guard
+test possible: it asserts no wording equals its own enum value. The first version failed
+that on its own terms — `secondary` was verbatim the handle, and the check it shipped with
+(no underscores) would have passed `Read "well-educated" as tertiary education.` while
+claiming to prevent exactly that. Found in review, and worth recording because the test
+was the part that looked done.
 
 ### The live run moved a prompt rule, again
 
@@ -112,8 +125,19 @@ confident misreading, so the gap is the gender question in
 gated on that ticket's measurement rather than guessed at here.
 
 **A request naming all three levels would still announce a filter.** It filters nothing —
-the pool holds exactly three — but phrase-plus-levels emits a reading regardless.
-[024](024-fuzzy-age-words-in-targeting.md) guards the equivalent case for age (a phrase
-with no span narrows nothing, so it says nothing) and income has the identical hole. Left
-alone because fixing it on one field and not the other would be worse than the hole:
-it belongs to whichever ticket does both.
+the pool holds exactly three — but phrase-plus-levels emits a reading regardless. All
+three fields share this, and **none** of them guards it: an earlier draft of this section
+credited [024](024-fuzzy-age-words-in-targeting.md) with guarding the age equivalent, which
+is wrong. `_resolve_ages` guards only the case where *neither* bound was set, which is the
+same guard education already has via `not kept`; a phrase attached to an explicit 18–100
+announces a filter on age exactly as an all-three-levels request does on education. Left
+alone deliberately — it belongs to whichever ticket does all three, since fixing one
+would read as a distinction between them.
+
+**An empty-string phrase was announcing `Read "" as …`, on all three fields.** Found in
+review. The guard was `is not None`, while the prompt instruction is to leave the field
+*empty* — and an empty string is what a JSON emitter reaches for when told that, so the
+schema's own default was not the only way to get there. Now falsy on age, income and
+education together, pinned by one test that asserts all three, because a guard fixed on
+one field would read as a deliberate distinction. This is the second time in this arc that
+the defect lived in the gap between what the prompt *says* and what the code *checks*.

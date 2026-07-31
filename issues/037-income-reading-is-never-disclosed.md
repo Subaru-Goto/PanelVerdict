@@ -63,11 +63,12 @@ prompt change, which is the riskiest surface — and education is the *third* fi
 is where the signal to generalise actually lands. So: generalise at 038, migrating all
 three at once, rather than half-generalising now.
 
-> **Reversed at [038](038-education-reading-is-never-disclosed.md), 2026-07-31.** The
-> third field arrived and the saving did not: each of the three renders its reading
-> differently — a span, a set of bands, a set of levels — so a shared carrier unifies only
-> the transport of the phrase and none of the sentence, while still costing the prompt
-> change. Three flat fields, and the prediction recorded here is on the record as tested.
+> **Reversed at [038](038-education-reading-is-never-disclosed.md), 2026-07-31.** Three
+> flat fields. What a general carrier replaces is how the phrase *travels*; what it costs
+> is a change to what the model emits, against two fields already live — and that is the
+> whole argument. Note what it is **not**: income and education render their sentences
+> almost identically, so the duplication a general shape was expected to remove is real
+> and still there. The field count and the shared renderer are separate questions.
 
 **Copy: `Read "good earners" as middle or upper income.`** Bands, not a share of the
 pool. This was decided rather than forced: a non-contiguous request ("rich and poor",
