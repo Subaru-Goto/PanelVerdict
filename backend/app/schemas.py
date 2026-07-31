@@ -168,8 +168,7 @@ class VoterSummary(BaseModel):
     both are the words the vote prompt was rendered from, so what the report
     shows about a voter cannot drift from what the panelist enacted.
 
-    Every voter is synthetic — a sampled persona, not a person — and the UI says
-    so where these fields are shown, because they look real enough to ask.
+    Every voter is synthetic — a sampled persona, not a person.
     """
 
     country: Locale
@@ -252,9 +251,6 @@ class PanelVerdict(BaseModel):
     `detectable_gap` is the smallest gap this panel size could have called decisive. It is
     what makes a null result readable: a wide interval alone cannot distinguish *"they are
     equivalent"* from *"this panel was too small to tell"*.
-
-    None of these are click-through rates. The panel chose *between* two variants;
-    real readers mostly see one.
     """
 
     share_preferring_b: float
@@ -270,11 +266,6 @@ class PanelVerdict(BaseModel):
 
 class RequestedRegion(BaseModel):
     """A place the target named, recorded as named rather than as we can serve it.
-
-    Keeping the requested place separate from the seeded countries is what makes a
-    coverage gap visible: a translator that emitted `Locale` would have to answer
-    "China" with Japan, and the substitution would be indistinguishable from a
-    target that asked for Japan.
 
     `country_code` is None when the label covers more than one country ("Europe")
     or names none; `culture_tag` is None when the label spans both buckets.
@@ -310,6 +301,13 @@ class TargetRequest(BaseModel):
     has to be able to say "these words mapped to nothing" — which is what `unmapped`
     carries. A request is not yet executable: `targeting.resolve_target` applies the
     coverage ladder to it.
+
+    Age, income and education each carry a `*_source_phrase`: the words the value was
+    read from, set only when the model judged rather than transcribed. Its presence is
+    the only thing that lets `resolve_target` disclose a reading, because that function
+    never sees the description and so cannot tell an inferred value from an explicit
+    one. No reading is legislated anywhere in this project — the model's is disclosed
+    instead, so a reader can disagree with it.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -319,43 +317,13 @@ class TargetRequest(BaseModel):
     # span and told so, where a validation error would only say the call failed.
     min_age: int | None = Field(default=None, ge=0)
     max_age: int | None = Field(default=None, ge=0)
-    # The words a vague age span was read from — "young", "elderly" — and nothing when
-    # the customer gave numbers. Its *presence* is the signal that the model judged
-    # rather than transcribed, which is what lets `resolve_target` disclose the reading
-    # without having to tell inferred from explicit itself: it never sees the
-    # description, so it could not.
-    #
-    # No bracket for a vague word is written down anywhere in this project, on purpose —
-    # the set of such words has no end and every bracket would be a constant of ours
-    # with no source. The model's span is disclosed instead of legislated, so the reader
-    # can disagree with it. Same trade as `TraitRequest.source_phrase`.
     age_source_phrase: str | None = None
     gender: Gender | None = None
     income_bands: list[IncomeBand] = []
-    # The words a band was read from — "good earners", "well off" — and nothing when the
-    # customer named a band outright. Presence means the model judged rather than
-    # transcribed, the same signal `age_source_phrase` carries above.
-    #
-    # Worth having because a single band excludes **60-80% of the pool** (a band covers
-    # one or two of five quintiles, so `middle` alone leaves 20%), and until this field
-    # existed it did so with nothing said. Where the boundary falls is genuinely a
-    # judgement — "good earners" plainly excludes the bottom, and where the middle ends
-    # is arguable — which is the case for showing the reading rather than legislating it.
+    # A band covers one or two of five quintiles, so `middle` alone excludes 80%
+    # of the pool — which is why the reading is worth disclosing at all.
     income_source_phrase: str | None = None
     education: list[EducationLevel] = []
-    # The words a level was read from — "well-educated", "academic" — and nothing when the
-    # attainment was named outright. Presence means the model judged rather than
-    # transcribed, the same signal the two fields above carry.
-    #
-    # A third flat field rather than one general shape for all three. What the general
-    # shape would replace is how the *phrase* travels, and that is the cheap part; what it
-    # would cost is a change to what the model must emit, on the one surface whose
-    # behaviour cannot be re-verified without paying — against two fields already live.
-    #
-    # Not because the three are unlike: income and education render almost identically
-    # (an ordered table, a joined list, one sentence), and a shared renderer for those two
-    # is arguable on its own merits. It is the age span that shares nothing, and it is the
-    # prompt, not the rendering, that decides the field count.
     education_source_phrase: str | None = None
     traits: list[TraitRequest] = []
     unmapped: list[str] = []

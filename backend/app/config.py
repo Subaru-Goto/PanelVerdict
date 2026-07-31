@@ -64,38 +64,12 @@ class Settings(BaseSettings):
     frontend_origin: str = "http://localhost:3000"
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    # Which langchain integration package builds the client — not the service being
-    # called. Every request goes to OpenRouter, which speaks the OpenAI wire
-    # protocol, so `langchain_openai` is the client that fits it; the value names
-    # the client, and `openrouter_base_url` above names the endpoint.
-    #
-    # Set rather than inferred, and that is not a style choice: `init_chat_model`
-    # infers the provider from the model id, and every id here is `vendor/model`,
-    # which it declines to guess at. Verified — omitting it raises `ValueError`
-    # listing the providers it knows, so a missing provider fails loudly instead
-    # of resolving against the wrong client.
     model_provider: str = "openai"
-    # Defaults to the cheapest profile on purpose: every size here is real money, so
-    # forgetting to choose should cost a cent rather than a tenth of the credit cap.
     profile: ProfileName = "dev"
     targeting_model: str = "openai/gpt-5-mini"
-    # The analyst's reasoning model, decided 2026-07-29:
-    # mini for v1 like every other role — consistency over a flagship, and at chat
-    # volume the difference is pennies. Config, so revisiting is a one-line change.
     analyst_model: str = "openai/gpt-5-mini"
     embedding_model: str = "openai/text-embedding-3-small"
     judge_model: str = "openai/gpt-5-mini"
-    # The same model as every other role, and not for consistency: the two
-    # purpose-built safety classifiers OpenRouter serves — gpt-oss-safeguard-20b
-    # and llama-guard-4-12b — both answer 404 "No endpoints available matching
-    # your guardrail restrictions and data policy" on this account. Measured, by
-    # calling them; the account is not ours to reconfigure.
-    #
-    # Nothing is really lost, because the policy was always the detector and the
-    # model only the engine: a general model reading the same policy flags the
-    # injection and passes "Members save half price this week", which is the
-    # pair that matters. A safety model would be cheaper and faster, not better,
-    # and it is the first thing to revisit if the account policy ever changes.
     screening_model: str = "openai/gpt-5-mini"
 
     @property
