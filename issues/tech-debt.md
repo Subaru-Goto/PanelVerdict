@@ -55,6 +55,30 @@ repo today, so it would be documentation rather than enforcement.
 And `app/main.py` reads `tally.counts["b"]` — fine while `/evaluate` hardcodes variants
 `"a"`/`"b"`, a `KeyError` the moment 010 names them anything else.
 
+## The four transport arguments want to be one type (noted 2026-07-31)
+
+`api_key`, `base_url`, `provider`, `model` now travel together into all six model
+constructors — `OpenRouterPanelLLM`, `analyst_chat_model`,
+`OpenRouterTargetTranslator`, `OpenRouterEmbedder`, `OpenRouterJudge`,
+`OpenRouterScreener`. [036](036-init-chat-model.md) is the evidence rather than the
+cause: adding one field to that set cost fourteen mechanical insertions across eight
+files, which is the clump and the shotgun surgery in one measurement.
+
+A frozen value object built once at the endpoint layer — carrying the three transport
+fields, with `model` staying a per-role argument since every role picks a different
+one — makes the next such change a single line. The seam already exists: `main.py`'s
+`_require_api_key()` plus `settings` is where all four are assembled today.
+
+Deliberately **not** done inside 036: that ticket held behaviour constant and its
+whole defence was a diff small enough to read against a bit-identical client. This
+refactor changes six public signatures and belongs in the pure-refactor PR this file
+is for.
+
+Not to be confused with a fix for the *naming*: `provider` means "which langchain
+integration package builds the client", not "which service is called" — the value is
+`openai` while every request goes to OpenRouter. That reasoning lives on
+`Settings.langchain_provider` and should move onto the value object with the fields.
+
 ## ~~`TargetQuery.disposition` keeps the prose, not the traits~~ (resolved 2026-07-27)
 
 Resolved by [017](017-representative-sampling.md) rather than by 011, and for a
