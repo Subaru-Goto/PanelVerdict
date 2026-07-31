@@ -49,7 +49,13 @@ failing the model for disagreeing with a guess of ours.
 - *"cautious"* → conscientiousness or neuroticism? Both defensible; the live run said
   conscientiousness.
 - *"budget-conscious"* → income quintile, or unmappable? 007's own text claimed income;
-  the live model returned `unmapped`, and is arguably right.
+  the live model returned `unmapped`, and is arguably right. **Decided 2026-07-31 by
+  [037](037-income-reading-is-never-disclosed.md): it maps.** A prompt rule now sends
+  words about earnings or wealth to `income_bands` with the phrase recorded, so
+  "budget-conscious" and "on a tight budget" are readings rather than unmappable. That
+  settles which side of the line it falls on; it does **not** give the band a ground
+  truth, so it stays in this list — assert that a phrase was recorded, never which bands
+  came back.
 - *"a woman's guide to car insurance"* → is the audience women, or is that just what
   the copy is **about**? A spouse shopping for a partner is a plausible reader. The
   model will very likely set `gender="female"` because the word is there.

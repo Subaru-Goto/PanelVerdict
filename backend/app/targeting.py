@@ -24,6 +24,7 @@ from app.schemas import (
     MIN_PERSONA_AGE,
     CoverageRung,
     CultureTag,
+    IncomeBand,
     Locale,
     Notice,
     Persona,
@@ -195,6 +196,41 @@ def _resolve_ages(
     return low, high, notices
 
 
+def _resolve_income(
+    bands: list[IncomeBand], source_phrase: str | None
+) -> tuple[tuple[int, ...], list[Notice]]:
+    """Expand the requested bands into the quintiles they cover, and disclose the
+    reading when a vague word is what produced them.
+
+    The notice names **bands**, never quintiles — a quintile is an internal rank the
+    prompt never mentions, so quoting one would describe something no panelist was asked
+    about.
+
+    Naming bands rather than a share of the pool ("the top 40%") is a *choice*, not a
+    necessity. Bands are a set, so a request can be non-contiguous — "rich and poor" is
+    quintiles 1, 2, 4 and 5 — and while that does have a percentage form, it needs a
+    different sentence from the contiguous case. One template that always reads correctly
+    was preferred to two that read better.
+
+    Rendered in the schema's own band order rather than the order the model listed them,
+    so the same request always reads identically.
+    """
+    quintiles = tuple(
+        sorted({q for band in bands for q in INCOME_BAND_QUINTILES[band]})
+    )
+    # Silent unless a phrase *and* bands are present. A phrase alone narrows nothing, so
+    # a reading would announce a filter that is not there; and a missing phrase is
+    # indistinguishable from a band the customer named outright, so silence is the only
+    # honest reading of it. A model slip lands here too, and degrading to silence beats
+    # raising — nothing in this module fails a run over a cosmetic gap.
+    if source_phrase is None or not bands:
+        return quintiles, []
+
+    requested = set(bands)
+    named = " or ".join(band for band in INCOME_BAND_QUINTILES if band in requested)
+    return quintiles, [_reading(f'Read "{source_phrase}" as {named} income.')]
+
+
 def _resolve_traits(
     requested: list[TraitRequest],
 ) -> tuple[tuple[TraitRequest, ...], list[Notice]]:
@@ -242,8 +278,11 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
     min_age, max_age, age_notices = _resolve_ages(
         request.min_age, request.max_age, request.age_source_phrase
     )
+    income_quintiles, income_notices = _resolve_income(
+        request.income_bands, request.income_source_phrase
+    )
     traits, trait_notices = _resolve_traits(request.traits)
-    notices += age_notices + trait_notices
+    notices += age_notices + income_notices + trait_notices
 
     if request.unmapped:
         notices.append(
@@ -269,15 +308,7 @@ def resolve_target(request: TargetRequest) -> TargetQuery:
         min_age=min_age,
         max_age=max_age,
         gender=request.gender,
-        income_quintiles=tuple(
-            sorted(
-                {
-                    quintile
-                    for band in request.income_bands
-                    for quintile in INCOME_BAND_QUINTILES[band]
-                }
-            )
-        ),
+        income_quintiles=income_quintiles,
         education=tuple(dict.fromkeys(request.education)),
         traits=traits,
         notices=tuple(notices),

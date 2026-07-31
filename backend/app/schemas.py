@@ -332,6 +332,16 @@ class TargetRequest(BaseModel):
     age_source_phrase: str | None = None
     gender: Gender | None = None
     income_bands: list[IncomeBand] = []
+    # The words a band was read from — "good earners", "well off" — and nothing when the
+    # customer named a band outright. Presence means the model judged rather than
+    # transcribed, the same signal `age_source_phrase` carries above.
+    #
+    # Worth having because a single band excludes **60-80% of the pool** (a band covers
+    # one or two of five quintiles, so `middle` alone leaves 20%), and until this field
+    # existed it did so with nothing said. Where the boundary falls is genuinely a
+    # judgement — "good earners" plainly excludes the bottom, and where the middle ends
+    # is arguable — which is the case for showing the reading rather than legislating it.
+    income_source_phrase: str | None = None
     education: list[EducationLevel] = []
     traits: list[TraitRequest] = []
     unmapped: list[str] = []
