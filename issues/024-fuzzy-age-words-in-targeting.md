@@ -67,7 +67,62 @@ So an unmappable attribute changes the notices and *not* the panel drawn — whi
 also means it cannot change a vote's cache key. Adding or removing "young" from a
 target re-uses the same paid votes.
 
-## Fix options (user decision pending — do not pick silently)
+## Decided 2026-07-31 — option 4: the model sets the span and the reading is disclosed
+
+None of the three options below was chosen. The user picked a fourth on the grounds
+that **the set of fuzzy words is unbounded** — "young", "old", "middle-aged", and
+whatever a customer types next — so the project cannot enumerate them, and the model
+has to be allowed to read them.
+
+- **Not option 1.** Honest but inert: a "young" target still seats a 91-year-old, and
+  the notice only tells you so.
+- **Not option 2.** Every bracket we legislate is a constant of ours needing a
+  citation, and the list has no end.
+- **Option 4 dissolves the unsourced-constant problem rather than solving it.** The
+  number is the *model's*, and it is **disclosed** instead of hidden — so there is
+  nothing of ours to cite. The house rule is met by attribution, not by a source: the
+  reader is told "read 'young' as 18–30" and can disagree.
+
+The precedent is already in the codebase, which is what makes this cheap: traits work
+exactly this way. "Cautious" → conscientiousness is the model's judgement,
+`TraitRequest.source_phrase` carries the words it read it from, and `targeting.py:200`
+renders the disclosure as `'{trait}: {level} (from "{source_phrase}")'`.
+
+### What it requires
+
+1. **`source_phrase` beyond traits.** Today it exists only on `TraitRequest`
+   (`schemas.py:303`). The age fields need it, which is the extension
+   [016](016-translation-accuracy-golden-set.md) said to cost out first.
+2. **A prompt carve-out.** Rule 5 — "leave a field empty rather than guessing" — is
+   *why* "young" currently lands in `unmapped`. The model is obeying. So the rule has
+   to stop applying to fuzzy age words, and the new rule must require the phrase
+   alongside the span: a span without its source is exactly the silent narrowing this
+   option is trying to avoid.
+3. **A `_reading` notice, not `_warn`.** This is a disclosure, not a gap. Using the
+   warning level would train the reader to skip the category — the lesson
+   [007](007-build-targeting-query-translation.md) already paid for with a warning
+   that fired when nothing had been narrowed.
+4. **The test asserts auditability, never the numbers.** A span is present and a
+   phrase was recorded. Asserting `max_age == 35` would fail a model that said 30 for
+   being reasonable, which is [016](016-translation-accuracy-golden-set.md)'s
+   judgement-call rule. It belongs in that golden set, run from the CLI — the model
+   call *is* the thing under test, so it cannot sit in the free suite. Judge tooling
+   (DeepEval/RAGAS) was considered and rejected for the same reason 016 rejects it:
+   checking a typed struct needs `assert`, not an opinion.
+
+### Accepted risk, on the record
+
+The model will sometimes narrow a panel on a reading the customer did not intend.
+That is the same defect class as 016's *"a woman's guide to car insurance"* — and the
+mirror image of Ohio → the whole US: quiet narrowing rather than quiet widening.
+Option 4 does not prevent it; it makes it **visible**, which is the standard this
+codebase already holds itself to everywhere else.
+
+Independent of all of this, the notice-wording fix from PR #87 still stands: "the pool
+holds no data on X" is wrong for genuinely unmappable things too (hobbies, cities),
+because the pool is not what's missing.
+
+## Fix options as originally written (superseded by option 4 above)
 
 1. **Notice-only:** prompt rule that unquantifiable age words go into
    `unmapped`, so the report shows "this part of your target couldn't be

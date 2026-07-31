@@ -55,6 +55,13 @@ failing the model for disagreeing with a guess of ours.
   model will very likely set `gender="female"` because the word is there.
 - *"a dad joke calendar"*, *"gifts for grandparents"* → same shape: a gendered or
   age-marked noun sitting in the **creative** rather than in the audience.
+- *"young"*, *"old"*, *"middle-aged"* → which span? Added 2026-07-31, when
+  [024](024-fuzzy-age-words-in-targeting.md) decided the **model** sets the bracket and
+  discloses the phrase it read it from. So this is a judgement call by construction:
+  assert a span exists and a `source_phrase` was recorded, never that the numbers match
+  ours — 18–30 and 18–35 are both defensible, which is exactly why the project declined
+  to legislate either. Note the ordering: *"in their 40s"* stays a **hard** requirement
+  in the table above, because arithmetic has ground truth and a vague adjective does not.
 
 For these, assert only that **a `source_phrase` was recorded** — that the
 interpretation is inspectable, not that it matches ours. Report the distribution of
@@ -122,6 +129,15 @@ Note the middle option's shape: it is the same trade already made for traits, wh
 demographic fields would let a notice quote the phrase and let a reader judge, without
 `resolve_target` having to decide anything. That is the option this ticket should cost
 out first.
+
+**Partly answered elsewhere, 2026-07-31.** [024](024-fuzzy-age-words-in-targeting.md)
+took the middle option for the **age** field specifically: the model sets a span for a
+fuzzy word, records the phrase, and a `_reading` notice quotes both. So the extension
+this section said to cost out first now has a committed consumer, and the age case
+becomes the precedent the gender question can be decided against — with one caveat that
+keeps this decision open rather than closed: age was decided *without* the measurement,
+because a fuzzy word has no correct span to over-read, while "woman" does. The
+frequency question that gates the gender call is still unmeasured.
 
 Deliberately not built ahead of the measurement — a fix for a frequency nobody has
 measured is a guess, and this run is cheap.
