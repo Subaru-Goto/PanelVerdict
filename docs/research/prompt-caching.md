@@ -375,6 +375,26 @@ required first.
   `cache_write_tokens` logged from `prompt_tokens_details` to prove it is actually
   firing.
 
+## It does fire on the *targeting* prompt (observed 2026-07-31)
+
+This document's scope is the vote prompt, and its conclusion holds there. But the
+same account, model and endpoint **do** cache on the targeting call: every
+translation measured in
+[targeting-call-effort.md](targeting-call-effort.md) reports `prompt_tokens`
+≈ 1,355–1,362 with `cached_tokens` ≈ 1,280.
+
+Nothing above is wrong — reason 1 is a threshold, and the target prompt simply
+clears it where the vote prompt cannot. The target system prompt enumerates the
+whole attribute vocabulary and carries a larger structured-output schema, which
+puts it over 1,024 tokens; the vote request is ~300–370.
+
+Worth stating because the shorthand "prompt caching cannot fire" has travelled
+into [003](../../issues/003-decide-panel-model-and-provider.md) and
+[008](../../issues/008-build-panel-evaluation.md) without the qualifier, and it is
+only true of votes. It does not change the cost picture much — the targeting call
+is one request per run against ~200 votes — but a future reader deriving a cost
+model from those tickets should know which path the claim covers.
+
 ## Sources
 
 All read 2026-07-27.

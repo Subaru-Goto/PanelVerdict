@@ -15,6 +15,8 @@ from langchain_openai import ChatOpenAI
 from openai import APIStatusError
 
 from app.llm import (
+    TARGET_MAX_COMPLETION_TOKENS,
+    TARGET_REASONING_EFFORT,
     VOTE_READ_TIMEOUT_SECONDS,
     OpenRouterEmbedder,
     OpenRouterJudge,
@@ -438,6 +440,33 @@ def test_the_vote_call_carries_the_measured_read_timeout() -> None:
     )
 
     assert _bound_model(llm).request_timeout == 60
+
+
+def test_the_translator_caps_its_output_and_asks_for_little_reasoning() -> None:
+    """One call generated 65,536 completion tokens and cost $0.13 — about a whole
+    200-vote run — before failing to parse (docs/research/targeting-call-effort.md).
+
+    Both settings are asserted here and neither replaces the other: the cap bounds a
+    runaway the timeout cannot see, since a model streaming output is not idle, and the
+    effort cuts the reasoning that was 40-85% of every response. The runaway is
+    stochastic — the same description succeeded twice and blew the cap once — so five
+    samples cannot retire the cap.
+
+    `_use_responses_api` is pinned for the reason the vote path pins it: the
+    `reasoning={...}` object form switches endpoints and drops `cost`, which is the field
+    every figure in that write-up was read from.
+    """
+    translator = OpenRouterTargetTranslator(
+        api_key="test",
+        base_url="http://openrouter.invalid",
+        provider="openai",
+        model="openai/gpt-5-mini",
+    )
+    bound = translator._model.steps[0]
+
+    assert bound.max_tokens == TARGET_MAX_COMPLETION_TOKENS
+    assert bound._default_params["reasoning_effort"] == TARGET_REASONING_EFFORT
+    assert bound._use_responses_api({}) is False
 
 
 def test_every_paid_call_is_bounded_and_none_inherits_the_sdk_default() -> None:
