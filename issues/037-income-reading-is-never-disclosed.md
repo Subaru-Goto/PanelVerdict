@@ -3,7 +3,7 @@ title: "A vague income word silently excludes most of the pool"
 labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
-assignee: null
+assignee: Subaru-Goto
 status: open
 ---
 

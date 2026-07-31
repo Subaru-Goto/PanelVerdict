@@ -423,6 +423,39 @@ def test_no_income_band_means_no_income_filter() -> None:
     assert resolve_target(TargetRequest()).income_quintiles == ()
 
 
+def test_an_inferred_income_band_is_disclosed_with_the_words_it_was_read_from() -> None:
+    """`"good earners"` becoming the upper band is as much a reading as `"cautious"`
+    becoming conscientiousness, and it costs the customer 60% of the pool. Traits
+    disclose theirs; income has disclosed nothing.
+
+    Assert the disclosure, never which band the model chose — 016's judgement-call rule,
+    for the same reason the age tests never pin a span.
+    """
+    # TODO: resolve a request carrying income_bands AND the phrase they were read from
+    # TODO: assert the quintiles still reach the query (this adds a notice, not a filter)
+    # TODO: assert a reading names the phrase. A countries reading always fires, so
+    #       filter by the phrase rather than counting — see the age tests for the idiom.
+    # TODO: assert the reading speaks the *band*, never a quintile. 023's rule: the
+    #       prompt never mentions a quintile, so a notice naming one leaks a handle and
+    #       describes something no panelist was asked about.
+    # TODO: assert no warning fires — a disclosed reading is not a problem
+
+
+def test_an_income_band_with_no_phrase_discloses_nothing() -> None:
+    """Two cases share this shape and both must stay silent: a customer who named the
+    band themselves made no judgement to report back, and a model that set a band while
+    forgetting the phrase gives us nothing honest to say.
+
+    The second is a real risk rather than a hypothetical — a missing phrase is
+    indistinguishable from an explicit request, which is the residual hole 024 accepted
+    on the record. Silence is the safe reading of it; announcing a filter we cannot
+    attribute would be worse.
+    """
+    # TODO: resolve a request with income_bands and no phrase
+    # TODO: assert the filter still applies
+    # TODO: assert no reading mentions income
+
+
 def test_the_requested_traits_are_carried_as_data() -> None:
     """The query holds the trait and level themselves, not prose about them: they
     become SQL bounds, and the report has to show which reading a verdict rests on."""
