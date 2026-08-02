@@ -36,14 +36,12 @@ class OutOfCredit(Exception):
 class VoteUsage:
     """What one vote cost, as the provider reported it, and how long it took.
 
-    The provenance is mixed on purpose: the token counts and `cost` come from the
-    provider's own usage block, while `seconds` is measured locally because no provider
-    reports it.
-
-    `reasoning_tokens` and `cost` are optional because **absent is not zero**. Reasoning
-    tokens bill at the output rate and are the largest single term, so a zero standing in
-    for an unreported figure understates the bill by most of it — and a cost of 0.0 in a
-    total that a budget decision reads is worse than an admitted gap.
+    - **Mixed provenance, on purpose:** the token counts and `cost` come from the
+      provider's own usage block; `seconds` is measured locally, because none reports it.
+    - **`reasoning_tokens` and `cost` are optional because absent is not zero.** Reasoning
+      tokens bill at the output rate and are the largest single term, so a zero standing in
+      for an unreported figure understates the bill by most of it — and a cost of 0.0 in a
+      total that a budget decision reads is worse than an admitted gap.
     """
 
     input_tokens: int
@@ -71,17 +69,15 @@ class VoteResponse:
 class UsageTotals:
     """A run's usage, summed — with how many votes each sum actually covers.
 
-    The counts are not bookkeeping. `reasoning_tokens` and `cost` are optional per vote,
-    so a sum over the votes that reported them is a *partial* figure, and a partial
-    figure presented as a total is how a run gets planned against a number that is
-    quietly too small.
-
-    The two time figures answer different questions and both are needed. A wave
-    finishes with its slowest member, so `seconds_slowest` is what a run's wall
-    time is actually made of; `seconds_total` beside it says how much of that
-    work happened at once. Both were measured per vote long before anything
-    summed them here, which is why a slow run could not be explained from a log
-    that reported only cost.
+    - **The `*_reported` counts are not bookkeeping.** `reasoning_tokens` and `cost` are
+      optional per vote, so a sum over the votes that reported them is a *partial* figure —
+      and a partial figure presented as a total is how a run gets planned against a number
+      that is quietly too small.
+    - **Both time figures are needed; they answer different questions.** A wave finishes
+      with its slowest member, so `seconds_slowest` is what a run's wall time is actually
+      made of, while `seconds_total` beside it says how much of that work happened at once.
+    - Both were measured per vote long before anything summed them here, which is why a
+      slow run could not be explained from a log that reported only cost.
     """
 
     votes: int
@@ -184,23 +180,19 @@ def presentation_orders(
 
     Both halves are load-bearing and they fix different things.
 
-    The split is exact because the model picks the first-shown option 0.66 of the
-    time (measured in docs/research/manipulation-check.md),
-    so a surplus of one order is a bias on the top line rather than noise that
-    averages out. An odd panel is off by one, which is as close as whole votes get.
-
-    The shuffle is because assigning by index parity — balanced as it is — ties
-    who-sees-which-order to however the panel arrived, and the caller chooses that:
-    `load_pool` returns id order, which groups by country. Nothing in the pipeline
-    guarantees the panel is not sorted by something that matters.
-
-    An odd panel cannot be split evenly, so the seed decides which order gets the
-    surplus. Handing it to a fixed side would tilt every odd-sized panel the same way,
-    which at a 0.66 first-position rate is a repeatable bias toward one variant — the
-    same defect as index parity, just smaller.
-
-    Seeded, because `presentation_order` is stored per vote and a re-run of one test
-    has to pair the same panelist with the same position to be the same test.
+    - **Exact split**, not a coin flip: the model picks the first-shown option 0.66 of the
+      time (measured in docs/research/manipulation-check.md), so a surplus of one order is
+      a bias on the top line rather than noise that averages out. An odd panel is off by
+      one, which is as close as whole votes get.
+    - **Shuffled**, because assigning by index parity — balanced as it is — ties
+      who-sees-which-order to however the panel arrived, and the caller chooses that:
+      `load_pool` returns id order, which groups by country. Nothing in the pipeline
+      guarantees the panel is not sorted by something that matters.
+    - **The odd vote's side is drawn, not fixed.** Handing the surplus to a fixed side
+      would tilt every odd-sized panel the same way, which at a 0.66 first-position rate is
+      a repeatable bias toward one variant — the same defect as index parity, just smaller.
+    - **Seeded**, because `presentation_order` is stored per vote and a re-run of one test
+      has to pair the same panelist with the same position to be the same test.
     """
     forward, reverse = list(variant_ids), list(reversed(variant_ids))
     rng = random.Random(seed)
@@ -243,19 +235,16 @@ class VoteFailure:
 class PanelVotes:
     """What a panel returned: the votes cast, and who did not manage to cast one.
 
-    The two travel together because a verdict computed from `records` alone would
-    silently be a verdict on a smaller panel than was asked for. Reporting the
-    shortfall rather than raising is the same division as retrieval's: the mechanism
-    says what happened, and the caller decides whether a thinner panel still deserves
-    a verdict.
-
-    A caller that reads `records` and never looks at `failures` has made that decision
-    by omission — which is the one reading this shape exists to prevent.
-
-    `usage` runs parallel to `records`, one entry each, holding `None` where the provider
-    reported nothing. It is the per-vote list rather than a total so that a latency
-    percentile stays available; `total_usage` derives the sums, which keeps them from
-    drifting from the list they summarise.
+    - **`records` and `failures` travel together** because a verdict computed from
+      `records` alone would silently be a verdict on a smaller panel than was asked for.
+    - **Reporting the shortfall rather than raising** is the same division as retrieval's:
+      the mechanism says what happened, and the caller decides whether a thinner panel
+      still deserves a verdict. A caller that reads `records` and never looks at `failures`
+      has made that decision by omission — the one reading this shape exists to prevent.
+    - **`usage` runs parallel to `records`**, one entry each, holding `None` where the
+      provider reported nothing. The per-vote list rather than a total, so a latency
+      percentile stays available; `total_usage` derives the sums, which keeps them from
+      drifting from the list they summarise.
     """
 
     records: list[VoteRecord]
@@ -305,19 +294,18 @@ def collect_panel_votes(
 ) -> PanelVotes:
     """Cast every panelist's vote concurrently, and report the ones that failed.
 
-    Each panelist sees the two variants in one of two orders, drawn from a balanced
-    shuffled assignment, votes positionally (blind to which variant is which), and the
-    position is resolved back to a variant id.
-
-    `orders` overrides the internal draw for callers that fixed the pairing before
-    narrowing the panel — the cache split assigns orders to a whole chunk,
-    then sends only the misses here, and a fresh draw over the smaller panel would
-    re-pair panelists with positions.
-
-    A vote that fails after the client's own retries costs that panelist and no other:
-    the remaining votes still stand, and the panel comes back short with the reason
-    attached. Records are ordered by the panel, never by which answers arrived first,
-    so two runs of one test are comparable line by line.
+    - Each panelist sees the two variants in one of two orders, drawn from a balanced
+      shuffled assignment, votes **positionally** (blind to which variant is which), and
+      the position is resolved back to a variant id.
+    - **`orders` overrides the internal draw** for callers that fixed the pairing before
+      narrowing the panel: the cache split assigns orders to a whole chunk, then sends only
+      the misses here, and a fresh draw over the smaller panel would re-pair panelists with
+      positions.
+    - **A vote that fails after the client's own retries costs that panelist and no other**
+      — the remaining votes still stand, and the panel comes back short with the reason
+      attached.
+    - **Records are ordered by the panel**, never by which answers arrived first, so two
+      runs of one test are comparable line by line.
     """
     if len(variants) != 2:
         raise ValueError(
