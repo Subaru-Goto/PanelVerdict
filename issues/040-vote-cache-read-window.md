@@ -42,21 +42,50 @@ is not *served*, so the run pays and draws a fresh panel. That is the requiremen
 
 Four things this keeps that a `DELETE` would cost:
 
-- **Nothing paid-for is destroyed**, so the schema's append-only rationale stays true and
-  needs no rewrite. A clearing policy would have made that comment false, which is the
-  failure mode [038](038-education-reading-is-never-disclosed.md) hit three times.
+- **No ongoing deletion**, so the ledger stays append-only in operation: still
+  `ON CONFLICT DO NOTHING`, still never `UPDATE`, and a row that falls out of the window is
+  merely unread rather than removed. The one-off truncate below is a migration step, not a
+  policy. The schema comment does still need a line saying the **read is windowed** — it
+  currently implies a stored vote is always available, and leaving that would be the
+  doc-claims-more-than-code failure this arc hit three times.
 - **Resume after a 402 still works** — topping up and re-running happens in minutes, far
   inside the window.
 - **It is reversible.** Change the interval and behaviour changes; no data is gone while
   the number is still being judged.
 - **No lifecycle hook, no session concept, no cron.**
 
-## Prerequisite: the table has no timestamp
+## Prerequisite: the table has no timestamp, and the naive migration lies about age
 
 Columns today are `request_fingerprint, persona_id, test_id, chosen_variant_id,
 presentation_order, reason`. So this needs `created_at timestamptz NOT NULL DEFAULT now()`
 first. Additive, and `apply_schema` already has a path for columns added after the first
 schema shipped.
+
+**The trap is the backfill.** `ADD COLUMN ... DEFAULT now()` stamps every *existing* row
+with the timestamp of the ALTER, so the whole historical ledger would look freshly cast and
+be served as current — the one direction that breaks the feature this ticket exists for.
+
+**Decided: truncate `votes` as part of the migration** (signed off 2026-08-02). Everything
+in there is our own test output, no report depends on it, and the requirement above already
+says old results are not needed.
+
+**`TRUNCATE votes`, never `docker compose down -v`.** The truncate itself is free — no API
+call, and the only cost is future: a test that would have replayed for $0 costs $0.145
+again (200 votes at the measured `USD_PER_VOTE`). The volume wipe is the expensive one,
+because it takes `personas` with it and a reseed re-embeds every persona — one call each,
+5,000 of them — which is exactly the cost `seed.py` exists to avoid re-paying, for a table
+this change does not touch. No embedding cost is recorded in `docs/research/`, so the size
+of that bill is unknown rather than small; the seeding time is real either way.
+
+Worth recording that the stakes are low either way: **the transient self-heals.** Without
+the truncate, every backfilled row falls outside the window 24 hours later and is never
+served again, so the worst case is one day of stale hits on data nobody wants. The truncate
+is chosen for being simple, not for averting something dangerous.
+
+Backfilling to a past date (`DEFAULT '2000-01-01'`, then `SET DEFAULT now()`) was the
+alternative — same behaviour, and it would preserve the append-only invariant rather than
+breaking it once. **Not chosen:** it keeps rows solely to honour a rule whose purpose is
+protecting paid output that someone might still want, and nobody wants these.
 
 ## The number: 24 hours, signed off 2026-08-02
 
