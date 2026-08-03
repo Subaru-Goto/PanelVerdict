@@ -11,8 +11,9 @@ before you publish, instead of after weeks of live traffic.
 **Read the caveat before you trust a number.** The panel is synthetic. It is
 useful where two headlines say genuinely different things, and it is *unvalidated*
 where they say the same thing differently — a measured limitation, written up in
-[`docs/research/task-framing.md`](docs/research/task-framing.md). Every number the
-app shows carries its own uncertainty for exactly this reason.
+[`docs/research/task-framing.md`](docs/research/task-framing.md) and summarised
+under [Known limitations](#known-limitations). Every number the app shows carries
+its own uncertainty for exactly this reason.
 
 ---
 
@@ -100,6 +101,73 @@ your credit. Add `PROFILE=demo` or `PROFILE=prod` to `.env` to change it.
 
 Repeat runs of the same headlines against the same panel reuse the cached votes,
 so they cost only the one targeting call.
+
+## Known limitations
+
+Four of these are load-bearing enough to read before using the app or judging it.
+
+**1. The panel is unvalidated on same-meaning copy — measured, not suspected.**
+This is the most significant limitation in the project, and the numbers are in
+[`docs/research/task-framing.md`](docs/research/task-framing.md):
+
+- Changing one sentence of the *question* ("which do you prefer?" → "which would
+  you click?") flips **38–43% of matched votes**, against a noise floor of 0.19–0.24.
+  The verdict-level reading is stabler — the `openness` gradient is identical under
+  all three framings — but the vote-level number is framing-dependent.
+- **The panel fails its published negative control.** Against 24,333 real Upworthy
+  A/B pairs: the lever known to do *nothing* to real clicks produced the largest,
+  most consistent preference in the run, and the three levers that *do* move real
+  clicks landed at chance.
+- So a preference share on two headlines that mean the same thing **is not a
+  prediction about readers.** It is informative where the headlines say genuinely
+  different things. `preference` remains the shipped framing because nothing in the
+  run gives grounds to change it, not because it won.
+
+**2. There is no document-based retrieval corpus.** Retrieval today is
+`nearest_panelists` — a pgvector similarity search over persona summaries inside the
+analyst's tool set. No prose is chunked, embedded, or retrieved, so when the analyst
+explains what a credible interval means it answers from its own weights rather than
+from a cited source. Two consequences worth knowing:
+
+- The corpus that would fix it is specified and open:
+  [018](issues/018-audience-research-knowledge-base.md).
+- The persona search that exists is weak on its own terms — it returns five
+  panelists out of up to 200 and is blind to which variant they chose, so it
+  characterises individuals rather than the panel
+  ([041](issues/041-which-traits-moved-the-vote.md),
+  [043](issues/043-persona-search-embeds-the-wrong-shape.md)).
+
+**3. Analyst conversations do not survive a restart.** The checkpointer is
+`InMemorySaver`, so thread history is process-local: restart the server and every
+conversation is gone, and a second worker would not see the first one's threads.
+Reports are unaffected — only the follow-up chat. ([046](issues/046-analyst-threads-die-on-restart.md))
+
+**4. Both paid endpoints are open.** `/evaluate` and `/chat` have no
+authentication and no rate limiting, and both spend real OpenRouter credit. Do not
+expose this to a network you do not control. The `$10` per-key cap is the only thing
+bounding the damage, and it is a cap on loss, not a control.
+([045](issues/045-paid-endpoints-have-no-auth-or-rate-limit.md))
+
+## Next steps
+
+Roughly in the order they would be done, each already specified:
+
+| next | what it changes |
+|---|---|
+| [018](issues/018-audience-research-knowledge-base.md) | a chunked, embedded, cited corpus so general answers come from sources rather than weights |
+| [045](issues/045-paid-endpoints-have-no-auth-or-rate-limit.md) | a shared-secret header and a per-key rate limit before anything is deployed |
+| [046](issues/046-analyst-threads-die-on-restart.md) | `PostgresSaver` on the pool that is already there |
+| [041](issues/041-which-traits-moved-the-vote.md) | which kind of person preferred which variant — the question customers ask next |
+| [044](issues/044-report-says-what-won-not-what-to-change.md) | a suggestion for the winning headline, framed as a hypothesis the app can then test |
+| [047](issues/047-nothing-correlates-a-log-line-to-its-run.md) | structured logs with a correlation id, so a slow or costly run can be traced |
+
+**And the one that would change what the app may claim:** a
+demographically-matched replication of the framing study. Limitation 1 rests on a
+run whose personas were not matched to Upworthy's 2013–15 readership, so failing
+the negative control there does not cleanly separate *"the panel does not
+reproduce copy effects"* from *"these personas are not that audience."*
+[`task-framing.md`](docs/research/task-framing.md) is explicit that this is
+unsettled — a matched replication is what would settle it, in either direction.
 
 ## Tests
 
