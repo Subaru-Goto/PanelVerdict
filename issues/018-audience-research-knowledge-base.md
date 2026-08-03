@@ -42,8 +42,16 @@ No new sourcing needed — every document is one this project has already read a
 | `docs/research/task-framing.md` (015) | our own measured framing effects and the failed validity check |
 | `docs/lessons-so-far.md` | the synthesis, including the two headline findings |
 
-Roughly 20 documents. Chunked at ~500 tokens that is a few hundred chunks — **embedding
-cost is single-digit cents, once.**
+Roughly 20 documents. Chunked at ~500 tokens that is a few hundred chunks.
+
+**The embedding cost is unmeasured** — corrected 2026-08-03. This line previously read
+*"single-digit cents, once"*, which had no derivation and contradicts
+[040](040-vote-cache-read-window.md): *"No embedding cost is recorded in
+`docs/research/`, so the size of that bill is unknown rather than small."* 040 is right,
+and the honest statement is that nobody has measured what an embedding call costs here.
+It is a **one-off** cost over a few hundred chunks, which is the part that matters for
+deciding to build this; the figure itself should come from a `--dry-run` before anyone
+budgets against it.
 
 ## The demo this unlocks, which is the real argument for it
 
@@ -177,11 +185,40 @@ codebase not written as a plain SQL function — `nearest_panelists` is 8 lines 
 a comment about the index opclass, and that is legible in a way a `VectorStoreRetriever`
 is not.
 
-**Recommended: stay with a SQL retrieval function** (the *"retrieval function returning
-chunks with their sources"* already in Scope), exposed as a `@tool` beside the existing
-three. That satisfies §1 — the requirement asks for document retrieval with embeddings
-and similarity search, not for a specific abstraction — keeps one retrieval idiom in the
-codebase, and adds nothing to the lockfile.
+**Open, not decided — the implementer's call, with both costs on the table.** The author
+has since noted (2026-08-03) that the LangChain primitives are fair game where they
+genuinely fit, so this is a trade-off to argue rather than a default to inherit:
 
-Worth writing down as a decision rather than a silence, because *"we didn't use the
-framework's retriever"* is a fair thing for a reviewer to ask about twice.
+| | SQL retrieval function | `VectorStoreRetriever` over `PGVector` |
+|---|---|---|
+| dependency | none | `langchain-postgres`, new |
+| idiom | matches `nearest_panelists` — 8 lines of SQL, one comment about the index opclass | the first retrieval here not written as SQL |
+| §1 | satisfied — the requirement asks for document retrieval with embeddings and similarity search, not a named abstraction | satisfied |
+| buys | full control of the filter-plus-rank query, which the corpus will need for source filtering | chunking/loader plumbing and a retriever interface the chat loop can consume directly |
+
+The SQL function is the smaller step and the one already written into Scope above. The
+retriever is worth it if the loader and splitter machinery would otherwise be
+hand-rolled — which is a real possibility here, since heading-aware chunking is a
+decision this ticket already has to make.
+
+Either way, **write the choice down rather than leaving a silence**, because *"why not
+the framework's retriever?"* is a fair thing for a reviewer to ask twice.
+
+## Done when
+
+Added 2026-08-03 — this ticket predates the convention, and it is now the README's first
+"Next steps" row, so it should say what finishing it means.
+
+The analyst can be asked a general question — *"what does research say about
+second-person pronouns?"* — and answer from **retrieved passages with their sources
+shown**, not from its own weights. Which requires all of:
+
+- a chunk table separate from `personas`, populated by a drop-and-reseed, with the
+  heading-aware splitting decided above
+- a retrieval function returning chunks **with citations**, exposed to the analyst
+- the two-kinds rule in `analyst.py` rewritten to license *general knowledge, retrieved
+  and cited* — the blocker in the amendment, and the clause
+  [044](044-report-says-what-won-not-what-to-change.md) also needs
+- a handful of question → expected-source pairs, enough to show retrieval finds the right
+  document; a full faithfulness harness is not needed to ship
+- votes still ungrounded, so every number 014 and 015 measured stays comparable
