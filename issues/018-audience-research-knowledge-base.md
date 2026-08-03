@@ -102,3 +102,86 @@ The corpus is **trusted input** — we choose every document, and it is committe
 user-supplied. So the retrieved text is not an injection vector in the way a user-supplied
 document would be. That property is worth stating in [013](013-guardrails-mvp.md) rather
 than assumed, because it stops holding the moment anyone can upload a source.
+
+---
+
+## Amendment: what the sprint review added (2026-08-03)
+
+The review named this ticket's absence as the **single largest gap against the graded
+requirement**, quoting §1: *"advanced RAG with query translation"*, *"standard document
+retrieval with embeddings"*, *"chunking strategies and similarity search"*. Everything
+above already answers the second and third. Two things it does not answer follow.
+
+### The blocker nobody had noticed: the system prompt forbids exactly this
+
+The reviewer's own examples are *"what makes a good headline?"* and *"how should I
+interpret a credible interval?"* — and `analyst.py:81` currently routes those **away**
+from any tool:
+
+> *"Anything general — what a credible interval means, why a headline might land, what
+> this method can and cannot show — you answer yourself, directly, **and do not reach for
+> a tool at all**."*
+
+That clause is not incidental. It is half of the two-kinds rule whose *other* half —
+*"anything about THIS test comes from a tool every time: never from memory, never
+estimated"* — is what stops the analyst inventing figures. The rule works because it
+admits **no middle**.
+
+So this ticket cannot ship as a tool addition alone. It needs the two-kinds rule
+rewritten to license a third case: *general knowledge, retrieved and cited*. And the
+hazard is precise — a loosely worded third clause becomes the loophole through which
+*"the panel skewed young"* gets answered from the model's weights.
+
+**[044](044-report-says-what-won-not-what-to-change.md) needs the same clause**, for its
+suggestions, which are also neither test facts nor pure general knowledge. Whoever writes
+it should write it once, for both. Recorded here because neither ticket knew about the
+other.
+
+Note this also *sharpens* the corpus's value rather than diminishing it: today an
+un-retrieved general answer is unfalsifiable, and the whole point of the sources
+requirement above is that a reader can check a claim. The prompt rule and the corpus want
+the same thing; the rule just predates the means.
+
+### Query translation: partly already shipped, partly [043](043-persona-search-embeds-the-wrong-shape.md)
+
+§1's *"query translation"* is worth claiming precisely, because two different things in
+this repo answer to that name:
+
+| what | where | is it RAG-shaped? |
+|---|---|---|
+| natural language → a structured filter | `targeting.py` — a model emits `TargetRequest`, code resolves it to countries and bands | no, and deliberately: [017](017-representative-sampling.md) replaced retrieval with `WHERE` here |
+| natural language → a better *search* string | [043](043-persona-search-embeds-the-wrong-shape.md) — HyDE, so the query is shaped like the corpus | yes |
+
+For this corpus the HyDE argument applies **more** cleanly than it does to persona
+summaries, and the reason is the asymmetry 043 describes: a customer question is
+interrogative, and these documents are expository prose with findings and β values. So
+the same technique that 043 proposes for personas — have the model write the passage it
+expects to find, then embed that — is the natural query-translation step here, and it
+costs no extra call once retrieval is a tool the model already invokes with an argument.
+
+### The LangChain surface the reviewer suggested, costed
+
+> *"LangChain's `create_retrieval_chain` or a retriever tool with `VectorStoreRetriever`
+> would integrate naturally alongside the existing tools."*
+
+True, and it is not free. Both are **MISSING** from the environment:
+
+```
+langchain_postgres   MISSING
+langchain_community  MISSING
+```
+
+So a `PGVector` vector store means a new dependency, against the rule that only packages
+the project directly needs get added. And it would be the **first** retrieval in this
+codebase not written as a plain SQL function — `nearest_panelists` is 8 lines of SQL with
+a comment about the index opclass, and that is legible in a way a `VectorStoreRetriever`
+is not.
+
+**Recommended: stay with a SQL retrieval function** (the *"retrieval function returning
+chunks with their sources"* already in Scope), exposed as a `@tool` beside the existing
+three. That satisfies §1 — the requirement asks for document retrieval with embeddings
+and similarity search, not for a specific abstraction — keeps one retrieval idiom in the
+codebase, and adds nothing to the lockfile.
+
+Worth writing down as a decision rather than a silence, because *"we didn't use the
+framework's retriever"* is a fair thing for a reviewer to ask about twice.
