@@ -76,6 +76,14 @@ shape through which *"the panel skewed young"* gets answered from memory. Whatev
 ships has to license generation about **copy** while leaving the ban on generation about
 **this test** intact — and that is a prompt-engineering problem, not a plumbing one.
 
+**And this ticket is not the only one waiting on that clause.** Added 2026-08-03:
+[018](018-audience-research-knowledge-base.md)'s knowledge base needs the same third
+case, for *general knowledge retrieved and cited*, and hits the same rule from the other
+side — the reviewer's example questions (*"how should I interpret a credible interval?"*)
+are exactly the ones the rule sends to the model's own weights. **Write the clause once,
+for both.** Two independently-worded exceptions to a rule whose whole strength is
+admitting no middle is how the middle stops being empty.
+
 ## Honesty: this is the least verifiable thing the product would emit
 
 Everything in the report today is either computed (`verdict.py`), counted (`analyze_results`)

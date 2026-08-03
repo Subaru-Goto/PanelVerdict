@@ -13,8 +13,9 @@ status: open
 > React's default error screen — no recovery, no user-facing message. … A crash loses
 > the report the user just paid for."*
 
-Correct, and the cost is exact: a `prod` run is **$0.145** and up to 200 model calls.
-A `TypeError` in a formatter throws all of it away and shows a blank screen.
+Correct, and the cost is exact: a `prod` run is **$0.145** — 200 votes at the measured
+`USD_PER_VOTE` (`docs/research/first-full-scale-run.md`) — and up to 200 model calls. A
+`TypeError` in a formatter throws all of it away and shows a blank screen.
 
 ## Why this is plausible rather than theoretical
 
@@ -50,9 +51,12 @@ Read from `node_modules/next/dist/docs/01-app/01-getting-started/10-error-handli
 rather than recalled, per the standing warning in `frontend/AGENTS.md`. Two things
 would trip an implementation written from memory:
 
-- **The signature is `{ error, unstable_retry }`, not `{ error, reset }`.** Writing
-  `reset` gives you `undefined` and a dead button, with no type error if it is
-  destructured loosely.
+- **`unstable_retry` is the recovery callback now, and `reset` is not what you remember.**
+  `reset` still exists and still works (`catchError.md:81`, `error.md:155`) — but it only
+  clears the error state and re-renders **without re-fetching**, so it cannot recover from
+  a Server Component error. The docs say to prefer `unstable_retry()` "in most cases". A
+  boundary written from memory gets a button that appears to work and silently fails on
+  the errors most worth recovering from.
 - **There is a component-level boundary**, `unstable_catchError as catchError` from
   `next/error`, which returns a wrapper usable around arbitrary children.
 

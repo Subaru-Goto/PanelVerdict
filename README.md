@@ -104,7 +104,8 @@ so they cost only the one targeting call.
 
 ## Known limitations
 
-Four of these are load-bearing enough to read before using the app or judging it.
+Four things worth knowing before using the app or judging it. The first is the one that
+changes what a number means.
 
 **1. The panel is unvalidated on same-meaning copy — measured, not suspected.**
 This is the most significant limitation in the project, and the numbers are in

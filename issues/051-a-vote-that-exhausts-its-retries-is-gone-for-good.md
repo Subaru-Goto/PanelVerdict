@@ -52,18 +52,32 @@ kind, the way `_failure_kind` already does.
 
 ## The measurement that decides whether this is worth building
 
-**Zero vote failures have ever been observed.** `docs/research/first-full-scale-run.md`
-records three runs: 200/200, 200/200, and 50/50 before an early stop — **0 failures in
-450 paid votes.**
+**Zero vote failures have ever been observed.** `docs/research/first-full-scale-run.md:77`
+records **"250 paid votes, 0 failures, 0 parse errors"**, and
+[000-map](000-map.md) carries the same figure.
+
+**Count the paid votes, not the rows.** The run table lists three runs and their vote
+counts sum to 450, which is the wrong number to reason from:
+
+| run | votes | cost | evidence about failures? |
+|---|---|---|---|
+| `fixed-200` | 200/200 | $0.1373 | yes |
+| `replay` | 200/200 | **$0.0000** | **no** |
+| `stopped` | 50/200 | $0.0363 | yes |
+
+`replay` *"answered 200 votes with **one** HTTP request (the translation)"* — they came
+from the cache. A vote that makes no model call cannot fail one, so those 200 say nothing
+about a failure rate. **250 is the denominator.**
 
 008 was explicit that the design does not rest on a rate: *"The failure rate is
-unmeasured and this design does not rest on one."* It still doesn't. But 0-of-450 is
+unmeasured and this design does not rest on one."* It still doesn't. But 0-of-250 is
 evidence, and it bounds the rate: the one-sided 95% upper bound is
-`1 − 0.05^(1/450) ≈ 0.7%`.
+`1 − 0.05^(1/250) ≈ 1.19%`.
 
-At that upper bound, a 200-vote run loses **~1.3 panelists in expectation** — against a
+At that upper bound, a 200-vote run loses **~2.4 panelists in expectation** — against a
 panel whose own resolution is **±14 preference points** at that size
-(`detectable_gap`). 199 votes and 200 votes do not produce different decisions.
+(`detectable_gap`, the figure `config.py`'s profile table quotes). 198 votes and 200
+votes do not produce different decisions.
 
 **So the honest reading: this fixes nothing that has been observed to break, and at the
 worst rate the evidence permits it would change no verdict.**
@@ -99,5 +113,5 @@ made twice on different tallies.
 
 Either a failure is actually observed and a single non-402 run-level re-attempt lands
 with a test proving the cache makes it free — or this ticket is **closed as wontfix**
-with the 0-of-450 figure recorded, so the next reader does not re-derive it. Closing it
+with the 0-of-250 figure recorded, so the next reader does not re-derive it. Closing it
 is the more likely outcome, and that is a finding rather than a failure.

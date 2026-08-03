@@ -98,7 +98,13 @@ per-vote figures are the pair a slow run is diagnosed from.
 
 ## Done when
 
-Every log line carries a timestamp and a request id — including a refused run, which
-has no `test_id` — the id survives into the vote workers rather than blanking there,
-`test_id` still means what the ledger says it means, and a run's usage totals are
-queryable fields rather than an interpolated repr.
+Every log line **is one JSON object per line** carrying a timestamp and a request id —
+including a refused run, which has no `test_id` — the id survives into the vote workers
+rather than blanking there, `test_id` still means what the ledger says it means, and a
+run's usage totals are queryable fields rather than an interpolated repr.
+
+JSON lines are named here deliberately, because the feedback asked for them
+(*"switch to JSON-line output … so logs are machine-parseable in any aggregator"*) and
+the dependency section above declines only the suggested **library**, not the format.
+Declining `python-json-logger` while quietly dropping the requirement would be the
+doc-claims-less-than-it-owes version of the failure this arc keeps finding.
