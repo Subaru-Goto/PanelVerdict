@@ -94,6 +94,31 @@ middleware travels with the code and can be tested, which matters here because a
 guard nobody can test is a guard nobody can trust. A proxy limit on top is fine as a
 second layer.
 
+**"App middleware" here means ASGI/FastAPI middleware, not LangChain's.** Considered
+2026-08-03 and rejected for two structural reasons, recorded so nobody spends an
+afternoon discovering them:
+
+- **`/evaluate` has no agent to hook.** `create_agent` appears in `analyst.py` and
+  nowhere else — `pipeline.py` has zero references. The vote path is
+  `run_panel_test` → `collect_panel_votes` → a `ThreadPoolExecutor` of direct
+  `llm.vote()` calls, so there is no agent loop and therefore no middleware surface.
+  That is the endpoint this ticket exists for: **$0.145 and up to 200 model calls**,
+  against a `/chat` turn bounded at 8 steps. Agent middleware would cover the cheap
+  half and be structurally unable to reach the expensive one.
+- **On `/chat` it runs too late to refuse.** Middleware hooks fire *inside* the agent
+  (`before_model`, `wrap_model_call`, `after_model`), by which point FastAPI has
+  accepted the request, `analysis_facts` has validated it, and the `StreamingResponse`
+  has begun — and a stream cannot change its HTTP status after the first byte, as
+  above. A rate limit must reject before any work starts, which is an HTTP-edge
+  concern by construction.
+
+Two nearby LangChain pieces are worth naming so they are not mistaken for this one:
+
+| piece | what it actually bounds | relevant here? |
+|---|---|---|
+| `ModelCallLimitMiddleware` / `ToolCallLimitMiddleware` | calls **within one agent turn** | not to this ticket — but it does replace `analyst.py`'s hand-derived `recursion_limit`, which is its own ticket |
+| `langchain_core.rate_limiters.InMemoryRateLimiter` | **our** request rate *to the provider*, so 429s at 25-way fan-out | no — it limits the caller, not the callers, so it protects the provider's quota rather than our credit |
+
 ## Done when
 
 An unauthenticated caller cannot start a paid run, the limit is enforced before the
