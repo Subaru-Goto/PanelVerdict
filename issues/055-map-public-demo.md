@@ -113,6 +113,14 @@ this ceiling, and should be answered with this line rather than with the design.
 
 <!-- one line per closed ticket -->
 
+- [The cost ceilings](064-the-cost-ceilings.md) — **signed off 2026-08-04.** A **$1.00/day**
+  global cap in USD and **2 runs per account per day**, public paid runs on `prod`, and an
+  apology rather than an error at the ceiling. **Buys 3 accounts a day**, which is thin and is
+  the first number to revisit if the demo gets traffic. Two things the ticket holds that the
+  gist cannot: why this finds the *edge* of `budget_notice`'s documented "never refuse" rather
+  than overruling it, and why only the global cap bounds exposure. Panel model **stays**;
+  analyst spend is unmeasured, so [070](070-what-does-a-run-actually-cost.md) has it.
+
 ## Not yet specified
 
 - **The deploy itself, and secrets handling.** [Where can this deploy?](059-where-can-this-deploy.md)
