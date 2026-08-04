@@ -14,8 +14,13 @@ when a reader asks what something on the report *means*, **with sources shown**.
 
 Two subjects, because two things on the report arrive with no explanation attached:
 
-- **the Big Five**, as this product implements them
-- **the Bayesian decision**, as this product implements it
+- **the Big Five** — what a trait is and what a level means
+- **the Bayesian decision** — what the band and the interval are, and why they are there
+
+**The corpus holds concepts and method. It holds no figures.** Every number a reader needs
+is already in the payload or comes from a tool — see
+[What never goes in](#what-never-goes-in-the-corpus). That single rule is what keeps a
+retrieved answer from ever contradicting the report it explains.
 
 Rewritten 2026-08-04. What changed and why is in [History](#history) — including the
 corpus this ticket used to describe, and the argument that killed it.
@@ -26,24 +31,26 @@ A customer has **no access to the code**. So when they ask what a trait level me
 analyst answers from the model's own weights — and the model's most probable answers are
 each wrong *about this product*:
 
-| the likely answer | what this codebase does | source |
+| the likely answer | what the corpus says instead | grounded in |
 |---|---|---|
-| scores come from a self-report inventory | sampled from `MVN(μ(age,gender), Σ)` — no panelist ever answered a questionnaire | `bigfive.py:33` |
-| "high" means above average, or the top fifth | `HIGH` is +0.5σ to +1.5σ; `VERY_HIGH` is a separate band above it | `bigfive.py:57` |
-| openness tracks education, culture, country | μ is conditioned on **age and gender only** — *"country does not condition the Big Five μ"* | `bigfive.py:17` |
-| a textbook gloss of openness | the literal sentence that reached the vote prompt: *"curious and imaginative, drawn to new ideas and experiences"* | `panel.py:19` |
+| these are people's questionnaire responses | every panelist is **synthetic** — traits were drawn from population statistics, never collected from anyone | `VoterSummary`: *"Every voter is synthetic — a sampled persona, not a person"* |
+| openness tracks education, culture, nationality | the draw is conditioned on **age and gender only**, so a trait level carries no claim about country | `bigfive.py:17` — *"country does not condition the Big Five μ"* |
+| a textbook definition of openness | what the level *means about this panelist*: appetite for novelty against preference for the familiar | `panel.py`'s level descriptions, BFI-2-style (`persona-seed-data.md`) |
+| a lean toward B is a result | a lean inside the band is **not** a result, and *"credibly too small to matter"* is a positive finding rather than a null one | `verdict.py:279-284` — *"the third is the point of the method"* |
 
 These are not obscure failure modes — they are the *default* completions. And the reader
 cannot catch any of them. That is hallucination in the form that costs something: not
 fabricated trivia, but a confident mismatch with what the system did, delivered to
 somebody with no way to check it.
 
-**A caution the same table has to obey.** `bigfive.py:58` warns that the cutoffs' clean
-population shares — 6.7 / 24.2 / 38.3 / 24.2 / 6.7 — describe the *unconditional* normal;
-*"a demographically conditioned cell skews off those shares, since μ moves with age and
-gender."* A corpus document quoting the shares flat, for a panel drawn to quotas, would
-commit this ticket's own defect while citing a source. Every seeded figure needs its
-conditions attached.
+**Note what is deliberately absent: percentiles.** *"Is `HIGH` the top fifth?"* has a
+figure for an answer, and figures are not this corpus's job — the honest response is that
+the report expresses a level, not a rank. Seeding the cutoffs would have been worse than
+unhelpful: `bigfive.py:58` warns that the clean population shares describe the
+*unconditional* normal and *"a demographically conditioned cell skews off those shares"*,
+so a document quoting them flat for a quota-drawn panel would commit this ticket's own
+defect **while citing a source**. The no-figures rule removes the possibility rather than
+guarding against it.
 
 ## Why the prompt rule is the blocker, and it is misrouting rather than strictness
 
@@ -66,23 +73,35 @@ needs the same clause for its suggestions; whoever writes it should write it onc
 
 ## Why this is genuinely retrieval, stated without overclaiming
 
-The old version of this ticket answered the fair objection *"that's just SQL"* by pointing
-at published papers. That defence is gone with them, so the claim has to be re-made
-honestly — and it splits:
+The old version answered the fair objection *"that's just SQL"* by pointing at published
+papers. That defence went with them, and the concepts-only rule sharpens the question
+rather than settling it: **a model can already define a ROPE.** So the claim has to be made
+honestly, in three parts.
 
-- **Some questions are near-lookups.** *"What does high openness mean here?"* has one
-  home. Retrieval is still the right mechanism, because the alternative is not a `WHERE`
-  clause — there is no column for it — it is the model guessing. This is where the
-  requirement is *thinly* met, and pretending otherwise would be the same overclaim the
-  previous version made.
-- **Some are genuinely multi-document.** *"B is ahead — why is this undecided?"* needs the
-  ROPE's definition, why the interval must clear the band entirely, and what
-  `detectable_gap` says at this panel size. Three documents, no single passage, and the
-  answer has to be composed from prose. **That** is the similarity search earning its
-  name.
+- **The weakest part, stated first.** Some of this is material the model broadly knows.
+  *"What is a credible interval?"* is not a fact it lacks. Pretending otherwise would
+  repeat the previous version's overclaim.
+- **What retrieval buys even so: the same answer every time, with a source.** An
+  explanation from weights is unfalsifiable and varies turn to turn; a retrieved one is
+  fixed and points at a document the reader could be shown. For a product whose entire job
+  is explaining a number somebody paid for, a *consistent, checkable* explanation is the
+  feature, not a nicety — and it is what the sources requirement in Scope is for.
+- **And the stance is ours, not the textbook's.** A generic explanation of a ROPE will not
+  say that *this* product treats `practical_tie` as a **positive finding** rather than a
+  null result, or that it demands the whole interval clear the band rather than merely lean
+  past it. `verdict.py:279-284` calls that third outcome *"the point of the method."* That
+  is an editorial position, and a model has no way to guess it.
 
-So: the requirement is met by the *shape of the answer*, not by the corpus being exotic.
-Write that down rather than restating the old paper argument, which no longer applies.
+**The strongest part is composition.** *"B is ahead — why is this undecided?"* is answered
+from three retrieved concepts — what the band is, why the interval must clear it entirely,
+what a null result can show — joined to three values off the wire: `rope`,
+`credible_interval`, `detectable_gap`. No single passage holds that answer, and no `WHERE`
+clause reaches it. **That** is the similarity search earning its name, and it is the shape
+worth demonstrating.
+
+So the requirement is met by the *shape of the answer*, not by the corpus being exotic.
+That division — retrieved concept, live number — is also exactly what keeps the two-kinds
+rule intact.
 
 ## What this corpus is not, and why
 
@@ -127,51 +146,128 @@ document that explains where μ comes from cites the paper the way the code does
 
 ### What gets seeded
 
-| subject | what the documents have to say | drawn from |
-|---|---|---|
-| trait meaning | the phrasing each level put in the vote prompt | `panel.py:19` `_TRAIT_PHRASES` |
-| trait levels | half-sigma cutoffs, the shares they imply, **and that a quota-drawn cell skews off them** | `bigfive.py:57-59` |
-| where μ comes from | conditioned on age and gender, not country; Donnellan & Lucas cited | `bigfive.py`, `docs/research/persona-seed-data.md` |
-| measured trait effects | this project's own manipulation check | `docs/research/manipulation-check.md` |
-| the decision rule | ROPE 0.43–0.57, why the interval must clear it, `credible_mass = 0.95`, HDI vs equal-tailed | `verdict.py` |
-| why not MCMC | exact conjugate answer; sampling would break byte-identical replay | `verdict.py`, 010e |
-| what the panel can resolve | `detectable_gap` — **±13.9 points at n=200**, in *posterior* share | `verdict.py:222`, [020](020-probability-not-label.md):113 |
-| when it stops early | 2 confirmations, the 50-vote floor and its cost | `docs/research/adaptive-stopping.md` |
+Concepts and method, phrased for a reader who is neither a statistician nor a
+psychometrician. No figures — see the rule below.
 
-**The ±13.9 figure is exactly why this needs care.** 020 records that ±14 was a *rejected*
-first pass expressing the gap as a raw vote share while every other number in the payload
-lives in the posterior share. A corpus document that quoted ±14 would cite a figure this
-repo already corrected away — and would do it authoritatively.
+| subject | the question it answers | grounded in |
+|---|---|---|
+| what a trait is | what each of the five traits describes, and what a level says about a panelist | `panel.py` level descriptions, `docs/research/persona-seed-data.md` |
+| how a panelist came to exist | traits drawn from population statistics, conditioned on age and gender; synthetic throughout, and what that limits | `bigfive.py`, `persona-seed-data.md`, Donnellan & Lucas cited |
+| what a credible interval is | how it differs from a confidence interval, and why a range rather than one number | `verdict.py` `posterior` |
+| what the band is and why | why a difference can be real yet too small to act on, and why the product takes a stance on that at all | `verdict.py` `rope_verdict` |
+| why *"ahead"* is not *"decisive"* | why the whole interval must clear the band, not merely lean past it | `verdict.py:279-284` |
+| what the three outcomes mean | `decisive`, `undecided`, `practical_tie` — and that the third is a **positive finding**, which *"not significant"* can never say | `verdict.py:279-284` |
+| what a null result can and cannot show | why *"this panel could have detected a gap this wide and found none"* is readable where bare `undecided` is not | `verdict.py` `detectable_gap` |
+| why it may stop early | that the run stops when the answer is already in, and that this is a cost decision with a stated confirmation rule | `docs/research/adaptive-stopping.md` |
+| what the method cannot tell you | the panel is unvalidated on same-meaning copy — 015's negative control | `docs/research/task-framing.md`, README *Known limitations* |
+
+### The rule: concepts and method, never figures
+
+**If a statement contains a number that also exists in code or on the wire, it does not go
+in the corpus.** The reasons compound:
+
+- **The figure is already there.** `PanelVerdict` carries `rope`, `credible_interval`,
+  `credible_mass` and `detectable_gap`, and `schemas.py:243` is explicit that *"`rope`
+  travels with the verdict rather than being implied."* A retrieved copy would duplicate a
+  fact the payload already supplies.
+- **A duplicate can disagree.** Two homes for one number means the analyst can cite a
+  document that contradicts the report on the same screen — with a citation attached,
+  which is worse than no answer.
+- **It respects the two-kinds rule instead of straining it.** Numbers stay tool facts;
+  concepts become the retrieved third kind. That makes the new clause narrow by
+  construction, which is what the 08-03 loophole guard was asking for.
+- **`docs/research/` is not the corpus.** Those documents are dense with figures —
+  `manipulation-check.md`'s measured effects, `adaptive-stopping.md`'s confirmation
+  counts. They are the *grounding* a corpus document cites, not text to chunk wholesale.
+
+**The worked example of why.** `detectable_gap` at *n* = 200 is ±13.9, and
+[020](020-probability-not-label.md):113 records that **±14 was a rejected first pass** —
+it expressed the gap as a raw vote share while every other number in the payload lives in
+the posterior share. A corpus document quoting ±14 would authoritatively cite a figure this
+repo had already corrected away. Under this rule no document quotes either: the concept
+*"the smallest gap a panel this size could have called decisive"* is seeded, and the value
+comes from the verdict.
+
+### What never goes in the corpus
+
+Already on the wire, so retrieving them would be duplication at best and contradiction at
+worst:
+
+- `verdict.rope`, `credible_interval`, `credible_mass`, `detectable_gap`
+- `stop_reason`, `tally`, `counts`
+- each voter's demographics and trait **levels** (`VoterSummary.traits`)
+
+And out of scope by [What this corpus is not](#what-this-corpus-is-not-and-why): anything
+about how real people respond to copy.
+
+**The asymmetry worth noticing:** `VoterSummary` gives the reader `openness: HIGH` — a bare
+enum label. The *value* is on the wire and the *meaning* is nowhere. That is the gap this
+corpus fills, and it is exactly the shape of the division above.
+
+## The bar: the analyst has to answer the topic *well*
+
+**This ticket is judged on user value, not on plumbing.** A chunk table, a retrieval
+function and a citation are all necessary and none of them is the goal. The goal is that
+somebody who is not an analyst asks *"why is this undecided when B is ahead?"* and gets an
+answer they can act on.
+
+Two consequences that shape the work rather than decorate it.
+
+**The documents are written for the reader, not transcribed from the code.** This settles
+what was previously left open. `verdict.py`'s docstrings are excellent and are written for
+engineers — *"for a skewed posterior the equal-tailed interval can include values less
+plausible than ones it excludes"* is exactly right and is not an answer for a marketer.
+Chunking them verbatim would hand engineer prose to a lay reader with a citation attached,
+which reads as evasion. So each document is **newly written as reader-facing explanation**,
+citing the code and the research rather than quoting them. Hand-written wins for a
+user-value reason, not a maintenance one.
+
+**A retrieved answer must be better than the model's own, or the corpus is overhead.** That
+is the comparison to actually run, and it is uncomfortable on purpose: for *"what is a
+credible interval?"* the weights may well win on fluency. The corpus has to earn its place
+on the axes it can win — the same answer every time, a source the reader can check, and
+this product's stance (`practical_tie` as a positive finding) which no generic explanation
+contains.
 
 ## Decisions this ticket has to make
 
 **Chunking.** Fixed-size with overlap is the default, but these are section-structured
-markdown documents. Splitting on headings keeps a claim with its number; fixed windows can
-cut a figure from its condition — and the `bigfive.py:58` caveat above is precisely a
-condition that must not be split from its shares. Prefer heading-aware, fall back to fixed
-windows inside an over-long section.
+markdown documents. Splitting on headings keeps an explanation with the caveat that
+qualifies it — and a concept severed from its caveat is precisely the confident-but-wrong
+answer this ticket exists to prevent. Prefer heading-aware, fall back to fixed windows
+inside an over-long section.
 
-**Hand-written prose versus generated from source — open.** Hand-written documents that
-*cite* the constants, or documents generated from the constants themselves. This is not
-decided here, and it is the decision the staleness hazard below turns on.
+**How answer quality gets measured.** Retrieval-hit metrics are not the bar above, so
+question → expected-source pairs are necessary but not sufficient: they prove the right
+document was found, not that the reader was served. This is where judge-based tooling
+(RAGAS, DeepEval) finally earns its place, having been the wrong instrument for
+[016](016-translation-accuracy-golden-set.md) and 017 — the output here is prose with no
+single right answer, which is the case judges are for. Two things to check, and the second
+is the one that matters:
 
-**Retrieval quality measurement.** No ground-truth relevance labels exist for this corpus,
-which is where judge-based tooling (RAGAS, DeepEval) earns its place, having been the wrong
-tool for [016](016-translation-accuracy-golden-set.md) and 017. A handful of
-question → expected-source pairs is probably enough for v1; a full faithfulness harness is
-not needed to ship.
+- **faithfulness** — the answer says only what the retrieved passages support
+- **whether a non-expert is actually served** — answered in plain language, and not
+  contradicting the numbers on screen
 
-## The hazard this design introduces
+A handful of pairs plus a small judged set is enough to ship. A full harness is not
+required, but *"the right chunk came back"* alone is not evidence this ticket succeeded.
 
-A corpus derived from source files **goes stale silently.** If `_TRAIT_PHRASES` or `_ROPE`
-changes and nobody reseeds, the analyst cites a document confidently describing behaviour
-the code no longer has — **strictly worse than answering from weights, because it arrives
-with a citation.**
+## What the concepts-only rule already removes
 
-Drop-and-reseed is the mitigation, and it stops being mere convention here: it is
-load-bearing once retrieved text makes claims about live constants. Whichever way the
-hand-written/generated decision above goes, something has to fail when the corpus and the
-code disagree.
+Worth recording, because an earlier draft of this ticket treated it as the design's main
+hazard: a corpus derived from source files **goes stale silently**, and a document
+confidently describing behaviour the code no longer has is *worse* than answering from
+weights, because it arrives with a citation.
+
+That hazard is now **structural rather than managed**. Documents hold no figures and quote
+no constants, so there is nothing in the corpus for a change to `_ROPE` or
+`_TRAIT_PHRASES` to falsify. Drop-and-reseed stays the convention because the corpus is a
+cache of committed documents, but it is no longer load-bearing for correctness.
+
+**What can still drift is a stance, not a number.** If the product stopped treating
+`practical_tie` as a positive finding, a document saying it does would be wrong — and no
+reseed catches that, because the document is not derived from the code. Narrow, slow-moving,
+and the residue worth stating rather than a reason to hold figures.
 
 ## Security note
 
@@ -197,6 +293,18 @@ Kept because the discarded arguments are the useful part.
   step for a corpus whose documents do not read like questions.
 - **Re-scoped again, 2026-08-04**, to this product's own behaviour. The reasoning is in
   *Why it is needed* and *What this corpus is not*.
+- **Narrowed the same day to concepts and method, no figures.** The first pass at the
+  re-scope would have seeded the ROPE bounds, the trait cutoffs and `detectable_gap` — all
+  of which `PanelVerdict` already puts on the wire. Duplicating them bought nothing and
+  risked a cited document disagreeing with the report beside it. Seeding *"what the band is
+  and why a product takes a stance on it"* and reading the bounds off the verdict is
+  strictly better, and it retires the staleness hazard the earlier draft called this
+  design's main risk.
+- **And the bar moved with it**, same day: the measure is whether the analyst answers the
+  topic *well* for a non-expert, not whether the pipeline retrieves. That settled the
+  hand-written-versus-generated question — engineer docstrings, chunked verbatim, are not
+  an answer for a marketer — and moved judged answer quality from a v1 nicety to the
+  evidence this ticket worked.
 - **The argument that died with it**, recorded so nobody rebuilds it: the corpus was going
   to hold Gligorić et al. 2023 (24,333 Upworthy pairs; second-person pronouns β +0.051,
   hypothesis rejected) beside our own 015 run (panel preferred *"you"* at 0.82 / 0.90 /
@@ -212,18 +320,21 @@ Kept because the discarded arguments are the useful part.
 
 ## Done when
 
-A reader who cannot open the repo can ask *"what does high openness mean about this
-panelist?"* or *"B is ahead — why is this undecided?"* and get an answer from **retrieved
-passages with their sources shown**, not the model's textbook gloss. Which requires all of:
+**A non-expert asks *"B is ahead — why is this undecided?"* and gets an answer they can act
+on** — the concept from retrieved passages with their sources shown, the numbers from the
+verdict, in language that needs no statistics. That is the test; everything below is what it
+takes to pass it.
 
 - a chunk table separate from `personas`, populated by a drop-and-reseed, with
   heading-aware splitting
+- documents **written as reader-facing explanation**, not chunked docstrings, each citing
+  the code or research it rests on
+- **no figure in any document that also exists in code or on the wire** — the analyst
+  composes retrieved concept with live value
 - a retrieval function returning chunks **with citations**, exposed to the analyst
 - the two-kinds rule rewritten so a question about a trait level or a credible interval
   routes to retrieval, **without opening the loophole** the 08-03 guard names — a question
   about this run's panel still goes to a tool
-- every seeded figure carrying its conditions, so no document quotes an unconditional
-  share for a quota-drawn panel or a resolution 020 already corrected away
-- a handful of question → expected-source pairs; a full faithfulness harness is not needed
-  to ship
+- question → expected-source pairs, **plus a judged check that the answers are faithful and
+  plain** — retrieval hits alone are not evidence this succeeded
 - votes still ungrounded, so every number 014 and 015 measured stays comparable
