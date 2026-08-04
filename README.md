@@ -155,7 +155,7 @@ Roughly in the order they would be done, each already specified:
 
 | next | what it changes |
 |---|---|
-| [018](issues/018-audience-research-knowledge-base.md) | a chunked, embedded, cited corpus so general answers come from sources rather than weights |
+| [018](issues/018-audience-research-knowledge-base.md) | a chunked, embedded, cited corpus, so what a trait level or a credible interval means here comes from a source rather than the model's weights |
 | [045](issues/045-paid-endpoints-have-no-auth-or-rate-limit.md) | a shared-secret header and a per-key rate limit before anything is deployed |
 | [046](issues/046-analyst-threads-die-on-restart.md) | `PostgresSaver` on the pool that is already there |
 | [041](issues/041-which-traits-moved-the-vote.md) | which kind of person preferred which variant — the question customers ask next |
