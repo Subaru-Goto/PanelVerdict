@@ -237,12 +237,21 @@ class TestBudgetNotice:
     finish is still worth starting, because every vote it casts is saved and a
     re-run after top-up resumes free. So the check informs; it never refuses."""
 
-    def test_thin_credit_warns_with_both_figures(self) -> None:
+    def test_thin_credit_warns_with_both_figures(self, monkeypatch) -> None:
+        """Both the balance and the estimate travel, so a reader can see the shortfall.
+
+        The rate is pinned to a known value rather than read from config, for two
+        reasons. Writing the product in (`"$0.15"`) broke on a model change — a config
+        value failing a message test. Deriving it from `USD_PER_VOTE` fixed that but
+        restated the formula under test, so it could not fail if both sides were wrong
+        together. A fixed rate asserts the arithmetic *and* survives a re-pricing.
+        """
+        monkeypatch.setattr("app.main.USD_PER_VOTE", 0.001)
         (notice,) = budget_notice(0.05, size=200)
 
         assert notice.severity == "warning"
         assert "$0.05" in notice.message
-        assert "$0.15" in notice.message
+        assert "$0.20" in notice.message
         assert "top" in notice.message and "re-run" in notice.message
 
     def test_sufficient_credit_says_nothing(self) -> None:
