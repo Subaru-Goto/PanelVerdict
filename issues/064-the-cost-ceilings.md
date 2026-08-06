@@ -22,6 +22,32 @@ yields a risk appetite.
 | **analyst, at the edge** | **20 turns per thread per day** | signed off, not derived. A chat turn is a fraction of a vote, so this is generous and cheap. 045 owns the mechanism. |
 | **analyst, inside** | `ModelCallLimitMiddleware(thread_limit=40, run_limit=8, exit_behavior='end')` | `run_limit=8` is what `2 * len(tools) + 2` evaluates to **today** (3 tools), so it is *what already ships* rather than a new guess — 052's argument. **`thread_limit=40` is signed off, not derived** — it is 2× the edge's turn budget, a deliberate slack so the inner limit is a backstop rather than a second gate. `exit_behavior='end'` means an exhausted turn finishes with a sentence, not a stack trace. |
 
+### Amendment 2026-08-05: the model changed, and the ceiling now buys ~2.4× more
+
+The panel moved to `openai/gpt-5.6-luna` and `USD_PER_VOTE` fell from a measured **0.000726**
+to an estimated **0.0003** (derivation in `config.py`; gate in
+[071](071-the-panel-model-changed-without-its-gate.md)). **The ceiling is unchanged at
+$1.00/day** — the author's risk appetite did not move — but what it buys did:
+
+| | at $0.000726 | at $0.0003 |
+|---|---|---|
+| a full `prod` run | $0.145 | **$0.060** |
+| full runs per day | 6 | **16** |
+| accounts per day, at 2 runs each | **3** | **8** |
+
+**This materially answers the concern below.** The section states 3 accounts/day is *"thin for
+a destination that says a stranger can use it safely"* and names it the first number to revisit.
+It got revisited by a model change rather than by raising the cap, which is the better outcome:
+the same exposure now serves nearly three times the visitors.
+
+**The ratio is 2.4×, not 2.7×.** `0.000726 / 0.0003 = 2.42`; the run and account counts show
+2.67× only because flooring rounds 6.9 down to 6 while 16.7 goes to 16. Quoting the counts
+flatters the change, so the constants are the honest figure.
+
+**Two caveats.** The new figure is an **estimate**, so these counts are provisional until 071
+measures a paid run — and per-account quotas become *less* decorative at 8 accounts than at 3,
+since the global cap no longer binds quite so immediately.
+
 ### What $1.00 actually buys, which is the number to argue with
 
 Stated plainly because the ticket's own framing hid it behind *runs*:
@@ -68,7 +94,8 @@ holds where it was reasoned and is silent here.
   on every axis … the clear value pick"* — and warns *"a cheap model that enacts badly is
   worth zero regardless of price."* Switching also **re-keys every vote fingerprint**
   (`configuration` is inside it) and invalidates what 014 and 015 measured.
-- **The analyst is already on `gpt-5-mini`** (`config.py:70`), its cost is **unmeasured**, and
+- **The analyst runs the cheapest model available** — `openai/gpt-5.6-luna` since 2026-08-05,
+  previously `gpt-5-mini` — its cost is **unmeasured**, and
   `003:38` deferred *"a reasoning model"* pick to 012 with no record it was ever made. So
   there is nothing to economise until it is measured →
   [070](070-what-does-a-run-actually-cost.md).

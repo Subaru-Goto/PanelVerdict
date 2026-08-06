@@ -123,6 +123,12 @@ this ceiling, and should be answered with this line rather than with the design.
 
 ## Not yet specified
 
+- **Whether Luna enacts Big Five traits.** The panel moved to `openai/gpt-5.6-luna` on
+  2026-08-05 on price, and `panel-model-selection.md`'s rule is that *"the manipulation check
+  decides, not assumption."* [071](071-the-panel-model-changed-without-its-gate.md) is the
+  gate; what is *not* yet sharp is what to do if enactment degrades in a way that changes
+  015's negative control rather than the trait effects.
+
 - **The deploy itself, and secrets handling.** [Where can this deploy?](059-where-can-this-deploy.md)
   asks *where*; actually standing it up graduates from that answer, and **nothing in the
   current ticket set delivers the public URL the destination names** — deliberately, since

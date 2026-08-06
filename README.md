@@ -86,14 +86,20 @@ cd frontend && npm install && npm run dev       # http://localhost:3000
 ## What a run costs
 
 Real money, every time — there is no free tier or mock mode in the app itself.
-One vote is roughly **$0.0007**, and the panel size comes from `PROFILE` in
+One vote is roughly **$0.0003**, and the panel size comes from `PROFILE` in
 `.env`:
 
 | profile | panel | ~cost per run |
 |---------|-------|---------------|
-| `dev` (default) | 25 | $0.018 |
-| `demo` | 100 | $0.073 |
-| `prod` | 200 | $0.145 |
+| `dev` (default) | 25 | $0.008 |
+| `demo` | 100 | $0.030 |
+| `prod` | 200 | $0.060 |
+
+These are **estimates, not measurements.** The panel moved from `gpt-5-mini` to
+`openai/gpt-5.6-luna` and no paid run has been made on the new model, so the
+per-vote figure is derived from list prices — see the note on `USD_PER_VOTE` in
+`backend/app/config.py` for the derivation and why it rounds up. The last
+*measured* figures, on `gpt-5-mini`, were $0.018 / $0.073 / $0.145.
 
 `PROFILE` is not in `.example.env` — it defaults to `dev`, and the default is
 the cheapest on purpose: forgetting to choose should cost a cent, not a tenth of

@@ -14,7 +14,8 @@ seconds without a login wall.
 
 **"$0" in the title means per visitor, and that is the property that matters** — unlimited
 people can read a real 200-vote report and the meter never moves. Seeding it is not free:
-two or three real `prod` runs cost about **$0.44 once, ever**, against
+two or three real `prod` runs cost about **$0.18 once, ever** (estimated at the current
+per-vote figure; it was $0.44 when the panel ran gpt-5-mini), against
 [064](064-the-cost-ceilings.md)'s $1.00 daily ceiling. A one-time spend, not a per-view one.
 
 **The saving is skipping translation, not caching votes.** That is the non-obvious part:
@@ -43,7 +44,7 @@ outcome *"is the point of the method"*:
 A single `decisive` example looks like any A/B tool. Clicking through all three shows the
 method.
 
-**Cost: about $0.44, once, ever** — three real `prod` runs at $0.145. Less than half of
+**Cost: about $0.18, once, ever** — three real `prod` runs at ~$0.060 each, estimated. Well under
 [064](064-the-cost-ceilings.md)'s $1.00 daily ceiling, spent one time.
 
 **The constraint that may bite.** [020](020-probability-not-label.md) records that a

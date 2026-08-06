@@ -342,8 +342,8 @@ class OpenRouterPanelLLM:
                 "ask": [str(message.content) for message in scaffold],
             }
         )
-        # No temperature: gpt-5-mini (a reasoning model) rejects any non-default
-        # temperature with a 400.
+        # No temperature: the panel runs a reasoning model, and those reject any non-default
+        # temperature with a 400. Not naming one — the constraint is the model class's.
         #
         # `max_retries` is the SDK's own default, stated rather than inherited: a panel
         # fans 25 requests out at once, so 429s are expected traffic and this is the line

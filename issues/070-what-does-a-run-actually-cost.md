@@ -20,7 +20,7 @@ Make spend visible. [064](064-the-cost-ceilings.md) signed off a $1.00/day ceili
   carries it. So a conversation's cost is currently unknowable.
 - **A model decision fell through a gap.** `003:38`: *"**Analyst model:** a reasoning model —
   separate role/run, so its selection is deferred to **012**."* 012 shipped, and
-  `config.py:70` carries `analyst_model = "openai/gpt-5-mini"` — the panel's model, with no
+  `config.py` carries `analyst_model = "openai/gpt-5.6-luna"` — the panel's model, with no
   `reasoning_effort` set. No record shows the pick was made. Recorded so it stops being
   invisible.
 
