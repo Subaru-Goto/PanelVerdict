@@ -30,8 +30,50 @@ alternative is one graph that pauses and resumes.
 
 What the answer has to weigh:
 
-- **`/evaluate` is linear**, which is exactly why [000-map](000-map.md) deferred LangGraph. A
-  linear graph is a more elaborate way to write a function that already works.
+### Correction: "the pipeline is linear" is not the argument (2026-08-05)
+
+An earlier draft rested on it, and it does not survive a look at the code. `pipeline.py:274-300`
+is:
+
+```
+for chunk in chunks:                    # a cycle
+    fan out 25 votes concurrently       # Send-shaped fan-out
+    if OutOfCredit: break               # conditional exit
+    tally + stopping_decision           # a barrier: needs the whole chunk
+    if confirmed twice: stop            # second conditional exit
+```
+
+A cycle, a barrier, two conditional exits and a 25-way fan-out inside each iteration. That is a
+**textbook LangGraph shape**, not a straight line — `Send`, an implicit join,
+`add_conditional_edges`, an edge back to the vote node. Anyone arguing from topology will
+conclude the opposite of what that draft claimed, so the argument has to be made on value.
+
+### The actual argument: what would a graph buy that is not already bought?
+
+- **Durable resume is already delivered, more cheaply, by the vote ledger.** `vote_fingerprint`
+  plus `ON CONFLICT (request_fingerprint) DO NOTHING` means a re-run re-asks only what has no
+  row. That is resume at the **domain** level: provider-independent, and it survives swapping
+  persistence later. A graph checkpointer would duplicate it, leaving two resume mechanisms to
+  keep honest. **This is the whole case.**
+- **Sync versus async is real work.** 25 blocking SDK calls in threads against async-oriented
+  nodes means touching all five `init_chat_model` sites in `llm.py` and everything binding them.
+- **010e's byte-identical replay is a documented guarantee**, and it is what makes the $0 demo
+  possible at all ([061](061-a-zero-cost-demo-page.md)). Rewriting the stopping loop risks it.
+- **This is the project's most delicate logic** — adaptive stopping, the ledger, chunked
+  concurrency. Most likely to break subtly, least likely to break loudly.
+
+### The middle path worth costing before choosing either extreme
+
+**Hand-author the graph around the vote loop, not through it.** Nodes for screen → select →
+confirm → vote → assemble, where `confirm` holds the `interrupt()` and the **vote node calls
+today's `collect_panel_votes` unchanged**, `ThreadPoolExecutor` and all.
+
+That buys the things actually wanted — real nodes and edges in production code, a real
+`interrupt()` for the spend gate, per-stage LangSmith spans — while the chunk loop, adaptive
+stopping and the ledger stay untouched inside one node. It is a far smaller change than making
+each vote a `Send`, and it does not put the replay guarantee at risk.
+
+Cost this before concluding either "nowhere" or "rewrite the pipeline".
 - **`collect_panel_votes` uses a `ThreadPoolExecutor` with 25 workers.** LangGraph nodes are
   async-oriented, so a vote node means deciding how 25 threads live inside it, or
   restructuring to a `Send` fan-out. Real work against tested code that carries adaptive

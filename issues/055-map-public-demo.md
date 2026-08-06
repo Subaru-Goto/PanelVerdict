@@ -61,10 +61,15 @@ this ceiling, and should be answered with this line rather than with the design.
   analyst *already runs on a graph* — the open question is where a **hand-authored** graph
   earns its place, never whether to adopt one.
 - **`create_agent` is the default; hand-author only where something specific demands it.**
-  A linear pipeline expressed as a graph is a more elaborate way to write a function that
-  already works, and `collect_panel_votes` runs 25 threads in a `ThreadPoolExecutor` that a
-  node would have to rehome. [067](067-where-is-a-hand-authored-graph-worth-it.md) is
-  therefore narrow, and *"nowhere yet"* is a legitimate answer to it.
+  **Not because the pipeline is simple** — corrected 2026-08-05, since `pipeline.py:274-300` is
+  a cycle with a barrier, two conditional exits and a 25-way fan-out, which is a textbook graph
+  shape and would argue the *opposite*. The reason is that **the value a graph would add here is
+  already bought:** durable resume comes from the vote ledger, where `vote_fingerprint` plus
+  `ON CONFLICT DO NOTHING` re-asks only what has no row — provider-independent, and it survives
+  swapping persistence. A graph checkpointer would duplicate it. Add the sync-versus-async cost
+  across `llm.py`'s five call sites and the risk to 010e's byte-identical replay, and the
+  balance is clear. [067](067-where-is-a-hand-authored-graph-worth-it.md) holds the full
+  argument and the middle path — a graph *around* the vote loop rather than through it.
 - **The edge refuses, the middleware bounds.** Auth and turns-per-window are FastAPI
   dependencies returning 401/429; per-turn model-call budgets are middleware. Middleware
   runs *inside* the agent after streaming has begun, so it can never refuse a request —
