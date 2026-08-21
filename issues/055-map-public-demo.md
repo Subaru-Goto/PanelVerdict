@@ -70,6 +70,10 @@ this ceiling, and should be answered with this line rather than with the design.
   across `llm.py`'s five call sites and the risk to 010e's byte-identical replay, and the
   balance is clear. [067](067-where-is-a-hand-authored-graph-worth-it.md) holds the full
   argument and the middle path — a graph *around* the vote loop rather than through it.
+  **Resolved 2026-08-21: the middle path won** — see *Decisions so far*. The default
+  ("`create_agent` wherever it fits") survives intact: the analyst stays on it; only
+  `/evaluate` gains a hand-authored graph, and on a new product requirement rather than
+  on topology enthusiasm.
 - **The edge refuses, the middleware bounds.** Auth and turns-per-window are FastAPI
   dependencies returning 401/429; per-turn model-call budgets are middleware. Middleware
   runs *inside* the agent after streaming has begun, so it can never refuse a request —
@@ -98,7 +102,12 @@ this ceiling, and should be answered with this line rather than with the design.
   on the copy ([011](011-build-report-ui.md)) and *"six more cold-reader rounds on the
   posterior chart"* ([023](023-vote-feed-voter-details.md)). The visual layer is fair game;
   the information architecture and wording are not.
-- **The framework learning goal is part of the destination, not a side effect.** Author's
+- **The framework learning goal is part of the destination, not a side effect.**
+  **Retired 2026-08-21** — author's direction: *"There is no learning mode, fully agentic
+  coding."* [069](069-author-the-react-loop-by-hand-once.md) closed with it (see *Out of
+  scope*); the nodes-and-edges surface it covered now ships in production via
+  [076](076-author-the-evaluate-graph-around-the-vote-loop.md). The original clause is
+  kept below for the record. Author's
   direction: *"I would like to really understand langChain and langGraph … gain the skill of
   work standard."* So a ticket that reaches the product outcome while teaching nothing has
   only half-succeeded. Note this is **not** in tension with `create_agent` as the default:
@@ -117,6 +126,26 @@ this ceiling, and should be answered with this line rather than with the design.
 ## Decisions so far
 
 <!-- one line per closed ticket -->
+
+- [Where is a hand-authored graph worth it?](067-where-is-a-hand-authored-graph-worth-it.md) —
+  **the middle path, decided 2026-08-21.** `/evaluate` becomes a graph *around* the vote
+  loop with an `interrupt()` spend gate; the analyst stays on `create_agent`; one FastAPI
+  service stands. Decided on the author's new panel-confirmation requirement, **not** on
+  the EU-AI-Act premise, which the research refuted. Build:
+  [Author the evaluate graph](076-author-the-evaluate-graph-around-the-vote-loop.md) +
+  [The panel preview](077-panel-preview-accept-or-redraw.md).
+- [Nothing confirms the panel before the money is spent](054-nothing-confirms-the-panel-before-the-money-is-spent.md) —
+  **superseded into the graph, 2026-08-21.** The gate is one `interrupt()` rather than two
+  endpoints; the author enlarged it — the preview shows the seated panel's composition
+  (age, country, gender, education, income) and offers **accept or redraw** (a fresh free
+  sample, same filter). Rationale carries forward; carried by 076/077.
+- [What does the EU AI Act actually require of PanelVerdict?](073-what-the-eu-ai-act-actually-requires.md) —
+  **minimal risk; no per-step-trace duty exists, 2026-08-21.** What does bind, in force
+  since 2 Aug 2026: Art. 50(1) — the analyst must disclose it is an AI system
+  ([074](074-the-analyst-never-says-it-is-an-ai-system.md), arguably the most urgent
+  ticket on a public URL) — and plausibly Art. 50(2) machine-readable marking
+  ([075](075-generated-text-carries-no-machine-readable-mark.md), watch-and-tag). Sourced
+  findings: [eu-ai-act-applicability.md](../docs/research/eu-ai-act-applicability.md).
 
 - [The cost ceilings](064-the-cost-ceilings.md) — **signed off 2026-08-04.** A **$1.00/day**
   global cap in USD and **2 runs per account per day**, public paid runs on `prod`, and an
@@ -139,11 +168,6 @@ this ceiling, and should be answered with this line rather than with the design.
   current ticket set delivers the public URL the destination names** — deliberately, since
   the steps depend on the platform. This is the fog patch that must graduate before the map
   can close.
-- **Does `/evaluate` become a graph?** Depends on
-  [067](067-where-is-a-hand-authored-graph-worth-it.md). If it does,
-  [054](054-nothing-confirms-the-panel-before-the-money-is-spent.md)'s two-endpoint
-  recommendation is replaced by one `interrupt()`, and the `ThreadPoolExecutor` in
-  `collect_panel_votes` has to find a home inside a node.
 - **Node versus Edge runtime on the frontend.** Route handlers and middleware can run on
   either, and the choice interacts with the auth provider's middleware and with anything
   needing Node APIs. Use each where it fits (author's direction, 2026-08-04) — but *which*
@@ -170,6 +194,11 @@ this ceiling, and should be answered with this line rather than with the design.
 
 ## Out of scope
 
+- **The hand-authored ReAct exercise** —
+  [Author the ReAct loop by hand once](069-author-the-react-loop-by-hand-once.md), closed
+  2026-08-21: the learning mode it served was dropped by author direction, and
+  [076](076-author-the-evaluate-graph-around-the-vote-loop.md) now exercises nodes and
+  edges in production code, so the throwaway would duplicate shipped work.
 - **Payments.** Not needed for a demo product; Stripe is the path *if* this gets traction,
   as a fresh effort rather than a deferral. Recorded so the reasoning is not re-derived.
 - **Multi-tenant accounts as a product** — owned history, teams, per-user report libraries.

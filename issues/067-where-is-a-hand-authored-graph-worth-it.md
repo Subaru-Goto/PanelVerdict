@@ -3,11 +3,45 @@ title: "Where is a hand-authored graph worth it, if anywhere?"
 labels: [wayfinder:grilling]
 parent: 055-map-public-demo
 blocked_by: []
-assignee: null
-status: open
+assignee: subaru.dayo@gmail.com
+status: closed
 ---
 
-## Question
+## Resolution (2026-08-21): the middle path — a graph around the vote loop
+
+**Decided with the author.** The graph goes where this ticket's own middle-path section
+put it: [Author the evaluate graph around the vote loop](076-author-the-evaluate-graph-around-the-vote-loop.md)
+— `screen → select → confirm → vote → assemble`, `interrupt()` at `confirm`, the vote
+loop unchanged inside one node. **The analyst stays on `create_agent`** (it already
+compiles a `StateGraph`; checkpointer/middleware/interrupts are parameters, per-step
+LangSmith spans are identical, and the tested NDJSON/error-discipline wire contract is
+not re-earned for zero user-visible change). **One FastAPI service stands** — LangGraph
+Server/`useStream` stays ruled out per the map.
+
+How the decision was actually reached, for the record:
+
+- The author first required LangGraph on a compliance belief — *"EU AI act … requires us
+  to show each step the LLM takes"* (2026-08-21). That premise was researched and
+  **refuted** ([073](073-what-the-eu-ai-act-actually-requires.md)): no provision requires
+  per-step traces for this product, and traceability where wanted is delivered by
+  LangSmith ([065](065-langsmith-behind-a-flag.md)) + correlation ids
+  ([047](047-nothing-correlates-a-log-line-to-its-run.md)) + the vote ledger, graph or no
+  graph.
+- What actually decides it is the author's **new product requirement**: a human sees the
+  seated panel's composition and **accepts or redraws** before votes are bought
+  ([077](077-panel-preview-accept-or-redraw.md)). That is a pause that must survive a
+  restart and resume from a later HTTP request — dynamic `interrupt()`, the one thing
+  this ticket said hand-authoring genuinely buys. The redraw edge (`confirm → select`)
+  even adds a human-driven cycle no prebuilt shape expresses.
+- The guard-rails this ticket set all stand: `collect_panel_votes` untouched inside one
+  node, no sync→async rewrite of `llm.py`, 010e's byte-identical replay explicitly
+  protected, dependency on [046](046-analyst-threads-die-on-restart.md)'s durable
+  checkpointer wired as a blocker.
+- The "answer after [069](069-author-the-react-loop-by-hand-once.md)" advice is moot:
+  069 closed as out of scope when the author dropped the learning mode (2026-08-21) —
+  nodes-and-edges fluency now comes from building 076 in production code.
+
+## Question (as originally posed)
 
 **Default decided: keep `create_agent` wherever it fits** (2026-08-04). So this ticket is
 narrow — is there *one* place a hand-authored `StateGraph` earns the rewrite?
