@@ -137,23 +137,23 @@ explains what a credible interval means it answers from its own weights rather t
 from a cited source. Two consequences worth knowing:
 
 - The corpus that would fix it is specified and open:
-  [018](issues/018-audience-research-knowledge-base.md).
+  [018](https://github.com/Subaru-Goto/PanelVerdict/issues/124).
 - The persona search that exists is weak on its own terms — it returns five
   panelists out of up to 200 and is blind to which variant they chose, so it
   characterises individuals rather than the panel
-  ([041](issues/041-which-traits-moved-the-vote.md),
-  [043](issues/043-persona-search-embeds-the-wrong-shape.md)).
+  ([041](https://github.com/Subaru-Goto/PanelVerdict/issues/139),
+  [043](https://github.com/Subaru-Goto/PanelVerdict/issues/141)).
 
 **3. Analyst conversations do not survive a restart.** The checkpointer is
 `InMemorySaver`, so thread history is process-local: restart the server and every
 conversation is gone, and a second worker would not see the first one's threads.
-Reports are unaffected — only the follow-up chat. ([046](issues/046-analyst-threads-die-on-restart.md))
+Reports are unaffected — only the follow-up chat. ([046](https://github.com/Subaru-Goto/PanelVerdict/issues/144))
 
 **4. Both paid endpoints are open.** `/evaluate` and `/chat` have no
 authentication and no rate limiting, and both spend real OpenRouter credit. Do not
 expose this to a network you do not control. The `$10` per-key cap is the only thing
 bounding the damage, and it is a cap on loss, not a control.
-([045](issues/045-paid-endpoints-have-no-auth-or-rate-limit.md))
+([045](https://github.com/Subaru-Goto/PanelVerdict/issues/143))
 
 ## Next steps
 
@@ -161,12 +161,12 @@ Roughly in the order they would be done, each already specified:
 
 | next | what it changes |
 |---|---|
-| [018](issues/018-audience-research-knowledge-base.md) | a chunked, embedded, cited corpus, so what a trait level or a credible interval means here comes from a source rather than the model's weights |
-| [045](issues/045-paid-endpoints-have-no-auth-or-rate-limit.md) | a shared-secret header and a per-key rate limit before anything is deployed |
-| [046](issues/046-analyst-threads-die-on-restart.md) | `PostgresSaver` on the pool that is already there |
-| [041](issues/041-which-traits-moved-the-vote.md) | which kind of person preferred which variant — the question customers ask next |
-| [044](issues/044-report-says-what-won-not-what-to-change.md) | a suggestion for the winning headline, framed as a hypothesis the app can then test |
-| [047](issues/047-nothing-correlates-a-log-line-to-its-run.md) | structured logs with a correlation id, so a slow or costly run can be traced |
+| [018](https://github.com/Subaru-Goto/PanelVerdict/issues/124) | a chunked, embedded, cited corpus, so what a trait level or a credible interval means here comes from a source rather than the model's weights |
+| [045](https://github.com/Subaru-Goto/PanelVerdict/issues/143) | a shared-secret header and a per-key rate limit before anything is deployed |
+| [046](https://github.com/Subaru-Goto/PanelVerdict/issues/144) | `PostgresSaver` on the pool that is already there |
+| [041](https://github.com/Subaru-Goto/PanelVerdict/issues/139) | which kind of person preferred which variant — the question customers ask next |
+| [044](https://github.com/Subaru-Goto/PanelVerdict/issues/142) | a suggestion for the winning headline, framed as a hypothesis the app can then test |
+| [047](https://github.com/Subaru-Goto/PanelVerdict/issues/145) | structured logs with a correlation id, so a slow or costly run can be traced |
 
 **And the one that would change what the app may claim:** a
 demographically-matched replication of the framing study. Limitation 1 rests on a
@@ -197,7 +197,11 @@ cd frontend && npm test && npx tsc --noEmit && npx eslint app __tests__
 | `db/` | database init |
 | `docs/` | how the thing works and why |
 | `docs/research/` | the sourced numbers — every constant with a citation traces here |
-| `issues/` | the plan, and the decision log |
+| `docs/decisions/` | the decision log — closed tickets from the file-tracker era, plus the id→issue mapping |
+
+The plan itself lives on [GitHub Issues](https://github.com/Subaru-Goto/PanelVerdict/issues)
+(since 2026-08-21): the issue labelled `wayfinder:map` is the map, its sub-issues are the
+tickets.
 
 ## Where the reasoning lives
 
@@ -210,4 +214,5 @@ isn't, that's a bug.
 **Comments explain *why*, never *what*.** The code says what it does. A comment
 is there for the thing you'd otherwise have to rediscover — a rejected
 alternative, a measured surprise, a constraint that isn't local. Ticket numbers
-don't belong in them; `issues/` is where that history lives.
+don't belong in them; `docs/decisions/` and the issue tracker are where that history
+lives.
