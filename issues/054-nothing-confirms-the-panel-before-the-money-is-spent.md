@@ -3,9 +3,39 @@ title: "Nothing confirms the panel before the money is spent — the human-in-th
 labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
-assignee: null
-status: open
+assignee: subaru.dayo@gmail.com
+status: closed
 ---
+
+## Resolution (2026-08-21): superseded by the graph — one `interrupt()`, not two endpoints
+
+The gap this ticket names is real and stays the design's centre; the **mechanism** moved,
+exactly as [055-map-public-demo](055-map-public-demo.md)'s fog note predicted. With
+[067](067-where-is-a-hand-authored-graph-worth-it.md) resolved to a hand-authored graph
+around the vote loop, the gate is an `interrupt()` at a `confirm` node —
+[076](076-author-the-evaluate-graph-around-the-vote-loop.md) builds it,
+[077](077-panel-preview-accept-or-redraw.md) shows it to the reader.
+
+What changed against this ticket's text, and why each change is sound:
+
+- **"Anyone reaching for `interrupt()` here will find nothing to interrupt"** was true
+  when written and was corrected by [068](068-amend-054-langgraph-is-installed.md)
+  (langgraph *is* installed); now `/evaluate` gets a graph, so the framework primitive
+  serves after all.
+- **The two-endpoint recommendation with a client-returned approved query is dropped.**
+  The checkpointer holds the paused state server-side, so the caller-supplied-filter
+  concern and the phase-2 re-translation option both dissolve; the pending-state
+  question this ticket flagged lands on 076's recorded decisions.
+- **The author enlarged the ask (2026-08-21):** the preview shows the seated panel's
+  *composition* (age, country, gender, education, income distributions), and the reader
+  can **redraw** — a fresh free sample under the same filter — not only accept. Both
+  live in 077's scope; "editing the filter by hand" stays out, as here.
+
+Everything else — the seam at `select_panel`, the everything-is-already-computed table,
+the warn-versus-gate argument for why `budget_notice`'s never-refuse stance does not
+transfer to interpretation errors, the complementarity with
+[016](016-translation-accuracy-golden-set.md) — carries forward unchanged as the
+rationale 076/077 build on.
 
 ## The gap
 

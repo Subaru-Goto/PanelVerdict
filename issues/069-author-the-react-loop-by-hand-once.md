@@ -3,11 +3,25 @@ title: "Author the ReAct loop by hand once, as an exercise, and keep the notes n
 labels: [wayfinder:research]
 parent: 055-map-public-demo
 blocked_by: []
-assignee: null
-status: open
+assignee: subaru.dayo@gmail.com
+status: closed
 ---
 
-## Question
+## Closed out of scope (2026-08-21)
+
+Both legs this ticket stood on gave way the same day:
+
+- **The learning mode is gone.** Author's direction: *"There is no learning mode, fully
+  agentic coding"* — which retires the map's framework-learning goal this ticket existed
+  to serve.
+- **The gap it covered no longer exists.** Its whole justification was that *"nodes and
+  edges are precisely what `create_agent` hides"* and no product ticket would ever
+  exercise them. [067](067-where-is-a-hand-authored-graph-worth-it.md) resolved to the
+  middle path, so [076](076-author-the-evaluate-graph-around-the-vote-loop.md) now builds
+  `StateGraph`, `add_node`, `add_conditional_edges`, and `interrupt()` in **production
+  code** — the exercise would duplicate, as a throwaway, what the map now ships.
+
+## Question (as originally posed)
 
 What does `create_agent` actually hide, learned by building it rather than by reading?
 
