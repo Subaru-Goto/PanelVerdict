@@ -46,7 +46,7 @@ the cap is a bound on blast radius rather than a fix.
 Recorded because it looks like the obvious lever and is not available. The repo's
 `ReasoningEffort` vocabulary lists `none`, and the provider accepts the parameter
 name — it rejects the *value* for this endpoint. Distinct from the trap in
-[010a](../../issues/010a-vote-usage-instrumentation.md), where an **unrecognised**
+[010a](../decisions/010a-vote-usage-instrumentation.md), where an **unrecognised**
 effort is accepted and silently does nothing: this one fails loudly.
 
 ## `minimal` is cheapest and wrong
@@ -66,7 +66,7 @@ silently draw a panel from the whole pool. Rejected on accuracy, not cost.
 
 It also read "cautious" as neuroticism where every other arm says
 conscientiousness — one of the judgement calls
-[016](../../issues/016-translation-accuracy-golden-set.md) already flags as having
+[016](https://github.com/Subaru-Goto/PanelVerdict/issues/123) already flags as having
 no ground truth, so not wrong, but a change.
 
 ## `low` — adopted
@@ -90,7 +90,7 @@ weaker than "accuracy holds", and it is all five samples can support.
 accuracy win, and that reading does not survive scrutiny** — see the next section.
 
 Adoption is cheap here in a way it is not for votes.
-[010a](../../issues/010a-vote-usage-instrumentation.md) declined `low` on the vote
+[010a](../decisions/010a-vote-usage-instrumentation.md) declined `low` on the vote
 path because 014's position-bias rate and 015's framing sensitivity were both
 measured at default effort. The translator has no measurement pinned to default
 effort, and it has no fingerprint, so no cached work is invalidated.
@@ -118,7 +118,7 @@ a change" for `cautious` → neuroticism.
 
 Needs a decision, and it generalises: the same precedence question decides whether
 `"good earners"` is an income word or an occupation
-([037](../../issues/037-income-reading-is-never-disclosed.md)).
+([037](../decisions/037-income-reading-is-never-disclosed.md)).
 
 ## `TARGET_MAX_COMPLETION_TOKENS = 4096`
 
@@ -141,7 +141,7 @@ Kept independent of the effort change on purpose. Five samples cannot show that
 - **n = 1 per cell.** Single samples per description per arm, chosen to span easy,
   explicit, fuzzy and multi-attribute inputs. Enough to reject `minimal` on a
   clear failure and to size a cap; not enough to compare `low` against default on
-  accuracy. That is [016](../../issues/016-translation-accuracy-golden-set.md)'s
+  accuracy. That is [016](https://github.com/Subaru-Goto/PanelVerdict/issues/123)'s
   golden set, still unbuilt.
 - **Whether `low` runs away.** Not observed in five calls. Not disproven either.
 - **The judge and the embedder.** Both now have timeouts but **no output cap**, and

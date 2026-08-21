@@ -1,15 +1,15 @@
 # Panel model + OpenRouter provider — selection research
 
-Resolves ticket **[003 — Decide panel model + OpenRouter provider config](../../issues/003-decide-panel-model-and-provider.md)**.
+Resolves ticket **[003 — Decide panel model + OpenRouter provider config](../decisions/003-decide-panel-model-and-provider.md)**.
 Pricing/features verified **live on openrouter.ai, 2026-07-17** (the ticket requires not trusting memory — model catalog + prices shift monthly).
 
 ## TL;DR
 
 - **Provider:** OpenRouter. ~~with **prompt caching** on the shared prefix (panel instructions + the two variants) — the main cost lever.~~ **Struck 2026-07-27:** caching cannot fire on this prompt at all — it needs 1,024 tokens (4,096 on Haiku 4.5) and the whole request is ~300–370. See [prompt-caching.md](prompt-caching.md). The cost lever is **output/reasoning tokens and the number of requests**.
-- **Panel model (v1 default):** ~~**GPT-5 Mini** (`openai/gpt-5-mini`) — best value that plausibly clears the trait-enactment bar. **Haiku 4.5** (`anthropic/claude-haiku-4.5`) is the drop-in fallback.~~ **Struck 2026-08-05:** the panel now runs **`openai/gpt-5.6-luna`**, on price. OpenRouter's model list (read 2026-08-05) prices it at **$0.10 / $0.60** per Mtok against GPT-5 Mini's $0.25 / $2.00 — a 3.3× cut on output, the dominant term per the line above. `openai/gpt-5.6-luna-pro` is *the same model served with `reasoning.mode=pro`*, so it costs the same per token and emits more of them; plain Luna was chosen first because plan B below says deploy the cheapest that matches enactment, and a pass ends the search. **The enactment half of that plan has not run yet** — everything below about fidelity deciding the model still binds, and [071](../../issues/071-the-panel-model-changed-without-its-gate.md) is the gate. Haiku 4.5 remains the untested fallback.
+- **Panel model (v1 default):** ~~**GPT-5 Mini** (`openai/gpt-5-mini`) — best value that plausibly clears the trait-enactment bar. **Haiku 4.5** (`anthropic/claude-haiku-4.5`) is the drop-in fallback.~~ **Struck 2026-08-05:** the panel now runs **`openai/gpt-5.6-luna`**, on price. OpenRouter's model list (read 2026-08-05) prices it at **$0.10 / $0.60** per Mtok against GPT-5 Mini's $0.25 / $2.00 — a 3.3× cut on output, the dominant term per the line above. `openai/gpt-5.6-luna-pro` is *the same model served with `reasoning.mode=pro`*, so it costs the same per token and emits more of them; plain Luna was chosen first because plan B below says deploy the cheapest that matches enactment, and a pass ends the search. **The enactment half of that plan has not run yet** — everything below about fidelity deciding the model still binds, and [071](https://github.com/Subaru-Goto/PanelVerdict/issues/162) is the gate. Haiku 4.5 remains the untested fallback.
 - **Fidelity benchmark:** **GPT-5.6 Sol** — the manipulation check compares Mini's Big-Five enactment against it; keep Mini if it matches, else fall back.
 - **Spend cap:** **$10** per-key credit cap on OpenRouter (hard 402 stop; see handling below).
-- **Analyst model:** a **reasoning model** — a separate role/run, so its selection is deferred to **[012](../../issues/012-build-analyst-chatbot-tools.md)** (not this ticket).
+- **Analyst model:** a **reasoning model** — a separate role/run, so its selection is deferred to **[012](../decisions/012-build-analyst-chatbot-tools.md)** (not this ticket).
 - **Final panel model** is confirmed-or-revised by the **manipulation check** (fidelity is a selection criterion, not just cost — Huang et al. 2026).
 
 ## Verified pricing (OpenRouter, 2026-07-17)

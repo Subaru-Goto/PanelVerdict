@@ -1,7 +1,7 @@
 # Seeding the persona pool
 
 How to run `app.seed` to generate and persist the persona pool, and how to
-validate quality before committing to a full run. Design: `issues/006f-persistence.md`.
+validate quality before committing to a full run. Design: `docs/decisions/006f-persistence.md`.
 
 ## Prerequisites
 

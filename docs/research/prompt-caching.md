@@ -1,6 +1,6 @@
 # Prompt caching — can it fire on a vote prompt?
 
-Checks the claim in [003 — Decide panel model + OpenRouter provider config](../../issues/003-decide-panel-model-and-provider.md),
+Checks the claim in [003 — Decide panel model + OpenRouter provider config](../decisions/003-decide-panel-model-and-provider.md),
 restated in [`panel-model-selection.md`](panel-model-selection.md): that **prompt
 caching on the shared prefix (panel instructions + the two variants) is "the main
 cost lever"**.
@@ -389,8 +389,8 @@ whole attribute vocabulary and carries a larger structured-output schema, which
 puts it over 1,024 tokens; the vote request is ~300–370.
 
 Worth stating because the shorthand "prompt caching cannot fire" has travelled
-into [003](../../issues/003-decide-panel-model-and-provider.md) and
-[008](../../issues/008-build-panel-evaluation.md) without the qualifier, and it is
+into [003](../decisions/003-decide-panel-model-and-provider.md) and
+[008](../decisions/008-build-panel-evaluation.md) without the qualifier, and it is
 only true of votes. It does not change the cost picture much — the targeting call
 is one request per run against ~200 votes — but a future reader deriving a cost
 model from those tickets should know which path the claim covers.
