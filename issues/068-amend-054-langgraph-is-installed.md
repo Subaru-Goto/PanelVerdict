@@ -3,11 +3,20 @@ title: "Amend 054 — langgraph is installed and interrupt is available"
 labels: [wayfinder:task]
 parent: 055-map-public-demo
 blocked_by: []
-assignee: null
-status: open
+assignee: subaru.dayo@gmail.com
+status: closed
 ---
 
-## Goal
+## Closed absorbed (2026-08-21)
+
+Everything this ticket asked for happened inside the resolutions of its two subjects:
+[054](054-nothing-confirms-the-panel-before-the-money-is-spent.md)'s closing note records
+the false claim and its correction, and [067](067-where-is-a-hand-authored-graph-worth-it.md)
+answered the question 054's recommendation was waiting on — including the
+checkpointer-survives-restart dependency this ticket flagged, now a `blocked_by` edge on
+[076](076-author-the-evaluate-graph-around-the-vote-loop.md).
+
+## Goal (as originally posed)
 
 [054](054-nothing-confirms-the-panel-before-the-money-is-spent.md) claims:
 

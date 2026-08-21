@@ -35,8 +35,11 @@ START → screen → select → confirm ──(accept)──→ vote → assembl
   `size × USD_PER_VOTE` estimate — **plus the panel's composition** (age spread, country,
   gender, education, income bands; the same aggregation shape
   [025](025-analyst-panel-composition-facts.md) built for `analyze_results`, computed here
-  from the selected personas rather than from votes). Resume value is `accept` or
-  `redraw`; a conditional edge routes accordingly.
+  from the selected personas rather than from votes). Resume value is `accept`,
+  `adjust` (carrying an edited `TargetQuery` — see [077](077-panel-preview-accept-or-redraw.md)),
+  or `redraw`; a conditional edge routes accordingly — `adjust` and `redraw` both take
+  the edge back to `select`, one with a new filter, one with a fresh draw of the same
+  filter.
 - **redraw** loops back to `select`: selection is SQL-only and free, and since
   [017](017-representative-sampling.md) the seed varies every draw, a redraw is a fresh
   uniform sample under the *same* filter — the interpretation stays fixed; only the draw

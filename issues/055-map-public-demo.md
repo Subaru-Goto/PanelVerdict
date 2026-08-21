@@ -1,8 +1,16 @@
 ---
 title: "Map: PanelVerdict public demo — a stranger can use it safely"
 labels: [wayfinder:map]
-status: open
+status: closed
 ---
+
+> **Closed 2026-08-21 — destination redrawn into
+> [Map: PanelVerdict next chapter](078-map-next-chapter.md).** The author named
+> production-readiness and a fixed requirement set (agent, LangGraph, RAG, HITL,
+> deployed) as the destination, which lifts this map's demo-not-production ceiling — the
+> exact condition under which this map said the production effort would return. Open
+> children stay open and live under 078 by reference; the *Decisions so far* below remain
+> the canonical record of what was settled here.
 
 ## Destination
 
