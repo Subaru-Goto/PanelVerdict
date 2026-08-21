@@ -5,7 +5,7 @@ from national time-use surveys in July 2026 and **not used by any code**.
 
 They live here rather than under `backend/app/data/` on purpose: that directory
 means "the app loads this", and nothing loads these. See
-[issues/006i](../../../issues/006i-leisure-profiles.md) for why leisure was closed
+[issues/006i](../../decisions/006i-leisure-profiles.md) for why leisure was closed
 — briefly, no evidence a leisure field moves a headline vote, and each new country
 cost a bespoke extraction.
 

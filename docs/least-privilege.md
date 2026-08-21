@@ -14,6 +14,13 @@ moment the system moves, and nothing fails to announce it.
 Two headlines and a target description. That is the whole attack surface a
 stranger controls.
 
+*Note (2026-08-21):* a third input is scheduled. The `/evaluate` graph's
+confirmation gate ([076 · #166](https://github.com/Subaru-Goto/PanelVerdict/issues/166))
+resumes with `accept`, `adjust` or `redraw`, and `adjust` carries a client-edited
+`TargetQuery` ([077 · #167](https://github.com/Subaru-Goto/PanelVerdict/issues/167)).
+Still the customer's own data, but a new structured entry point — the moment it
+lands, this list is wrong until it is three items long.
+
 Everything else that looks like it might be untrusted turns out not to be:
 
 - **Personas are sampled or templated, never written by a model.** Every field
@@ -104,6 +111,13 @@ the model family, and injection technique is family-specific. Unlike ids or
 enums, this cannot be fixed by withholding something: the knowledge is in the
 weights, so a prompt rule is the only lever, and its effect is unassertable.
 
+*Note (2026-08-21):* this is about the model **family**, not about being an AI.
+EU AI Act Art. 50(1) requires the opposite disclosure — a person interacting with
+the analyst must be told it is artificial
+([073](decisions/073-what-the-eu-ai-act-actually-requires.md),
+[074 · #164](https://github.com/Subaru-Goto/PanelVerdict/issues/164)). The two
+coexist: say *that* it is an AI system, never *which* one.
+
 ## Where the boundary moved, and what is not covered
 
 `read_reasons` puts text written by **another model** into the analyst's
@@ -158,18 +172,26 @@ the scope holds against the *model* and not against the *caller* — a client ca
 name any persona in the pool. Today those are the same party and the pool is
 synthetic, so nothing leaks; the moment they are not, this is the first thing
 that breaks, and it will break quietly because the code looks right.
-[035](../issues/035-panel-scope-comes-from-the-client.md) carries it.
+[035](https://github.com/Subaru-Goto/PanelVerdict/issues/136) carries it.
 
 The structural blocker to notice first: **`ChatRequest` carries the entire
 `EvaluateResponse` from the client.** That is safe only while a caller can send
 nothing but their own data. With tenants, the server must load the result under
 the session's tenant and ignore what the body claimed.
 
+*Note (2026-08-21):* this tripwire is now scheduled to fire. The next chapter's
+definition of production-ready includes **authenticated and rate-limited**
+([078 · #122](https://github.com/Subaru-Goto/PanelVerdict/issues/122)), so accounts
+are on the map — which promotes everything this section prescribes (scoping by
+construction, [035 · #136](https://github.com/Subaru-Goto/PanelVerdict/issues/136),
+loading results server-side instead of trusting the posted body) from watch-item
+to requirement of that work.
+
 ### 2. No model in this system can spend money — the path is gone, not gated
 
 The path was real: a crafted headline goes into the panel's prompt, the panel
 model writes it into a vote *reason*,
-[029](../issues/029-serve-vote-reasons-to-the-analyst.md) hands reasons to the
+[029](https://github.com/Subaru-Goto/PanelVerdict/issues/130) hands reasons to the
 analyst, and the analyst held `run_panel_test`, which bought a whole new panel.
 
 What stood there was the tool description's only-on-explicit-ask rule — a

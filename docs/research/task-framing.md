@@ -1,6 +1,6 @@
 # Task-framing sensitivity, and a failed validity check
 
-**[015](../../issues/015-task-framing-sensitivity.md) · 2026-07-27 · `openai/gpt-5-mini`**
+**[015](../decisions/015-task-framing-sensitivity.md) · 2026-07-27 · `openai/gpt-5-mini`**
 
 Does the panel's verdict depend on how we word the question? And, since the
 stimulus set had to be rebuilt to ask that honestly, does the panel reproduce
@@ -168,9 +168,9 @@ do not track what moves people.
 ## What this settles
 
 - **The question wording is not a free choice, and the reported number depends on
-  it** in the same-meaning regime. [009](../../issues/009-build-bayesian-layer.md)
+  it** in the same-meaning regime. [009](../decisions/009-build-bayesian-layer.md)
   must name the reported quantity after the question actually asked, and
-  [011](../../issues/011-build-report-ui.md) must carry a framing caveat rather
+  [011](../decisions/011-build-report-ui.md) must carry a framing caveat rather
   than presenting one number as *the* verdict.
 - **The panel is unvalidated on same-meaning copy, with evidence rather than
   suspicion.** 014 established that traits steer votes between opposed

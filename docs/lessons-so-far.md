@@ -16,6 +16,11 @@ Deliberately not duplicated here:
 2026.** None of it transfers to another panel model without re-running, and the model
 is config rather than a constant precisely so that stays possible.
 
+**Amendment (2026-08-21):** the switch happened — panel, targeting and analyst now run
+`openai/gpt-5.6-luna` ([071 · #162](https://github.com/Subaru-Goto/PanelVerdict/issues/162)),
+and none of the numbers below have been re-measured on it. Read everything here as the
+previous model's behaviour until a re-run says otherwise.
+
 ---
 
 ## The two findings that matter most
@@ -267,6 +272,13 @@ remaining. Wall-clock is not the cost that runs out.
 inflates false `decisive` 25-fold. I spent a long time reasoning about the stopping
 *rule* without once asking what stopping *buys*. The trade was never close.
 
+**Amendment (2026-08-21):** the conclusion was later reversed, not the lesson —
+[010d](decisions/010d-adaptive-stopping.md) redesigned the rule (stop on the report's
+own 0.95 bar, two confirming boundaries), simulated it before it spent
+([`research/adaptive-stopping.md`](research/adaptive-stopping.md)), and shipped stopping
+enabled at 0.4% false `decisive` while keeping the savings. The lesson stands: it
+shipped only after being priced.
+
 **When a test fails, the test may be wrong.** It happened twice on one branch — the
 uniform prior integrates to 1/8 not 1/16, and a wide band does not make a small batch
 a tie. Both times the code was right. Verify independently before deciding which side
@@ -298,3 +310,9 @@ Upworthy archive — ~32,000 real A/B tests with impressions and clicks — and 
 of scope on the map. Until then the honest claim is that the panel responds
 consistently to its own inputs, and on same-meaning copy we have direct evidence that
 consistency is not accuracy.
+
+**Amendment (2026-08-21):** "the map" above was
+[055](decisions/055-map-public-demo.md), since closed and redrawn by
+[078 · next chapter (#122)](https://github.com/Subaru-Goto/PanelVerdict/issues/122).
+Upworthy validation is absent from the new requirement set too, so the claim stands —
+it now stands against 078.

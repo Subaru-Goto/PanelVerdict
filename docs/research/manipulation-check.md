@@ -1,7 +1,7 @@
 # Targeting manipulation check — result
 
 **Run 2026-07-26.** `openai/gpt-5-mini` via OpenRouter, default temperature. 5,400
-votes in 49m 35s. Ticket: [014](../../issues/014-targeting-manipulation-check.md).
+votes in 49m 35s. Ticket: [014](../decisions/014-targeting-manipulation-check.md).
 Harness: `backend/experiments/`. Raw rows are not committed (they are a
 re-runnable artifact, not a source); regenerate with
 
@@ -14,9 +14,9 @@ uv run python -m experiments.analysis experiments/out/votes.jsonl
 ## The question
 
 Does a persona attribute steer a vote? Nothing in this project had tested it, and
-[001](../../issues/001-decide-persona-schema-and-seed.md),
-[003](../../issues/003-decide-panel-model-and-provider.md) and
-[006b](../../issues/006b-demographics-sampler.md) each defer a decision to the
+[001](../decisions/001-decide-persona-schema-and-seed.md),
+[003](../decisions/003-decide-panel-model-and-provider.md) and
+[006b](../decisions/006b-demographics-sampler.md) each defer a decision to the
 answer. `persona-attributes-grounding.md` states the stakes plainly: trait
 targeting "remains an unproven **hypothesis**", and the enactment literature is
 actively skeptical — Han et al. 2025 found persona injection moved *self-reported*
@@ -59,7 +59,7 @@ manipulation rather than the model's own variability.
 - **Position bias measured at 0.66** — the model picks the first-shown option two
   thirds of the time. It cannot contaminate any result here because every persona
   sees both orders, and it concentrates in cells where content preference is weak.
-  This is the number [002](../../issues/002-decide-vote-schema.md) asked for.
+  This is the number [002](../decisions/002-decide-vote-schema.md) asked for.
 
 ## Per trait
 
@@ -108,7 +108,7 @@ properly ordered at five levels (0.00 / 0.00 / 0.25 / 0.42 / 0.67) and is not at
 three (0.00 / 0.00 / 0.17 / 0.58 / 0.42). One trait, at this sample size, is not
 evidence.
 
-The consequence for [006j](../../issues/006j-persona-summary-embedding.md) D1b is
+The consequence for [006j](../decisions/006j-persona-summary-embedding.md) D1b is
 narrow. That decision had two justifications; the vote-path one — that two
 personas a standard deviation apart were receiving identical voting instructions —
 is not visible in behaviour here. The retrieval one, that finer levels give the
@@ -137,7 +137,7 @@ way on nearly every pair; conscientiousness and neuroticism push the other. The
 five pairs evidently share a strong "novel and spontaneous vs. proven and
 cautious" dimension, and much of each trait's measured effect travels along it.
 
-**Consequence for [007](../../issues/007-build-targeting-query-translation.md):**
+**Consequence for [007](../decisions/007-build-targeting-query-translation.md):**
 targeting can select confidently along that broad dimension and only partially
 along an individual trait. A target description naming one trait will return a
 panel that also differs on the others.
@@ -168,7 +168,7 @@ panel that also differs on the others.
   *this* question, since a trait can only steer a vote on a pair where it predicts a
   direction. But nothing here shows a persona moves a vote between two wordings of the
   same offer, which is the case a customer will bring.
-  [015](../../issues/015-task-framing-sensitivity.md) carries pairs in that regime,
+  [015](../decisions/015-task-framing-sensitivity.md) carries pairs in that regime,
   grounded in Gligorić et al. 2023.
 
 ## What this settles
@@ -176,11 +176,11 @@ panel that also differs on the others.
 - **The gate is passed.** Persona traits steer votes far beyond the model's own
   variability, with the negative controls clean. Work built on the persona pool is
   not built on nothing.
-- **[003](../../issues/003-decide-panel-model-and-provider.md)'s fidelity concern
+- **[003](../decisions/003-decide-panel-model-and-provider.md)'s fidelity concern
   is answered for `gpt-5-mini`** — it enacts Big Five in behaviour, not merely in
   self-report, which is the specific failure Han et al. documented. The flagship
   benchmark comparison is no longer needed to establish that traits work at all;
   it would only be needed to compare fidelity.
-- **[001](../../issues/001-decide-persona-schema-and-seed.md)'s earn-their-place
+- **[001](../decisions/001-decide-persona-schema-and-seed.md)'s earn-their-place
   gate is now usable.** NFC, maximizing and CSII can be tested with this harness
   by adding a pair and a rendering, at roughly 20 minutes per trait.

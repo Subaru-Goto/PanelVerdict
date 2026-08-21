@@ -1,9 +1,9 @@
 # Reading the posterior
 
-What each number out of the Bayesian layer ([009](../issues/009-build-bayesian-layer.md))
+What each number out of the Bayesian layer ([009](decisions/009-build-bayesian-layer.md))
 means, which pairs of them are easy to confuse, and the analytical facts worth knowing
 before writing copy about them. Written for whoever builds
-[011](../issues/011-build-report-ui.md) as much as for whoever finishes 009.
+[011](decisions/011-build-report-ui.md) as much as for whoever finishes 009.
 
 Every figure below is computed from the shipped implementation (`app/verdict.py`),
 not quoted from a textbook.
@@ -17,8 +17,16 @@ the reference is pure convention — A's share is `1 - p`.
 |---|---|---|
 | `share_preferring_b` | E[p] | *about 62% of the panel prefer B* |
 | `probability_majority_prefers_b` | P(p > 0.5) | *we are 97% sure more than half do* |
-| `interval` | 95% HDI | *the plausible range for that share* |
-| ROPE verdict | HDI vs [0.43, 0.57] | *decisive / practical tie / undecided* |
+| `credible_interval` | 95% HDI | *the plausible range for that share* |
+| `probability_meaningfully_preferred`, `probability_practical_tie` | posterior mass outside / inside [0.43, 0.57] | *how sure we are the gap is worth acting on — or credibly negligible* |
+
+The verdict ships as those probabilities, not as a label: `PanelVerdict` carries no
+field naming a recommendation. The *decisive / practical tie / undecided* reading is
+derived at render time against a threshold the reader can see, because a label applied
+earlier would let the same word stand for everything between a coin flip and a
+near-certainty. `detectable_gap` — the smallest gap this panel size could have called
+decisive — travels alongside, so a null result stays readable: a wide interval alone
+cannot distinguish *"they are equivalent"* from *"this panel was too small to tell"*.
 
 **The first two are the pair to be careful with.** One is the estimate; the other is
 confidence in its direction. They move independently:
@@ -108,6 +116,12 @@ The **region of practical equivalence** is [0.43, 0.57] — a preference share w
 | HDI entirely **inside** the ROPE | **practical tie** — credibly *not* different enough to matter |
 | HDI **straddles** a ROPE edge | **undecided** — not enough data |
 
+That mapping is how to *read* the numbers, not what the schema carries: as shipped, the
+report states the band as probabilities (`probability_meaningfully_preferred`,
+`probability_practical_tie`) and any label is derived at render time. The HDI-vs-band
+comparison itself survives in code only inside `detectable_gap`'s boundary search
+(`rope_verdict` in `app/verdict.py`).
+
 **This third answer is the strongest argument for the Bayesian formulation.** A
 classical test can only reject or fail to reject, and "not significant" versus "no
 real difference" are entirely different claims a p-value cannot distinguish. The ROPE
@@ -135,8 +149,9 @@ reported `undecided`. ±7 is the narrowest band that works at n = 200; the exact
 requirement is ±6.9.
 
 It is also defensible on its own terms: identical prompts flip 11–20% of the time
-([015](research/task-framing.md)), so a 7-point gap sits inside the instrument's own
-wobble. And a wider band makes `decisive` **harder** — 64% of votes required rather
+([015](research/task-framing.md) — measured on `gpt-5-mini`, unverified on the current
+panel model, [071 · #162](https://github.com/Subaru-Goto/PanelVerdict/issues/162)), so
+a 7-point gap sits inside the instrument's own wobble. And a wider band makes `decisive` **harder** — 64% of votes required rather
 than 60% at n = 200 — which is protective against exactly the overclaiming 015 found.
 
 **The band cannot be derived from the posterior**, and this is worth being firm about.
@@ -154,11 +169,40 @@ read backwards: ±7 wants n≈200, ±5.6 wants n≈300.
 **Boundary sensitivity is worth respecting.** At n = 200, 128 votes for B is decisive
 and 127 is undecided. One vote. Do not let "decisive" imply robustness in the copy.
 
-## Why adaptive stopping is off by default
+## Adaptive stopping: the shipped rule, and the two it replaced
 
-Two independent reasons, both measured.
+Adaptive stopping is **on**. The pipeline checks the posterior at every chunk boundary
+and stops early when the report would already make a call
+([010d](decisions/010d-adaptive-stopping.md); simulation in
+[`research/adaptive-stopping.md`](research/adaptive-stopping.md)).
 
-**A P-threshold is the wrong trigger.** `P(p > 0.5) >= 0.99` disagrees with the
+**The shipped rule.** Stop when `probability_meaningfully_preferred` (either direction)
+or `probability_practical_tie` reaches the report's own bar — `credible_mass`, 0.95 —
+on **two consecutive** chunk boundaries reading the same way (`_STOP_CONFIRMATIONS = 2`
+in `app/pipeline.py`; a streak breaks on any boundary that reads differently, including
+a decisive that flips sides). One threshold, the report's own, so the run stops exactly
+when the render-time recommendation would fire — no second constant to source, and no
+gap where the run stops before the report would call it or keeps spending after it has.
+Both stops are answers: `decisive` in either direction, and the `practical_tie` a
+label-agreement rule could effectively never take.
+
+Checking at every boundary is sequential peeking, so the rule was simulated before it
+spent (20,000 runs per cell, chunk 25, cap 200): a single crossing calls a false
+`decisive` on 2.3% of genuinely tied panels; two confirmations hold it to **0.4%** —
+under the 1.2% this project had previously accepted — while keeping the savings
+(E[votes] **137 of 200** at a true 65/35, 91 at 70/30). The correction note in that
+research doc is worth reading on its own: the first simulation concluded peeking was
+free, a baseline bug reversed the conclusion, and the two-confirmation design is the
+repair.
+
+### History: the two candidate rules this replaced
+
+Both were measured and rejected before the shipped rule existed — an earlier version of
+this page concluded from them that stopping should ship disabled. The analyses stay
+because they explain the shape of what shipped; their numbers are from those earlier
+simulations.
+
+**A bare P-threshold is the wrong trigger.** `P(p > 0.5) >= 0.99` disagrees with the
 verdict at every panel size below ~1,600:
 
 | n | first k reaching P >= 0.99 | P | HDI | verdict |
@@ -171,10 +215,10 @@ The two rules ask different questions: `P` asks whether B is ahead **at all**, t
 HDI-against-ROPE asks whether B is ahead **by enough to matter**. The second is
 strictly stronger, so stopping on the weaker one stops before there is an answer.
 
-**Stopping on the verdict has a worse problem: peeking.** The verdict wobbles as
-batches arrive — the HDI narrows but its position also drifts — so every extra look is
-another chance to cross a ROPE edge by luck. Simulated over 600 panels, batches of 20
-to a cap of 200:
+**Stopping on the verdict *label* has a worse problem: peeking.** The verdict wobbles
+as batches arrive — the HDI narrows but its position also drifts — so every extra look
+is another chance to cross a ROPE edge by luck. Simulated over 600 panels, batches of
+20 to a cap of 200:
 
 | rule | false `decisive` at a true tie | catches a real 60/40 | avg votes |
 |---|---|---|---|
@@ -195,15 +239,15 @@ Confirmation streaks repair most of it but cost detection power: three-in-a-row
 catches *fewer* real differences than the full panel, 45% against 53%, because a run
 can be decisive at n = 200 without having been decisive at 160 and 180.
 
-**And the trade is not worth making, because the feature exists to save money.** At
-$0.0022/vote a full 200-panel costs **$0.44**; stopping early saves about **$0.20 per
-test**. Twenty cents against a 25-fold false-positive inflation is a bad deal at any
-budget, and an indefensible one for a product whose pitch is not overclaiming.
-
-So **fixed n = 200 is the default**. The machinery still exists and still emits the
-per-batch posterior sequence — the animation needs it, and stopping earns its place at
-the ~1,100-vote panels tie detection wants, where it saves dollars rather than cents.
-It ships disabled.
+**On those numbers the trade was not worth making** — at that era's ~$0.0022/vote a
+full 200-panel cost $0.44 and stopping saved about $0.20 per test, twenty cents against
+a 25-fold false-positive inflation — so this page once ended: *fixed n = 200 is the
+default, it ships disabled*. What changed is the rule, not the arithmetic: stopping on
+the report's own bar with two confirmations buys nearly the same savings at 0.4% false
+`decisive`, so the trade reversed and stopping shipped enabled. (Per-vote cost has also
+fallen — *estimated* at $0.0003 on the current panel model, `USD_PER_VOTE` in
+`backend/app/config.py`, so a full prod run is ~$0.06.) The machinery still emits the
+per-batch posterior sequence — the animation needs it.
 
 ## The expected preference shortfall, and why it is not called a loss
 
@@ -260,7 +304,7 @@ which is what knowing nothing costs.
 mostly see one variant and never make the comparison the panel was asked to make, so a
 70/30 forced preference can sit on top of a tiny click difference.
 
-**Not validated on same-meaning variants.** [015](../issues/015-task-framing-sensitivity.md)
+**Not validated on same-meaning variants.** [015](decisions/015-task-framing-sensitivity.md)
 found the panel produces confident preferences uncorrelated with published field
 effects when the two variants say the same thing differently — which is the regime real
 A/B tests live in. On the published *null* it reported `P(majority prefers B) =
