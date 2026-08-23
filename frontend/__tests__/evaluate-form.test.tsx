@@ -1,4 +1,10 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -30,6 +36,17 @@ async function fillAndSubmit() {
 }
 
 describe("EvaluateForm", () => {
+  it("discloses the AI system on the form, before anything is submitted", () => {
+    // Submitting headlines to a synthetic panel is interacting with an AI
+    // system, so the disclosure rides with the submit control — told before
+    // the exchange, not in a footer after it.
+    render(<EvaluateForm />);
+
+    expect(
+      screen.getByText(/PanelVerdict is an AI system/),
+    ).toBeTruthy();
+  });
+
   it("runs on headlines alone — the audience is optional", () => {
     // Two headlines against a cross-section of the whole pool is the simplest
     // thing the product does, and the gate here was the only reason it could
@@ -89,8 +106,9 @@ describe("EvaluateForm", () => {
     expect(
       await screen.findByText(/50 of 200 matched panelists voted/),
     ).toBeTruthy();
-    expect(screen.getByText(/stopped early: the call was already clear/))
-      .toBeTruthy();
+    expect(
+      screen.getByText(/stopped early: the call was already clear/),
+    ).toBeTruthy();
   });
 
   it("renders model output as literal text, never as markup", async () => {

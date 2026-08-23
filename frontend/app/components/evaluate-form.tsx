@@ -140,6 +140,13 @@ export default function EvaluateForm() {
         >
           {state.phase === "loading" ? "Asking the panel…" : "Evaluate"}
         </button>
+        {/* Submitting counts as interacting with an AI system, so the
+            disclosure sits with the submit control rather than in a footer —
+            told before the exchange, where the telling can still change it. */}
+        <p className="text-xs text-zinc-500">
+          PanelVerdict is an AI system: the panel is synthetic personas, and
+          the verdict and analyst answers are AI-generated.
+        </p>
       </form>
 
       {state.phase === "loading" && <Waiting />}

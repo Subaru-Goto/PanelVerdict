@@ -92,9 +92,14 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
       <header className="flex items-start justify-between gap-2">
         <div className="flex flex-col">
           <h2 className="text-sm font-semibold">Ask the analyst</h2>
+          {/* The first sentence is a legal duty, not flavour: anyone chatting
+              with an AI system must be told so, in context, before the first
+              exchange — a footer mention or an "assistant" label does not
+              count. It renders in the header so it is on screen before a
+              first message can be typed. */}
           <p className="text-xs text-zinc-500">
-            Answers come from this test&apos;s own numbers. Every panelist is
-            synthetic.
+            The analyst is an AI system, not a person. Answers come from this
+            test&apos;s own numbers. Every panelist is synthetic.
           </p>
         </div>
         <button
