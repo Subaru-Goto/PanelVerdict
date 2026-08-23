@@ -25,11 +25,13 @@ class PanelProfile:
 
 type ProfileName = Literal["dev", "demo", "prod"]
 
-# Per-run costs, ESTIMATED for Luna rather than measured — see USD_PER_VOTE:
+# Per-run costs at the MEASURED Luna rate (see USD_PER_VOTE; guard thresholds use its
+# 0.00015 margin figure, real spend runs ~$0.0001212/vote):
 #
-#   dev   25 → ~$0.008/run — plumbing, where the verdict's content is irrelevant
-#   demo 100 → ~$0.030/run — enough panelists to read as a panel
-#   prod 200 → ~$0.060/run — ~166 fixed-length runs inside the $10 credit cap
+#   dev   25 → ~$0.003/run measured (guard warns below $0.00375)
+#   demo 100 → ~$0.012/run measured (guard warns below $0.015)
+#   prod 200 → ~$0.024/run measured (guard warns below $0.030) — ~400 fixed-length runs
+#              inside the $10 credit cap
 #
 # The measured gpt-5-mini figures these replace, kept for comparison: $0.018 / $0.073 /
 # $0.145, with a decisive pair stopping at 50 votes for $0.036.
@@ -47,31 +49,21 @@ PROFILES: dict[ProfileName, PanelProfile] = {
     "prod": PanelProfile(size=200, model="openai/gpt-5.6-luna"),
 }
 
-# ESTIMATED, not measured. Signed off 2026-08-05: test budget belongs to development, so
-# this is derived from list prices instead of bought.
+# MEASURED 2026-08-23, with a stated margin. The 20-vote `vote_cost` probe on
+# openai/gpt-5.6-luna reported $0.0001212/vote (provider `cost` field, 10/10 default-arm
+# votes — the method 010a validated bit-for-bit against list-price derivation), and the
+# 5,400-vote 071 gate run derived to ~$0.65 total, consistent with the account dashboard.
+# Full numbers: docs/research/manipulation-check-luna.md.
 #
-# - The method is validated against the one figure we did measure: 270 input + 310 output
-#   tokens/vote at gpt-5-mini's $0.25/$2.00 per Mtok derives $0.0006875 against a measured
-#   $0.000687 (first-full-scale-run.md) — agreement to within a rounding step, not exact.
-#   So the arithmetic is sound and only the token counts are uncertain on a new model.
-# - Same token counts at Luna's $0.10/$0.60 (OpenRouter model list, read 2026-08-05) give
-#   **$0.000213/vote** — 31% of gpt-5-mini.
-# - Rounded UP to 0.0003: a 1.41x allowance on the total, because a different model emits a
-#   different amount of reasoning and that term dominates. (Applied to the output term
-#   alone it would be 1.47x; the margin is stated against the total, which is what
-#   `budget_notice` multiplies.)
-# - The round number is deliberate. A figure like 0.000287 would read as measured.
-#
-# HOW THIS WEAKENS THE PRE-FLIGHT WARNING, stated because the number went DOWN. This
-# constant is the threshold in `budget_notice`, so a prod run now warns below $0.060 where
-# it warned below $0.145 — a guard ~2.4x looser than anything previously shipped. That is
-# correct if the estimate is right and under-warns if Luna reasons more than gpt-5-mini did.
-# The 1.41x margin is the whole defence, which is why it errs high against the *derivation*
-# rather than against the retired constant.
-#
-# Replace with a measured value the first time a paid run is made on Luna
-# (issues/071-the-panel-model-changed-without-its-gate.md).
-USD_PER_VOTE = 0.0003
+# - Rounded UP to 0.00015 — a 1.24x allowance on the measurement, because this constant is
+#   `budget_notice`'s pre-flight threshold and the conservative error for a guard is high.
+#   The probe's variance argues the same way: p95 output ran ~1.5x the mean.
+# - Probe prompts (~352 tokens) sit inside the prod vote's measured 270–370 range, so the
+#   per-vote figure transfers to real panels.
+# - This replaces the 0.0003 list-price estimate of 2026-08-05, which proved ~2.5x high —
+#   Luna emits ~6.5 reasoning tokens/vote where gpt-5-mini emitted ~160, and reasoning was
+#   the term the old margin existed to absorb.
+USD_PER_VOTE = 0.00015
 
 
 class Settings(BaseSettings):
