@@ -7,6 +7,11 @@ This is the operator's checklist — what to click, in what order, and why the o
 matters. **Ship dark**: the URL stays unannounced until auth (#158), rate limits (#143)
 and the cost-ceiling implementation hold.
 
+**The guided way: `bash scripts/deploy-wizard.sh`** — it walks these exact steps,
+opens each dashboard, captures the values into `.env.deploy` (gitignored; re-runs
+remember), runs the seed with those values without touching your local `.env`, and
+verifies each stage with a curl. The sections below are the same procedure in prose.
+
 ## The shape
 
 | piece | platform | $/mo |

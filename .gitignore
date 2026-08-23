@@ -13,3 +13,4 @@ node_modules/
 .next/
 .env.local
 backend/experiments/out/
+.env.deploy
