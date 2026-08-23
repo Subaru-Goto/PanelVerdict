@@ -3,7 +3,7 @@ title: "What does the EU AI Act actually require of PanelVerdict?"
 labels: [wayfinder:research]
 parent: 055-map-public-demo
 blocked_by: []
-assignee: subaru.dayo@gmail.com
+assignee: Subaru-Goto
 status: closed
 ---
 

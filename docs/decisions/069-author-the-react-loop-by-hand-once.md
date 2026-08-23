@@ -3,7 +3,7 @@ title: "Author the ReAct loop by hand once, as an exercise, and keep the notes n
 labels: [wayfinder:research]
 parent: 055-map-public-demo
 blocked_by: []
-assignee: subaru.dayo@gmail.com
+assignee: Subaru-Goto
 status: closed
 ---
 

@@ -1,0 +1,8 @@
+# Runtime image carries app/ only — everything else is development surface.
+tests/
+experiments/
+pipeline/
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc

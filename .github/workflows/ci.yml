@@ -1,0 +1,45 @@
+# CI on every push and PR — the shape ticket 087 (#180) decided: GitHub Actions
+# regardless of deploy host. Both suites are model-free by design (every model is a
+# double), so this workflow spends nothing.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest # docker included — testcontainers needs it
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # app.config instantiates Settings() at import and these three have no defaults.
+      # Values are inert: every test that touches Postgres builds its own throwaway
+      # pgvector container and connects to it directly.
+      POSTGRES_USER: ci
+      POSTGRES_PASSWORD: ci
+      POSTGRES_DB: ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm test
