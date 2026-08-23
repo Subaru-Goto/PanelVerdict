@@ -31,6 +31,13 @@ jobs:
             echo "DEPLOY_HEALTH_URL not set — nothing deployed yet, skipping."
             exit 0
           fi
+          # Masking replaces only the exact secret value, and curl's failure
+          # messages name the *bare host* — a substring the mask misses, on
+          # exactly the red-run paths (DNS, connect, connect-timeout) this
+          # secret exists for. Mask the derived host before any byte that
+          # could print it.
+          host="${URL#*://}"; host="${host%%/*}"
+          echo "::add-mask::$host"
           # --max-time 120: if this run is doing its last-resort job, the Render free
           # instance has spun down and needs ~1 minute to wake before it can answer.
           body=$(curl -fsS --max-time 120 "$URL/health")
