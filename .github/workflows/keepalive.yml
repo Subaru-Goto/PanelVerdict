@@ -1,0 +1,33 @@
+# The Supabase free tier pauses a project after 7 idle days; a few real database
+# requests a day keep it active (decided on #154, sourced in deploy-targets.md). This
+# pings /health daily, which runs a real connection check against Postgres — so one green
+# run per day is both the keep-alive and a smoke test that the whole deployed stack is up.
+#
+# DEPLOY_HEALTH_URL is a repository *variable* (Settings → Secrets and variables →
+# Actions → Variables), e.g. https://<railway-app>.up.railway.app — no trailing slash.
+# Until it is set, runs skip quietly instead of failing: the workflow lands with the
+# code, the deploy lands later.
+name: keepalive
+
+on:
+  schedule:
+    - cron: "17 6 * * *" # daily, 06:17 UTC — an off-minute, kind to the shared cron pool
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: ping /health and require the database to answer
+        env:
+          URL: ${{ vars.DEPLOY_HEALTH_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "DEPLOY_HEALTH_URL not set — nothing deployed yet, skipping."
+            exit 0
+          fi
+          body=$(curl -fsS --max-time 30 "$URL/health")
+          echo "$body"
+          # "db":"up" is the half that keeps Supabase awake; a paused or broken
+          # database must FAIL this job so it is noticed, not merely logged.
+          echo "$body" | grep -q '"db":"up"'
