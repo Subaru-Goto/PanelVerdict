@@ -323,11 +323,21 @@ fi
 stage "GitHub — arm the loud daily check"
 say "cron-job.org notifies by email; this workflow FAILS RED in the repo unless"
 say "/health answers with the database up — the check that is hard to miss."
-set_var DEPLOY_HEALTH_URL "$RENDER_URL"
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+# A secret, not a variable (088): public repo means public run logs, and curl's
+# failure messages name the host — secrets are masked there, variables are not.
+set_secret DEPLOY_HEALTH_URL "$RENDER_URL"
+# Dispatch only when the secret verifiably exists: set_secret degrades to a
+# skip on failure (fine-grained tokens gate Secrets separately from Variables),
+# and a dispatched run that finds no URL skips *green* by design — which would
+# read here as proof the check is armed when nothing is.
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 \
+  && gh secret list 2>/dev/null | awk '{print $1}' | grep -qx DEPLOY_HEALTH_URL; then
   gh workflow run keepalive.yml >/dev/null 2>&1 \
     && say "✓ keepalive dispatched — check: gh run list --workflow=keepalive.yml" \
     || warn "could not dispatch keepalive — run it from the Actions tab once"
+else
+  SKIPPED+=("keepalive dispatch — DEPLOY_HEALTH_URL secret not confirmed; set it, then: gh workflow run keepalive.yml")
+  warn "keepalive not dispatched — the DEPLOY_HEALTH_URL secret is not confirmed set"
 fi
 say ""
 say "Final proof, when you're ready (a dev run costs ~half a cent):"

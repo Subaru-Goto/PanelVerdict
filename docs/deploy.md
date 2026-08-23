@@ -6,7 +6,11 @@ the budget is zero); ticket
 [087/#180](https://github.com/Subaru-Goto/PanelVerdict/issues/180) carries the build.
 This is the operator's checklist — what to click, in what order, and why the order
 matters. **Ship dark**: the URL stays unannounced until auth (#158), rate limits (#143)
-and the cost-ceiling implementation hold.
+and the cost-ceiling implementation hold. Unannounced, never secret (#187): the URL is
+public by construction — a Render URL derives from its service name, and the frontend
+bakes `NEXT_PUBLIC_API_URL` into its public bundle — so dark means *unlinked*, and the
+actual protection is the safety spine's job. Nothing in this repo, its tracker, or its
+workflow logs may print the live URL.
 
 **The guided way: `bash scripts/deploy-wizard.sh`** — it walks these exact steps,
 opens each dashboard, captures the values into `.env.deploy` (gitignored; re-runs
@@ -80,7 +84,9 @@ and exercises a real database round-trip 120 times a day.
 - The daily check (`.github/workflows/keepalive.yml`) curls `/health` and **fails
   loudly** unless the database answers `"db":"up"` — cron-job.org notifies by email; a
   red workflow run is harder to miss. Activate it by setting the repository
-  **variable** `DEPLOY_HEALTH_URL` to the Render URL; until then it skips quietly.
+  **secret** `DEPLOY_HEALTH_URL` to the Render URL; until then it skips quietly. A
+  secret rather than a variable (#187): run logs are public here, and curl's failure
+  messages name the host — secrets are masked in logs, variables are not.
 
 ## Done-when checks (ticket 087's bar)
 
