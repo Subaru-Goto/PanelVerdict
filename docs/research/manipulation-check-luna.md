@@ -57,18 +57,24 @@ From the 20-vote `vote_cost` probe (2026-08-23, provider-reported `cost` field �
 method [010a](../decisions/010a-vote-usage-instrumentation.md) validated bit-for-bit
 against list-price derivation):
 
-- **$0.0001212/vote** reported (10/10 default-arm votes) → **$0.0242 per 200-vote test**
-- against gpt-5-mini's measured $0.107/200: **~77% cheaper** — the author's ">50%
+- probe: **$0.0001212/vote** reported (10/10 default-arm votes)
+- **the population disagreed with the sample — recorded because it corrected the
+  constant**: the full day landed at **€0.79 on the author's dashboard** (2026-08-23;
+  the key served only this project that day) — ~$0.83–0.92 across plausible EUR/USD
+  rates, possibly including card FX if read from a bank view — deriving to
+  **~$0.00015–0.00017/vote** → **~$0.030–0.034 per 200-vote test**. The probe's 10
+  default-arm votes under-sampled a population whose trait-rendered prompts run longer.
+- against gpt-5-mini's measured $0.107/200: **~70% cheaper** — the author's ">50%
   cheaper" expectation (2026-08-23), confirmed and exceeded
-- the full 5,400-vote gate derives to ≈ **$0.65**, consistent with the spend observed on
-  the account dashboard during the run
-- prompt sizes in the probe (~352 tokens) sit inside the prod vote's measured 270–370
-  range, so the per-vote figure transfers
 - harness nit, recorded: `vote_cost`'s "cost derived" line still prices at gpt-5-mini's
   $0.25/$2.00 — the *reported* column is the authoritative one
+- refinement path, stated: the next paid run should read OpenRouter's own **USD**
+  activity view rather than a currency-converted card view, and tighten the range
 
-`USD_PER_VOTE` in `config.py` moves from the 0.0003 estimate to a measured-with-margin
-0.00015 (derivation at the constant).
+`USD_PER_VOTE` in `config.py` moves from the 0.0003 estimate to 0.0002 — the top of the
+dashboard-derived range plus a ~1.2–1.3× margin (a first pass set 0.00015 from the probe
+alone and the same day's dashboard erased it; a sample-of-10 is a probe, not a
+measurement).
 
 ## What this run does NOT cover
 
