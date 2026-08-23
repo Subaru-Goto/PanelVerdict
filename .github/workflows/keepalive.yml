@@ -41,7 +41,16 @@ jobs:
           # --max-time 120: if this run is doing its last-resort job, the Render free
           # instance has spun down and needs ~1 minute to wake before it can answer.
           body=$(curl -fsS --max-time 120 "$URL/health")
-          echo "$body"
+          # The body never prints: run logs are public and the response is
+          # remote content — a compromised or misbehaving endpoint could put
+          # anything there, including ::workflow commands:: the runner would
+          # obey. Fixed sentences only; an operator who needs the body can
+          # curl /health themselves.
           # "db":"up" is the half that keeps Supabase awake; a paused or broken
           # database must FAIL this job so it is noticed, not merely logged.
-          echo "$body" | grep -q '"db":"up"'
+          if printf '%s' "$body" | grep -q '"db":"up"'; then
+            echo "health ok — database up"
+          else
+            echo "health answered, but the database did not report up — check Supabase"
+            exit 1
+          fi
