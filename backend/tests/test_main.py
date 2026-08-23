@@ -3,6 +3,8 @@ import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.postgres import PostgresSaver
 from openai import APIStatusError
 
 from app.config import settings
@@ -10,6 +12,7 @@ from app.main import (
     app,
     budget_notice,
     get_analyst,
+    get_checkpointer,
     get_conn,
     get_embedder,
     get_panel_llm,
@@ -69,6 +72,11 @@ def client(conn, stub_llm):
     app.dependency_overrides[get_embedder] = lambda: FixedEmbedder(pointing(0))
     # The screener is a model too. None means 'advisory checks do not run'.
     app.dependency_overrides[get_screener] = lambda: None
+    # The real saver is Postgres, created by the lifespan — which TestClient
+    # only runs as a context manager, and these tests don't. One in-memory
+    # saver per fixture: thread durability is test_analyst's subject.
+    saver = InMemorySaver()
+    app.dependency_overrides[get_checkpointer] = lambda: saver
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -344,6 +352,18 @@ def test_the_chat_connection_can_bind_a_query_vector(conn, pg_url, monkeypatch) 
         assert found == []
     finally:
         dependency.close()
+
+
+def test_the_lifespan_builds_the_postgres_checkpointer(pg_url, monkeypatch) -> None:
+    """Every other test overrides get_checkpointer — only this one runs the
+    real lifespan (TestClient does that as a context manager). It pins the
+    wiring the deploy relies on: startup opens the pool, `setup()` migrates
+    the library's checkpoint tables without error, and the saver the /chat
+    dependency will hand out is the Postgres one."""
+    # database_url is a derived property, so the patch lands on the class.
+    monkeypatch.setattr(type(settings), "database_url", pg_url)
+    with TestClient(app):
+        assert isinstance(app.state.checkpointer, PostgresSaver)
 
 
 def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None:

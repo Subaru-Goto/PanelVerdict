@@ -14,8 +14,8 @@ RUN uv sync --frozen --no-dev --no-install-project
 # runtime reads them; seeding itself runs from a developer machine against Supabase.
 COPY app ./app
 
-# One worker, one process — NOT a tunable. The analyst's InMemorySaver holds
-# conversation threads in this process, so a resume must land where the thread lives.
-# Lifting this requires the Postgres checkpointer (issue #144), not a bigger dyno.
+# One worker because the free instance is small, not because it must be one:
+# analyst threads live in Postgres (issue #144), so any worker or replica can
+# resume any thread — this number became a tunable the day that landed.
 # Render injects PORT; 8000 is the local-docker fallback.
 CMD ["sh", "-c", "uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

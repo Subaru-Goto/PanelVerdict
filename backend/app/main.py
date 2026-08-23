@@ -1,14 +1,17 @@
 import logging
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pgvector.psycopg import register_vector
-
 from langchain_core.language_models import BaseChatModel
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from pgvector.psycopg import register_vector
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from app.analyst import ToolDeps, analysis_facts, stream_analyst
 from app.assembly import Embedder
@@ -23,13 +26,13 @@ from app.llm import (
 )
 from app.panel import votes_with_voters
 from app.pipeline import EmptyPanel, NoVotes, run_panel_test
-from app.screening import OpenRouterScreener, Screener, UnsafeInput, screen_inputs
 from app.schemas import (
     ChatRequest,
     EvaluateRequest,
     EvaluateResponse,
     Notice,
 )
+from app.screening import OpenRouterScreener, Screener, UnsafeInput, screen_inputs
 from app.targeting import TargetTranslator
 from app.vote import OutOfCredit, PanelLLM
 
@@ -44,7 +47,49 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="PanelVerdict API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """The app's only startup/shutdown lifecycle: the analyst's checkpointer.
+
+    One saver for the process lifetime — threads must outlive requests, which
+    is the whole point of a checkpointer. In Postgres (#144) so a restart or a
+    second worker resumes the same transcript; the in-memory saver made a
+    resumed thread silently start from nothing, and an analyst with no memory
+    of its own words can contradict the answer on screen. The saver cannot
+    borrow `get_conn`: that connection is request-lifetime by contract, this
+    one is startup-to-shutdown.
+
+    A pool of exactly one connection, both halves on purpose:
+    - one, because PostgresSaver serializes every operation behind a process
+      lock (its `_cursor` takes `self.lock`), so a second connection could
+      never be used;
+    - a pool rather than a bare Connection, because `check=` on checkout
+      replaces a connection the Supabase pooler has dropped during an idle
+      spell, where a bare Connection would stay broken until the next deploy.
+    The connection kwargs mirror `PostgresSaver.from_conn_string`'s own.
+
+    `setup()` runs here, not in schema.sql or the seed: the checkpoint tables
+    are the library's, versioned by its own `checkpoint_migrations` table, so
+    a library upgrade must be able to migrate them at deploy time without a
+    reseed. Project tables remain the seed's job (see `get_conn`). DDL through
+    the session pooler (port 5432) is fine — 006f's rule bans only the
+    transaction pooler.
+    """
+    with ConnectionPool(
+        settings.database_url,
+        min_size=1,
+        max_size=1,
+        check=ConnectionPool.check_connection,
+        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+    ) as pool:
+        checkpointer = PostgresSaver(pool)
+        checkpointer.setup()
+        app.state.checkpointer = checkpointer
+        yield
+
+
+app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -219,10 +264,11 @@ def evaluate(
     )
 
 
-# One saver for the process lifetime — threads must outlive requests, which is
-# the whole point of a checkpointer. In-memory: a restart forgets every thread,
-# accepted at v1 demo scale (the report the chat is scoped to lives client-side).
-_CHECKPOINTER = InMemorySaver()
+def get_checkpointer(request: Request) -> BaseCheckpointSaver:
+    """The lifespan's process-lifetime saver, exposed as a dependency so tests
+    can swap in an InMemorySaver — thread durability is test_analyst's
+    subject, not a tax on every endpoint test."""
+    return request.app.state.checkpointer
 
 
 @app.post("/chat")
@@ -231,6 +277,7 @@ def chat(
     analyst: BaseChatModel = Depends(get_analyst),
     conn: psycopg.Connection = Depends(get_conn),
     embedder: Embedder = Depends(get_embedder),
+    checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
 ) -> StreamingResponse:
     # No translator and no panel model: with `run_panel_test` gone, this
     # endpoint has nothing that could buy a vote. The absence is the guarantee —
@@ -249,7 +296,7 @@ def chat(
             result=request.result,
             thread_id=request.thread_id,
             message=request.message,
-            checkpointer=_CHECKPOINTER,
+            checkpointer=checkpointer,
             deps=ToolDeps(conn=conn, embedder=embedder),
         ),
         media_type="application/x-ndjson",
