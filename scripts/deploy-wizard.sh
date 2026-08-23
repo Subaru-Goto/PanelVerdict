@@ -237,7 +237,7 @@ if confirm "Run the real seed now (--size full)?"; then
     uv run python -m app.seed --size full)
   say "✓ pool seeded"
 else
-  SKIPPED+=("the seed — run it later from backend/: uv run python -m app.seed --size full")
+  SKIPPED+=("the seed — from the repo root: set -a; source .env.deploy; set +a; cd backend; uv run python -m app.seed --size full")
 fi
 
 # ── Stage 4 ────────────────────────────────────────────────────────────────
@@ -308,7 +308,9 @@ say "database round-trip 120 times a day."
 open_url "https://console.cron-job.org/signup"
 step "Create the free account (or sign in), then: Cronjobs → CREATE CRONJOB."
 step "URL: $RENDER_URL/health"
-step "Execution schedule → Every 12 minutes."
+step "Execution schedule → the INTERVAL picker → 'Every 12 minutes'."
+note "In custom-cron terms that is '*/12 * * * *' — a bare '12' fires ONCE per hour at minute 12,"
+note "which leaves Render asleep 45 minutes of every hour. The interval picker avoids the trap."
 step "Notifications: enable 'job fails' — that email is the early warning."
 step "Save, then use 'TEST RUN' once and confirm it reports success (HTTP 200)."
 if confirm "Did the test run succeed?"; then
