@@ -2,15 +2,11 @@ import json
 
 import psycopg
 import pytest
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-
-from langgraph.checkpoint.memory import InMemorySaver
-
 from app.analyst import (
     _SYSTEM_PROMPT,
     ToolDeps,
-    build_tools,
     analysis_facts,
+    build_tools,
     stream_analyst,
     vote_reasons,
 )
@@ -28,6 +24,8 @@ from app.schemas import (
     VoteTally,
 )
 from app.verdict import panel_verdict
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.checkpoint.memory import InMemorySaver
 from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
@@ -464,6 +462,14 @@ class TestAnalystAgent:
         # Zero interpolation, pinned: no request content can reach the seat
         # the instructions sit in.
         assert "{" not in _SYSTEM_PROMPT
+
+    def test_the_prompt_affirms_an_ai_system_while_withholding_the_make(self) -> None:
+        # Art. 50(1) requires the artificial nature affirmed; the machinery
+        # rule withholds the model family. Pin the affirmation so a future
+        # edit to the identity rule cannot silently drop the legal half —
+        # prompt obedience is unassertable, but the sentence's presence is not.
+        assert "an AI system" in _SYSTEM_PROMPT
+        assert "never a person" in _SYSTEM_PROMPT
 
     def test_a_thread_remembers_its_tool_results_across_turns(self, conn) -> None:
         """The reason the checkpointer exists: turn two's prompt still carries

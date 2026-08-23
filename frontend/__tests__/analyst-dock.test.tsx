@@ -44,6 +44,17 @@ afterEach(() => {
 });
 
 describe("AnalystDock", () => {
+  it("discloses the AI system before a first message can be typed", () => {
+    renderDock();
+
+    // Art. 50(1): the disclosure must be in-context at latest at the first
+    // interaction. The header renders it the moment the dock opens, so it is
+    // on screen before the input can be used.
+    expect(
+      screen.getByText(/The analyst is an AI system, not a person/),
+    ).toBeTruthy();
+  });
+
   it("opens with the suggestion chips and streams a chip's answer", async () => {
     const stream = manualStream();
     const fetchMock = mockFetch(stream.response);
@@ -190,7 +201,10 @@ describe("AnalystDock", () => {
     await screen.findByText(/Five/);
 
     const revealIds = started.mock.calls
-      .map((call, index) => ({ period: call[1], id: started.mock.results[index]?.value }))
+      .map((call, index) => ({
+        period: call[1],
+        id: started.mock.results[index]?.value,
+      }))
       .filter((timer) => timer.period === REVEAL_TICK_MS)
       .map((timer) => timer.id);
     expect(revealIds).toHaveLength(1);
@@ -218,9 +232,7 @@ describe("AnalystDock", () => {
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByText("Five panelists.")).toBeNull();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Ask the analyst" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Ask the analyst" }));
     expect(await screen.findByText("Five panelists.")).toBeDefined();
   });
 
