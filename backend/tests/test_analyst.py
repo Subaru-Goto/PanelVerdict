@@ -2,11 +2,19 @@ import json
 
 import psycopg
 import pytest
+from langchain.agents import AgentState
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
 from app.analyst import (
     _SYSTEM_PROMPT,
     ToolDeps,
     analysis_facts,
     build_tools,
+    checkpointed_models,
     stream_analyst,
     vote_reasons,
 )
@@ -24,8 +32,6 @@ from app.schemas import (
     VoteTally,
 )
 from app.verdict import panel_verdict
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langgraph.checkpoint.memory import InMemorySaver
 from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
@@ -274,7 +280,7 @@ def _run(
     model: ScriptedChatModel,
     *,
     conn: psycopg.Connection,
-    checkpointer: InMemorySaver | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
     thread_id: str = "t-1",
     message: str = "Why did it stop early?",
     result: EvaluateResponse | None = None,
@@ -485,6 +491,76 @@ class TestAnalystAgent:
 
         _run(model, conn=conn, checkpointer=checkpointer, message="How sure are we?")
         reply = _run(model, conn=conn, checkpointer=checkpointer, message="Why?")
+
+        assert reply == "Because the interval cleared the band."
+        third_prompt = model.seen[2]
+        assert any(isinstance(m, ToolMessage) for m in third_prompt)
+        assert any(
+            isinstance(m, HumanMessage) and m.content == "How sure are we?"
+            for m in third_prompt
+        )
+
+    def test_every_checkpointed_model_survives_the_serde_round_trip(self) -> None:
+        """The Postgres saver stores state through JsonPlusSerializer, which
+        rebuilds a pydantic model by re-importing its class — and answers a
+        failure with a plain dict and a log line, not an error. Derived from
+        the agent's real state schema, so a model added to the state is
+        covered the day it appears, or this test names the field pool it
+        needs extending with."""
+        serde = JsonPlusSerializer()
+        models = checkpointed_models(AgentState)
+        assert models, "the walk found no models — the schema moved"
+
+        # One valid instance per class, built from its own required fields; a
+        # new required field fails here with its name, asking to be added.
+        samples = {
+            "content": "x",
+            "role": "assistant",
+            "tool_call_id": "t",
+            "name": "f",
+        }
+        for model_cls in models:
+            instance = model_cls(
+                **{
+                    name: samples[name]
+                    for name, field in model_cls.model_fields.items()
+                    if field.is_required()
+                }
+            )
+            revived = serde.loads_typed(serde.dumps_typed(instance))
+            assert type(revived) is model_cls
+
+    def test_a_thread_survives_a_process_restart(self, conn, pg_url) -> None:
+        """The reason the saver moved to Postgres (#144): a second saver
+        instance over the same database — a restarted process, or another
+        worker — resumes the transcript the first one wrote, ToolMessages
+        included, instead of silently answering from an empty thread."""
+        model = ScriptedChatModel(
+            responses=[
+                tool_call_message(),
+                AIMessage(content="98% for A."),
+                AIMessage(content="Because the interval cleared the band."),
+            ]
+        )
+
+        with PostgresSaver.from_conn_string(pg_url) as saver:
+            saver.setup()
+            _run(
+                model,
+                conn=conn,
+                checkpointer=saver,
+                thread_id="t-restart",
+                message="How sure are we?",
+            )
+        # A fresh saver over the same database is what a restart leaves behind.
+        with PostgresSaver.from_conn_string(pg_url) as saver:
+            reply = _run(
+                model,
+                conn=conn,
+                checkpointer=saver,
+                thread_id="t-restart",
+                message="Why?",
+            )
 
         assert reply == "Because the interval cleared the band."
         third_prompt = model.seen[2]

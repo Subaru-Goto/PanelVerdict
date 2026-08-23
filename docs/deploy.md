@@ -25,8 +25,8 @@ verifies each stage with a curl. The sections below are the same procedure in pr
 
 No payment card anywhere. The trade, stated plainly: Render free spins down after 15
 idle minutes and wakes in ~1 minute. The 12-minute ping keeps it warm almost always;
-until the Postgres checkpointer (#144) lands, a spin-down that does slip through
-erases in-flight analyst conversations — accepted while the URL is dark.
+analyst threads live in Postgres (#144), so a spin-down that does slip through costs
+the ~1-minute wake and nothing else — conversations resume where they left off.
 
 ## 1 — Supabase (do first: everything else needs its connection values)
 

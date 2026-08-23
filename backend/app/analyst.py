@@ -5,9 +5,9 @@ number the analyst can cite comes out of `verdict.py`, recomputed from the
 tally. Conversation memory is a server-side checkpointer keyed by `thread_id`:
 the checkpointed transcript keeps ToolMessages, so a follow-up is answered from
 context instead of re-buying tool calls a text-only replay would drop.
-In-memory in v1 — a restart forgets threads and a second worker would not
-share them, both acceptable at demo scale; the Postgres checkpointer is the
-scale-up path, not a redesign.
+The saver lives in Postgres (#144) — main.py's lifespan owns it — so threads
+survive restarts and are shared across workers; this module stays
+saver-agnostic and takes whatever `BaseCheckpointSaver` it is handed.
 """
 
 import json
@@ -15,6 +15,7 @@ from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from statistics import median_low
+from typing import get_args, get_type_hints
 
 import psycopg
 from langchain.agents import create_agent
@@ -378,6 +379,37 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
         )
 
     return [analyze_results, search_personas, read_reasons]
+
+
+def checkpointed_models(state: type) -> set[type[BaseModel]]:
+    """Every pydantic model reachable from a state schema, nested ones included.
+
+    What the checkpointer serializes is exactly what the state schema reaches,
+    and JsonPlusSerializer reconstructs a model by re-importing its class.
+    Derived rather than listed because the failure is silent: langgraph answers
+    a type it cannot rebuild with a plain dict and a log line, so a missing or
+    moved model surfaces later as an AttributeError in whichever node reads the
+    field. Tests round-trip each model this finds through the saver's serde.
+    """
+    found: set[type[BaseModel]] = set()
+
+    def walk(annotation: object) -> None:
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            if annotation in found:
+                return
+            found.add(annotation)
+            for field in annotation.model_fields.values():
+                walk(field.annotation)
+            return
+        # list[X], X | None, Annotated[X, reducer], NotRequired[X] — the
+        # wrappers a state field arrives in; the models are always in their
+        # arguments.
+        for argument in get_args(annotation):
+            walk(argument)
+
+    for annotation in get_type_hints(state).values():
+        walk(annotation)
+    return found
 
 
 def stream_analyst(
