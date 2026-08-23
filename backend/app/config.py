@@ -93,15 +93,16 @@ class Settings(BaseSettings):
     # is felt where the panel's is not. `-pro` emits more reasoning before it answers.
     analyst_model: str = "openai/gpt-5.6-luna"
     embedding_model: str = "openai/text-embedding-3-small"
-    # `-pro` on both below, and the reason is the same: one call per run, so the extra
-    # reasoning tokens cost almost nothing in absolute terms, and both are judgements where
-    # being wrong is expensive — a screener that misses an injection, a judge that scores a
-    # bad answer well. Neither is bounded by an output cap, so unlike `targeting_model`
-    # there is no ceiling for `pro` mode to collide with.
-    # NOT yet validated: 071 records that `-pro` changes model behaviour and needs the same
-    # scrutiny as any other model change. These two are the cheapest places to be wrong.
-    judge_model: str = "openai/gpt-5.6-luna-pro"
-    screening_model: str = "openai/gpt-5.6-luna-pro"
+    # Plain Luna here too (2026-08-23, was `-pro`): OpenRouter routes each request only to
+    # providers compatible with the account's data policy, and `-pro`'s provider set can
+    # fall entirely outside it — the failure is a 404 ("no endpoints available matching
+    # your guardrail restrictions") on every screen and judge call, which takes down every
+    # evaluate run. `-pro` was also never validated in these roles (071: `-pro` changes
+    # model behaviour and needs the same scrutiny as any other model change), while plain
+    # Luna is the one model that passed its gate. If `-pro` returns, it needs both the
+    # privacy settings loosened and its own validation pass.
+    judge_model: str = "openai/gpt-5.6-luna"
+    screening_model: str = "openai/gpt-5.6-luna"
 
     @property
     def panel(self) -> PanelProfile:
