@@ -32,10 +32,16 @@ the session pooler ($0) + cron-job.org keep-warm ($0) + GitHub Actions daily che
 of a $0 bill.**
 
 - **Render free**: spins down after "15 minutes without receiving any inbound traffic",
-  wakes in "about one minute"; a workspace gets **750 free instance hours/month**
-  (render.com/docs/free, read 2026-08-23). A continuously-warm month is ~744 hours —
-  one always-warm free service fits, and exactly one. On exhaustion the service is
-  suspended until the next month.
+  wakes in "about one minute"; Render "grants 750 Free instance hours **to each
+  workspace** per calendar month", hours accrue only while a service is awake, and on
+  exhaustion Render "suspends **all** of your Free web services until the start of the
+  next month" (render.com/docs/free, read 2026-08-23). A continuously-warm month is
+  ~744 hours — one always-warm free service fits **per workspace**, and exactly one:
+  a workspace shared with any other kept-warm free service exhausts the budget
+  mid-month and suspends *everything* in it. **PanelVerdict therefore gets its own
+  workspace.** Whether each workspace under one account receives its own fresh 750 is
+  not stated verbatim — UNVERIFIED; the wording implies it, and the deploy checklist
+  verifies the free-hours meter after creating the workspace.
 - **Render is IPv4-only**, so the backend reaches Supabase through the **Supavisor
   session pooler** (IPv4, free on all tiers) instead of the direct IPv6 connection.
   Session mode keeps psycopg3's prepared statements working; transaction mode remains

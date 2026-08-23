@@ -42,19 +42,23 @@ erases in-flight analyst conversations — accepted while the URL is dark.
 
 ## 2 — Render (the backend)
 
-1. New → Web Service → this GitHub repo, root directory `backend/` — Render detects
-   the `Dockerfile` (one worker by design, see its comment). Instance type: **Free**.
-2. Environment variables:
+1. **Create a new workspace for PanelVerdict** — the 750 free hours/month are *per
+   workspace*, exhaustion suspends *all* of a workspace's free services until the next
+   month, and one kept-warm service uses ~744. Any other kept-warm free project must
+   live in a different workspace. After creating it, check the workspace's free-hours
+   meter shows its own full allowance.
+2. In that workspace: New → Web Service → this GitHub repo, root directory `backend/`
+   — Render detects the `Dockerfile` (one worker by design, see its comment). Instance
+   type: **Free**.
+3. Environment variables:
    - `OPENROUTER_API_KEY`
    - `POSTGRES_USER` (`postgres.<project-ref>`), `POSTGRES_PASSWORD`, `POSTGRES_DB`,
      `POSTGRES_HOST`, `POSTGRES_PORT` — the session-pooler values from step 1
    - `PROFILE` — leave unset for `dev` while dark; `prod` is a deliberate act
    - `FRONTEND_ORIGIN` — the Vercel URL, once step 3 exists (CORS)
-3. The service URL (`https://….onrender.com`) is the API URL. First responses after an
+4. The service URL (`https://….onrender.com`) is the API URL. First responses after an
    idle spin-down take ~1 minute — that's the free tier, not a bug.
 
-Budget note: a workspace has 750 free instance hours/month; a kept-warm service uses
-~744. **One** always-warm free service per workspace — this one.
 
 ## 3 — Vercel (the frontend)
 

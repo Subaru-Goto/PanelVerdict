@@ -241,12 +241,16 @@ else
 fi
 
 # ── Stage 4 ────────────────────────────────────────────────────────────────
-stage "Render — the backend, on the free instance"
-open_url "https://dashboard.render.com/web/new"
-step "New Web Service → connect this GitHub repo."
+stage "Render — the backend, on the free instance, in ITS OWN workspace"
+open_url "https://dashboard.render.com/"
+warn "The 750 free hours/month are PER WORKSPACE, and exhausting them suspends ALL of"
+warn "that workspace's free services until next month. A kept-warm service uses ~744 —"
+warn "any other kept-warm free service must live in a DIFFERENT workspace than this one."
+step "Workspace switcher (top-left) → Create workspace → name it (e.g. panelverdict)."
+step "Confirm the new workspace's Billing page shows its own full free-hours allowance."
+step "In that workspace: New Web Service → connect this GitHub repo."
 step "Root Directory: backend — Render detects the Dockerfile as the build recipe."
-step "Instance type: FREE. No card. (750 free hours/mo per workspace — a kept-warm"
-say "    service uses ~744, so this must be the workspace's only always-warm free service.)"
+step "Instance type: FREE. No card."
 step "Environment variables — add these:"
 say "    OPENROUTER_API_KEY   (copy from your local .env)"
 say "    POSTGRES_HOST = $POSTGRES_HOST"
