@@ -1,9 +1,9 @@
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from openai import APIStatusError
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult
+from openai import APIStatusError
 
 from app.config import settings
 from app.main import (
@@ -263,7 +263,12 @@ class TestBudgetNotice:
         assert budget_notice(None, size=200) == ()
 
 
-def test_the_preflight_warning_reaches_the_response(client, conn) -> None:
+def test_the_preflight_warning_reaches_the_response(client, conn, monkeypatch) -> None:
+    # The rate is pinned for the same reason as the arithmetic test above: this
+    # test wants "a warning reaches the wire", not a bet on config. Unpinned, it
+    # silently inverted when the per-vote estimate dropped below the $0.01 stub
+    # (first at the 2026-08-05 re-estimate, again at the 2026-08-23 measurement).
+    monkeypatch.setattr("app.main.USD_PER_VOTE", 0.001)
     seed_japanese(conn, 3)
     app.dependency_overrides[get_remaining_credit] = lambda: 0.01
 

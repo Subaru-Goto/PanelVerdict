@@ -21,6 +21,13 @@ is config rather than a constant precisely so that stays possible.
 and none of the numbers below have been re-measured on it. Read everything here as the
 previous model's behaviour until a re-run says otherwise.
 
+**Amendment (2026-08-23):** the manipulation check re-ran on Luna and **passed** — same
+three carrying traits at full span, controls clean, flip rate 23.6% against a ~9–13%
+floor (down from mini's 32.5%), cost measured at $0.0001212/vote
+([manipulation-check-luna.md](research/manipulation-check-luna.md)). The 015 framing
+numbers and the negative control below remain un-re-measured — the validity caveat still
+describes gpt-5-mini.
+
 ---
 
 ## The two findings that matter most
