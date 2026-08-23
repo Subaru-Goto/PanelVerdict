@@ -323,7 +323,9 @@ fi
 stage "GitHub — arm the loud daily check"
 say "cron-job.org notifies by email; this workflow FAILS RED in the repo unless"
 say "/health answers with the database up — the check that is hard to miss."
-set_var DEPLOY_HEALTH_URL "$RENDER_URL"
+# A secret, not a variable (088): public repo means public run logs, and curl's
+# failure messages name the host — secrets are masked there, variables are not.
+set_secret DEPLOY_HEALTH_URL "$RENDER_URL"
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh workflow run keepalive.yml >/dev/null 2>&1 \
     && say "✓ keepalive dispatched — check: gh run list --workflow=keepalive.yml" \

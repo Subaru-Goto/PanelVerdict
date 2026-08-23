@@ -4,8 +4,12 @@
 # the repo unless the database answers, which is the signal that is hard to miss; it
 # also stands in as the keep-alive of last resort if cron-job.org ever stops.
 #
-# DEPLOY_HEALTH_URL is a repository *variable* (Settings → Secrets and variables →
-# Actions → Variables), e.g. https://<service>.onrender.com — no trailing slash.
+# DEPLOY_HEALTH_URL is a repository *secret* (Settings → Secrets and variables →
+# Actions → Secrets), e.g. https://<service>.onrender.com — no trailing slash.
+# A secret and not a variable (088): this repo is public, so run logs are public,
+# and curl names the host in its failure messages — exactly when this loud check
+# goes red. Secrets are masked in logs; variables are not. The URL is guessable
+# anyway (the service name derives it), but the repo should not print it.
 # Until it is set, runs skip quietly instead of failing: the workflow lands with the
 # code, the deploy lands later.
 name: keepalive
@@ -21,7 +25,7 @@ jobs:
     steps:
       - name: ping /health and require the database to answer
         env:
-          URL: ${{ vars.DEPLOY_HEALTH_URL }}
+          URL: ${{ secrets.DEPLOY_HEALTH_URL }}
         run: |
           if [ -z "$URL" ]; then
             echo "DEPLOY_HEALTH_URL not set — nothing deployed yet, skipping."
