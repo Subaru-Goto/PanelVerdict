@@ -183,14 +183,14 @@ finish() {
 # STAGES — author this section. One stage() per step the human takes.
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
-TOTAL_STAGES=7
+TOTAL_STAGES=8
 
 # Captured values live in .env.deploy (gitignored) — NEVER the local .env, whose
 # POSTGRES_* point at the docker-compose database. The seed stage injects the
 # captured values as environment overrides (env beats dotenv in pydantic-settings).
 ENV_FILE=".env.deploy"
 
-banner "PanelVerdict deploy — Vercel + Railway + Supabase + Actions (docs/deploy.md)"
+banner "PanelVerdict deploy — Vercel + Render + Supabase + cron-job.org (docs/deploy.md)"
 
 # ── Stage 1 ────────────────────────────────────────────────────────────────
 stage "Preflight"
@@ -206,16 +206,17 @@ note "Ship dark: nothing in this wizard announces a URL. Public is a later, sepa
 pause
 
 # ── Stage 2 ────────────────────────────────────────────────────────────────
-stage "Supabase — create the project, capture the direct connection"
+stage "Supabase — create the project, capture the session pooler"
 say "One project carries Postgres, pgvector and (later) auth."
 open_url "https://supabase.com/dashboard/new"
 step "Create a project — pick an EU region; set and REMEMBER the database password."
 step "When it finishes provisioning: click 'Connect' (top bar)."
-step "Choose 'Direct connection' — NOT a pooler. The host looks like db.<ref>.supabase.co."
-note "Direct is IPv6-only; that is fine — Railway gets an IPv6 toggle in stage 4."
-ask POSTGRES_HOST "Paste the direct host (db.<ref>.supabase.co):"
+step "Choose 'Session pooler' — Render is IPv4-only and direct connections are IPv6-only."
+note "Session mode, port 5432 — NEVER the transaction pooler (6543): psycopg3 prepares statements."
+ask POSTGRES_HOST "Paste the pooler host (aws-…pooler.supabase.com):"
+ask POSTGRES_USER "Paste the pooler username (postgres.<project-ref> — the suffix matters):"
 ask_secret POSTGRES_PASSWORD "Paste the database password:"
-POSTGRES_USER="postgres"; POSTGRES_PORT="5432"; POSTGRES_DB="postgres"
+POSTGRES_PORT="5432"; POSTGRES_DB="postgres"
 write_env POSTGRES_HOST "$POSTGRES_HOST"
 write_env POSTGRES_PASSWORD "$POSTGRES_PASSWORD"
 write_env POSTGRES_USER "$POSTGRES_USER"
@@ -240,37 +241,42 @@ else
 fi
 
 # ── Stage 4 ────────────────────────────────────────────────────────────────
-stage "Railway — the always-on backend"
-open_url "https://railway.app/new"
-step "Deploy from GitHub repo → pick this repo."
-step "Service Settings → Source → set Root Directory to: backend"
-warn "BEFORE anything connects: Settings → Networking → 'Enable Outbound IPv6'."
-note "Skipping that gives a bare ENETUNREACH against Supabase — the trap deploy-targets.md warns about."
-step "Variables tab — add these, and SEAL the first three (⋮ menu → Seal):"
-say "    OPENROUTER_API_KEY   (sealed — copy from your local .env)"
-say "    POSTGRES_PASSWORD    (sealed)"
-say "    POSTGRES_USER        (sealed)  = postgres"
+stage "Render — the backend, on the free instance, in ITS OWN workspace"
+open_url "https://dashboard.render.com/"
+warn "The 750 free hours/month are PER WORKSPACE, and exhausting them suspends ALL of"
+warn "that workspace's free services until next month. A kept-warm service uses ~744 —"
+warn "any other kept-warm free service must live in a DIFFERENT workspace than this one."
+step "Workspace switcher (top-left) → Create workspace → name it (e.g. panelverdict)."
+step "Confirm the new workspace's Billing page shows its own full free-hours allowance."
+step "In that workspace: New Web Service → connect this GitHub repo."
+step "Root Directory: backend — Render detects the Dockerfile as the build recipe."
+step "Instance type: FREE. No card."
+step "Environment variables — add these:"
+say "    OPENROUTER_API_KEY   (copy from your local .env)"
 say "    POSTGRES_HOST = $POSTGRES_HOST"
+say "    POSTGRES_USER = $POSTGRES_USER"
+say "    POSTGRES_PASSWORD    (the database password)"
 say "    POSTGRES_PORT = 5432    POSTGRES_DB = postgres"
 say "    FRONTEND_ORIGIN — leave for stage 6.  PROFILE — leave unset (dev) while dark."
-step "Settings → Networking → Public Networking → Generate Domain."
-ask RAILWAY_URL "Paste the public URL (https://…up.railway.app, no trailing slash):"
-RAILWAY_URL="${RAILWAY_URL%/}"
-write_env RAILWAY_URL "$RAILWAY_URL"
+step "Create the service; its URL is https://<name>.onrender.com."
+ask RENDER_URL "Paste the service URL (https://…onrender.com, no trailing slash):"
+RENDER_URL="${RENDER_URL%/}"
+write_env RENDER_URL "$RENDER_URL"
 say "Waiting for the deploy, then checking health (db must be 'up'):"
-pause "Press Enter once the Railway deploy shows as successful"
-if curl -fsS --max-time 30 "$RAILWAY_URL/health" | grep -q '"db":"up"'; then
-  say "✓ backend is up and talking to Supabase over IPv6"
+pause "Press Enter once the Render deploy shows as live"
+# --max-time 120: a cold-started free instance takes ~1 min to wake before answering.
+if curl -fsS --max-time 120 "$RENDER_URL/health" | grep -q '"db":"up"'; then
+  say "✓ backend is up and talking to Supabase through the session pooler"
 else
-  warn "health check failed or db is down — check the IPv6 toggle and the POSTGRES_* variables"
-  SKIPPED+=("backend health — re-check: curl $RAILWAY_URL/health")
+  warn "health check failed or db is down — check the POSTGRES_* values (pooler host + postgres.<ref> user)"
+  SKIPPED+=("backend health — re-check: curl $RENDER_URL/health")
 fi
 
 # ── Stage 5 ────────────────────────────────────────────────────────────────
 stage "Vercel — the frontend"
 open_url "https://vercel.com/new"
 step "Import this repo → set Root Directory to: frontend (framework auto-detects)."
-step "Environment Variables → add NEXT_PUBLIC_API_URL = $RAILWAY_URL"
+step "Environment Variables → add NEXT_PUBLIC_API_URL = $RENDER_URL"
 step "Deploy, then copy the production URL."
 ask VERCEL_URL "Paste the Vercel URL (https://…vercel.app, no trailing slash):"
 VERCEL_URL="${VERCEL_URL%/}"
@@ -284,20 +290,38 @@ fi
 
 # ── Stage 6 ────────────────────────────────────────────────────────────────
 stage "Cross-wire CORS"
-step "Back in Railway → Variables → set FRONTEND_ORIGIN = $VERCEL_URL (it redeploys)."
-pause "Press Enter once the redeploy is green"
-if curl -fsS --max-time 30 -H "Origin: $VERCEL_URL" -D - -o /dev/null "$RAILWAY_URL/health" \
+step "Back in Render → Environment → set FRONTEND_ORIGIN = $VERCEL_URL (it redeploys)."
+pause "Press Enter once the redeploy is live"
+if curl -fsS --max-time 120 -H "Origin: $VERCEL_URL" -D - -o /dev/null "$RENDER_URL/health" \
     | grep -qi '^access-control-allow-origin'; then
   say "✓ CORS answers for the Vercel origin"
 else
   warn "no CORS header seen — check FRONTEND_ORIGIN matches the Vercel URL exactly"
-  SKIPPED+=("CORS check — curl -H \"Origin: $VERCEL_URL\" -D - $RAILWAY_URL/health")
+  SKIPPED+=("CORS check — curl -H \"Origin: $VERCEL_URL\" -D - $RENDER_URL/health")
 fi
 
 # ── Stage 7 ────────────────────────────────────────────────────────────────
-stage "GitHub — arm the keep-alive"
-say "The daily /health ping keeps the Supabase free tier awake AND smoke-tests the stack."
-set_var DEPLOY_HEALTH_URL "$RAILWAY_URL"
+stage "cron-job.org — the keep-warm ping"
+say "One ping every 12 minutes does triple duty: keeps Render inside its 15-minute"
+say "spin-down window, keeps Supabase off its 7-day idle pause, and exercises a real"
+say "database round-trip 120 times a day."
+open_url "https://console.cron-job.org/signup"
+step "Create the free account (or sign in), then: Cronjobs → CREATE CRONJOB."
+step "URL: $RENDER_URL/health"
+step "Execution schedule → Every 12 minutes."
+step "Notifications: enable 'job fails' — that email is the early warning."
+step "Save, then use 'TEST RUN' once and confirm it reports success (HTTP 200)."
+if confirm "Did the test run succeed?"; then
+  say "✓ keep-warm armed"
+else
+  SKIPPED+=("cron-job.org job — $RENDER_URL/health every 12 min, failure notifications on")
+fi
+
+# ── Stage 8 ────────────────────────────────────────────────────────────────
+stage "GitHub — arm the loud daily check"
+say "cron-job.org notifies by email; this workflow FAILS RED in the repo unless"
+say "/health answers with the database up — the check that is hard to miss."
+set_var DEPLOY_HEALTH_URL "$RENDER_URL"
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   gh workflow run keepalive.yml >/dev/null 2>&1 \
     && say "✓ keepalive dispatched — check: gh run list --workflow=keepalive.yml" \

@@ -1,10 +1,11 @@
-# The Supabase free tier pauses a project after 7 idle days; a few real database
-# requests a day keep it active (decided on #154, sourced in deploy-targets.md). This
-# pings /health daily, which runs a real connection check against Postgres — so one green
-# run per day is both the keep-alive and a smoke test that the whole deployed stack is up.
+# The LOUD half of the health story. cron-job.org pings /health every 12 minutes to
+# keep Render warm and Supabase off its 7-day idle pause (decided on #154, amended in
+# deploy-targets.md) — but its failure alerts are email. This daily run FAILS RED in
+# the repo unless the database answers, which is the signal that is hard to miss; it
+# also stands in as the keep-alive of last resort if cron-job.org ever stops.
 #
 # DEPLOY_HEALTH_URL is a repository *variable* (Settings → Secrets and variables →
-# Actions → Variables), e.g. https://<railway-app>.up.railway.app — no trailing slash.
+# Actions → Variables), e.g. https://<service>.onrender.com — no trailing slash.
 # Until it is set, runs skip quietly instead of failing: the workflow lands with the
 # code, the deploy lands later.
 name: keepalive
@@ -26,7 +27,9 @@ jobs:
             echo "DEPLOY_HEALTH_URL not set — nothing deployed yet, skipping."
             exit 0
           fi
-          body=$(curl -fsS --max-time 30 "$URL/health")
+          # --max-time 120: if this run is doing its last-resort job, the Render free
+          # instance has spun down and needs ~1 minute to wake before it can answer.
+          body=$(curl -fsS --max-time 120 "$URL/health")
           echo "$body"
           # "db":"up" is the half that keeps Supabase awake; a paused or broken
           # database must FAIL this job so it is noticed, not merely logged.

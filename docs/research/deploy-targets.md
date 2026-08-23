@@ -8,6 +8,9 @@ anything an official page would not confirm is flagged **UNVERIFIED**.
 
 ## Verdict: Vercel Hobby (frontend, $0) + Railway Hobby (backend, $5/mo) — $5.00/mo total
 
+**Superseded same day — see the amendment below. Kept as the record of what "cheapest"
+scored before the budget was fixed at zero.**
+
 The demo stack lands at **$5.00/month, flat**: Next.js 16 on Vercel's free Hobby plan,
 the FastAPI backend as one always-on Railway Hobby service with outbound IPv6 enabled
 (direct Supabase connection, no IPv4 add-on), Supabase free tier, and the daily
@@ -15,6 +18,52 @@ keep-alive ping on GitHub Actions ($0 on a public repo). Runner-up is Fly.io for
 backend (~$3.35/mo, cheaper but usage-metered and auto-stop-by-default); Cloud Run and
 Vercel-for-backend are disqualified by the correctness constraint below, and Render by
 IPv4-only networking plus a higher price.
+
+## Amendment (2026-08-23, later the same day): the budget is $0
+
+The owner fixed the demo budget at **zero** — a constraint, not a preference. That
+re-sorts the field, because the research above weighted "cheapest always-on" when the
+requirement is "free": every free tier sleeps, so "always-on" stops being a criterion
+and becomes a *risk to manage*.
+
+**Amended verdict: Vercel Hobby ($0) + Render free web service ($0) + Supabase free via
+the session pooler ($0) + cron-job.org keep-warm ($0) + GitHub Actions daily check ($0)
+— $0.00/mo, and Render free requires no payment card, which is the only hard guarantee
+of a $0 bill.**
+
+- **Render free**: spins down after "15 minutes without receiving any inbound traffic",
+  wakes in "about one minute"; Render "grants 750 Free instance hours **to each
+  workspace** per calendar month", hours accrue only while a service is awake, and on
+  exhaustion Render "suspends **all** of your Free web services until the start of the
+  next month" (render.com/docs/free, read 2026-08-23). A continuously-warm month is
+  ~744 hours — one always-warm free service fits **per workspace**, and exactly one:
+  a workspace shared with any other kept-warm free service exhausts the budget
+  mid-month and suspends *everything* in it. **PanelVerdict therefore gets its own
+  workspace.** Whether each workspace under one account receives its own fresh 750 is
+  not stated verbatim — UNVERIFIED; the wording implies it, and the deploy checklist
+  verifies the free-hours meter after creating the workspace.
+- **Render is IPv4-only**, so the backend reaches Supabase through the **Supavisor
+  session pooler** (IPv4, free on all tiers) instead of the direct IPv6 connection.
+  Session mode keeps psycopg3's prepared statements working; transaction mode remains
+  unusable (sourced above, 2026-08-21). The owner runs Render + Neon elsewhere; Neon
+  serves IPv4 directly, which is why that pairing never met this constraint.
+- **Keep-warm**: cron-job.org — free, donation-financed, intervals "up to once per
+  minute", with status notifications on failure (cron-job.org, read 2026-08-23) — pings
+  `/health` **every 12 minutes** (owner's choice; inside the 15-minute spin-down
+  window). One ping does triple duty: keeps Render warm, keeps Supabase from its 7-day
+  idle pause, and exercises a real database round-trip. The GitHub Actions daily run
+  stays as the *loud* check — cron-job.org notifies by email; a red workflow run is
+  harder to miss.
+- **Accepted risks, stated plainly**: (1) keep-warm is best-effort — a missed ping
+  window means one visitor waits ~1 minute; (2) Render "may suspend a Free web service
+  that initiates an uncommonly high volume of traffic" — inbound pings at 120/day are
+  modest, but the policy does not explicitly bless keep-warm pinging (UNVERIFIED as
+  blessed); (3) **until the Postgres checkpointer (#144) lands, any spin-down erases
+  in-flight analyst conversations** — the InMemorySaver constraint above did not
+  disappear, it was *accepted* while the deploy is dark, and #144 retires it.
+- What $5/mo bought that $0 does not: a contractual always-on process and the direct
+  IPv6 connection. The migration path back (or to any host) is the same generic
+  `backend/Dockerfile` — no lock-in either way.
 
 ## The constraint that does the sorting
 
