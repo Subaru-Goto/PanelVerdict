@@ -3,7 +3,7 @@ title: "Where is a hand-authored graph worth it, if anywhere?"
 labels: [wayfinder:grilling]
 parent: 055-map-public-demo
 blocked_by: []
-assignee: subaru.dayo@gmail.com
+assignee: Subaru-Goto
 status: closed
 ---
 

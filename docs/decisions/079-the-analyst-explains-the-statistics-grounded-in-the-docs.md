@@ -3,7 +3,7 @@ title: "The analyst explains the statistics — grounded in the methodology docs
 labels: [wayfinder:task]
 parent: 078-map-next-chapter
 blocked_by: []
-assignee: subaru.dayo@gmail.com
+assignee: Subaru-Goto
 status: closed
 ---
 

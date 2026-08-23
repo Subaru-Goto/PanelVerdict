@@ -3,7 +3,7 @@ title: "Amend 054 — langgraph is installed and interrupt is available"
 labels: [wayfinder:task]
 parent: 055-map-public-demo
 blocked_by: []
-assignee: subaru.dayo@gmail.com
+assignee: Subaru-Goto
 status: closed
 ---
 

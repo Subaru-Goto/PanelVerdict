@@ -3,7 +3,7 @@ title: "Nothing confirms the panel before the money is spent — the human-in-th
 labels: [wayfinder:task]
 parent: 000-map
 blocked_by: []
-assignee: subaru.dayo@gmail.com
+assignee: Subaru-Goto
 status: closed
 ---
 
