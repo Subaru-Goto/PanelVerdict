@@ -1,5 +1,5 @@
-# The backend as one always-on process (Railway builds this; deploy-targets.md holds
-# the platform decision). uv's official image pins Python 3.13 to match pyproject.
+# The backend as one process (Render builds this; deploy-targets.md holds the
+# platform decision). uv's official image pins Python 3.13 to match pyproject.
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
 WORKDIR /srv/backend
@@ -17,5 +17,5 @@ COPY app ./app
 # One worker, one process — NOT a tunable. The analyst's InMemorySaver holds
 # conversation threads in this process, so a resume must land where the thread lives.
 # Lifting this requires the Postgres checkpointer (issue #144), not a bigger dyno.
-# Railway injects PORT; 8000 is the local-docker fallback.
+# Render injects PORT; 8000 is the local-docker fallback.
 CMD ["sh", "-c", "uv run uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]

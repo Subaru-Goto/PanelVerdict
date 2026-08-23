@@ -1,7 +1,8 @@
-# Deploying PanelVerdict — the $5/month shape
+# Deploying PanelVerdict — the $0/month shape
 
 The platform decision and every sourced number live in
-[research/deploy-targets.md](research/deploy-targets.md); ticket
+[research/deploy-targets.md](research/deploy-targets.md) (see its 2026-08-23 amendment:
+the budget is zero); ticket
 [087/#180](https://github.com/Subaru-Goto/PanelVerdict/issues/180) carries the build.
 This is the operator's checklist — what to click, in what order, and why the order
 matters. **Ship dark**: the URL stays unannounced until auth (#158), rate limits (#143)
@@ -17,53 +18,70 @@ verifies each stage with a curl. The sections below are the same procedure in pr
 | piece | platform | $/mo |
 |---|---|---|
 | Next.js frontend | Vercel Hobby | 0 |
-| FastAPI backend (one always-on service) | Railway Hobby | 5 |
+| FastAPI backend (Docker, kept warm) | Render free web service | 0 |
 | Postgres + pgvector + auth | Supabase free tier | 0 |
-| CI + daily keep-alive | GitHub Actions (this repo) | 0 |
+| keep-warm ping, every 12 min | cron-job.org | 0 |
+| CI + daily loud health check | GitHub Actions (this repo) | 0 |
 
-## 1 — Supabase (do first: everything else needs its connection string)
+No payment card anywhere. The trade, stated plainly: Render free spins down after 15
+idle minutes and wakes in ~1 minute. The 12-minute ping keeps it warm almost always;
+until the Postgres checkpointer (#144) lands, a spin-down that does slip through
+erases in-flight analyst conversations — accepted while the URL is dark.
+
+## 1 — Supabase (do first: everything else needs its connection values)
 
 1. Create a project (region: EU, matching the developer). Save the database password.
-2. Get the **direct** connection string (Connect → Direct connection — the IPv6 one,
-   *not* the pooler). The repo talks psycopg3 with prepared statements, so the
-   transaction pooler is never an option; the session pooler is the IPv4 fallback only.
+2. Get the **session pooler** connection (Connect → Session pooler). Render is
+   IPv4-only, and Supabase's direct connections are IPv6-only — the session pooler is
+   the IPv4 door. Note the pooler host (`aws-…pooler.supabase.com`), port `5432`, and
+   the username (`postgres.<project-ref>` — the ref suffix matters). **Never the
+   transaction pooler** (port 6543): psycopg3 uses prepared statements.
 3. Apply the schema and seed from your machine (paid embedding calls happen here, once):
-   set the `POSTGRES_*` values in `.env` to the Supabase project, then
-   `uv run python -m app.seed --size full`.
+   run `uv run python -m app.seed --size full` from `backend/` with the pooler values
+   as environment overrides (the wizard does this for you).
 
-## 2 — Railway (the backend)
+## 2 — Render (the backend)
 
-1. New project → deploy from this GitHub repo, root directory `backend/` (the
-   `Dockerfile` there is the build recipe — one worker by design, see its comment).
-2. **Before first deploy finishes: Settings → Networking → Enable Outbound IPv6.**
-   Without it, Supabase direct connections fail with a bare `ENETUNREACH` — this is the
-   single most likely trap in the whole setup.
-3. Variables — mark the secrets **sealed** (write-only):
-   - `OPENROUTER_API_KEY` *(sealed)*
-   - `POSTGRES_USER`, `POSTGRES_PASSWORD` *(sealed)*, `POSTGRES_DB`, `POSTGRES_HOST`,
-     `POSTGRES_PORT` — from the Supabase direct string
+1. New → Web Service → this GitHub repo, root directory `backend/` — Render detects
+   the `Dockerfile` (one worker by design, see its comment). Instance type: **Free**.
+2. Environment variables:
+   - `OPENROUTER_API_KEY`
+   - `POSTGRES_USER` (`postgres.<project-ref>`), `POSTGRES_PASSWORD`, `POSTGRES_DB`,
+     `POSTGRES_HOST`, `POSTGRES_PORT` — the session-pooler values from step 1
    - `PROFILE` — leave unset for `dev` while dark; `prod` is a deliberate act
    - `FRONTEND_ORIGIN` — the Vercel URL, once step 3 exists (CORS)
-4. Generate a public domain for the service; note it — it is the API URL.
+3. The service URL (`https://….onrender.com`) is the API URL. First responses after an
+   idle spin-down take ~1 minute — that's the free tier, not a bug.
+
+Budget note: a workspace has 750 free instance hours/month; a kept-warm service uses
+~744. **One** always-warm free service per workspace — this one.
 
 ## 3 — Vercel (the frontend)
 
 1. Import the repo, root directory `frontend/` (Next.js is auto-detected).
-2. One environment variable: `NEXT_PUBLIC_API_URL` = the Railway domain (no trailing
+2. One environment variable: `NEXT_PUBLIC_API_URL` = the Render URL (no trailing
    slash).
-3. Deploy; then go back to Railway and set `FRONTEND_ORIGIN` to the Vercel URL.
+3. Deploy; then go back to Render and set `FRONTEND_ORIGIN` to the Vercel URL.
 
-## 4 — GitHub (already in the repo)
+## 4 — cron-job.org (the keep-warm)
+
+Create a free account at cron-job.org, add a job hitting `<render-url>/health` **every
+12 minutes**, and switch on failure notifications. One ping does triple duty: keeps
+Render inside its 15-minute spin-down window, keeps Supabase off its 7-day idle pause,
+and exercises a real database round-trip 120 times a day.
+
+## 5 — GitHub (already in the repo)
 
 - CI (`.github/workflows/ci.yml`) runs both suites on every push — nothing to configure.
-- Keep-alive (`.github/workflows/keepalive.yml`) pings `/health` daily, which runs a real
-  Postgres check — one green run per day keeps the Supabase free tier awake *and* smoke
-  tests the stack. Activate it by setting the repository **variable**
-  `DEPLOY_HEALTH_URL` to the Railway domain; until then it skips quietly.
+- The daily check (`.github/workflows/keepalive.yml`) curls `/health` and **fails
+  loudly** unless the database answers `"db":"up"` — cron-job.org notifies by email; a
+  red workflow run is harder to miss. Activate it by setting the repository
+  **variable** `DEPLOY_HEALTH_URL` to the Render URL; until then it skips quietly.
 
 ## Done-when checks (ticket 087's bar)
 
-- `curl <railway-url>/health` → `{"status":"ok","db":"up"}`
+- `curl <render-url>/health` → `{"status":"ok","db":"up"}`
 - the Vercel page runs a dev-profile evaluate end to end, and an analyst turn streams
+- cron-job.org shows a run history of green pings 12 minutes apart
 - the keep-alive workflow has one green scheduled run
-- the Railway bill reads $5.00
+- the bill everywhere reads $0.00 — no card is on file anywhere
