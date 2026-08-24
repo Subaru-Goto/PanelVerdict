@@ -6,9 +6,9 @@ import { makeResponse } from "./fixtures";
 const RESPONSE = makeResponse();
 
 const mockFetch = (status: number, body: object) => {
-  const fetchMock = vi.fn().mockResolvedValue(
-    new Response(JSON.stringify(body), { status }),
-  );
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValue(new Response(JSON.stringify(body), { status }));
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 };
@@ -26,7 +26,9 @@ describe("evaluate", () => {
     });
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url.endsWith("/evaluate")).toBe(true);
+    // Same origin, exact path: the browser talks to its own proxy (045/#143),
+    // which is the only holder of the edge secret.
+    expect(url).toBe("/api/evaluate");
     // The exact keys EvaluateRequest requires — the missing target_description
     // is what made every submit a 422 before this slice.
     expect(JSON.parse(init.body as string)).toEqual({
@@ -53,7 +55,9 @@ describe("evaluate", () => {
   it("falls back to the status line when detail is not a string", async () => {
     // FastAPI's own validation errors carry a list-typed detail; forwarding a
     // serialized array would be noise, not a sentence.
-    mockFetch(422, { detail: [{ loc: ["body", "headline_a"], msg: "required" }] });
+    mockFetch(422, {
+      detail: [{ loc: ["body", "headline_a"], msg: "required" }],
+    });
 
     await expect(
       evaluate({ targetDescription: "x", headlineA: "a", headlineB: "b" }),

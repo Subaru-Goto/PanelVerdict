@@ -138,8 +138,12 @@ export type EvaluateInput = {
   headlineB: string;
 };
 
-export async function evaluate(request: EvaluateInput): Promise<EvaluateResponse> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/evaluate`, {
+export async function evaluate(
+  request: EvaluateInput,
+): Promise<EvaluateResponse> {
+  // Same origin, through the proxy route (045/#143): the browser never learns
+  // the backend URL or the edge secret — neither exists in this bundle.
+  const res = await fetch("/api/evaluate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -152,7 +156,9 @@ export async function evaluate(request: EvaluateInput): Promise<EvaluateResponse
     // The backend's refusals are written for humans and safe by construction
     // (fixed sentences and exception type names — never provider text), so the
     // detail is the error message when present.
-    const body = (await res.json().catch(() => null)) as { detail?: string } | null;
+    const body = (await res.json().catch(() => null)) as {
+      detail?: string;
+    } | null;
     throw new Error(
       typeof body?.detail === "string"
         ? body.detail
