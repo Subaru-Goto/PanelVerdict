@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { POST as chatProxy } from "../app/api/chat/route";
 import { POST as evaluateProxy } from "../app/api/evaluate/route";
 
 // 045/#143: the browser never holds the edge secret — these route handlers do,
@@ -74,5 +75,52 @@ describe("the evaluate proxy", () => {
     expect(new Headers(init.headers).get("X-Forwarded-For")).toBe(
       "203.0.113.9",
     );
+  });
+});
+
+describe("the chat proxy", () => {
+  it("pipes the NDJSON stream through instead of buffering it", async () => {
+    // The first token must reach the reader while the backend stream is still
+    // open — a proxy that collects the body would hang right here, because
+    // the analyst's answer is worth nothing after the conversation moved on.
+    vi.stubEnv("API_URL", "http://backend.test");
+    vi.stubEnv("API_SHARED_SECRET", "edge-secret");
+    let backendStream!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        backendStream = controller;
+      },
+    });
+    const backend = vi.fn().mockResolvedValue(
+      new Response(body, {
+        status: 200,
+        headers: { "Content-Type": "application/x-ndjson" },
+      }),
+    );
+    vi.stubGlobal("fetch", backend);
+    const encoder = new TextEncoder();
+
+    const response = await chatProxy(
+      new Request("http://frontend.test/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thread_id: "t-1", message: "why?", result: {} }),
+      }),
+    );
+    const reader = response.body!.getReader();
+    backendStream.enqueue(encoder.encode('{"type":"token","text":"pie"}\n'));
+    const first = await reader.read();
+    backendStream.enqueue(encoder.encode('{"type":"done"}\n'));
+    backendStream.close();
+    const second = await reader.read();
+
+    expect(
+      new Headers(
+        (backend.mock.calls[0] as [string, RequestInit])[1].headers,
+      ).get("X-API-Key"),
+    ).toBe("edge-secret");
+    expect(response.headers.get("content-type")).toBe("application/x-ndjson");
+    expect(new TextDecoder().decode(first.value)).toContain('"pie"');
+    expect(new TextDecoder().decode(second.value)).toContain('"done"');
   });
 });
