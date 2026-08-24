@@ -1,0 +1,953 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PanelVerdict — interface prototype</title>
+<!--
+  A throwaway prototype: every screen of the flow, start to finish, in one file.
+  It answers "what should this look like and how should it behave", nothing else.
+  No network, no build step, all state is the `flow` object below.
+
+  Two rules the visual language rests on, and neither is decoration:
+    1. Colour never encodes a value. Bars, curves and shares are drawn in ink.
+       Red means attention or refusal; amber means a caveat; green means ready.
+       A reader must never infer "worse" from "redder".
+    2. Nothing is boxed except a decision the human owns. Sections are separated
+       by rules, not cards, so the one bordered panel on the page is the one
+       place the human is being asked to act.
+-->
+<style>
+  :root{
+    --ink:#171A20; --ink-2:#5C5E62; --ink-3:#8E8E8E;
+    --line:#E2E3E5; --surface:#FFFFFF; --surface-2:#F4F4F4;
+    --red:#DA291C; --amber:#B5850B; --green:#1F7A33;
+    --pill:100px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:var(--ink);background:var(--surface);
+    -webkit-font-smoothing:antialiased;font-size:15px;line-height:1.5}
+  .kicker{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-2);font-weight:500}
+  h1{font-size:40px;font-weight:500;letter-spacing:-.01em}
+  h2{font-size:24px;font-weight:500;letter-spacing:-.01em}
+  h3{font-size:16px;font-weight:600}
+
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
+    padding:0 40px;height:56px;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .wordmark{font-size:13px;font-weight:700;letter-spacing:.32em;text-transform:uppercase;cursor:pointer;background:none;border:none;font-family:inherit;color:inherit}
+  .nav-links{display:flex;gap:6px}
+  .nav-links button{font:inherit;font-size:13px;font-weight:500;color:var(--ink);background:none;border:none;
+    padding:7px 18px;border-radius:var(--pill);cursor:pointer;transition:background .15s}
+  .nav-links button:hover{background:var(--surface-2)}
+  .nav-links button.active{background:var(--ink);color:#fff}
+  .nav-right{display:flex;align-items:center;gap:12px}
+  .badge{font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;border:1px solid var(--line);
+    border-radius:var(--pill);padding:6px 14px;color:var(--ink-2);display:flex;align-items:center;gap:8px}
+  .badge .bdot{width:7px;height:7px;border-radius:50%;background:var(--green);flex:none}
+  .badge.spent .bdot{background:var(--amber)}
+  .who{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:var(--pill);
+    padding:5px 6px 5px 14px;background:none;font:inherit;font-size:13px;font-weight:500;cursor:pointer}
+  .who .av{width:24px;height:24px;border-radius:50%;background:var(--ink);color:#fff;font-size:11px;
+    font-weight:600;display:grid;place-items:center;letter-spacing:.02em}
+  .signin{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:var(--pill);
+    padding:6px 16px;background:none;font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:border-color .15s}
+  .signin:hover{border-color:var(--ink)}
+
+  main{max-width:1080px;margin:0 auto;padding:0 40px 120px}
+  .view{display:none;animation:fade .25s ease}
+  .view.on{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:none;transform:none}}
+
+  /* ---------- buttons ---------- */
+  .btn{font:inherit;font-size:14px;font-weight:500;border-radius:var(--pill);padding:11px 32px;cursor:pointer;
+    border:none;transition:transform .1s,opacity .15s}
+  .btn:hover{opacity:.88}.btn:active{transform:scale(.98)}
+  .btn-primary{background:var(--ink);color:#fff}
+  .btn-ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink)}
+  .btn-quiet{background:var(--surface-2);color:var(--ink)}
+  .btn[disabled]{background:var(--surface-2);color:var(--ink-3);cursor:not-allowed;opacity:1}
+  .btn-link{background:none;border:none;color:var(--ink-2);font:inherit;font-size:13px;text-decoration:underline;cursor:pointer;padding:0}
+
+  /* ---------- landing ---------- */
+  .hero{padding:96px 0 64px;text-align:center}
+  .hero p.lede{max-width:660px;margin:16px auto 0;font-size:17px;font-weight:300;color:var(--ink-2)}
+  .hero-actions{margin-top:36px;display:flex;justify-content:center;gap:14px}
+  .principles{margin-top:24px;display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  .principle{border-top:2px solid var(--ink);padding-top:18px}
+  .principle p{margin-top:8px;font-size:13px;font-weight:300;color:var(--ink-2)}
+  .recent{margin-top:72px}
+  .recent .row{display:flex;justify-content:space-between;align-items:baseline;gap:20px;padding:14px 0;border-bottom:1px solid var(--line)}
+  .recent .row:first-child{border-top:1px solid var(--line)}
+  .recent .q{font-size:14px;font-weight:500}
+  .recent .v{font-size:13px;font-weight:300;color:var(--ink-2);white-space:nowrap}
+  .disclosure{margin-top:88px;border-top:1px solid var(--line);padding-top:20px;text-align:center;
+    font-size:12px;font-weight:300;color:var(--ink-3)}
+
+  /* ---------- stepper ---------- */
+  .flow-head{padding:48px 0 0}
+  .flow-head p.sub{margin-top:12px;font-size:15px;font-weight:300;color:var(--ink-2);max-width:620px}
+  .stepper{display:flex;margin-top:26px;border-bottom:1px solid var(--line)}
+  .st{font-size:12px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--ink-3);
+    padding:0 0 14px;margin-right:40px;border-bottom:2px solid transparent;display:flex;gap:10px;align-items:center;
+    background:none;border-top:none;border-left:none;border-right:none;font-family:inherit;cursor:default}
+  .st .n{width:20px;height:20px;border-radius:50%;border:1.5px solid var(--ink-3);font-size:11px;
+    display:grid;place-items:center;letter-spacing:0}
+  .st.cur{color:var(--ink);border-bottom-color:var(--ink)}
+  .st.cur .n{border-color:var(--ink);background:var(--ink);color:#fff}
+  .st.done{color:var(--ink);cursor:pointer}
+  .st.done .n{border-color:var(--ink);background:#fff;color:var(--ink)}
+
+  /* ---------- step 1 ---------- */
+  .pair{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+  @media(max-width:860px){.pair{grid-template-columns:1fr}}
+  .field{margin-top:34px}
+  .field .kicker{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;gap:16px}
+  .count{font-size:11px;letter-spacing:.05em;color:var(--ink-3);text-transform:none;font-weight:400}
+  .opt{text-transform:none;letter-spacing:.05em;color:var(--ink-3);font-weight:400}
+  /* A headline is one line, so it gets an underline, not a box. */
+  input.line{width:100%;font:inherit;font-size:22px;font-weight:300;border:none;border-bottom:1.5px solid var(--line);
+    padding:8px 2px;outline:none;background:transparent;transition:border-color .15s}
+  input.line:focus{border-bottom-color:var(--ink)}
+  textarea{width:100%;min-height:92px;font:inherit;font-size:13px;font-weight:300;line-height:1.6;
+    border:1px solid var(--line);padding:16px;outline:none;resize:vertical;background:var(--surface);transition:border-color .15s}
+  textarea:focus{border-color:var(--ink)}
+  .hint{margin-top:10px;font-size:12px;font-weight:300;color:var(--ink-3);max-width:560px}
+  .actions{margin-top:36px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+
+  /* ---------- notices: one box, a different left rule ---------- */
+  .notice{border:1px solid var(--line);border-left:2px solid var(--ink-3);padding:12px 16px;font-size:12.5px;
+    color:var(--ink-2);font-weight:300;margin-top:14px}
+  .notice b{font-weight:600;color:var(--ink)}
+  .notice.warn{border-left-color:var(--amber)}
+  .notice.stop{border-left-color:var(--red)}
+  .notice.ok{border-left-color:var(--green)}
+
+  /* ---------- step 2: the panel, and the decision ---------- */
+  .panel-grid{display:grid;grid-template-columns:280px 1fr;gap:56px;margin-top:40px}
+  @media(max-width:860px){.panel-grid{grid-template-columns:1fr}}
+  .stat-tile{border-top:2px solid var(--ink);padding-top:18px;margin-bottom:36px}
+  .stat-tile .kicker{margin-bottom:10px}
+  .hero-number{font-size:72px;font-weight:300;letter-spacing:-.03em;line-height:1}
+  .hero-number small{font-size:22px;color:var(--ink-3);font-weight:300}
+  .stat-note{font-size:13px;color:var(--ink-2);margin-top:10px;font-weight:300}
+  .trait-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:13px 0;border-bottom:1px solid var(--line)}
+  .trait-row:first-child{border-top:1px solid var(--line)}
+  .trait-name{font-size:14px;font-weight:500}
+  .trait-val{font-size:13px;color:var(--ink-2);font-weight:300;font-variant-numeric:tabular-nums}
+  .tag{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2);
+    border:1px solid var(--line);border-radius:var(--pill);padding:2px 9px;margin-left:10px;vertical-align:2px}
+  .tag-unmatched{color:var(--amber);border-color:var(--amber)}
+  .roster{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+  .persona{font-size:12px;font-weight:300;color:var(--ink-2);border:1px solid var(--line);border-radius:var(--pill);padding:5px 12px}
+  .decision{margin-top:56px;border:1px solid var(--ink);padding:36px 40px}
+  .decision p.exp{color:var(--ink-2);font-size:14px;font-weight:300;max-width:560px;margin-top:10px}
+  .size-row{margin:26px 0 22px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+  .size-row label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);font-weight:600}
+  .wbtn{width:26px;height:26px;border-radius:50%;border:1px solid var(--line);background:none;cursor:pointer;
+    font-size:14px;color:var(--ink-2);line-height:1;transition:all .12s}
+  .wbtn:hover{border-color:var(--ink);color:var(--ink)}
+  .wv{display:inline-block;min-width:34px;text-align:center;font-weight:600;color:var(--ink);font-size:18px;font-variant-numeric:tabular-nums}
+  .decision-actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;align-items:center}
+  .hitl-note{margin-top:22px;font-size:12px;color:var(--ink-3);font-weight:300}
+
+  /* ---------- step 3: running ---------- */
+  .run-wrap{padding:72px 0;text-align:center}
+  .run-wrap .kicker{margin-bottom:14px}
+  .run-wrap h2{font-weight:300;font-size:28px}
+  .stream{margin:44px auto 0;max-width:620px;text-align:left}
+  .step-line{display:flex;gap:14px;align-items:center;padding:13px 4px;border-bottom:1px solid var(--line);
+    font-size:13px;letter-spacing:.08em;text-transform:uppercase;font-weight:600;color:var(--ink-3)}
+  .step-line .s-dot{width:8px;height:8px;border-radius:50%;background:var(--line);flex:none}
+  .step-line .sub{margin-left:auto;font-size:11px;letter-spacing:.04em;font-weight:400;text-transform:none;color:var(--ink-3)}
+  .step-line.done{color:var(--ink)}.step-line.done .s-dot{background:var(--ink)}
+  .step-line.run{color:var(--ink)}.step-line.run .s-dot{background:var(--ink);animation:pulse .9s infinite alternate}
+  @keyframes pulse{from{opacity:.2}to{opacity:1}}
+  .run-note{margin-top:30px;font-size:12px;color:var(--ink-3);font-weight:300}
+
+  /* ---------- step 4: the verdict ---------- */
+  .page-head{padding:44px 0 8px;display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap}
+  .page-head .meta{color:var(--ink-2);font-size:13px;margin-top:8px;font-weight:300}
+  .rec-line{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:500;letter-spacing:.04em;margin-top:14px}
+  .rec-icon{width:10px;height:10px;border-radius:50%;background:var(--green);flex:none}
+  .rec-nocall .rec-icon{background:var(--amber)}
+  .rec-nocall{color:var(--amber)}
+  .winner{margin-top:24px;border-top:2px solid var(--ink);padding-top:20px}
+  .winner .line{font-size:34px;font-weight:300;letter-spacing:-.02em;margin-top:8px}
+  .winner .loser{font-size:15px;font-weight:300;color:var(--ink-3);margin-top:12px}
+  .stat-band{display:grid;grid-template-columns:repeat(4,1fr);gap:28px;margin-top:48px}
+  @media(max-width:860px){.stat-band{grid-template-columns:1fr 1fr}}
+  .stat-band .stat-tile{margin-bottom:0}
+  .stat-band .hero-number{font-size:52px}
+  .prose{margin-top:44px;max-width:640px;font-size:14px;font-weight:300;color:var(--ink-2)}
+  .prose p+p{margin-top:12px}
+  .chart-wrap{margin-top:56px}
+  .chart-wrap .kicker{margin-bottom:6px}
+  .chart-hint{font-size:12px;color:var(--ink-3);margin-bottom:22px;font-weight:300}
+  .legend{display:flex;gap:22px;margin-top:14px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+  .legend span{display:flex;align-items:center;gap:8px}
+  .lg-mean{width:14px;height:0;border-top:1.5px dashed var(--ink)}
+  .lg-hdi{width:14px;height:5px;background:var(--ink)}
+  .lg-rope{width:14px;height:10px;background:var(--surface-2);border:1px solid var(--line)}
+
+  /* votes */
+  .votes{margin-top:64px}
+  .vote{padding:14px 0;border-bottom:1px solid var(--line);position:relative}
+  .vote-top{display:flex;justify-content:space-between;align-items:baseline;gap:16px}
+  .vote-name{font-size:14px;font-weight:500}
+  .vote-val{font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .track{height:8px;background:var(--surface-2);border-radius:4px;margin-top:10px;overflow:hidden}
+  .fill{height:100%;background:var(--ink);border-radius:0 4px 4px 0;transition:width .6s cubic-bezier(.2,.7,.3,1)}
+  .vote .tip{position:absolute;left:0;right:0;bottom:calc(100% - 6px);z-index:20;background:var(--ink);color:#fff;
+    padding:14px 16px;font-size:13px;font-weight:300;line-height:1.55;opacity:0;pointer-events:none;transition:opacity .15s;border-radius:2px}
+  .vote .tip .tip-k{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#9B9EA3;display:block;margin-bottom:6px;font-weight:600}
+  .vote:hover .tip{opacity:1}
+  .vote:hover{background:var(--surface-2)}
+  .report-actions{margin-top:56px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+
+  /* ---------- analyst dock ---------- */
+  .dock-btn{position:fixed;bottom:24px;right:24px;z-index:60;background:var(--ink);color:#fff;border:none;
+    border-radius:var(--pill);padding:13px 24px;font:inherit;font-size:13px;font-weight:500;cursor:pointer;
+    box-shadow:0 6px 24px rgba(23,26,32,.18);display:flex;align-items:center;gap:10px}
+  .dock{position:fixed;bottom:0;right:0;z-index:61;width:420px;max-width:100vw;height:min(620px,86vh);
+    background:var(--surface);border-left:1px solid var(--line);border-top:1px solid var(--line);
+    display:none;flex-direction:column;box-shadow:0 -6px 40px rgba(23,26,32,.10)}
+  .dock.on{display:flex}
+  .dock-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
+  .dock-body{flex:1;overflow-y:auto;padding:20px}
+  .turn{margin-bottom:20px}
+  .turn .kicker{margin-bottom:6px}
+  .turn p{font-size:13.5px;font-weight:300;line-height:1.6;color:var(--ink)}
+  .turn.reader{text-align:right}
+  .turn.reader p{display:inline-block;background:var(--surface-2);padding:10px 14px;text-align:left;max-width:88%}
+  .turn.refusal p{color:var(--ink-2);border-left:2px solid var(--amber);padding-left:12px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;padding:0 20px 12px}
+  .chip{font:inherit;font-size:12px;font-weight:400;color:var(--ink-2);background:none;border:1px solid var(--line);
+    border-radius:var(--pill);padding:6px 13px;cursor:pointer;transition:all .12s}
+  .chip:hover{border-color:var(--ink);color:var(--ink)}
+  .dock-foot{border-top:1px solid var(--line);padding:14px 20px;display:flex;gap:12px;align-items:center}
+  .dock-foot input{flex:1;font:inherit;font-size:13.5px;border:none;border-bottom:1.5px solid var(--line);
+    padding:8px 2px;outline:none;background:transparent}
+  .dock-foot input:focus{border-bottom-color:var(--ink)}
+
+  /* ---------- sign-in sheet ---------- */
+  .scrim{position:fixed;inset:0;z-index:80;background:rgba(23,26,32,.34);display:none;place-items:center;padding:24px}
+  .scrim.on{display:grid}
+  .sheet{background:var(--surface);width:100%;max-width:420px;padding:40px;border:1px solid var(--ink)}
+  .sheet h2{font-size:22px}
+  .sheet p{margin-top:12px;font-size:14px;font-weight:300;color:var(--ink-2)}
+  .google{margin-top:28px;width:100%;display:flex;align-items:center;justify-content:center;gap:12px;
+    background:var(--ink);color:#fff;border:none;border-radius:var(--pill);padding:13px 24px;font:inherit;
+    font-size:14px;font-weight:500;cursor:pointer}
+  .sheet .fine{margin-top:20px;font-size:11.5px;color:var(--ink-3);font-weight:300}
+  .sheet .dismiss{margin-top:18px;width:100%;text-align:center}
+
+  /* ---------- states gallery ---------- */
+  .state-block{margin-top:56px;border-top:2px solid var(--ink);padding-top:22px}
+  .state-block h3{margin-bottom:4px}
+  .state-block .when{font-size:12.5px;font-weight:300;color:var(--ink-3);margin-bottom:16px}
+  .empty{padding:56px 0;text-align:center}
+  .empty h2{font-weight:300;font-size:26px}
+  .empty p{margin:12px auto 0;max-width:520px;font-size:14px;font-weight:300;color:var(--ink-2)}
+  .empty .actions{justify-content:center}
+
+  @media(max-width:840px){
+    nav{flex-wrap:wrap;height:auto;padding:10px 16px;row-gap:8px}
+    .nav-links{order:3;width:100%;justify-content:center;border-top:1px solid var(--line);padding-top:8px}
+    main{padding:0 20px 120px}
+    h1{font-size:30px}
+    .dock{width:100%}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <button class="wordmark" onclick="go('landing')">Panelverdict</button>
+  <div class="nav-links">
+    <button id="nav-flow" class="active" onclick="go('step1')">Test copy</button>
+    <button id="nav-states" onclick="go('states')">States &amp; refusals</button>
+  </div>
+  <div class="nav-right">
+    <div class="badge" id="ready-badge"><span class="bdot"></span><span>Panel ready</span></div>
+    <button class="signin" id="signin-btn" onclick="openSheet()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <circle cx="12" cy="8" r="3.6"></circle><path d="M4.5 20c0-4 3.4-6.2 7.5-6.2s7.5 2.2 7.5 6.2"></path>
+      </svg>
+      Sign in
+    </button>
+    <button class="who" id="who-btn" style="display:none" onclick="signOut()">
+      Sam O. <span class="av">SO</span>
+    </button>
+  </div>
+</nav>
+
+<main>
+
+<!-- ============================== LANDING ============================== -->
+<section id="landing" class="view on">
+  <div class="hero">
+    <p class="kicker" style="margin-bottom:18px">Synthetic panel · A/B testing for copy</p>
+    <h1>A verdict — and how sure it is.</h1>
+    <p class="lede">
+      A panel of synthetic readers judges both versions of your copy and reports which one it prefers,
+      how wide the lead is, and when the lead is too small to call.
+    </p>
+    <div class="hero-actions">
+      <button class="btn btn-primary" onclick="go('step1')">Run a panel</button>
+      <button class="btn btn-ghost" onclick="showSample()">See a sample verdict</button>
+    </div>
+  </div>
+
+  <div class="principles">
+    <div class="principle">
+      <h3>Every vote is on the record</h3>
+      <p>Each panel member votes and says why, in their own words. The reasons are in the report, not behind a summary.</p>
+    </div>
+    <div class="principle">
+      <h3>Uncertainty stays attached</h3>
+      <p>The verdict carries the range the true preference could plausibly sit in, and says plainly when the gap is too small to call.</p>
+    </div>
+    <div class="principle">
+      <h3>You approve the panel</h3>
+      <p>Nothing is spent until you have seen who is judging and confirmed it. The panel is proposed, never assumed.</p>
+    </div>
+  </div>
+
+  <div class="recent">
+    <p class="kicker" style="margin-bottom:16px">Recent verdicts</p>
+    <div class="row"><span class="q">“Save 50% this week” vs “Members save half price this week”</span><span class="v">Clear lean · A · 71%</span></div>
+    <div class="row"><span class="q">“Book in 30 seconds” vs “Reserve your slot now”</span><span class="v">No call · gap too small</span></div>
+    <div class="row"><span class="q">“Built for teams” vs “Built for teams like yours”</span><span class="v">Clear lean · B · 66%</span></div>
+  </div>
+
+  <p class="disclosure">
+    The panel is synthetic personas, not people, and every verdict on this site is generated by an AI system.
+    A preference share is not a predicted click-through rate.
+  </p>
+</section>
+
+<!-- ============================== STEP 1 ============================== -->
+<section id="step1" class="view">
+  <div class="flow-head">
+    <h1>Two versions, one panel.</h1>
+    <p class="sub">
+      Paste both versions of the line you are choosing between. Next you will see who is proposed to
+      judge them — nothing is spent until you approve that panel.
+    </p>
+    <div class="stepper" id="stepper-1"></div>
+  </div>
+
+  <div class="pair">
+    <div class="field">
+      <div class="kicker"><span>Version A</span><span class="count" id="count-a">0 / 200</span></div>
+      <input class="line" id="input-a" maxlength="200" placeholder="The first line" oninput="onCopyInput()">
+    </div>
+    <div class="field">
+      <div class="kicker"><span>Version B</span><span class="count" id="count-b">0 / 200</span></div>
+      <input class="line" id="input-b" maxlength="200" placeholder="The line it is competing with" oninput="onCopyInput()">
+    </div>
+  </div>
+
+  <div class="field" style="max-width:640px">
+    <div class="kicker">
+      <span>Who should judge this? <span class="opt">— optional</span></span>
+      <span class="count">Blank means a general panel</span>
+    </div>
+    <textarea id="input-audience" placeholder="Parents in the UK and Ireland who shop for groceries online, aged 30–50."></textarea>
+    <p class="hint">
+      Plain words are fine. The next step shows which of these traits the pool could actually match,
+      and names any it could not — an unmatched trait is a caveat on the verdict, not a silent failure.
+    </p>
+  </div>
+
+  <div id="screen-refusal" style="display:none;max-width:640px">
+    <div class="notice stop">
+      <b>This copy was not sent to the panel.</b> The screener refuses copy that asks the panel to judge
+      something other than the copy itself. Edit the lines above and try again.
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-primary" id="to-panel" onclick="toPanel()" disabled>Preview the panel</button>
+    <button class="btn-link" onclick="fillSample()">Fill in a sample</button>
+  </div>
+</section>
+
+<!-- ============================== STEP 2 ============================== -->
+<section id="step2" class="view">
+  <div class="flow-head">
+    <h1>This panel, if you approve it.</h1>
+    <p class="sub">
+      These are the readers proposed to judge your copy. Change the size, or go back and change who you
+      asked for. The run starts — and the first money is spent — only when you confirm.
+    </p>
+    <div class="stepper" id="stepper-2"></div>
+  </div>
+
+  <div class="panel-grid">
+    <div>
+      <div class="stat-tile">
+        <p class="kicker">Panel size</p>
+        <div class="hero-number" id="panel-size-display">24</div>
+        <p class="stat-note">readers, each voting once and giving a reason</p>
+      </div>
+      <div class="stat-tile">
+        <p class="kicker">Drawn from</p>
+        <div class="hero-number">312<small> matched</small></div>
+        <p class="stat-note">personas in the pool that fit the description you gave</p>
+      </div>
+    </div>
+
+    <div>
+      <p class="kicker" style="margin-bottom:6px">What the pool could match</p>
+      <p class="chart-hint">Every trait you asked for, and what the pool did with it.</p>
+      <div class="trait-row">
+        <span class="trait-name">Country <span class="tag">Matched</span></span>
+        <span class="trait-val">United Kingdom, Ireland</span>
+      </div>
+      <div class="trait-row">
+        <span class="trait-name">Age <span class="tag">Matched</span></span>
+        <span class="trait-val">30–50</span>
+      </div>
+      <div class="trait-row">
+        <span class="trait-name">Shops for groceries online <span class="tag tag-unmatched">Not matched</span></span>
+        <span class="trait-val">no such trait in the pool</span>
+      </div>
+
+      <div class="notice warn">
+        <b>One trait could not be matched.</b> The pool holds no “shops for groceries online” attribute, so the
+        panel is not filtered on it. The verdict will carry this caveat, and it is repeated on the report.
+      </div>
+
+      <div class="roster">
+        <span class="persona">F, 34, UK, degree</span>
+        <span class="persona">M, 41, IE, secondary</span>
+        <span class="persona">F, 47, UK, postgraduate</span>
+        <span class="persona">M, 30, UK, degree</span>
+        <span class="persona">F, 38, IE, degree</span>
+        <span class="persona">M, 44, UK, secondary</span>
+        <span class="persona">F, 50, UK, degree</span>
+        <span class="persona">+ 17 more</span>
+      </div>
+
+      <div class="decision">
+        <h2>Approve this panel?</h2>
+        <p class="exp">
+          Confirming starts the run. Each reader casts one vote, and a run of this size is the unit
+          your daily allowance is counted in.
+        </p>
+
+        <div class="size-row">
+          <label for="panel-size">Panel size</label>
+          <button class="wbtn" onclick="bumpPanel(-4)" aria-label="Fewer readers">−</button>
+          <span class="wv" id="panel-size">24</span>
+          <button class="wbtn" onclick="bumpPanel(4)" aria-label="More readers">+</button>
+          <span style="font-size:12.5px;font-weight:300;color:var(--ink-3)">
+            A smaller panel is cheaper and less certain. A larger one narrows the range.
+          </span>
+        </div>
+
+        <div class="decision-actions">
+          <button class="btn btn-primary" onclick="startRun()">Confirm and run the panel</button>
+          <button class="btn btn-ghost" onclick="go('step1')">Change the copy</button>
+        </div>
+
+        <p class="hitl-note">
+          Nothing has been spent yet. Leaving this page costs nothing.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== STEP 3 ============================== -->
+<section id="step3" class="view">
+  <div class="flow-head"><div class="stepper" id="stepper-3"></div></div>
+  <div class="run-wrap">
+    <p class="kicker">The panel is reading</p>
+    <h2 id="run-headline">Twenty-four readers, one line each.</h2>
+
+    <div class="stream" id="stream">
+      <div class="step-line" data-step="0"><span class="s-dot"></span>Panel assembled<span class="sub" id="sub-0"></span></div>
+      <div class="step-line" data-step="1"><span class="s-dot"></span>Copy screened<span class="sub" id="sub-1"></span></div>
+      <div class="step-line" data-step="2"><span class="s-dot"></span>Votes returning<span class="sub" id="sub-2"></span></div>
+      <div class="step-line" data-step="3"><span class="s-dot"></span>Verdict computed<span class="sub" id="sub-3"></span></div>
+    </div>
+
+    <p class="run-note" id="run-note">A run of this size usually takes under a minute.</p>
+    <div class="actions" style="justify-content:center" id="run-cancel">
+      <button class="btn-link" onclick="cancelRun()">Cancel this run</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== STEP 4 ============================== -->
+<section id="step4" class="view">
+  <div class="flow-head"><div class="stepper" id="stepper-4"></div></div>
+
+  <div class="page-head">
+    <div>
+      <p class="kicker">Verdict</p>
+      <div class="rec-line" id="rec-line"><span class="rec-icon"></span><span id="rec-text">The panel leans clearly</span></div>
+      <p class="meta" id="report-meta">24 readers · UK and Ireland, 30–50 · one trait unmatched</p>
+    </div>
+    <button class="btn btn-quiet" onclick="go('step1')">Test another line</button>
+  </div>
+
+  <div class="winner">
+    <p class="kicker">Preferred</p>
+    <div class="line" id="winner-line">“Save 50% this week”</div>
+    <div class="loser" id="loser-line">over “Members save half price this week”</div>
+  </div>
+
+  <div class="stat-band">
+    <div class="stat-tile">
+      <p class="kicker">Preferred A</p>
+      <div class="hero-number">71<small>%</small></div>
+      <p class="stat-note">of the panel chose the first line</p>
+    </div>
+    <div class="stat-tile">
+      <p class="kicker">Chance A is better</p>
+      <div class="hero-number">94<small>%</small></div>
+      <p class="stat-note">given these votes, and this panel only</p>
+    </div>
+    <div class="stat-tile">
+      <p class="kicker">Chance B is better</p>
+      <div class="hero-number">2<small>%</small></div>
+      <p class="stat-note">the outcome the panel argues against</p>
+    </div>
+    <div class="stat-tile">
+      <p class="kicker">Practically a tie</p>
+      <div class="hero-number">4<small>%</small></div>
+      <p class="stat-note">the gap is real but too small to act on</p>
+    </div>
+  </div>
+
+  <div class="prose">
+    <p>
+      Most of the plausible range sits on A’s side of even, and the gap is wide enough to be worth acting
+      on rather than dismissing as noise. If you have to choose today, choose A.
+    </p>
+    <p>
+      This is a panel of 24 synthetic readers, not a live audience. It says which line reads better to
+      readers like these; it does not predict how many people will click.
+    </p>
+  </div>
+
+  <div class="notice warn" style="max-width:640px">
+    <b>One trait was not matched.</b> The pool holds no “shops for groceries online” attribute, so the panel
+    was not filtered on it. Treat the verdict as a read from UK and Ireland adults aged 30–50, no narrower.
+  </div>
+
+  <div class="chart-wrap">
+    <p class="kicker">Where the true preference could sit</p>
+    <p class="chart-hint">
+      The curve is every share the votes make plausible. The band in the middle is the zone where the two
+      lines are close enough to call a tie.
+    </p>
+    <svg id="posterior" viewBox="0 0 600 210" width="100%" style="max-width:600px;display:block" role="img"
+         aria-label="Plausible range for the share preferring A, centred on 71 percent"></svg>
+    <div class="legend">
+      <span><i class="lg-mean"></i> Most likely</span>
+      <span><i class="lg-hdi"></i> Plausible range</span>
+      <span><i class="lg-rope"></i> Practically a tie</span>
+    </div>
+  </div>
+
+  <div class="votes">
+    <p class="kicker" style="margin-bottom:6px">How each reader voted</p>
+    <p class="chart-hint">Hover a row for the reason that reader gave. The bar is that reader’s confidence.</p>
+    <div id="vote-list"></div>
+  </div>
+
+  <div class="report-actions">
+    <button class="btn btn-ghost" onclick="go('step1')">Test another line</button>
+    <button class="btn-link" onclick="openDock()">Ask the analyst about this verdict</button>
+  </div>
+</section>
+
+<!-- ============================== STATES ============================== -->
+<section id="states" class="view">
+  <div class="flow-head">
+    <h1>States and refusals.</h1>
+    <p class="sub">
+      Every moment the interface has to say no, or say nothing yet. Each is written to name the remedy and
+      never the remaining budget — a running total is a progress bar for anyone probing the limits.
+    </p>
+  </div>
+
+  <div class="state-block">
+    <h3>Not signed in, and a run was requested</h3>
+    <p class="when">The gate sits at the run, not at the door: the form and a sample verdict are readable signed-out.</p>
+    <button class="btn btn-ghost" onclick="openSheet()">Show the sign-in sheet</button>
+  </div>
+
+  <div class="state-block">
+    <h3>This account’s runs for today are spent</h3>
+    <p class="when">A per-person allowance, refilled on a rolling 24-hour window.</p>
+    <div class="notice warn" style="max-width:640px">
+      <b>You have used today’s runs.</b> Your allowance refills over the next day. Reports you have already
+      run stay readable, and the analyst is still free to ask.
+    </div>
+  </div>
+
+  <div class="state-block">
+    <h3>The day’s budget for everyone is spent</h3>
+    <p class="when">The shared ceiling that keeps the whole deployment inside its bill. Names no figure.</p>
+    <div class="notice warn" style="max-width:640px">
+      <b>Today’s budget is spent.</b> Paid runs return tomorrow, and the sample verdict stays free to read.
+    </div>
+  </div>
+
+  <div class="state-block">
+    <h3>The copy was refused before any money was spent</h3>
+    <p class="when">The screener rejects input that tries to redirect the panel rather than be judged by it.</p>
+    <div class="notice stop" style="max-width:640px">
+      <b>This copy was not sent to the panel.</b> The screener refuses copy that asks the panel to judge
+      something other than the copy itself. Edit the lines and try again.
+    </div>
+  </div>
+
+  <div class="state-block">
+    <h3>The session expired mid-flow</h3>
+    <p class="when">Signing in again returns to this exact step, with the copy still in the fields.</p>
+    <div class="notice" style="max-width:640px">
+      <b>You were signed out.</b> Sign in again to run this panel — your copy is still here, and nothing was spent.
+    </div>
+  </div>
+
+  <div class="state-block">
+    <h3>A run failed after the votes started</h3>
+    <p class="when">A failure names what survived, because partial votes are still evidence.</p>
+    <div class="notice stop" style="max-width:640px">
+      <b>The run stopped after 9 of 24 votes.</b> Too few to call a verdict. This run has not been counted
+      against your allowance; you can start it again.
+    </div>
+  </div>
+
+  <div class="state-block">
+    <h3>Nothing has been run yet</h3>
+    <p class="when">The signed-in empty state. It offers the sample rather than an empty box.</p>
+    <div class="empty">
+      <h2>No verdicts yet.</h2>
+      <p>Run a panel on two versions of a line, or read a sample verdict first to see what comes back.</p>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="go('step1')">Run a panel</button>
+        <button class="btn btn-ghost" onclick="showSample()">Read the sample</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="state-block">
+    <h3>The analyst is asked something off-topic</h3>
+    <p class="when">The analyst answers about this verdict, the panel, and how to read it — and declines the rest in one line, without lecturing.</p>
+    <button class="btn btn-ghost" onclick="askOffTopic()">Ask it for a curry recipe</button>
+  </div>
+</section>
+
+</main>
+
+<!-- ============================== ANALYST DOCK ============================== -->
+<button class="dock-btn" id="dock-btn" onclick="openDock()" style="display:none">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+    <path d="M20 15a3 3 0 0 1-3 3H8l-4 3V6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3z"></path>
+  </svg>
+  Ask the analyst
+</button>
+
+<aside class="dock" id="dock" aria-label="Analyst">
+  <div class="dock-head">
+    <div>
+      <p class="kicker">Analyst</p>
+      <p style="font-size:12px;font-weight:300;color:var(--ink-3);margin-top:2px">Reads this verdict only</p>
+    </div>
+    <button class="btn-link" onclick="closeDock()">Close</button>
+  </div>
+  <div class="dock-body" id="dock-body"></div>
+  <div class="chips">
+    <button class="chip" onclick="ask('Why is this not a tie?')">Why is this not a tie?</button>
+    <button class="chip" onclick="ask('How sure are we about the winner?')">How sure are we?</button>
+    <button class="chip" onclick="ask('Who was on this panel?')">Who was on this panel?</button>
+  </div>
+  <form class="dock-foot" onsubmit="event.preventDefault();ask(this.q.value);this.q.value=''">
+    <input name="q" placeholder="Ask about this verdict" autocomplete="off">
+    <button class="btn btn-primary" style="padding:9px 20px;font-size:13px">Send</button>
+  </form>
+</aside>
+
+<!-- ============================== SIGN-IN SHEET ============================== -->
+<div class="scrim" id="scrim" onclick="if(event.target===this)closeSheet()">
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <p class="kicker">One step</p>
+    <h2 id="sheet-title" style="margin-top:8px">Sign in to run a panel.</h2>
+    <p>
+      Signing in is how a run is counted to a person rather than to a network address, so one visitor
+      cannot drink the day’s budget. Your copy stays where it is.
+    </p>
+    <button class="google" onclick="signIn()">
+      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="#fff" d="M12 11v3.2h5.3a4.6 4.6 0 0 1-1.9 3l3 2.3A9 9 0 0 0 21 12a10 10 0 0 0-.2-1.8z"></path>
+        <path fill="#fff" opacity=".85" d="M12 21a8.7 8.7 0 0 0 6-2.2l-3-2.3A5.5 5.5 0 0 1 6.9 14l-3.1 2.4A9 9 0 0 0 12 21"></path>
+        <path fill="#fff" opacity=".7" d="M6.9 14a5.4 5.4 0 0 1 0-3.4L3.8 8.2a9 9 0 0 0 0 8.1z"></path>
+        <path fill="#fff" opacity=".85" d="M12 6.6a4.9 4.9 0 0 1 3.4 1.3l2.6-2.6A8.7 8.7 0 0 0 12 3a9 9 0 0 0-8.2 5.2l3.1 2.4A5.4 5.4 0 0 1 12 6.6"></path>
+      </svg>
+      Continue with Google
+    </button>
+    <p class="fine">
+      Google tells us your name, email address and profile picture. Verdicts are stored against an internal
+      id, not your email. Nothing is posted anywhere on your behalf.
+    </p>
+    <div class="dismiss"><button class="btn-link" onclick="closeSheet()">Not now</button></div>
+  </div>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ state */
+const flow = {
+  view: 'landing',
+  step: 1,
+  signedIn: false,
+  panelSize: 24,
+  a: '',
+  b: '',
+  runTimer: null,
+  dockSeeded: false,
+};
+
+const STEPS = ['Copy', 'Panel', 'Voting', 'Verdict'];
+
+/* ------------------------------------------------------------------ nav */
+function go(view){
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === view));
+  flow.view = view;
+  document.getElementById('nav-flow').classList.toggle('active', view !== 'states' && view !== 'landing');
+  document.getElementById('nav-states').classList.toggle('active', view === 'states');
+  const step = {step1:1, step2:2, step3:3, step4:4}[view];
+  if (step) { flow.step = step; renderSteppers(); }
+  document.getElementById('dock-btn').style.display = view === 'step4' ? 'flex' : 'none';
+  if (view !== 'step4') closeDock();
+  if (view !== 'step3' && flow.runTimer) { clearInterval(flow.runTimer); flow.runTimer = null; }
+  window.scrollTo({top:0, behavior:'instant'});
+}
+
+function renderSteppers(){
+  [1,2,3,4].forEach(n => {
+    const el = document.getElementById('stepper-' + n);
+    if (!el) return;
+    el.innerHTML = STEPS.map((label, i) => {
+      const num = i + 1;
+      const cls = num === flow.step ? 'cur' : (num < flow.step ? 'done' : '');
+      const click = num < flow.step ? ` onclick="go('step${num}')"` : '';
+      return `<button class="st ${cls}"${click}><span class="n">${num}</span>${label}</button>`;
+    }).join('');
+  });
+}
+
+/* ------------------------------------------------------------------ auth */
+function openSheet(){ document.getElementById('scrim').classList.add('on'); }
+function closeSheet(){ document.getElementById('scrim').classList.remove('on'); }
+function signIn(){
+  flow.signedIn = true;
+  document.getElementById('signin-btn').style.display = 'none';
+  document.getElementById('who-btn').style.display = 'flex';
+  closeSheet();
+  if (flow.view === 'step2') startRun();
+}
+function signOut(){
+  flow.signedIn = false;
+  document.getElementById('signin-btn').style.display = 'flex';
+  document.getElementById('who-btn').style.display = 'none';
+}
+
+/* ------------------------------------------------------------------ step 1 */
+function onCopyInput(){
+  const a = document.getElementById('input-a');
+  const b = document.getElementById('input-b');
+  flow.a = a.value; flow.b = b.value;
+  document.getElementById('count-a').textContent = `${a.value.length} / 200`;
+  document.getElementById('count-b').textContent = `${b.value.length} / 200`;
+  document.getElementById('to-panel').disabled = !(a.value.trim() && b.value.trim());
+  document.getElementById('screen-refusal').style.display = 'none';
+}
+
+function fillSample(){
+  document.getElementById('input-a').value = 'Save 50% this week';
+  document.getElementById('input-b').value = 'Members save half price this week';
+  document.getElementById('input-audience').value =
+    'Parents in the UK and Ireland who shop for groceries online, aged 30–50.';
+  onCopyInput();
+}
+
+function toPanel(){
+  // The screener runs before anything is spent; this stands in for it.
+  const text = (flow.a + ' ' + flow.b).toLowerCase();
+  if (text.includes('ignore') && text.includes('instruction')) {
+    document.getElementById('screen-refusal').style.display = 'block';
+    return;
+  }
+  go('step2');
+}
+
+/* ------------------------------------------------------------------ step 2 */
+function bumpPanel(delta){
+  flow.panelSize = Math.max(8, Math.min(48, flow.panelSize + delta));
+  document.getElementById('panel-size').textContent = flow.panelSize;
+  document.getElementById('panel-size-display').textContent = flow.panelSize;
+}
+
+/* ------------------------------------------------------------------ step 3 */
+const RUN_STEPS = [
+  { sub: () => `${flow.panelSize} readers` },
+  { sub: () => 'both versions cleared' },
+  { sub: () => `${flow.panelSize} of ${flow.panelSize}` },
+  { sub: () => 'plausible range narrowed' },
+];
+
+function startRun(){
+  if (!flow.signedIn) { openSheet(); return; }
+  go('step3');
+  document.getElementById('run-headline').textContent =
+    `${flow.panelSize} readers, one line each.`;
+  const lines = [...document.querySelectorAll('#stream .step-line')];
+  lines.forEach((l, i) => { l.className = 'step-line'; document.getElementById('sub-' + i).textContent = ''; });
+  let i = 0;
+  lines[0].classList.add('run');
+  flow.runTimer = setInterval(() => {
+    lines[i].className = 'step-line done';
+    document.getElementById('sub-' + i).textContent = RUN_STEPS[i].sub();
+    i++;
+    if (i < lines.length) { lines[i].classList.add('run'); return; }
+    clearInterval(flow.runTimer); flow.runTimer = null;
+    setTimeout(showReport, 500);
+  }, 1100);
+}
+
+function cancelRun(){
+  if (flow.runTimer) { clearInterval(flow.runTimer); flow.runTimer = null; }
+  go('step2');
+}
+
+/* ------------------------------------------------------------------ step 4 */
+const VOTES = [
+  ['F, 34, UK, degree', 'A', 0.86, 'Fifty per cent is a number I can act on. “Half price” makes me pause to work out what it means.'],
+  ['M, 41, IE, secondary', 'A', 0.74, 'Short and it names the discount. I would not read past the second one on a phone.'],
+  ['F, 47, UK, postgraduate', 'B', 0.61, '“Members” tells me who it is for. The first one could be anyone shouting.'],
+  ['M, 30, UK, degree', 'A', 0.92, 'The urgency is in “this week”, and the first line gets to it faster.'],
+  ['F, 38, IE, degree', 'A', 0.68, 'I trust a percentage more than a phrase. “Half price” from what, exactly?'],
+  ['M, 44, UK, secondary', 'A', 0.55, 'Barely. The second one is fine, but it takes longer to say the same thing.'],
+  ['F, 50, UK, degree', 'B', 0.71, 'The word “members” makes it feel like something I already belong to.'],
+  ['M, 36, IE, degree', 'A', 0.81, 'Plain and specific. I would click that.'],
+];
+
+function renderVotes(){
+  document.getElementById('vote-list').innerHTML = VOTES.map(([who, side, conf, why]) => `
+    <div class="vote">
+      <div class="vote-top">
+        <span class="vote-name">${who}</span>
+        <span class="vote-val">chose ${side} · ${Math.round(conf * 100)}% confident</span>
+      </div>
+      <div class="track"><div class="fill" style="width:${Math.round(conf * 100)}%"></div></div>
+      <div class="tip"><span class="tip-k">In their words</span>${why}</div>
+    </div>`).join('') +
+    `<p style="padding:16px 0;font-size:13px;font-weight:300;color:var(--ink-3)">
+       + ${Math.max(0, flow.panelSize - VOTES.length)} more readers, all reasons included in the full report.
+     </p>`;
+}
+
+/* The posterior, drawn in ink. Colour never encodes the value. */
+function renderChart(){
+  const svg = document.getElementById('posterior');
+  const W = 600, TOP = 26, BASE = 168, CRI_Y = 184;
+  const mean = 0.71, sd = 0.085, lo = 0.56, hi = 0.85, ropeLo = 0.47, ropeHi = 0.53;
+  const x = p => 20 + p * (W - 40);
+  const dens = p => Math.exp(-((p - mean) ** 2) / (2 * sd * sd));
+  const y = d => BASE - d * (BASE - TOP);
+
+  let pts = [];
+  for (let i = 0; i <= 120; i++) { const p = i / 120; pts.push(`${x(p).toFixed(1)},${y(dens(p)).toFixed(1)}`); }
+
+  svg.innerHTML = `
+    <rect x="${x(ropeLo)}" y="${TOP - 8}" width="${x(ropeHi) - x(ropeLo)}" height="${BASE - TOP + 8}"
+          fill="var(--surface-2)"></rect>
+    <line x1="20" y1="${BASE}" x2="${W - 20}" y2="${BASE}" stroke="var(--line)" stroke-width="1"></line>
+    <polyline points="${pts.join(' ')}" fill="none" stroke="var(--ink)" stroke-width="1.75"></polyline>
+    <line x1="${x(mean)}" y1="${TOP - 8}" x2="${x(mean)}" y2="${BASE}" stroke="var(--ink)"
+          stroke-width="1.25" stroke-dasharray="4 4"></line>
+    <text x="${x(mean)}" y="${TOP - 14}" text-anchor="middle" font-size="12" font-weight="600"
+          fill="var(--ink)" font-family="inherit">71%</text>
+    <line x1="${x(lo)}" y1="${CRI_Y}" x2="${x(hi)}" y2="${CRI_Y}" stroke="var(--ink)" stroke-width="6"
+          stroke-linecap="butt"></line>
+    <text x="${x(lo)}" y="${CRI_Y + 18}" font-size="11" fill="var(--ink-3)" font-family="inherit">56%</text>
+    <text x="${x(hi)}" y="${CRI_Y + 18}" text-anchor="end" font-size="11" fill="var(--ink-3)" font-family="inherit">85%</text>
+    <text x="${x(0.5)}" y="${BASE + 16}" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="inherit">even</text>
+    <text x="20" y="${BASE + 16}" font-size="11" fill="var(--ink-3)" font-family="inherit">all prefer B</text>
+    <text x="${W - 20}" y="${BASE + 16}" text-anchor="end" font-size="11" fill="var(--ink-3)" font-family="inherit">all prefer A</text>`;
+}
+
+function showReport(){
+  const a = flow.a || 'Save 50% this week';
+  const b = flow.b || 'Members save half price this week';
+  document.getElementById('winner-line').textContent = `“${a}”`;
+  document.getElementById('loser-line').textContent = `over “${b}”`;
+  document.getElementById('report-meta').textContent =
+    `${flow.panelSize} readers · UK and Ireland, 30–50 · one trait unmatched`;
+  renderVotes();
+  renderChart();
+  seedDock();
+  go('step4');
+}
+
+function showSample(){ fillSample(); showReport(); }
+
+/* ------------------------------------------------------------------ analyst */
+const ANSWERS = {
+  'why is this not a tie?':
+    'Because only about 4% of the plausible range falls inside the tie zone. The panel’s preference for A is not just real, it is wide enough that acting on it is reasonable. If the curve had straddled even, I would be telling you the opposite.',
+  'how sure are we about the winner?':
+    'Fairly, with a caveat. Given these 24 votes there is a 94% chance A is genuinely preferred by readers like these. That is a statement about this panel, not about your customers — a synthetic panel can be wrong about a real audience in ways these numbers cannot see.',
+  'who was on this panel?':
+    'Twenty-four readers in the UK and Ireland, aged 30 to 50, spread across secondary, degree and postgraduate education. You also asked for people who shop for groceries online; the pool has no such trait, so the panel was not filtered on it.',
+};
+
+const OFF_TOPIC =
+  'That is outside what I can help with — I only read this verdict, the panel behind it, and how to interpret it. Ask me why the panel leaned the way it did, or what the range means.';
+
+function seedDock(){
+  if (flow.dockSeeded) return;
+  flow.dockSeeded = true;
+  addTurn('analyst',
+    'The panel leans clearly to the first line: 71% of 24 readers preferred it, and the plausible range sits well clear of even. The most common reason given was that a percentage is easier to act on than “half price”. Ask me anything about how this was reached.');
+}
+
+function addTurn(role, text, refusal){
+  const body = document.getElementById('dock-body');
+  const el = document.createElement('div');
+  el.className = 'turn ' + role + (refusal ? ' refusal' : '');
+  el.innerHTML = (role === 'analyst' ? '<p class="kicker">Analyst</p>' : '') + `<p>${text}</p>`;
+  body.appendChild(el);
+  body.scrollTop = body.scrollHeight;
+}
+
+function ask(q){
+  if (!q || !q.trim()) return;
+  openDock();
+  addTurn('reader', q);
+  const key = q.trim().toLowerCase();
+  const known = ANSWERS[key];
+  setTimeout(() => {
+    if (known) addTurn('analyst', known);
+    else addTurn('analyst', OFF_TOPIC, true);
+  }, 420);
+}
+
+function askOffTopic(){ go('step4'); setTimeout(() => ask('What is a good curry recipe?'), 260); }
+
+function openDock(){ seedDock(); document.getElementById('dock').classList.add('on'); }
+function closeDock(){ document.getElementById('dock').classList.remove('on'); }
+
+/* ------------------------------------------------------------------ boot */
+renderSteppers();
+</script>
+</body>
+</html>
