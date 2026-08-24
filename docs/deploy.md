@@ -46,6 +46,13 @@ the ~1-minute wake and nothing else — conversations resume where they left off
    run `uv run python -m app.seed --size full` from `backend/` with the pooler values
    as environment overrides (the wizard does this for you).
 
+**Re-run the schema step on any deploy that adds a table.** `apply_schema` is
+idempotent and the seed resumes, so re-running costs nothing when the pool is already
+there — but nothing re-runs it for you, and a table the code expects and the database
+lacks is a 500 on every request that touches it. `request_ledger` (045/#143) is the
+first case: without it both paid endpoints fail. Re-running the same seed command
+creates it.
+
 ## 2 — Render (the backend)
 
 1. **Create a new workspace for PanelVerdict** — the 750 free hours/month are *per

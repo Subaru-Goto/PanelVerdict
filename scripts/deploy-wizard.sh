@@ -228,6 +228,8 @@ stage "Schema + seed, from this machine"
 say "Applies schema.sql and seeds the persona pool into Supabase. The embedding"
 say "calls are the one paid part; the dry run below prices the plan first."
 note "Resumable by design: a re-run never re-pays for personas already seeded."
+note "Run this again after any deploy that adds a table — schema.sql is applied here"
+note "and nowhere else, and a table the code expects but the database lacks is a 500."
 (cd backend && POSTGRES_HOST="$POSTGRES_HOST" POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
   POSTGRES_USER="$POSTGRES_USER" POSTGRES_PORT="$POSTGRES_PORT" POSTGRES_DB="$POSTGRES_DB" \
   uv run python -m app.seed --size full --dry-run) || warn "dry run failed — check the connection values"

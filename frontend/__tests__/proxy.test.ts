@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { POST as chatProxy } from "../app/api/chat/route";
-import { POST as evaluateProxy } from "../app/api/evaluate/route";
+import {
+  maxDuration as chatMaxDuration,
+  POST as chatProxy,
+} from "../app/api/chat/route";
+import {
+  maxDuration as evaluateMaxDuration,
+  POST as evaluateProxy,
+} from "../app/api/evaluate/route";
 
 // 045/#143: the browser never holds the edge secret — these route handlers do,
 // server-side. The tests stub the backend fetch the way api.test.ts stubs it.
@@ -82,6 +88,33 @@ describe("the evaluate proxy", () => {
     expect(sent.get("X-Forwarded-For")).toBeNull();
   });
 
+  it("ignores x-real-ip, which only Vercel's edge makes trustworthy", async () => {
+    // x-vercel-forwarded-for is stamped by Vercel and unreachable from a
+    // request; x-real-ip is a convention any host may leave unset — and off
+    // Vercel a visitor could send it themselves, reopening the very hole the
+    // move away from X-Forwarded-For closed.
+    vi.stubEnv("API_URL", "http://backend.test");
+    vi.stubEnv("API_SHARED_SECRET", "edge-secret");
+    const backend = vi
+      .fn()
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", backend);
+
+    await evaluateProxy(
+      new Request("http://frontend.test/api/evaluate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Real-IP": "attacker-chosen",
+        },
+        body: "{}",
+      }),
+    );
+
+    const [, init] = backend.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("X-Client-Id")).toBeNull();
+  });
+
   it("asserts no client id when the platform names no client", async () => {
     // Local `next dev` has no edge to stamp one. Sending nothing is the honest
     // answer: the backend then counts the socket peer, rather than being
@@ -106,6 +139,20 @@ describe("the evaluate proxy", () => {
 
     const [, init] = backend.mock.calls[0] as [string, RequestInit];
     expect(new Headers(init.headers).get("X-Client-Id")).toBeNull();
+  });
+});
+
+describe("the proxy routes' execution budget", () => {
+  it("allows longer than a full panel run takes", () => {
+    // Routing through a function inserts a timeout the direct-to-backend path
+    // never had. A prod run measures ~40s (010a: 4.65 s/vote, concurrency 25,
+    // 200 votes), and a platform default of a few seconds would 504 the
+    // visitor while the backend keeps working — and the ledger has already
+    // charged the run.
+    const measuredRunSeconds = 40;
+
+    expect(evaluateMaxDuration).toBeGreaterThan(measuredRunSeconds);
+    expect(chatMaxDuration).toBeGreaterThan(measuredRunSeconds);
   });
 });
 

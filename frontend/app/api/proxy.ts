@@ -3,19 +3,18 @@
 // whole point: anything NEXT_PUBLIC_* ships to every visitor by definition.
 /** Who the backend's rate limiter should count.
  *
- * Only headers the *platform* sets are trustworthy here: this route is public,
- * so a visitor can send any `x-client-id` or `x-forwarded-for` they like, and
- * `x-forwarded-for` is appended to rather than replaced — its leftmost entry
- * is caller-written text. Vercel sets `x-vercel-forwarded-for` and `x-real-ip`
- * at the edge, where a request cannot reach. Returning null when neither
- * exists (local `next dev`) leaves the backend to count the socket peer rather
- * than trust anything a caller wrote.
+ * Exactly one header qualifies: `x-vercel-forwarded-for`, which Vercel stamps
+ * at its edge where an incoming request cannot reach. This route is public, so
+ * every other candidate is caller-writable — `x-client-id` and
+ * `x-forwarded-for` outright (the latter is appended to rather than replaced,
+ * making its leftmost entry attacker text), and `x-real-ip` is merely a
+ * convention: off Vercel a visitor sends it themselves and mints unlimited
+ * budgets, which is the hole the move away from `x-forwarded-for` closed.
+ * Returning null where the platform names nobody (local `next dev`) leaves the
+ * backend counting the socket peer rather than trusting caller text.
  */
 function clientId(request: Request): string | null {
-  return (
-    request.headers.get("x-vercel-forwarded-for") ??
-    request.headers.get("x-real-ip")
-  );
+  return request.headers.get("x-vercel-forwarded-for");
 }
 
 export async function proxyPost(
