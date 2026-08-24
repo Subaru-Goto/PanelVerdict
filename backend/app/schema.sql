@@ -66,12 +66,10 @@ CREATE TABLE IF NOT EXISTS request_ledger (
 CREATE INDEX IF NOT EXISTS request_ledger_window_idx
     ON request_ledger (endpoint, caller, requested_at);
 
--- One row per paid request the gate admitted, priced at admission (064/#192):
--- the global daily cap sums the day's rows before letting the next paid
--- request start. Priced from the same constants the guard derives its caps
--- from (USD_PER_VOTE, the profile table), numeric so a day of additions stays
--- exact at the cap boundary. Swept like request_ledger: expired rows are dead
--- weight, deleted opportunistically on write.
+-- One row per paid request the gate admitted, priced at admission (064/#192).
+-- The global daily cap sums the day's rows before admitting the next request.
+-- `numeric`, so a day of additions stays exact at the cap boundary. Swept like
+-- request_ledger: expired rows are deleted opportunistically on write.
 CREATE TABLE IF NOT EXISTS spend_ledger (
     endpoint text NOT NULL,
     usd      numeric NOT NULL,

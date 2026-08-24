@@ -4,15 +4,6 @@ from decimal import Decimal
 import httpx
 import psycopg
 import pytest
-from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatResult
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver
-from openai import APIStatusError
-from pgvector.psycopg import register_vector
-from pydantic import SecretStr
-
 from app.config import PROFILES, USD_PER_VOTE, PanelProfile, Settings, settings
 from app.main import (
     app,
@@ -30,6 +21,14 @@ from app.persistence import nearest_panelists, persist_pool
 from app.schemas import EvaluateRequest
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
+from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatResult
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from openai import APIStatusError
+from pgvector.psycopg import register_vector
+from pydantic import SecretStr
 from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
@@ -380,11 +379,9 @@ def test_a_caller_cap_refusal_does_not_spend_the_threads_budget(
 def test_the_days_budget_is_one_pool_shared_by_every_caller(
     client, conn, monkeypatch
 ) -> None:
-    """064's load-bearing layer. The per-caller caps bound a caller, but a new
-    caller costs nothing to mint, so only a global pool bounds what a day can
-    cost. One caller spending the whole budget must refuse the *next* caller —
-    with an apology that names the remedy, because the visitor did nothing
-    wrong and the demo report is still theirs to read."""
+    """The per-caller caps bound a caller, and a caller costs nothing to mint,
+    so 064's global pool is what bounds a day. One caller spending the budget
+    must refuse the *next* caller, with a message naming the remedy."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
     run_price = settings.panel.size * USD_PER_VOTE
     monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
@@ -406,11 +403,8 @@ def test_the_days_budget_is_one_pool_shared_by_every_caller(
 
 
 def test_chat_turns_draw_from_the_same_days_pool(client, conn, monkeypatch) -> None:
-    """The pool bounds the day, not an endpoint: the analyst's calls cost real
-    dollars too, so a day /evaluate has already spent must refuse /chat as
-    well. A turn is priced at one whole vote — 064 signs a turn off as "a
-    fraction of a vote", and the pool rounds the unmeasured fraction up to the
-    one price that is measured."""
+    """The pool bounds the day, not one endpoint: the analyst costs money too,
+    so a day /evaluate has already spent must refuse /chat as well."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
     run_price = settings.panel.size * USD_PER_VOTE
     monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
@@ -479,15 +473,13 @@ def test_a_caller_cap_refusal_does_not_charge_the_pool(
 def test_a_run_priced_at_the_cap_is_admitted_not_refused(
     client, conn, monkeypatch
 ) -> None:
-    """The boundary is `>`, not `>=`: a budget of exactly one run must buy that
-    run. It only holds if the price is exact — a size of 3 prices at
-    0.0006000000000000001 in float, a hair over its own cap, so pricing in
-    Decimal is what keeps the last affordable run affordable."""
+    """The boundary is `>`, not `>=`: a budget of exactly one run buys that
+    run. Only exact pricing holds it — a size of 3 costs
+    0.0006000000000000001 in float, a hair over its own cap."""
     monkeypatch.setitem(
         PROFILES, settings.profile, PanelProfile(size=3, model="stub/model")
     )
-    # The cap is a figure someone wrote down — $0.0006, exactly three votes —
-    # not the float product the gate must not compute.
+    # A written figure — $0.0006 — not the float product under test.
     monkeypatch.setattr(
         settings, "global_daily_cap_usd", float(Decimal(str(USD_PER_VOTE)) * 3)
     )
@@ -497,9 +489,8 @@ def test_a_run_priced_at_the_cap_is_admitted_not_refused(
 
 
 def test_a_pool_cap_of_zero_is_the_same_escape_hatch(client, conn, monkeypatch) -> None:
-    """The other caps' zero means unlimited, and a developer iterating locally
-    would hit this one too — the pool prices a stubbed dev run the same as a
-    paid one, so a day of local iteration spends a budget nothing consumed."""
+    """Zero means unlimited here as it does for the other caps: the pool prices
+    a stubbed dev run like a paid one, so local iteration needs the hatch."""
     monkeypatch.setattr(settings, "global_daily_cap_usd", 0)
     seed_japanese(conn, 2)
 
@@ -520,9 +511,8 @@ def test_concurrent_runs_cannot_outspend_the_pool(
     pool's advisory lock makes the database arbitrate here too."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
     run_price = settings.panel.size * USD_PER_VOTE
-    # 3.5 slots, deliberately off the boundary: the exact-cap edge is test 1's
-    # subject; this test is about the race, and a mid-slot cap keeps a float
-    # repr wobble in `3 * run_price` from muddying what it measures.
+    # 3.5 slots: a mid-slot cap keeps a float wobble in `3 * run_price` out of
+    # a test about the race. The exact-cap edge has its own test.
     monkeypatch.setattr(settings, "global_daily_cap_usd", 3.5 * run_price)
     seed_japanese(conn, 2)
 
