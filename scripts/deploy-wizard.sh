@@ -251,8 +251,14 @@ step "Confirm the new workspace's Billing page shows its own full free-hours all
 step "In that workspace: New Web Service → connect this GitHub repo."
 step "Root Directory: backend — Render detects the Dockerfile as the build recipe."
 step "Instance type: FREE. No card."
+# Minted here, used on both sides (045/#143): the backend refuses paid
+# endpoints without it, the frontend's server-side proxy sends it. openssl is
+# on every macOS/Linux this wizard supports.
+API_SHARED_SECRET_VALUE=$(openssl rand -hex 32)
+write_env API_SHARED_SECRET "$API_SHARED_SECRET_VALUE"
 step "Environment variables — add these:"
 say "    OPENROUTER_API_KEY   (copy from your local .env)"
+say "    API_SHARED_SECRET = $API_SHARED_SECRET_VALUE"
 say "    POSTGRES_HOST = $POSTGRES_HOST"
 say "    POSTGRES_USER = $POSTGRES_USER"
 say "    POSTGRES_PASSWORD    (the database password)"
@@ -276,7 +282,10 @@ fi
 stage "Vercel — the frontend"
 open_url "https://vercel.com/new"
 step "Import this repo → set Root Directory to: frontend (framework auto-detects)."
-step "Environment Variables → add NEXT_PUBLIC_API_URL = $RENDER_URL"
+# Server-side only (045/#143): the browser talks to the frontend's own proxy
+# routes, which hold the secret — nothing here is NEXT_PUBLIC_*.
+step "Environment Variables → add API_URL = $RENDER_URL"
+step "Environment Variables → add API_SHARED_SECRET = $API_SHARED_SECRET_VALUE"
 step "Deploy, then copy the production URL."
 ask VERCEL_URL "Paste the Vercel URL (https://…vercel.app, no trailing slash):"
 VERCEL_URL="${VERCEL_URL%/}"
