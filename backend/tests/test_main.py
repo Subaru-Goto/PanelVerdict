@@ -114,6 +114,39 @@ def test_a_caller_without_the_shared_secret_cannot_start_a_paid_run(
     assert calls == {"translate": 0, "vote": 0}
 
 
+def test_the_proxy_with_the_right_secret_passes_the_gate(
+    client, conn, monkeypatch
+) -> None:
+    """The guard is a gate, not a wall: the Next proxy's header opens it."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    seed_japanese(conn, 5)
+
+    response = client.post(
+        "/evaluate", json=_REQUEST_BODY, headers={"X-API-Key": "edge-secret"}
+    )
+
+    assert response.status_code == 200
+
+
+def test_chat_without_the_secret_is_refused_before_the_stream_opens(
+    client, monkeypatch
+) -> None:
+    """A stream cannot change its status after the first byte, so the refusal
+    has to come before there is a stream at all — 401, not an error event."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+
+    response = client.post(
+        "/chat",
+        json={
+            "result": _CHAT_RESULT,
+            "thread_id": "t-gate",
+            "message": "why?",
+        },
+    )
+
+    assert response.status_code == 401
+
+
 def test_evaluate_returns_the_full_panel_test_payload(client, conn) -> None:
     seed_japanese(conn, 5)
 
