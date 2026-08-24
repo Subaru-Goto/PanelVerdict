@@ -6,6 +6,7 @@ from langchain_core.outputs import ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from openai import APIStatusError
+from pydantic import SecretStr
 
 from app.config import settings
 from app.main import (
@@ -79,6 +80,38 @@ def client(conn, stub_llm):
     app.dependency_overrides[get_checkpointer] = lambda: saver
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+def test_a_caller_without_the_shared_secret_cannot_start_a_paid_run(
+    client, conn, monkeypatch
+) -> None:
+    """045/#143: the browser's proxy holds the secret; a caller without it gets
+    401 and — the property that matters — costs nothing: neither the translator
+    nor the panel model is ever invoked. CORS is a browser courtesy, so this
+    refusal is the only thing standing between curl and $0.145 a run."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    calls = {"translate": 0, "vote": 0}
+
+    class CountingTranslator:
+        def translate(self, request):
+            calls["translate"] += 1
+            return StubTranslator().translate(request)
+
+    class CountingLLM:
+        configuration = "stub"
+
+        def vote(self, **kwargs):
+            calls["vote"] += 1
+            return voted()
+
+    app.dependency_overrides[get_translator] = lambda: CountingTranslator()
+    app.dependency_overrides[get_panel_llm] = lambda: CountingLLM()
+    seed_japanese(conn, 5)
+
+    response = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 401
+    assert calls == {"translate": 0, "vote": 0}
 
 
 def test_evaluate_returns_the_full_panel_test_payload(client, conn) -> None:

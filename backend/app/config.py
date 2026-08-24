@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     frontend_origin: str = "http://localhost:3000"
+    # The edge secret the frontend's server-side proxy sends with every call to
+    # a paid endpoint (045/#143). Never NEXT_PUBLIC_*: anything compiled into
+    # the browser bundle authenticates nobody. None = guard off, for local dev
+    # and CI; the deploy sets it.
+    api_shared_secret: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     model_provider: str = "openai"

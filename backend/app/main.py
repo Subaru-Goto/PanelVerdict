@@ -1,3 +1,4 @@
+import hmac
 import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -5,7 +6,7 @@ from contextlib import asynccontextmanager
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -90,6 +91,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
+
+# The two endpoints that spend money (045/#143). CORS below is a browser
+# courtesy that curl ignores; this middleware is the actual gate, and it runs
+# before any dependency does work — a refused request costs nothing, the same
+# property 013 established for refused content. Timing-safe comparison because
+# the whole point of the secret is an attacker guessing it.
+_PAID_PATHS = ("/evaluate", "/chat")
+
+
+@app.middleware("http")
+async def require_shared_secret(request: Request, call_next):
+    secret = settings.api_shared_secret
+    if secret is not None and request.url.path in _PAID_PATHS:
+        offered = request.headers.get("x-api-key", "")
+        if not hmac.compare_digest(offered, secret.get_secret_value()):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "missing or wrong API secret"},
+            )
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
