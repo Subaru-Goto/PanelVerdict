@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     # the browser bundle authenticates nobody. None = guard off, for local dev
     # and CI; the deploy sets it.
     api_shared_secret: SecretStr | None = None
+    # Derived, not tuned (045/#143): a prod run is 200 votes × USD_PER_VOTE
+    # ($0.0002, dashboard-reconciled — see 071) = $0.04, so 25 runs bounds one
+    # caller's worst-case spend at $1.00 per day. Raise it by deciding a new
+    # ceiling, not by feel.
+    evaluate_runs_per_day: int = 25
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     model_provider: str = "openai"

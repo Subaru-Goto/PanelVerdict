@@ -147,6 +147,38 @@ def test_chat_without_the_secret_is_refused_before_the_stream_opens(
     assert response.status_code == 401
 
 
+def test_a_caller_over_the_run_limit_is_refused_before_any_model_call(
+    client, conn, monkeypatch
+) -> None:
+    """045/#143's other half: the secret says a request came through our proxy,
+    the ledger says how often this caller has asked. Runs past the window's
+    limit get 429 and buy nothing — the counter lives in Postgres, so neither
+    a redeploy nor a second worker forgets it."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 2)
+    calls = {"vote": 0}
+
+    class CountingLLM:
+        configuration = "stub"
+
+        def vote(self, **kwargs):
+            calls["vote"] += 1
+            return voted()
+
+    app.dependency_overrides[get_panel_llm] = lambda: CountingLLM()
+    seed_japanese(conn, 5)
+    headers = {"X-API-Key": "edge-secret", "X-Forwarded-For": "203.0.113.9"}
+
+    first = client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
+    second = client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
+    votes_bought_by_honest_runs = calls["vote"]
+    third = client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert third.status_code == 429
+    assert calls["vote"] == votes_bought_by_honest_runs
+
+
 def test_evaluate_returns_the_full_panel_test_payload(client, conn) -> None:
     seed_japanese(conn, 5)
 

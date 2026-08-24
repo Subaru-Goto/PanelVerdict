@@ -227,6 +227,54 @@ def get_conn() -> Iterator[psycopg.Connection]:
         yield conn
 
 
+def enforce_run_limit(
+    request: Request, conn: psycopg.Connection = Depends(get_conn)
+) -> None:
+    """Postgres-backed runs-per-day gate on the paid run (045/#143).
+
+    Counts the forwarded client: every legitimate request arrives through the
+    Next proxy from one egress IP, and the proxy is trusted to name its caller
+    precisely because it holds the secret the middleware just checked. The
+    count lives in Postgres for the same reason the checkpointer does (#144) —
+    a redeploy or a second worker must not forget it. Refusal costs nothing:
+    this raises before the handler and its model calls run. The attempt is
+    recorded before the run so a caller cannot probe for free, and the write
+    sweeps the caller's expired rows so the ledger cannot accumulate rows
+    nobody will read again (040's lesson).
+    """
+    forwarded = request.headers.get("x-forwarded-for", "")
+    caller = forwarded.split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+    with conn.cursor() as cur:
+        cur.execute(
+            "DELETE FROM request_ledger WHERE endpoint = %s AND caller = %s"
+            " AND requested_at < now() - interval '24 hours'",
+            ("/evaluate", caller),
+        )
+        cur.execute(
+            "SELECT count(*) FROM request_ledger WHERE endpoint = %s AND caller = %s",
+            ("/evaluate", caller),
+        )
+        row = cur.fetchone()
+        used = int(row[0]) if row else 0
+        if used >= settings.evaluate_runs_per_day:
+            # The sentence is this codebase's own and names the remedy; the
+            # caller identity never travels back.
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"run limit reached ({settings.evaluate_runs_per_day} per "
+                    "day) — try again tomorrow"
+                ),
+            )
+        cur.execute(
+            "INSERT INTO request_ledger (endpoint, caller) VALUES (%s, %s)",
+            ("/evaluate", caller),
+        )
+    conn.commit()
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "db": "up" if check_connection() else "down"}
@@ -235,6 +283,7 @@ def health() -> dict[str, str]:
 @app.post("/evaluate")
 def evaluate(
     request: EvaluateRequest,
+    _limit: None = Depends(enforce_run_limit),
     llm: PanelLLM = Depends(get_panel_llm),
     translator: TargetTranslator = Depends(get_translator),
     conn: psycopg.Connection = Depends(get_conn),
