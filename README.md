@@ -165,9 +165,12 @@ per caller and analyst turns per thread and per caller, refusing before anything
 is bought ([045](https://github.com/Subaru-Goto/PanelVerdict/issues/143)). But
 with no accounts yet, "caller" means the network address the platform reports:
 people behind one NAT share a budget, and somebody with many addresses gets
-many. It bounds casual abuse, not a determined one, and a hard spend cap on the
-OpenRouter key remains the backstop until real per-user auth lands
-([063](https://github.com/Subaru-Goto/PanelVerdict/issues/158)).
+many. What bounds the determined abuser is a global daily pool — every paid
+request is priced at the gate and refused once the day's budget ($1.00) is
+spent, whoever asks ([064](docs/decisions/064-the-cost-ceilings.md),
+[089](https://github.com/Subaru-Goto/PanelVerdict/issues/192)); a hard spend cap
+on the OpenRouter key remains the backstop, and real per-user auth is still to
+land ([063](https://github.com/Subaru-Goto/PanelVerdict/issues/158)).
 
 ## Next steps
 

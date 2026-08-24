@@ -2,6 +2,7 @@ import hmac
 import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from typing import NamedTuple
 
 import psycopg
@@ -17,7 +18,7 @@ from psycopg_pool import ConnectionPool
 
 from app.analyst import ToolDeps, analysis_facts, stream_analyst
 from app.assembly import Embedder
-from app.config import USD_PER_VOTE, settings
+from app.config import USD_PER_TURN, USD_PER_VOTE, settings
 from app.db import check_connection
 from app.llm import (
     OpenRouterEmbedder,
@@ -241,6 +242,42 @@ class _Charge(NamedTuple):
     unit: str
 
 
+class _Spend(NamedTuple):
+    """One priced request to charge against the day's global pool (064/#192)."""
+
+    endpoint: str
+    usd: Decimal
+
+
+def _usd(amount: float) -> Decimal:
+    """A configured dollar figure as exact decimal arithmetic.
+
+    Money leaves float at the edge and never returns: float addition drifts,
+    and a day of $0.04 charges must land exactly ON a $1.00 cap, not a hair
+    past it — so the sum lives in a numeric column and every comparison
+    happens in Decimal. Via str(), because Decimal(0.04) would embalm the
+    float's binary error instead.
+
+    Convert *written* figures only — a constant, or a cap someone typed into
+    the environment. Converting a computed float would embalm that product's
+    drift verbatim: price in Decimal first (see `_run_price`), and there is no
+    drift to carry.
+    """
+    return Decimal(str(amount))
+
+
+def _run_price() -> Decimal:
+    """What one run may buy: every vote the profile is sized to.
+
+    Multiplied in Decimal, not float, so the price is exact at any panel size.
+    `size * USD_PER_VOTE` in float happens to have a clean repr at today's
+    three sizes and does not at every size — at 3 it is 0.0006000000000000001,
+    a hair over its own cap, which would refuse the last run a budget can
+    afford.
+    """
+    return _usd(USD_PER_VOTE) * settings.panel.size
+
+
 def caller_id(request: Request) -> str:
     """Who to count, from the one header a visitor cannot choose.
 
@@ -283,6 +320,8 @@ def enforce_run_limit(
     _charge_ledger(
         conn,
         _Charge("/evaluate", caller, settings.evaluate_runs_per_day, "runs"),
+        # Priced at what the run may buy: every vote the profile is sized to.
+        spend=_Spend("/evaluate", _run_price()),
     )
 
 
@@ -312,10 +351,15 @@ def enforce_turn_limit(
         _Charge(
             "/chat-caller", caller, settings.chat_turns_per_caller_per_day, "turns"
         ),
+        # A turn's cost is unmeasured; the pool charges the measured ceiling
+        # 064 rounds its "fraction of a vote" up to (see USD_PER_TURN).
+        spend=_Spend("/chat", _usd(USD_PER_TURN)),
     )
 
 
-def _charge_ledger(conn: psycopg.Connection, *charges: _Charge) -> None:
+def _charge_ledger(
+    conn: psycopg.Connection, *charges: _Charge, spend: _Spend | None = None
+) -> None:
     """Enforce every cap, then record one attempt against each — or refuse.
 
     Count-then-insert is not a limit under load: READ COMMITTED cannot see
@@ -328,16 +372,28 @@ def _charge_ledger(conn: psycopg.Connection, *charges: _Charge) -> None:
 
     All caps are checked before any is recorded, so a request refused by one
     cap does not silently consume another's budget. `limit <= 0` disables a cap
-    outright — the escape hatch for local iteration.
+    outright — the escape hatch for local iteration; a cap of 0 on the pool is
+    the same hatch.
+
+    `spend` prices this request against the day's global pool (064/#192) — one
+    budget shared by every caller and both paid endpoints, because the per-key
+    caps bound a caller and a new caller costs nothing to mint. Checked after
+    the per-key caps so the refusal a caller earned names *their* limit, and
+    the pool's lock is always taken first so it cannot order-invert against
+    the sorted per-key locks.
 
     The write sweeps the key's expired rows, so the ledger never accumulates
     rows nobody will read again (040's lesson).
     """
     active = [charge for charge in charges if charge.limit > 0]
-    if not active:
+    cap = _usd(settings.global_daily_cap_usd)
+    pooled = spend if spend is not None and cap > 0 else None
+    if not active and pooled is None:
         return
     window = "requested_at > now() - interval '24 hours'"
     with conn.cursor() as cur:
+        if pooled is not None:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("spend-pool",))
         for charge in sorted(active):
             cur.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
@@ -368,10 +424,37 @@ def _charge_ledger(conn: psycopg.Connection, *charges: _Charge) -> None:
                         " — try again tomorrow"
                     ),
                 )
+        if pooled is not None:
+            cur.execute(
+                "DELETE FROM spend_ledger WHERE spent_at < now() - interval '24 hours'"
+            )
+            cur.execute(
+                "SELECT coalesce(sum(usd), 0) FROM spend_ledger"
+                " WHERE spent_at > now() - interval '24 hours'"
+            )
+            row = cur.fetchone()
+            spent = Decimal(row[0]) if row else Decimal(0)
+            if spent + pooled.usd > cap:
+                conn.rollback()
+                # The visitor did nothing wrong, so the sentence is an apology
+                # naming the remedy (064) — never a figure, which would hand an
+                # abuser a progress bar.
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        "today's budget is spent — paid runs return tomorrow,"
+                        " and the demo report stays free to read"
+                    ),
+                )
         for charge in active:
             cur.execute(
                 "INSERT INTO request_ledger (endpoint, caller) VALUES (%s, %s)",
                 (charge.endpoint, charge.key),
+            )
+        if pooled is not None:
+            cur.execute(
+                "INSERT INTO spend_ledger (endpoint, usd) VALUES (%s, %s)",
+                (pooled.endpoint, pooled.usd),
             )
     conn.commit()
 

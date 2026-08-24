@@ -50,8 +50,9 @@ the ~1-minute wake and nothing else — conversations resume where they left off
 idempotent and the seed resumes, so re-running costs nothing when the pool is already
 there — but nothing re-runs it for you, and a table the code expects and the database
 lacks is a 500 on every request that touches it. `request_ledger` (045/#143) is the
-first case: without it both paid endpoints fail. Re-running the same seed command
-creates it.
+first case: without it both paid endpoints fail. `spend_ledger` (064/#192, the global
+daily cap) is the second, with the same symptom. Re-running the same seed command
+creates them.
 
 ## 2 — Render (the backend)
 
