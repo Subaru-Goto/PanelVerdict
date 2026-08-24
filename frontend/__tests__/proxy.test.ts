@@ -51,30 +51,61 @@ describe("the evaluate proxy", () => {
     expect(await response.json()).toEqual({ verdict: "stub" });
   });
 
-  it("names the real client to the backend, whose ledger counts callers", async () => {
-    // Without this, every visitor arrives at the backend as this proxy's one
-    // egress IP and shares a single rate-limit budget.
+  it("overwrites a forged client id with the platform's own value", async () => {
+    // The proxy is public, so a caller can send any header they like. The
+    // backend counts X-Client-Id, so whatever arrives under that name — or
+    // under X-Forwarded-For, which platforms append to rather than replace —
+    // must never survive into the upstream request.
     vi.stubEnv("API_URL", "http://backend.test");
     vi.stubEnv("API_SHARED_SECRET", "edge-secret");
     const backend = vi
       .fn()
       .mockResolvedValue(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", backend);
-    const request = new Request("http://frontend.test/api/evaluate", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Forwarded-For": "203.0.113.9",
-      },
-      body: "{}",
-    });
 
-    await evaluateProxy(request);
+    await evaluateProxy(
+      new Request("http://frontend.test/api/evaluate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Client-Id": "attacker-chosen",
+          "X-Forwarded-For": "10.0.0.1, 203.0.113.9",
+          "X-Vercel-Forwarded-For": "198.51.100.7",
+        },
+        body: "{}",
+      }),
+    );
 
     const [, init] = backend.mock.calls[0] as [string, RequestInit];
-    expect(new Headers(init.headers).get("X-Forwarded-For")).toBe(
-      "203.0.113.9",
+    const sent = new Headers(init.headers);
+    expect(sent.get("X-Client-Id")).toBe("198.51.100.7");
+    expect(sent.get("X-Forwarded-For")).toBeNull();
+  });
+
+  it("asserts no client id when the platform names no client", async () => {
+    // Local `next dev` has no edge to stamp one. Sending nothing is the honest
+    // answer: the backend then counts the socket peer, rather than being
+    // handed a value a caller could have written.
+    vi.stubEnv("API_URL", "http://backend.test");
+    vi.stubEnv("API_SHARED_SECRET", "edge-secret");
+    const backend = vi
+      .fn()
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", backend);
+
+    await evaluateProxy(
+      new Request("http://frontend.test/api/evaluate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Client-Id": "attacker-chosen",
+        },
+        body: "{}",
+      }),
     );
+
+    const [, init] = backend.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("X-Client-Id")).toBeNull();
   });
 });
 

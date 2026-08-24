@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     # still bounding a loop. Replace with a derived ceiling once a turn's cost
     # is measured from the usage logs.
     chat_turns_per_thread_per_day: int = 30
+    # The thread cap bounds one runaway conversation; this one bounds the
+    # caller, because the client mints thread ids and could otherwise reset the
+    # thread cap at will. Deliberately looser than the thread cap is tight: an
+    # honest visitor may open several reports in a session.
+    chat_turns_per_caller_per_day: int = 120
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     model_provider: str = "openai"

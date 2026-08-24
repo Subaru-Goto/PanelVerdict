@@ -1,13 +1,5 @@
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatResult
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver
-from openai import APIStatusError
-from pydantic import SecretStr
-
 from app.config import settings
 from app.main import (
     app,
@@ -25,6 +17,13 @@ from app.persistence import nearest_panelists, persist_pool
 from app.schemas import EvaluateRequest
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
+from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatResult
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from openai import APIStatusError
+from pydantic import SecretStr
 from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
@@ -217,6 +216,61 @@ def test_a_thread_over_its_turn_limit_is_refused_before_the_stream(
     assert third.status_code == 429
     assert spent_after_refusal == spent_by_honest_turns
     assert fresh_thread.status_code == 200
+
+
+def test_a_forged_forwarding_header_does_not_buy_a_fresh_budget(
+    client, conn, monkeypatch
+) -> None:
+    """The rate-limit key must not be something the caller can choose.
+    X-Forwarded-For is caller-settable — platforms append rather than replace,
+    so its leftmost entry is attacker text — and keying on it let anyone mint
+    unlimited budgets by varying one header. Only X-Client-Id counts, which the
+    proxy overwrites from a platform value the visitor cannot set; the secret
+    is what makes that header trustworthy."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+    seed_japanese(conn, 5)
+
+    def run(forged: str):
+        return client.post(
+            "/evaluate",
+            json=_REQUEST_BODY,
+            headers={
+                "X-API-Key": "edge-secret",
+                "X-Client-Id": "198.51.100.7",
+                "X-Forwarded-For": forged,
+            },
+        )
+
+    first = run("203.0.113.1")
+    second = run("203.0.113.2")
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+
+
+def test_rotating_thread_ids_does_not_escape_the_chat_limit(
+    client, conn, monkeypatch
+) -> None:
+    """The client mints thread ids, so a per-thread count alone is a limit the
+    caller can reset at will. The thread cap still bounds one runaway
+    conversation; this pins the caller cap that bounds the abuser."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "chat_turns_per_thread_per_day", 99)
+    monkeypatch.setattr(settings, "chat_turns_per_caller_per_day", 2)
+
+    def turn(thread_id: str):
+        return client.post(
+            "/chat",
+            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "hi"},
+            headers={"X-API-Key": "edge-secret", "X-Client-Id": "198.51.100.7"},
+        )
+
+    first, second = turn("t-a"), turn("t-b")
+    third = turn("t-c")
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert third.status_code == 429
 
 
 def test_evaluate_returns_the_full_panel_test_payload(client, conn) -> None:

@@ -227,25 +227,37 @@ def get_conn() -> Iterator[psycopg.Connection]:
         yield conn
 
 
+def caller_id(request: Request) -> str:
+    """Who to count, from the one header a visitor cannot choose.
+
+    X-Client-Id is set by our proxy, which overwrites whatever the caller sent
+    using a value its platform supplies — and the proxy is trustworthy here
+    precisely because the shared secret the middleware just checked proves the
+    request came from it. Deliberately NOT X-Forwarded-For: platforms append
+    rather than replace, so its leftmost entry is caller-written text, and
+    keying a rate limit on it let anyone mint unlimited budgets by varying one
+    header. Falling back to the socket peer keeps a direct call (which still
+    needs the secret) counted rather than uncounted.
+    """
+    asserted = request.headers.get("x-client-id", "").strip()
+    if asserted:
+        return asserted
+    return request.client.host if request.client else "unknown"
+
+
 def enforce_run_limit(
-    request: Request, conn: psycopg.Connection = Depends(get_conn)
+    caller: str = Depends(caller_id),
+    conn: psycopg.Connection = Depends(get_conn),
 ) -> None:
     """Postgres-backed runs-per-day gate on the paid run (045/#143).
 
-    Counts the forwarded client: every legitimate request arrives through the
-    Next proxy from one egress IP, and the proxy is trusted to name its caller
-    precisely because it holds the secret the middleware just checked. The
-    count lives in Postgres for the same reason the checkpointer does (#144) —
-    a redeploy or a second worker must not forget it. Refusal costs nothing:
-    this raises before the handler and its model calls run. The attempt is
-    recorded before the run so a caller cannot probe for free, and the write
-    sweeps the caller's expired rows so the ledger cannot accumulate rows
-    nobody will read again (040's lesson).
+    The count lives in Postgres for the same reason the checkpointer does
+    (#144) — a redeploy or a second worker must not forget it. Refusal costs
+    nothing: this raises before the handler and its model calls run. The
+    attempt is recorded before the run so a caller cannot probe for free, and
+    the write sweeps the caller's expired rows so the ledger cannot accumulate
+    rows nobody will read again (040's lesson).
     """
-    forwarded = request.headers.get("x-forwarded-for", "")
-    caller = forwarded.split(",")[0].strip() or (
-        request.client.host if request.client else "unknown"
-    )
     _charge_ledger(
         conn,
         endpoint="/evaluate",
@@ -256,18 +268,33 @@ def enforce_run_limit(
 
 
 def enforce_turn_limit(
-    request: ChatRequest, conn: psycopg.Connection = Depends(get_conn)
+    request: ChatRequest,
+    caller: str = Depends(caller_id),
+    conn: psycopg.Connection = Depends(get_conn),
 ) -> None:
-    """The /chat gate counts turns per *thread*, not requests per caller —
-    a request is not the unit of /chat's cost, and the refusal must land
-    before there is a stream to be unable to refuse (045/#143). Declaring the
-    body model here shares FastAPI's single parse with the handler."""
+    """Two counts, because each bounds a different runaway (045/#143).
+
+    Per thread, since a request is not the unit of /chat's cost — a turn is,
+    and turns accumulate in a thread. Per caller as well, because the *client*
+    mints thread ids: a thread-only cap is one the abuser resets by sending a
+    new id, so it would bound the honest conversation and nothing else. The
+    refusal must land before there is a stream to be unable to refuse.
+    Declaring the body model here shares FastAPI's single parse with the
+    handler.
+    """
     _charge_ledger(
         conn,
         endpoint="/chat",
         key=request.thread_id,
         limit=settings.chat_turns_per_thread_per_day,
         unit="turns for this thread",
+    )
+    _charge_ledger(
+        conn,
+        endpoint="/chat-caller",
+        key=caller,
+        limit=settings.chat_turns_per_caller_per_day,
+        unit="turns",
     )
 
 
