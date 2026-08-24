@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS votes (
 -- opportunistically on write.
 CREATE TABLE IF NOT EXISTS request_ledger (
     endpoint     text NOT NULL,
-    caller       text NOT NULL,                     -- forwarded client IP via the proxy
+    caller       text NOT NULL,                     -- the counted identity: forwarded
+                                                    -- client IP (/evaluate), thread id (/chat)
     requested_at timestamptz NOT NULL DEFAULT now()
 );
 

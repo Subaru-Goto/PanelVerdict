@@ -90,6 +90,13 @@ class Settings(BaseSettings):
     # caller's worst-case spend at $1.00 per day. Raise it by deciding a new
     # ceiling, not by feel.
     evaluate_runs_per_day: int = 25
+    # Bounded by structure, not price — honestly flagged: no per-turn dollar
+    # measurement exists yet (unlike USD_PER_VOTE). A turn is at most 4 model
+    # calls (analyst.py's recursion budget), a thread is one report's
+    # conversation, and 30 turns/day is far above an honest conversation while
+    # still bounding a loop. Replace with a derived ceiling once a turn's cost
+    # is measured from the usage logs.
+    chat_turns_per_thread_per_day: int = 30
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     model_provider: str = "openai"

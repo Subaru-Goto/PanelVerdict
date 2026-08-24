@@ -246,31 +246,59 @@ def enforce_run_limit(
     caller = forwarded.split(",")[0].strip() or (
         request.client.host if request.client else "unknown"
     )
+    _charge_ledger(
+        conn,
+        endpoint="/evaluate",
+        key=caller,
+        limit=settings.evaluate_runs_per_day,
+        unit="runs",
+    )
+
+
+def enforce_turn_limit(
+    request: ChatRequest, conn: psycopg.Connection = Depends(get_conn)
+) -> None:
+    """The /chat gate counts turns per *thread*, not requests per caller —
+    a request is not the unit of /chat's cost, and the refusal must land
+    before there is a stream to be unable to refuse (045/#143). Declaring the
+    body model here shares FastAPI's single parse with the handler."""
+    _charge_ledger(
+        conn,
+        endpoint="/chat",
+        key=request.thread_id,
+        limit=settings.chat_turns_per_thread_per_day,
+        unit="turns for this thread",
+    )
+
+
+def _charge_ledger(
+    conn: psycopg.Connection, *, endpoint: str, key: str, limit: int, unit: str
+) -> None:
+    """Count-then-record inside the window; over the limit raises 429 before
+    any paid work. The write sweeps the key's expired rows so the ledger never
+    accumulates rows nobody will read again (040's lesson)."""
     with conn.cursor() as cur:
         cur.execute(
             "DELETE FROM request_ledger WHERE endpoint = %s AND caller = %s"
             " AND requested_at < now() - interval '24 hours'",
-            ("/evaluate", caller),
+            (endpoint, key),
         )
         cur.execute(
             "SELECT count(*) FROM request_ledger WHERE endpoint = %s AND caller = %s",
-            ("/evaluate", caller),
+            (endpoint, key),
         )
         row = cur.fetchone()
         used = int(row[0]) if row else 0
-        if used >= settings.evaluate_runs_per_day:
+        if used >= limit:
             # The sentence is this codebase's own and names the remedy; the
-            # caller identity never travels back.
+            # counted identity never travels back.
             raise HTTPException(
                 status_code=429,
-                detail=(
-                    f"run limit reached ({settings.evaluate_runs_per_day} per "
-                    "day) — try again tomorrow"
-                ),
+                detail=f"limit reached ({limit} {unit} per day) — try again tomorrow",
             )
         cur.execute(
             "INSERT INTO request_ledger (endpoint, caller) VALUES (%s, %s)",
-            ("/evaluate", caller),
+            (endpoint, key),
         )
     conn.commit()
 
@@ -345,6 +373,7 @@ def get_checkpointer(request: Request) -> BaseCheckpointSaver:
 @app.post("/chat")
 def chat(
     request: ChatRequest,
+    _limit: None = Depends(enforce_turn_limit),
     analyst: BaseChatModel = Depends(get_analyst),
     conn: psycopg.Connection = Depends(get_conn),
     embedder: Embedder = Depends(get_embedder),

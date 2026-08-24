@@ -179,6 +179,46 @@ def test_a_caller_over_the_run_limit_is_refused_before_any_model_call(
     assert calls["vote"] == votes_bought_by_honest_runs
 
 
+def test_a_thread_over_its_turn_limit_is_refused_before_the_stream(
+    client, conn, monkeypatch
+) -> None:
+    """The stream cannot change its status after the first byte, so the limit
+    speaks in HTTP: 429, no stream, no model call. Per thread, not per caller —
+    a request is not the unit of /chat's cost, a thread's turns are — and a
+    fresh thread is untouched by a sibling's exhaustion."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "chat_turns_per_thread_per_day", 2)
+    invocations = {"model": 0}
+
+    class CountingModel(ScriptedChatModel):
+        def _generate(self, messages, **kwargs):
+            invocations["model"] += 1
+            return super()._generate(messages, **kwargs)
+
+    app.dependency_overrides[get_analyst] = lambda: CountingModel(
+        responses=[AIMessage(content="ok")]
+    )
+    headers = {"X-API-Key": "edge-secret", "X-Forwarded-For": "203.0.113.9"}
+
+    def turn(thread_id: str):
+        return client.post(
+            "/chat",
+            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "why?"},
+            headers=headers,
+        )
+
+    first, second = turn("t-limit"), turn("t-limit")
+    spent_by_honest_turns = invocations["model"]
+    third = turn("t-limit")
+    spent_after_refusal = invocations["model"]
+    fresh_thread = turn("t-other")
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert third.status_code == 429
+    assert spent_after_refusal == spent_by_honest_turns
+    assert fresh_thread.status_code == 200
+
+
 def test_evaluate_returns_the_full_panel_test_payload(client, conn) -> None:
     seed_japanese(conn, 5)
 
