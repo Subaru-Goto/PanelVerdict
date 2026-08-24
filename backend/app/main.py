@@ -250,30 +250,24 @@ class _Spend(NamedTuple):
 
 
 def _usd(amount: float) -> Decimal:
-    """A configured dollar figure as exact decimal arithmetic.
+    """A written dollar figure — a constant, or a configured cap — as Decimal.
 
-    Money leaves float at the edge and never returns: float addition drifts,
-    and a day of $0.04 charges must land exactly ON a $1.00 cap, not a hair
-    past it — so the sum lives in a numeric column and every comparison
-    happens in Decimal. Via str(), because Decimal(0.04) would embalm the
-    float's binary error instead.
+    Money is compared in Decimal because float sums drift, and a day of
+    charges must land exactly on the cap rather than a hair past it. Via
+    str(), or the float's binary error survives the conversion.
 
-    Convert *written* figures only — a constant, or a cap someone typed into
-    the environment. Converting a computed float would embalm that product's
-    drift verbatim: price in Decimal first (see `_run_price`), and there is no
-    drift to carry.
+    Pass written figures only, never a computed product: price in Decimal
+    from the start instead (see `_run_price`).
     """
     return Decimal(str(amount))
 
 
 def _run_price() -> Decimal:
-    """What one run may buy: every vote the profile is sized to.
+    """What one run may buy: a vote for every seat the profile is sized to.
 
-    Multiplied in Decimal, not float, so the price is exact at any panel size.
-    `size * USD_PER_VOTE` in float happens to have a clean repr at today's
-    three sizes and does not at every size — at 3 it is 0.0006000000000000001,
-    a hair over its own cap, which would refuse the last run a budget can
-    afford.
+    Multiplied in Decimal so the price is exact at any panel size. In float,
+    3 votes price at 0.0006000000000000001 — over a cap of exactly 3 votes,
+    which would refuse the last run the budget can afford.
     """
     return _usd(USD_PER_VOTE) * settings.panel.size
 
@@ -352,7 +346,7 @@ def enforce_turn_limit(
             "/chat-caller", caller, settings.chat_turns_per_caller_per_day, "turns"
         ),
         # A turn's cost is unmeasured; the pool charges the measured ceiling
-        # 064 rounds its "fraction of a vote" up to (see USD_PER_TURN).
+        # A turn's real cost is unmeasured; USD_PER_TURN explains the stand-in.
         spend=_Spend("/chat", _usd(USD_PER_TURN)),
     )
 
@@ -364,26 +358,23 @@ def _charge_ledger(
 
     Count-then-insert is not a limit under load: READ COMMITTED cannot see
     another transaction's uncommitted rows and sync handlers run in a thread
-    pool, so simultaneous requests all read the same `used` and all pass — 10
-    concurrent requests took 7 slots out of a limit of 3, measured. A per-key
-    advisory lock makes the database arbitrate; it is held to the end of this
-    transaction and taken in a stable order so two callers charging the same
-    pair of keys cannot deadlock.
+    pool, so simultaneous requests all read the same count and all pass — 10
+    concurrent requests took 7 slots out of a limit of 3, measured. Advisory
+    locks make the database arbitrate instead.
 
-    All caps are checked before any is recorded, so a request refused by one
-    cap does not silently consume another's budget. `limit <= 0` disables a cap
-    outright — the escape hatch for local iteration; a cap of 0 on the pool is
-    the same hatch.
-
-    `spend` prices this request against the day's global pool (064/#192) — one
-    budget shared by every caller and both paid endpoints, because the per-key
-    caps bound a caller and a new caller costs nothing to mint. Checked after
-    the per-key caps so the refusal a caller earned names *their* limit, and
-    the pool's lock is always taken first so it cannot order-invert against
-    the sorted per-key locks.
-
-    The write sweeps the key's expired rows, so the ledger never accumulates
-    rows nobody will read again (040's lesson).
+    - Locks are held to the end of the transaction and always taken in the
+      same order (pool first, then per-key sorted), so callers charging the
+      same keys cannot deadlock.
+    - Every cap is checked before any is recorded, so a request refused by one
+      cap does not consume another's budget.
+    - `limit <= 0` — or a pool cap of 0 — disables that cap, the escape hatch
+      for local iteration.
+    - `spend` charges the day's global pool (064/#192): one budget for every
+      caller and both paid endpoints, since a new caller costs nothing to
+      mint. Checked after the per-key caps, so a caller who has hit their own
+      limit is told which one.
+    - Writes sweep expired rows, so the ledger never keeps rows nobody will
+      read again (040).
     """
     active = [charge for charge in charges if charge.limit > 0]
     cap = _usd(settings.global_daily_cap_usd)
@@ -436,9 +427,8 @@ def _charge_ledger(
             spent = Decimal(row[0]) if row else Decimal(0)
             if spent + pooled.usd > cap:
                 conn.rollback()
-                # The visitor did nothing wrong, so the sentence is an apology
-                # naming the remedy (064) — never a figure, which would hand an
-                # abuser a progress bar.
+                # Names the remedy, never the figure — a number left would
+                # give an abuser a progress bar.
                 raise HTTPException(
                     status_code=429,
                     detail=(
