@@ -49,4 +49,30 @@ describe("the evaluate proxy", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ verdict: "stub" });
   });
+
+  it("names the real client to the backend, whose ledger counts callers", async () => {
+    // Without this, every visitor arrives at the backend as this proxy's one
+    // egress IP and shares a single rate-limit budget.
+    vi.stubEnv("API_URL", "http://backend.test");
+    vi.stubEnv("API_SHARED_SECRET", "edge-secret");
+    const backend = vi
+      .fn()
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", backend);
+    const request = new Request("http://frontend.test/api/evaluate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Forwarded-For": "203.0.113.9",
+      },
+      body: "{}",
+    });
+
+    await evaluateProxy(request);
+
+    const [, init] = backend.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("X-Forwarded-For")).toBe(
+      "203.0.113.9",
+    );
+  });
 });

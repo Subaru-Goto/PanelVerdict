@@ -3,11 +3,15 @@
 // bundle by definition, so the secret must live here or authenticate nobody.
 export async function POST(request: Request): Promise<Response> {
   const secret = process.env.API_SHARED_SECRET;
+  // The backend's ledger counts callers by this header; without it every
+  // visitor would arrive as this proxy's one egress IP and share one budget.
+  const client = request.headers.get("x-forwarded-for");
   const response = await fetch(`${process.env.API_URL}/evaluate`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(secret ? { "X-API-Key": secret } : {}),
+      ...(client ? { "X-Forwarded-For": client } : {}),
     },
     body: await request.text(),
   });
