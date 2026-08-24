@@ -12,7 +12,7 @@ from openai import APIStatusError
 from pgvector.psycopg import register_vector
 from pydantic import SecretStr
 
-from app.config import Settings, settings
+from app.config import USD_PER_VOTE, Settings, settings
 from app.main import (
     app,
     budget_notice,
@@ -71,6 +71,7 @@ def client(conn, stub_llm, monkeypatch):
         "evaluate_runs_per_day",
         "chat_turns_per_thread_per_day",
         "chat_turns_per_caller_per_day",
+        "global_daily_cap_usd",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
     # Every override is a zero-argument callable, never the class itself: FastAPI
@@ -373,6 +374,158 @@ def test_a_caller_cap_refusal_does_not_spend_the_threads_budget(
         )
         row = cur.fetchone()
     assert row is not None and row[0] == 0
+
+
+def test_the_days_budget_is_one_pool_shared_by_every_caller(
+    client, conn, monkeypatch
+) -> None:
+    """064's load-bearing layer. The per-caller caps bound a caller, but a new
+    caller costs nothing to mint, so only a global pool bounds what a day can
+    cost. One caller spending the whole budget must refuse the *next* caller —
+    with an apology that names the remedy, because the visitor did nothing
+    wrong and the demo report is still theirs to read."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    run_price = settings.panel.size * USD_PER_VOTE
+    monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
+    seed_japanese(conn, 5)
+
+    def run(caller: str):
+        return client.post(
+            "/evaluate",
+            json=_REQUEST_BODY,
+            headers={"X-API-Key": "edge-secret", "X-Client-Id": caller},
+        )
+
+    first = run("203.0.113.1")
+    second = run("203.0.113.2")
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert "budget" in second.json()["detail"]
+
+
+def test_chat_turns_draw_from_the_same_days_pool(client, conn, monkeypatch) -> None:
+    """The pool bounds the day, not an endpoint: the analyst's calls cost real
+    dollars too, so a day /evaluate has already spent must refuse /chat as
+    well. A turn is priced at one whole vote — 064 signs a turn off as "a
+    fraction of a vote", and the pool rounds the unmeasured fraction up to the
+    one price that is measured."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    run_price = settings.panel.size * USD_PER_VOTE
+    monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
+    seed_japanese(conn, 5)
+    headers = {"X-API-Key": "edge-secret", "X-Client-Id": "203.0.113.1"}
+
+    spends_the_day = client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
+    turn = client.post(
+        "/chat",
+        json={"result": _CHAT_RESULT, "thread_id": "t-pool", "message": "why?"},
+        headers=headers,
+    )
+
+    assert spends_the_day.status_code == 200
+    assert turn.status_code == 429
+
+
+def test_a_pool_refusal_does_not_spend_the_callers_own_budget(
+    client, conn, monkeypatch
+) -> None:
+    """The rule pins in both directions: a request the pool refuses bought
+    nothing, so it must not have consumed one of the caller's runs either —
+    tomorrow's reopened pool owes them their full allowance."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    run_price = settings.panel.size * USD_PER_VOTE
+    monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
+    seed_japanese(conn, 5)
+
+    def run(caller: str):
+        return client.post(
+            "/evaluate",
+            json=_REQUEST_BODY,
+            headers={"X-API-Key": "edge-secret", "X-Client-Id": caller},
+        )
+
+    run("203.0.113.1")  # spends the whole pool
+    refused = run("203.0.113.2")
+
+    assert refused.status_code == 429
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM request_ledger WHERE caller = '203.0.113.2'")
+        row = cur.fetchone()
+    assert row is not None and row[0] == 0
+
+
+def test_a_caller_cap_refusal_does_not_charge_the_pool(
+    client, conn, monkeypatch
+) -> None:
+    """And the mirror image: a run the caller's own cap refused cost nothing,
+    so it must not shrink the day for everyone else."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+    seed_japanese(conn, 5)
+    headers = {"X-API-Key": "edge-secret", "X-Client-Id": "203.0.113.1"}
+
+    client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
+    refused = client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
+
+    assert refused.status_code == 429
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM spend_ledger")
+        row = cur.fetchone()
+    assert row is not None and row[0] == 1  # the honest run, nothing more
+
+
+def test_a_pool_cap_of_zero_is_the_same_escape_hatch(client, conn, monkeypatch) -> None:
+    """The other caps' zero means unlimited, and a developer iterating locally
+    hits this one even faster — sixty dev runs of nothing but stubs would
+    close the day."""
+    monkeypatch.setattr(settings, "global_daily_cap_usd", 0)
+    seed_japanese(conn, 2)
+
+    codes = [client.post("/evaluate", json=_REQUEST_BODY).status_code for _ in range(3)]
+
+    assert codes == [200, 200, 200]
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM spend_ledger")
+        row = cur.fetchone()
+    assert row is not None and row[0] == 0
+
+
+def test_concurrent_runs_cannot_outspend_the_pool(
+    client, conn, pg_url, monkeypatch
+) -> None:
+    """The same READ COMMITTED race the per-key ledger had to survive: a sum
+    over committed rows is stale the moment two gates read it together. The
+    pool's advisory lock makes the database arbitrate here too."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    run_price = settings.panel.size * USD_PER_VOTE
+    # 3.5 slots, deliberately off the boundary: the exact-cap edge is test 1's
+    # subject; this test is about the race, and a mid-slot cap keeps a float
+    # repr wobble in `3 * run_price` from muddying what it measures.
+    monkeypatch.setattr(settings, "global_daily_cap_usd", 3.5 * run_price)
+    seed_japanese(conn, 2)
+
+    def own_connection():
+        with psycopg.connect(pg_url) as connection:
+            register_vector(connection)
+            yield connection
+
+    app.dependency_overrides[get_conn] = own_connection
+
+    def run(caller: str) -> int:
+        return client.post(
+            "/evaluate",
+            json=_REQUEST_BODY,
+            headers={"X-API-Key": "edge-secret", "X-Client-Id": caller},
+        ).status_code
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        codes = [
+            f.result() for f in [pool.submit(run, f"203.0.113.{n}") for n in range(10)]
+        ]
+
+    assert codes.count(200) == 3
+    assert codes.count(429) == 7
 
 
 def test_a_cap_of_zero_is_the_local_escape_hatch(client, conn, monkeypatch) -> None:

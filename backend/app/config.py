@@ -70,6 +70,12 @@ PROFILES: dict[ProfileName, PanelProfile] = {
 #   the term the old margin existed to absorb.
 USD_PER_VOTE = 0.0002
 
+# What one chat turn charges the day's pool (064/#192). 064 signs off a turn as
+# "a fraction of a vote" and records the analyst's own cost as unmeasured, so
+# the pool rounds that fraction up to the one price that IS measured. Replace
+# with a measured per-turn figure when one exists (064's open question).
+USD_PER_TURN = USD_PER_VOTE
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=ROOT_ENV, extra="ignore")
@@ -102,6 +108,13 @@ class Settings(BaseSettings):
     # thread cap at will. Deliberately looser than the thread cap is tight: an
     # honest visitor may open several reports in a session.
     chat_turns_per_caller_per_day: int = 120
+    # 064's load-bearing layer: the caps above bound one caller, but a new
+    # caller costs nothing to mint, so only a global pool bounds what a day can
+    # cost. $1.00 is the author's signed-off ceiling ("no more than 1 euro a
+    # day"), expressed in USD deliberately unconverted — 064 records why a
+    # hardcoded FX rate would be worse than a cent of drift. 0 disables, the
+    # same escape hatch the other caps have.
+    global_daily_cap_usd: float = 1.00
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     model_provider: str = "openai"
