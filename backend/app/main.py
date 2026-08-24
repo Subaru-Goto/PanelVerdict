@@ -246,18 +246,36 @@ class _Spend(NamedTuple):
     """One priced request to charge against the day's global pool (064/#192)."""
 
     endpoint: str
-    usd: float
+    usd: Decimal
 
 
 def _usd(amount: float) -> Decimal:
-    """A dollar figure as exact decimal arithmetic.
+    """A configured dollar figure as exact decimal arithmetic.
 
-    The constants are floats, but float addition drifts, and a day of $0.04
-    charges must land exactly ON a $1.00 cap, not a hair past it — so the sum
-    lives in a numeric column and the comparison happens in Decimal. Via str(),
-    because Decimal(0.04) would embalm the float's binary error instead.
+    Money leaves float at the edge and never returns: float addition drifts,
+    and a day of $0.04 charges must land exactly ON a $1.00 cap, not a hair
+    past it — so the sum lives in a numeric column and every comparison
+    happens in Decimal. Via str(), because Decimal(0.04) would embalm the
+    float's binary error instead.
+
+    Convert *written* figures only — a constant, or a cap someone typed into
+    the environment. Converting a computed float would embalm that product's
+    drift verbatim: price in Decimal first (see `_run_price`), and there is no
+    drift to carry.
     """
     return Decimal(str(amount))
+
+
+def _run_price() -> Decimal:
+    """What one run may buy: every vote the profile is sized to.
+
+    Multiplied in Decimal, not float, so the price is exact at any panel size.
+    `size * USD_PER_VOTE` in float happens to have a clean repr at today's
+    three sizes and does not at every size — at 3 it is 0.0006000000000000001,
+    a hair over its own cap, which would refuse the last run a budget can
+    afford.
+    """
+    return _usd(USD_PER_VOTE) * settings.panel.size
 
 
 def caller_id(request: Request) -> str:
@@ -303,7 +321,7 @@ def enforce_run_limit(
         conn,
         _Charge("/evaluate", caller, settings.evaluate_runs_per_day, "runs"),
         # Priced at what the run may buy: every vote the profile is sized to.
-        spend=_Spend("/evaluate", settings.panel.size * USD_PER_VOTE),
+        spend=_Spend("/evaluate", _run_price()),
     )
 
 
@@ -335,7 +353,7 @@ def enforce_turn_limit(
         ),
         # A turn's cost is unmeasured; the pool charges the measured ceiling
         # 064 rounds its "fraction of a vote" up to (see USD_PER_TURN).
-        spend=_Spend("/chat", USD_PER_TURN),
+        spend=_Spend("/chat", _usd(USD_PER_TURN)),
     )
 
 
@@ -416,7 +434,7 @@ def _charge_ledger(
             )
             row = cur.fetchone()
             spent = Decimal(row[0]) if row else Decimal(0)
-            if spent + _usd(pooled.usd) > cap:
+            if spent + pooled.usd > cap:
                 conn.rollback()
                 # The visitor did nothing wrong, so the sentence is an apology
                 # naming the remedy (064) — never a figure, which would hand an
@@ -436,7 +454,7 @@ def _charge_ledger(
         if pooled is not None:
             cur.execute(
                 "INSERT INTO spend_ledger (endpoint, usd) VALUES (%s, %s)",
-                (pooled.endpoint, _usd(pooled.usd)),
+                (pooled.endpoint, pooled.usd),
             )
     conn.commit()
 

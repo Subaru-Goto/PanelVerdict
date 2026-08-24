@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from decimal import Decimal
 
 import httpx
 import psycopg
@@ -12,7 +13,7 @@ from openai import APIStatusError
 from pgvector.psycopg import register_vector
 from pydantic import SecretStr
 
-from app.config import USD_PER_VOTE, Settings, settings
+from app.config import PROFILES, USD_PER_VOTE, PanelProfile, Settings, settings
 from app.main import (
     app,
     budget_notice,
@@ -475,10 +476,30 @@ def test_a_caller_cap_refusal_does_not_charge_the_pool(
     assert row is not None and row[0] == 1  # the honest run, nothing more
 
 
+def test_a_run_priced_at_the_cap_is_admitted_not_refused(
+    client, conn, monkeypatch
+) -> None:
+    """The boundary is `>`, not `>=`: a budget of exactly one run must buy that
+    run. It only holds if the price is exact — a size of 3 prices at
+    0.0006000000000000001 in float, a hair over its own cap, so pricing in
+    Decimal is what keeps the last affordable run affordable."""
+    monkeypatch.setitem(
+        PROFILES, settings.profile, PanelProfile(size=3, model="stub/model")
+    )
+    # The cap is a figure someone wrote down — $0.0006, exactly three votes —
+    # not the float product the gate must not compute.
+    monkeypatch.setattr(
+        settings, "global_daily_cap_usd", float(Decimal(str(USD_PER_VOTE)) * 3)
+    )
+    seed_japanese(conn, 3)
+
+    assert client.post("/evaluate", json=_REQUEST_BODY).status_code == 200
+
+
 def test_a_pool_cap_of_zero_is_the_same_escape_hatch(client, conn, monkeypatch) -> None:
     """The other caps' zero means unlimited, and a developer iterating locally
-    hits this one even faster — sixty dev runs of nothing but stubs would
-    close the day."""
+    would hit this one too — the pool prices a stubbed dev run the same as a
+    paid one, so a day of local iteration spends a budget nothing consumed."""
     monkeypatch.setattr(settings, "global_daily_cap_usd", 0)
     seed_japanese(conn, 2)
 
