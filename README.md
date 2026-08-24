@@ -53,7 +53,13 @@ target description ──▶ translator ──▶ structured query ──▶ poo
 
 **1. Configure.** Copy `.example.env` to `.env` in the repo root and fill it in —
 `POSTGRES_*`, `FRONTEND_ORIGIN`, and `OPENROUTER_API_KEY`. The frontend needs
-`NEXT_PUBLIC_API_URL=http://localhost:8000` in `frontend/.env.local`.
+`API_URL=http://localhost:8000` in `frontend/.env.local`.
+
+The browser never calls the backend directly: it talks to the frontend's own
+`/api/*` routes, which hold the backend URL and the edge secret server-side.
+Nothing here is `NEXT_PUBLIC_*`, because that would ship it to every visitor.
+Locally you can leave `API_SHARED_SECRET` unset — the guard is then off, which
+is what you want for development.
 
 **2. Start the database.** pgvector-flavoured Postgres:
 
@@ -83,23 +89,31 @@ cd backend  && uv run fastapi dev app/main.py   # http://localhost:8000
 cd frontend && npm install && npm run dev       # http://localhost:3000
 ```
 
+**Deployed, dark.** The app runs on Vercel + Render + Supabase at $0/month, kept
+warm by a cron ping, and is deliberately unannounced until the safety spine is
+finished. [`docs/deploy.md`](docs/deploy.md) is the operator's checklist —
+`bash scripts/deploy-wizard.sh` walks it step by step.
+
 ## What a run costs
 
 Real money, every time — there is no free tier or mock mode in the app itself.
-One vote is roughly **$0.0003**, and the panel size comes from `PROFILE` in
-`.env`:
+A vote costs **~$0.00015–0.00017** measured, and the panel size comes from
+`PROFILE` in `.env`:
 
-| profile | panel | ~cost per run |
-|---------|-------|---------------|
-| `dev` (default) | 25 | $0.008 |
-| `demo` | 100 | $0.030 |
-| `prod` | 200 | $0.060 |
+| profile | panel | ~cost per run (measured) |
+|---------|-------|--------------------------|
+| `dev` (default) | 25 | $0.004 |
+| `demo` | 100 | $0.016 |
+| `prod` | 200 | $0.032 |
 
-These are **estimates, not measurements.** The panel moved from `gpt-5-mini` to
-`openai/gpt-5.6-luna` and no paid run has been made on the new model, so the
-per-vote figure is derived from list prices — see the note on `USD_PER_VOTE` in
-`backend/app/config.py` for the derivation and why it rounds up. The last
-*measured* figures, on `gpt-5-mini`, were $0.018 / $0.073 / $0.145.
+These are **measurements**, reconciled against OpenRouter's own USD activity
+view during the model gate run
+([071](https://github.com/Subaru-Goto/PanelVerdict/issues/162),
+[`manipulation-check-luna.md`](docs/research/manipulation-check-luna.md)).
+`USD_PER_VOTE` in `backend/app/config.py` rounds up to `0.0002` — that margin
+is what the warn-and-proceed budget notice gates on, deliberately a little
+pessimistic. The `gpt-5-mini` figures these replaced were $0.018 / $0.073 /
+$0.145 per run, so Luna is roughly 70% cheaper.
 
 `PROFILE` is not in `.example.env` — it defaults to `dev`, and the default is
 the cheapest on purpose: forgetting to choose should cost a cent, not a tenth of
@@ -110,7 +124,7 @@ so they cost only the one targeting call.
 
 ## Known limitations
 
-Four things worth knowing before using the app or judging it. The first is the one that
+Three things worth knowing before using the app or judging it. The first is the one that
 changes what a number means.
 
 **1. The panel is unvalidated on same-meaning copy — measured, not suspected.**
@@ -144,16 +158,16 @@ from a cited source. Two consequences worth knowing:
   ([041](https://github.com/Subaru-Goto/PanelVerdict/issues/139),
   [043](https://github.com/Subaru-Goto/PanelVerdict/issues/141)).
 
-**3. Analyst conversations do not survive a restart.** The checkpointer is
-`InMemorySaver`, so thread history is process-local: restart the server and every
-conversation is gone, and a second worker would not see the first one's threads.
-Reports are unaffected — only the follow-up chat. ([046](https://github.com/Subaru-Goto/PanelVerdict/issues/144))
-
-**4. Both paid endpoints are open.** `/evaluate` and `/chat` have no
-authentication and no rate limiting, and both spend real OpenRouter credit. Do not
-expose this to a network you do not control. The `$10` per-key cap is the only thing
-bounding the damage, and it is a cap on loss, not a control.
-([045](https://github.com/Subaru-Goto/PanelVerdict/issues/143))
+**3. There is no per-user identity, so the spend guard counts addresses.** The
+paid endpoints are no longer open — a shared secret admits only calls made
+through the frontend's server-side proxy, and a Postgres-backed ledger caps runs
+per caller and analyst turns per thread and per caller, refusing before anything
+is bought ([045](https://github.com/Subaru-Goto/PanelVerdict/issues/143)). But
+with no accounts yet, "caller" means the network address the platform reports:
+people behind one NAT share a budget, and somebody with many addresses gets
+many. It bounds casual abuse, not a determined one, and a hard spend cap on the
+OpenRouter key remains the backstop until real per-user auth lands
+([063](https://github.com/Subaru-Goto/PanelVerdict/issues/158)).
 
 ## Next steps
 
@@ -162,8 +176,7 @@ Roughly in the order they would be done, each already specified:
 | next | what it changes |
 |---|---|
 | [018](https://github.com/Subaru-Goto/PanelVerdict/issues/124) | a chunked, embedded, cited corpus, so what a trait level or a credible interval means here comes from a source rather than the model's weights |
-| [045](https://github.com/Subaru-Goto/PanelVerdict/issues/143) | a shared-secret header and a per-key rate limit before anything is deployed |
-| [046](https://github.com/Subaru-Goto/PanelVerdict/issues/144) | `PostgresSaver` on the pool that is already there |
+| [063](https://github.com/Subaru-Goto/PanelVerdict/issues/158) | real per-user identity, which is what turns the spend guard from per-address into per-person |
 | [041](https://github.com/Subaru-Goto/PanelVerdict/issues/139) | which kind of person preferred which variant — the question customers ask next |
 | [044](https://github.com/Subaru-Goto/PanelVerdict/issues/142) | a suggestion for the winning headline, framed as a hypothesis the app can then test |
 | [047](https://github.com/Subaru-Goto/PanelVerdict/issues/145) | structured logs with a correlation id, so a slow or costly run can be traced |
@@ -194,6 +207,7 @@ cd frontend && npm test && npx tsc --noEmit && npx eslint app __tests__
 | `backend/app/analyst.py` | the "Ask the analyst" agent and its tools |
 | `backend/app/seed.py` | pool generation (the only paid CLI) |
 | `frontend/app/` | Next.js report UI and the analyst dock |
+| `frontend/app/api/` | server-side proxy routes — the only place the backend URL and edge secret exist |
 | `db/` | database init |
 | `docs/` | how the thing works and why |
 | `docs/research/` | the sourced numbers — every constant with a citation traces here |

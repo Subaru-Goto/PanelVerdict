@@ -1,4 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import httpx
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, BaseMessage
@@ -6,8 +9,10 @@ from langchain_core.outputs import ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from openai import APIStatusError
+from pgvector.psycopg import register_vector
+from pydantic import SecretStr
 
-from app.config import settings
+from app.config import Settings, settings
 from app.main import (
     app,
     budget_notice,
@@ -51,9 +56,23 @@ _REQUEST_BODY = {
 
 
 @pytest.fixture
-def client(conn, stub_llm):
+def client(conn, stub_llm, monkeypatch):
     """The app with every paid or external dependency replaced: the testcontainer
-    connection, a canned translator, and a stub panel model."""
+    connection, a canned translator, and a stub panel model.
+
+    The edge guard's settings are pinned to their declared defaults, not left
+    to the ambient environment: `Settings` reads the repo-root `.env`, so a
+    developer who has `API_SHARED_SECRET` set for their own deploy would
+    otherwise watch every unauthenticated test turn 401 while CI stayed green.
+    Read from the model's own defaults so the pin cannot drift from them.
+    """
+    for field in (
+        "api_shared_secret",
+        "evaluate_runs_per_day",
+        "chat_turns_per_thread_per_day",
+        "chat_turns_per_caller_per_day",
+    ):
+        monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
     # Every override is a zero-argument callable, never the class itself: FastAPI
     # reads an override's signature as a dependency, so `StubTranslator` bare would
     # turn its `request: TargetRequest` parameter into the endpoint's body model.
@@ -79,6 +98,313 @@ def client(conn, stub_llm):
     app.dependency_overrides[get_checkpointer] = lambda: saver
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+def test_a_caller_without_the_shared_secret_cannot_start_a_paid_run(
+    client, conn, monkeypatch
+) -> None:
+    """045/#143: the browser's proxy holds the secret; a caller without it gets
+    401 and — the property that matters — costs nothing: neither the translator
+    nor the panel model is ever invoked. CORS is a browser courtesy, so this
+    refusal is the only thing standing between curl and $0.145 a run."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    calls = {"translate": 0, "vote": 0}
+
+    class CountingTranslator:
+        def translate(self, request):
+            calls["translate"] += 1
+            return StubTranslator().translate(request)
+
+    class CountingLLM:
+        configuration = "stub"
+
+        def vote(self, **kwargs):
+            calls["vote"] += 1
+            return voted()
+
+    app.dependency_overrides[get_translator] = lambda: CountingTranslator()
+    app.dependency_overrides[get_panel_llm] = lambda: CountingLLM()
+    seed_japanese(conn, 5)
+
+    response = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 401
+    assert calls == {"translate": 0, "vote": 0}
+
+
+def test_the_proxy_with_the_right_secret_passes_the_gate(
+    client, conn, monkeypatch
+) -> None:
+    """The guard is a gate, not a wall: the Next proxy's header opens it."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    seed_japanese(conn, 5)
+
+    response = client.post(
+        "/evaluate", json=_REQUEST_BODY, headers={"X-API-Key": "edge-secret"}
+    )
+
+    assert response.status_code == 200
+
+
+def test_chat_without_the_secret_is_refused_before_the_stream_opens(
+    client, monkeypatch
+) -> None:
+    """A stream cannot change its status after the first byte, so the refusal
+    has to come before there is a stream at all — 401, not an error event."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+
+    response = client.post(
+        "/chat",
+        json={
+            "result": _CHAT_RESULT,
+            "thread_id": "t-gate",
+            "message": "why?",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_a_caller_over_the_run_limit_is_refused_before_any_model_call(
+    client, conn, monkeypatch
+) -> None:
+    """045/#143's other half: the secret says a request came through our proxy,
+    the ledger says how often this caller has asked. Runs past the window's
+    limit get 429 and buy nothing — the counter lives in Postgres, so neither
+    a redeploy nor a second worker forgets it."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 2)
+    calls = {"vote": 0}
+
+    class CountingLLM:
+        configuration = "stub"
+
+        def vote(self, **kwargs):
+            calls["vote"] += 1
+            return voted()
+
+    app.dependency_overrides[get_panel_llm] = lambda: CountingLLM()
+    seed_japanese(conn, 5)
+    headers = {"X-API-Key": "edge-secret", "X-Client-Id": "203.0.113.9"}
+
+    first = client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
+    second = client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
+    votes_bought_by_honest_runs = calls["vote"]
+    third = client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert third.status_code == 429
+    assert calls["vote"] == votes_bought_by_honest_runs
+
+
+def test_a_thread_over_its_turn_limit_is_refused_before_the_stream(
+    client, conn, monkeypatch
+) -> None:
+    """The stream cannot change its status after the first byte, so the limit
+    speaks in HTTP: 429, no stream, no model call. Per thread, not per caller —
+    a request is not the unit of /chat's cost, a thread's turns are — and a
+    fresh thread is untouched by a sibling's exhaustion."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "chat_turns_per_thread_per_day", 2)
+    invocations = {"model": 0}
+
+    class CountingModel(ScriptedChatModel):
+        def _generate(self, messages, **kwargs):
+            invocations["model"] += 1
+            return super()._generate(messages, **kwargs)
+
+    app.dependency_overrides[get_analyst] = lambda: CountingModel(
+        responses=[AIMessage(content="ok")]
+    )
+    headers = {"X-API-Key": "edge-secret", "X-Forwarded-For": "203.0.113.9"}
+
+    def turn(thread_id: str):
+        return client.post(
+            "/chat",
+            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "why?"},
+            headers=headers,
+        )
+
+    first, second = turn("t-limit"), turn("t-limit")
+    spent_by_honest_turns = invocations["model"]
+    third = turn("t-limit")
+    spent_after_refusal = invocations["model"]
+    fresh_thread = turn("t-other")
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert third.status_code == 429
+    assert spent_after_refusal == spent_by_honest_turns
+    assert fresh_thread.status_code == 200
+
+
+def test_a_forged_forwarding_header_does_not_buy_a_fresh_budget(
+    client, conn, monkeypatch
+) -> None:
+    """The rate-limit key must not be something the caller can choose.
+    X-Forwarded-For is caller-settable — platforms append rather than replace,
+    so its leftmost entry is attacker text — and keying on it let anyone mint
+    unlimited budgets by varying one header. Only X-Client-Id counts, which the
+    proxy overwrites from a platform value the visitor cannot set; the secret
+    is what makes that header trustworthy."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+    seed_japanese(conn, 5)
+
+    def run(forged: str):
+        return client.post(
+            "/evaluate",
+            json=_REQUEST_BODY,
+            headers={
+                "X-API-Key": "edge-secret",
+                "X-Client-Id": "198.51.100.7",
+                "X-Forwarded-For": forged,
+            },
+        )
+
+    first = run("203.0.113.1")
+    second = run("203.0.113.2")
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+
+
+def test_rotating_thread_ids_does_not_escape_the_chat_limit(
+    client, conn, monkeypatch
+) -> None:
+    """The client mints thread ids, so a per-thread count alone is a limit the
+    caller can reset at will. The thread cap still bounds one runaway
+    conversation; this pins the caller cap that bounds the abuser."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "chat_turns_per_thread_per_day", 99)
+    monkeypatch.setattr(settings, "chat_turns_per_caller_per_day", 2)
+
+    def turn(thread_id: str):
+        return client.post(
+            "/chat",
+            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "hi"},
+            headers={"X-API-Key": "edge-secret", "X-Client-Id": "198.51.100.7"},
+        )
+
+    first, second = turn("t-a"), turn("t-b")
+    third = turn("t-c")
+
+    assert (first.status_code, second.status_code) == (200, 200)
+    assert third.status_code == 429
+
+
+def test_a_non_ascii_secret_header_is_a_refusal_not_a_crash(
+    client, monkeypatch
+) -> None:
+    """Headers arrive latin-1-decoded, and `hmac.compare_digest` refuses to
+    compare strings holding non-ASCII codepoints — so a byte like 0xe9 turned
+    the 401 into a 500 with a traceback. Compared as bytes, a wrong key is
+    just a wrong key, whatever its bytes."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+
+    # Sent as raw bytes: this byte cannot survive an ASCII encode, which is
+    # exactly the shape a hostile client puts on the wire.
+    response = client.post(
+        "/evaluate", json=_REQUEST_BODY, headers={b"X-API-Key": b"caf\xe9"}
+    )
+
+    assert response.status_code == 401
+
+
+def test_concurrent_runs_cannot_outrun_the_ledger(
+    client, conn, pg_url, monkeypatch
+) -> None:
+    """Count-then-insert is not a limit under load: READ COMMITTED hides other
+    transactions' uncommitted rows and sync handlers run in a thread pool, so
+    simultaneous requests all read the same 'used' and all pass. The database
+    has to arbitrate, not the application.
+
+    Each request opens its own connection here, as in production — sharing the
+    fixture's single connection would serialize the very contention under test.
+    """
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 3)
+    seed_japanese(conn, 2)
+
+    def own_connection():
+        with psycopg.connect(pg_url) as connection:
+            register_vector(connection)
+            yield connection
+
+    app.dependency_overrides[get_conn] = own_connection
+    headers = {"X-API-Key": "edge-secret", "X-Client-Id": "198.51.100.7"}
+
+    def run() -> int:
+        return client.post("/evaluate", json=_REQUEST_BODY, headers=headers).status_code
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        codes = [f.result() for f in [pool.submit(run) for _ in range(10)]]
+
+    assert codes.count(200) == 3
+    assert codes.count(429) == 7
+
+
+def test_a_caller_cap_refusal_does_not_spend_the_threads_budget(
+    client, conn, monkeypatch
+) -> None:
+    """Two caps, one recording step: a request the caller cap refuses must not
+    have consumed a turn from the thread it named, or tripping the caller cap
+    would quietly cap conversations for reasons unrelated to them."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    monkeypatch.setattr(settings, "chat_turns_per_thread_per_day", 5)
+    monkeypatch.setattr(settings, "chat_turns_per_caller_per_day", 1)
+    headers = {"X-API-Key": "edge-secret", "X-Client-Id": "198.51.100.7"}
+
+    def turn(thread_id: str):
+        return client.post(
+            "/chat",
+            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "hi"},
+            headers=headers,
+        )
+
+    turn("t-first")  # spends the caller's only turn
+    refused = turn("t-second")
+
+    assert refused.status_code == 429
+    # The refused thread kept all five of its turns: nothing was recorded.
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM request_ledger WHERE endpoint = '/chat'"
+            " AND caller = 't-second'"
+        )
+        row = cur.fetchone()
+    assert row is not None and row[0] == 0
+
+
+def test_a_cap_of_zero_is_the_local_escape_hatch(client, conn, monkeypatch) -> None:
+    """Unlike the secret, the caps had no off value, so a developer iterating
+    on the cheap dev profile was locked out after 25 runs with no remedy but
+    hand-written SQL. Zero means unlimited."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 0)
+    seed_japanese(conn, 2)
+
+    codes = [client.post("/evaluate", json=_REQUEST_BODY).status_code for _ in range(3)]
+
+    assert codes == [200, 200, 200]
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM request_ledger")
+        row = cur.fetchone()
+    assert row is not None and row[0] == 0
+
+
+def test_a_malformed_payload_does_not_spend_a_run(client, conn, monkeypatch) -> None:
+    """013's rule is that a refused request costs nothing, and a payload the
+    schema rejects buys no model call — so it must not spend budget either.
+    Dependencies resolve before the endpoint's own body is validated, so the
+    limiter has to see the parsed body itself to get this order right."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 5)
+
+    response = client.post("/evaluate", json={"headline_a": "only one field"})
+
+    assert response.status_code == 422
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM request_ledger")
+        row = cur.fetchone()
+    assert row is not None and row[0] == 0
 
 
 def test_evaluate_returns_the_full_panel_test_payload(client, conn) -> None:

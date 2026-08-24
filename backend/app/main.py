@@ -1,11 +1,13 @@
+import hmac
 import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from typing import NamedTuple
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -90,6 +92,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
+
+# The two endpoints that spend money (045/#143). CORS below is a browser
+# courtesy that curl ignores; this middleware is the actual gate, and it runs
+# before any dependency does work — a refused request costs nothing, the same
+# property 013 established for refused content. Timing-safe comparison because
+# the whole point of the secret is an attacker guessing it.
+_PAID_PATHS = ("/evaluate", "/chat")
+
+
+@app.middleware("http")
+async def require_shared_secret(request: Request, call_next):
+    secret = settings.api_shared_secret
+    if secret is not None and request.url.path in _PAID_PATHS:
+        # Compared as bytes: Starlette hands header values back latin-1
+        # decoded, and `compare_digest` raises TypeError on a str holding a
+        # non-ASCII codepoint — so `x-api-key: café` used to become a 500 with
+        # a traceback instead of a plain refusal.
+        offered = request.headers.get("x-api-key", "").encode("latin-1")
+        if not hmac.compare_digest(offered, secret.get_secret_value().encode()):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "missing or wrong API secret"},
+            )
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -205,6 +232,150 @@ def get_conn() -> Iterator[psycopg.Connection]:
         yield conn
 
 
+class _Charge(NamedTuple):
+    """One cap to enforce: how many rows this key may hold in the window."""
+
+    endpoint: str
+    key: str
+    limit: int
+    unit: str
+
+
+def caller_id(request: Request) -> str:
+    """Who to count, from the one header a visitor cannot choose.
+
+    X-Client-Id is set by our proxy, which overwrites whatever the caller sent
+    using a value its platform supplies — and the proxy is trustworthy here
+    precisely because the shared secret the middleware just checked proves the
+    request came from it. Deliberately NOT X-Forwarded-For: platforms append
+    rather than replace, so its leftmost entry is caller-written text, and
+    keying a rate limit on it let anyone mint unlimited budgets by varying one
+    header. Falling back to the socket peer keeps a direct call (which still
+    needs the secret) counted rather than uncounted.
+    """
+    asserted = request.headers.get("x-client-id", "").strip()
+    if asserted:
+        return asserted
+    return request.client.host if request.client else "unknown"
+
+
+def enforce_run_limit(
+    request: EvaluateRequest,
+    caller: str = Depends(caller_id),
+    conn: psycopg.Connection = Depends(get_conn),
+) -> None:
+    """Postgres-backed runs-per-day gate on the paid run (045/#143).
+
+    Declares the body it never reads, and that is the point: dependencies
+    resolve before the endpoint's own body is validated, so without this a
+    payload the schema rejects would spend one of the caller's runs on its way
+    to a 422. Validating here puts the free refusal first, keeping 013's rule
+    that a refused request costs nothing. Same name as the handler's parameter,
+    or FastAPI would treat the two as separate embedded body fields.
+
+    The count lives in Postgres for the same reason the checkpointer does
+    (#144) — a redeploy or a second worker must not forget it. Refusal costs
+    nothing: this raises before the handler and its model calls run. The
+    attempt is recorded before the run so a caller cannot probe for free, and
+    the write sweeps the caller's expired rows so the ledger cannot accumulate
+    rows nobody will read again (040's lesson).
+    """
+    _charge_ledger(
+        conn,
+        _Charge("/evaluate", caller, settings.evaluate_runs_per_day, "runs"),
+    )
+
+
+def enforce_turn_limit(
+    request: ChatRequest,
+    caller: str = Depends(caller_id),
+    conn: psycopg.Connection = Depends(get_conn),
+) -> None:
+    """Two counts, because each bounds a different runaway (045/#143).
+
+    Per thread, since a request is not the unit of /chat's cost — a turn is,
+    and turns accumulate in a thread. Per caller as well, because the *client*
+    mints thread ids: a thread-only cap is one the abuser resets by sending a
+    new id, so it would bound the honest conversation and nothing else. The
+    refusal must land before there is a stream to be unable to refuse.
+    Declaring the body model here shares FastAPI's single parse with the
+    handler.
+    """
+    _charge_ledger(
+        conn,
+        _Charge(
+            "/chat",
+            request.thread_id,
+            settings.chat_turns_per_thread_per_day,
+            "turns for this thread",
+        ),
+        _Charge(
+            "/chat-caller", caller, settings.chat_turns_per_caller_per_day, "turns"
+        ),
+    )
+
+
+def _charge_ledger(conn: psycopg.Connection, *charges: _Charge) -> None:
+    """Enforce every cap, then record one attempt against each — or refuse.
+
+    Count-then-insert is not a limit under load: READ COMMITTED cannot see
+    another transaction's uncommitted rows and sync handlers run in a thread
+    pool, so simultaneous requests all read the same `used` and all pass — 10
+    concurrent requests took 7 slots out of a limit of 3, measured. A per-key
+    advisory lock makes the database arbitrate; it is held to the end of this
+    transaction and taken in a stable order so two callers charging the same
+    pair of keys cannot deadlock.
+
+    All caps are checked before any is recorded, so a request refused by one
+    cap does not silently consume another's budget. `limit <= 0` disables a cap
+    outright — the escape hatch for local iteration.
+
+    The write sweeps the key's expired rows, so the ledger never accumulates
+    rows nobody will read again (040's lesson).
+    """
+    active = [charge for charge in charges if charge.limit > 0]
+    if not active:
+        return
+    window = "requested_at > now() - interval '24 hours'"
+    with conn.cursor() as cur:
+        for charge in sorted(active):
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"{charge.endpoint}:{charge.key}",),
+            )
+        for charge in active:
+            cur.execute(
+                "DELETE FROM request_ledger WHERE endpoint = %s AND caller = %s"
+                " AND requested_at < now() - interval '24 hours'",
+                (charge.endpoint, charge.key),
+            )
+            cur.execute(
+                "SELECT count(*) FROM request_ledger"
+                f" WHERE endpoint = %s AND caller = %s AND {window}",
+                (charge.endpoint, charge.key),
+            )
+            row = cur.fetchone()
+            if (int(row[0]) if row else 0) >= charge.limit:
+                # Release the locks now rather than at request teardown; the
+                # discarded sweep is opportunistic and costs nothing.
+                conn.rollback()
+                # The sentence is this codebase's own and names the remedy; the
+                # counted identity never travels back.
+                raise HTTPException(
+                    status_code=429,
+                    detail=(
+                        f"limit reached ({charge.limit} {charge.unit} per day)"
+                        " — try again tomorrow"
+                    ),
+                )
+        for charge in active:
+            cur.execute(
+                "INSERT INTO request_ledger (endpoint, caller) VALUES (%s, %s)",
+                (charge.endpoint, charge.key),
+            )
+    conn.commit()
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "db": "up" if check_connection() else "down"}
@@ -213,6 +384,7 @@ def health() -> dict[str, str]:
 @app.post("/evaluate")
 def evaluate(
     request: EvaluateRequest,
+    _limit: None = Depends(enforce_run_limit),
     llm: PanelLLM = Depends(get_panel_llm),
     translator: TargetTranslator = Depends(get_translator),
     conn: psycopg.Connection = Depends(get_conn),
@@ -274,6 +446,7 @@ def get_checkpointer(request: Request) -> BaseCheckpointSaver:
 @app.post("/chat")
 def chat(
     request: ChatRequest,
+    _limit: None = Depends(enforce_turn_limit),
     analyst: BaseChatModel = Depends(get_analyst),
     conn: psycopg.Connection = Depends(get_conn),
     embedder: Embedder = Depends(get_embedder),

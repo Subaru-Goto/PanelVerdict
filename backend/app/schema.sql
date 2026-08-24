@@ -49,3 +49,19 @@ CREATE TABLE IF NOT EXISTS votes (
     presentation_order  text[] NOT NULL,
     reason              text NOT NULL
 );
+
+-- One row per paid request that passed the edge gate (045/#143): the rate
+-- limiter counts a caller's rows inside the window before letting a run start.
+-- In Postgres, not process memory, for the same reason the checkpointer is
+-- (#144): a redeploy or a second worker must not forget the count. Rows older
+-- than the widest window are dead weight; the limiter sweeps them
+-- opportunistically on write.
+CREATE TABLE IF NOT EXISTS request_ledger (
+    endpoint     text NOT NULL,
+    caller       text NOT NULL,                     -- the counted identity: forwarded
+                                                    -- client IP (/evaluate), thread id (/chat)
+    requested_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS request_ledger_window_idx
+    ON request_ledger (endpoint, caller, requested_at);

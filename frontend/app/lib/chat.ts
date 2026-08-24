@@ -29,7 +29,8 @@ export type ChatInput = {
 export async function* streamChat(
   input: ChatInput,
 ): AsyncGenerator<ChatStreamEvent> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/chat`, {
+  // Same origin, through the proxy route (045/#143); the stream pipes through.
+  const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

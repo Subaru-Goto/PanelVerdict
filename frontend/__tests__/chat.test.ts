@@ -45,7 +45,8 @@ describe("streamChat", () => {
     await collect();
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url.endsWith("/chat")).toBe(true);
+    // Same origin, exact path: the stream flows through the proxy (045/#143).
+    expect(url).toBe("/api/chat");
     expect(JSON.parse(init.body as string)).toEqual({
       thread_id: "t-1",
       message: "Why did it stop early?",
@@ -91,7 +92,9 @@ describe("streamChat", () => {
   it("throws the backend's own refusal sentence on a pre-stream 422", async () => {
     mockFetch(
       new Response(
-        JSON.stringify({ detail: "tally names variants ['x'], expected a and b" }),
+        JSON.stringify({
+          detail: "tally names variants ['x'], expected a and b",
+        }),
         { status: 422 },
       ),
     );

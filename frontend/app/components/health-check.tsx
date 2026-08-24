@@ -13,7 +13,9 @@ export default function HealthCheck() {
 
     async function load() {
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/health`, {
+        // Same origin, through the proxy (045/#143) — the backend URL lives
+        // only in the server-side route handlers.
+        const res = await fetch("/api/health", {
           signal: controller.signal,
         });
         if (!res.ok) throw new Error(`API responded ${res.status}`);
