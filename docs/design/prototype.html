@@ -140,13 +140,14 @@
 
   /* ---------- step 1 ---------- */
   .pair{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+  .pair .field{min-width:0}
   @media(max-width:860px){.pair{grid-template-columns:1fr}}
   .field{margin-top:34px}
   .field .kicker{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;gap:16px}
   .count{font-size:11px;letter-spacing:.05em;color:var(--ink-3);text-transform:none;font-weight:400}
   .opt{text-transform:none;letter-spacing:.05em;color:var(--ink-3);font-weight:400}
   /* A headline is one line, so it gets an underline, not a box. */
-  input.line{width:100%;font:inherit;font-size:22px;font-weight:300;border:none;border-bottom:1.5px solid var(--line);
+  input.line{width:100%;min-width:0;font:inherit;font-size:22px;font-weight:300;border:none;border-bottom:1.5px solid var(--line);
     padding:8px 2px;outline:none;background:transparent;transition:border-color .15s}
   input.line:focus{border-bottom-color:var(--ink)}
   textarea{width:100%;min-height:92px;font:inherit;font-size:13px;font-weight:300;line-height:1.6;
@@ -162,7 +163,7 @@
   .allowance{font-size:12.5px;font-weight:300;color:var(--ink-3)}
   .vocab{margin-top:12px;max-width:600px;font-size:12px;font-weight:300;color:var(--ink-2)}
   .vocab-row{display:flex;gap:12px;padding:4px 0;align-items:baseline}
-  .vocab-k{flex:none;width:64px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--ink)}
+  .vocab-k{flex:none;width:86px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--ink)}
   .vocab-k.not{color:var(--amber)}
   .cty-row{display:flex;gap:10px;flex-wrap:wrap}
   .cty{font:inherit;font-size:13px;font-weight:500;color:var(--ink-2);background:none;border:1px solid var(--line);
@@ -170,6 +171,7 @@
   .cty:hover{border-color:var(--ink);color:var(--ink)}
   .cty.on{background:var(--ink);color:#fff;border-color:var(--ink)}
   .sel-row{display:flex;gap:28px;flex-wrap:wrap}
+  .sel-stretch{justify-content:space-between;gap:32px}
   .sel-row label{display:flex;flex-direction:column;gap:7px;font-size:11px;letter-spacing:.14em;
     text-transform:uppercase;font-weight:600;color:var(--ink-2)}
   .sel-row select{font:inherit;font-size:14px;font-weight:400;color:var(--ink);border:none;
@@ -177,7 +179,7 @@
     outline:none;min-width:130px;cursor:pointer}
   .sel-row select:focus{border-bottom-color:var(--ink)}
   .age-pair{display:flex;align-items:baseline;gap:10px}
-  .age-in{width:64px;font:inherit;font-size:14px;font-weight:400;color:var(--ink);border:none;
+  .age-in{width:64px;text-align:center;font:inherit;font-size:14px;font-weight:400;color:var(--ink);border:none;
     border-bottom:1.5px solid var(--line);border-radius:0;padding:6px 2px;background:transparent;outline:none}
   .age-in:focus{border-bottom-color:var(--ink)}
   .chip-set{display:flex;gap:8px;flex-wrap:wrap}
@@ -205,7 +207,8 @@
   .trait-name{font-size:14px;font-weight:500}
   .trait-val{font-size:13px;color:var(--ink-2);font-weight:300;font-variant-numeric:tabular-nums}
   .tag{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2);
-    border:1px solid var(--line);border-radius:var(--pill);padding:2px 9px;margin-left:10px;vertical-align:2px}
+    border:1px solid var(--line);border-radius:var(--pill);padding:2px 9px;margin-left:10px;vertical-align:2px;
+    white-space:nowrap;display:inline-block}
   .tag-unmatched{color:var(--amber);border-color:var(--amber)}
   .roster{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
   .persona{font-size:12px;font-weight:300;color:var(--ink-2);border:1px solid var(--line);border-radius:var(--pill);padding:5px 12px}
@@ -378,6 +381,9 @@
     .sheet{padding:32px 24px}
     .dock{width:100%}
     .legend{flex-direction:column;gap:12px}
+    .sel-stretch{justify-content:center;gap:26px}
+    .sel-stretch label{align-items:center;text-align:center}
+    .sel-stretch .chip-set{justify-content:center}
     .dock-btn{bottom:72px;right:16px}
     .idbar{left:12px;right:12px;bottom:12px;flex-wrap:wrap;justify-content:center}
   }
@@ -513,8 +519,7 @@
        everything else — query translation is half the RAG story. -->
   <div class="field" style="max-width:640px">
     <div class="kicker">
-      <span>Country</span>
-      <span class="count">The pool holds these three</span>
+      <span>Country <span class="opt2">the pool holds these countries</span></span>
     </div>
     <div class="cty-row">
       <button class="cty on" data-c="US" onclick="toggleCountry('US')">United States</button>
@@ -526,27 +531,27 @@
   <!-- Demographics are selects, not text (amended 2026-08-25): the pool serves
        exactly these four dimensions, real briefs speak them, and a control
        cannot be misread. The translator no longer reads demographics. -->
-  <div class="field" style="max-width:640px">
+  <div class="field">
     <div class="kicker">
-      <span>Demographics <span class="opt">— optional</span></span>
-      <span class="count">Any means unfiltered</span>
+      <span>Demographics <span class="opt">— optional · any means unfiltered</span></span>
     </div>
-    <div class="sel-row">
-      <label>Age
+    <!-- Multi-choice, matching the backend: education and income_bands are
+         lists. Nothing picked means unfiltered. One stretched row: four
+         groups sharing the content width instead of huddling left. -->
+    <div class="sel-row sel-stretch">
+      <label>Age <span class="opt2">blank = all ages</span>
         <span class="age-pair">
           <input class="age-in" id="age-min" type="number" min="18" max="100" placeholder="any" oninput="onAudienceInput()" aria-label="Minimum age">
           <span style="color:var(--ink-3)">to</span>
           <input class="age-in" id="age-max" type="number" min="18" max="100" placeholder="any" oninput="onAudienceInput()" aria-label="Maximum age">
         </span>
       </label>
-      <label>Gender
-        <select id="sel-gender" onchange="onAudienceInput()">
-          <option>Any</option><option>Women</option><option>Men</option>
-        </select></label>
-    </div>
-    <!-- Multi-choice, matching the backend: education and income_bands are
-         lists. Nothing picked means unfiltered. -->
-    <div class="sel-row" style="margin-top:24px">
+      <label>Gender <span class="opt2">none picked = all</span>
+        <span class="chip-set" id="gender-set">
+          <button class="cty sm" data-v="Women" onclick="toggleChip(this)">Women</button>
+          <button class="cty sm" data-v="Men" onclick="toggleChip(this)">Men</button>
+        </span>
+      </label>
       <label>Education <span class="opt2">none picked = all</span>
         <span class="chip-set" id="edu-set">
           <button class="cty sm" data-v="Secondary" onclick="toggleChip(this)">Secondary</button>
@@ -574,17 +579,17 @@
       <span>Who else are they? <span class="opt">— optional</span></span>
       <span class="count">Blank means demographics only</span>
     </div>
-    <textarea id="input-audience" oninput="onAudienceInput()" placeholder="Parents who shop for groceries online."></textarea>
+    <textarea id="input-audience" oninput="onAudienceInput()" maxlength="200" placeholder="Parents who shop for groceries online."></textarea>
     <div class="vocab">
       <div class="vocab-row"><span class="vocab-k">Matched</span>
-        <span>country and the demographics above are sampled from surveyed data</span></div>
-      <div class="vocab-row"><span class="vocab-k not">Enacted</span>
-        <span>what you write here is role-played — each panelist is told to be this, and the verdict says so</span></div>
+        <span>country and the demographics above are picked from real survey data</span></div>
+      <div class="vocab-row"><span class="vocab-k not">Role-played</span>
+        <span>what you write here, every panelist is asked to act out — and the verdict says so</span></div>
     </div>
     <!-- An audience already accepted is not re-approved on every run: same
          selections, same words, same seats. Any change reopens the gate. -->
     <div class="read-as" id="read-as" style="display:none">
-      <span><b>Reading accepted:</b> 30–50 · United States · “parents who shop for groceries online” enacted · <span id="read-as-size">24</span> seated</span>
+      <span><b>Reading accepted:</b> <span id="read-as-text"></span></span>
       <button class="btn-link" onclick="go('step2')">Change</button>
     </div>
   </div>
@@ -638,24 +643,19 @@
     <div>
       <p class="kicker" style="margin-bottom:6px">What the pool could match</p>
       <p class="chart-hint">Every trait you asked for, and what the pool did with it.</p>
-      <div class="trait-row">
-        <span class="trait-name">Country <span class="tag">Selected</span></span>
-        <span class="trait-val">United States</span>
-      </div>
-      <div class="trait-row">
-        <span class="trait-name">Age <span class="tag">Selected</span></span>
-        <span class="trait-val">30–50</span>
-      </div>
-      <div class="trait-row">
-        <span class="trait-name">“Parents who shop for groceries online” <span class="tag tag-unmatched">Enacted</span></span>
-        <span class="trait-val">told to each panelist, not sampled</span>
-      </div>
+      <!-- Rendered from the form's controls — every selection appears here. -->
+      <div id="gate-rows"></div>
 
-      <div class="notice warn">
-        <b>Part of this audience is enacted, not matched.</b> The pool holds no parenthood or shopping
-        data; each panelist will be instructed to be a parent who shops for groceries online, on top
-        of their surveyed demographics. That part of the verdict rests on the model’s portrayal, and
-        the report says so.
+      <!-- The interrupt's one artifact: a small model turns the audience words
+           into the instruction each panelist will act. Editing it here IS the
+           human-in-the-loop — the edit resumes the run, not a page. -->
+      <div id="instr-block" style="display:none">
+        <p class="kicker" style="margin:28px 0 6px">The instruction each panelist will act</p>
+        <p class="chart-hint">
+          Written from your words by a small model. Edit it directly if it reads wrong — panelists
+          act it on top of who they already are, and the report will say which part was acted.
+        </p>
+        <textarea id="instr" maxlength="240" aria-label="The instruction each panelist will act"></textarea>
       </div>
 
       <div class="roster">
@@ -688,8 +688,9 @@
     </div>
 
     <p class="hitl-note">
-      Nothing has been spent. Selections and your words reach this page as they are —
-      the first model call is the run itself.
+      The votes are bought only when you accept. If you wrote an audience, one small call
+      turned it into the instruction above — that call is the only spend so far, and it
+      repeats only when your words change, never per run.
     </p>
   </div>
 </section>
@@ -722,7 +723,7 @@
   <div class="page-head">
     <div>
       <p class="kicker">Verdict</p>
-      <p class="meta" id="report-meta">United States, 30–50 · context enacted</p>
+      <p class="meta" id="report-meta">United States, 30–50 · partly role-played</p>
     </div>
     <button class="btn btn-quiet" onclick="go('step1')">Test another line</button>
   </div>
@@ -780,9 +781,9 @@
     </div>
 
   <div class="notice warn">
-    <b>Part of this audience was enacted, not matched.</b> “Parents who shop for groceries online” was
-    instructed, not sampled — the pool holds no such data. The demographics are surveyed; that part of
-    the portrayal is the model’s.
+    <b>Part of this audience was role-played.</b> “Parents who shop for groceries online” was acted
+    on instruction — the pool holds no data to pick them by. The demographics are real survey data;
+    the acting is the model’s.
   </div>
 
   <div class="votes">
@@ -972,6 +973,8 @@ const flow = {
   runTimer: null,
   beforeStates: null, // where the states gallery was opened from
   pendingView: null,  // a form view blocked by the wall, resumed after sign-in
+  acceptedSummary: '',
+  instrFor: null,     // the audience text the shown instruction was written from
   history: [],        // this account's saved tests (in-memory stand-in)
   histSeq: 0,
 };
@@ -992,6 +995,7 @@ function go(view){
   document.getElementById('states-toggle').classList.toggle('on', view === 'states');
   const step = {step1:1, step2:2, step3:3, step4:4}[view];
   if (step) { flow.step = step; renderSteppers(); }
+  if (view === 'step2') renderGate();
   document.getElementById('dock-btn').style.display = view === 'step4' ? 'flex' : 'none';
   if (view !== 'step4') closeDock();
   if (view !== 'step3' && flow.runTimer) { clearTimeout(flow.runTimer); flow.runTimer = null; }
@@ -1089,12 +1093,11 @@ function onAudienceInput(){ renderRunControls(); }
    trains the reader to dismiss the one approval that matters. */
 function audienceKey(){
   const cts = ['US', 'DE', 'JP'].filter(c => flow.countries[c]).join(',');
-  const chips = ['edu-set', 'income-set'].map(id =>
+  const chips = ['gender-set', 'edu-set', 'income-set'].map(id =>
     [...document.querySelectorAll('#' + id + ' .cty.on')].map(b => b.dataset.v).join(',')).join('|');
   const age = document.getElementById('age-min').value + '-' + document.getElementById('age-max').value;
-  const gender = document.getElementById('sel-gender').value;
   return document.getElementById('input-audience').value.trim() +
-    '|' + cts + '|' + age + '|' + gender + '|' + chips;
+    '|' + cts + '|' + age + '|' + chips;
 }
 
 function gateNeeded(){
@@ -1123,6 +1126,7 @@ function renderRunControls(){
   const need = gateNeeded();
   document.getElementById('to-panel').textContent = need ? 'Preview the panel' : 'Run the panel';
   document.getElementById('read-as').style.display = need ? 'none' : 'flex';
+  if (!need) document.getElementById('read-as-text').textContent = flow.acceptedSummary || '';
   const al = document.getElementById('allowance');
   if (flow.signedIn) {
     al.style.display = 'inline';
@@ -1140,7 +1144,7 @@ function fillSample(){
   document.getElementById('input-audience').value = 'Parents who shop for groceries online.';
   document.getElementById('age-min').value = 30;
   document.getElementById('age-max').value = 50;
-  document.getElementById('sel-gender').value = 'Any';
+  setChips('gender-set', []);
   setChips('edu-set', []);
   setChips('income-set', []);
   flow.countries = { US: true, DE: false, JP: false };
@@ -1160,8 +1164,75 @@ function toPanel(){
 }
 
 /* ------------------------------------------------------------------ step 2 */
+const COUNTRY_NAME = { US: 'United States', DE: 'Germany', JP: 'Japan' };
+
+function readControls(){
+  const mn = document.getElementById('age-min').value;
+  const mx = document.getElementById('age-max').value;
+  const picks = id => [...document.querySelectorAll('#' + id + ' .cty.on')].map(b => b.dataset.v);
+  return {
+    countries: ['US', 'DE', 'JP'].filter(c => flow.countries[c]).map(c => COUNTRY_NAME[c]),
+    age: (mn || mx) ? (mn && mx ? `${mn}–${mx}` : mn ? `${mn} and over` : `up to ${mx}`) : null,
+    gender: picks('gender-set'),
+    education: picks('edu-set'),
+    income: picks('income-set'),
+    // trailing full stop dropped so the quote nests cleanly in sentences
+    text: document.getElementById('input-audience').value.trim().replace(/\.$/, ''),
+  };
+}
+
+function renderGate(){
+  const c = readControls();
+  const row = (name, val) => `
+    <div class="trait-row">
+      <span class="trait-name">${name} <span class="tag">Selected</span></span>
+      <span class="trait-val">${val}</span>
+    </div>`;
+  let rows = row('Country', c.countries.join(', '));
+  if (c.age) rows += row('Age', c.age);
+  if (c.gender.length) rows += row('Gender', c.gender.join(', '));
+  if (c.education.length) rows += row('Education', c.education.join(', '));
+  if (c.income.length) rows += row('Income', c.income.join(', '));
+  if (c.text) rows += `
+    <div class="trait-row">
+      <span class="trait-name">“${c.text}” <span class="tag tag-unmatched">Role-played</span></span>
+      <span class="trait-val">no data to pick them by — acted instead, per the instruction below</span>
+    </div>`;
+  document.getElementById('gate-rows').innerHTML = rows;
+  const block = document.getElementById('instr-block');
+  block.style.display = c.text ? 'block' : 'none';
+  if (c.text && flow.instrFor !== c.text) {
+    // One small-model call per audience change, never per run. An in-place
+    // edit below costs nothing and needs no regeneration — the edit IS the
+    // instruction that runs.
+    document.getElementById('instr').value = generateInstruction(c.text);
+    flow.instrFor = c.text;
+  }
+}
+
+function generateInstruction(text){
+  // Stands in for the cheap rewrite call; the fixture gets the real shape.
+  if (/^parents who shop for groceries online$/i.test(text))
+    return 'You are a parent of young children, and you buy your groceries online.';
+  return 'You are ' + text.charAt(0).toLowerCase() + text.slice(1) + '.';
+}
+
+function audienceSummary(){
+  const c = readControls();
+  const parts = [];
+  if (c.age) parts.push(c.age);
+  parts.push(c.countries.join(' & '));
+  if (c.gender.length) parts.push(c.gender.join(', '));
+  if (c.education.length) parts.push(c.education.join(', '));
+  if (c.income.length) parts.push(c.income.join(', '));
+  if (c.text) parts.push(`“${c.text}” role-played`);
+  parts.push(`${flow.panelSize} seated`);
+  return parts.join(' · ');
+}
+
 function acceptPanel(){
   flow.accepted = audienceKey();
+  flow.acceptedSummary = audienceSummary();
   renderRunControls();
   attemptRun();
 }
@@ -1311,7 +1382,7 @@ function renderReport(){
   const b = flow.b || 'Members save half price this week';
   document.getElementById('winner-line').textContent = `“${a}”`;
   document.getElementById('loser-line').textContent = `over “${b}”`;
-  document.getElementById('report-meta').textContent = 'United States, 30–50 · context enacted';
+  document.getElementById('report-meta').textContent = 'United States, 30–50 · partly role-played';
   document.getElementById('pref-count').textContent =
     `${Math.round(flow.panelSize * 0.71)} of ${flow.panelSize}`;
   renderVotes();
@@ -1377,7 +1448,7 @@ const ANSWERS = {
   'how sure are we about the winner?':
     'Fairly, with a caveat. Given these 24 votes there is a 94% chance A is genuinely preferred by readers like these. That is a statement about this panel, not about your customers — a synthetic panel can be wrong about a real audience in ways these numbers cannot see.',
   'who was on this panel?':
-    'Twenty-four readers in the United States, aged 30 to 50, spread across secondary, degree and postgraduate education. You also asked for parents who shop for groceries online — the pool holds no such data, so each panelist was instructed to be one, on top of their surveyed demographics. Their reasons come from that portrayal.',
+    'Twenty-four readers in the United States, aged 30 to 50, spread across secondary, degree and postgraduate education. You also asked for parents who shop for groceries online — the pool holds no such data, so each panelist was asked to act as one, on top of their real demographics. Their reasons come from that acting.',
 };
 
 const OFF_TOPIC =
