@@ -70,6 +70,16 @@ PROFILES: dict[ProfileName, PanelProfile] = {
 #   the term the old margin existed to absorb.
 USD_PER_VOTE = 0.0002
 
+# MEASURED at the effort this app actually runs (`TARGET_REASONING_EFFORT = "low"`,
+# app/llm.py): five descriptions landed in a $0.0006-$0.0011 band —
+# docs/research/targeting-call-effort.md, 2026-08-05. Rounded up from the worst of
+# them, the same allowance USD_PER_VOTE takes.
+#
+# This is what starting a run costs before anyone has agreed to buy a panel: one
+# translation, and nothing else. A prod panel is 200 x USD_PER_VOTE = $0.04, so a
+# preview is ~1/33 of the thing it previews.
+USD_PER_TRANSLATION = 0.0012
+
 # What one chat turn charges the day's pool (064/#192). 064 calls a turn "a
 # fraction of a vote" but leaves the analyst's own cost unmeasured, so the pool
 # rounds up to the one price that is measured. Replace once a turn is measured.
@@ -103,6 +113,13 @@ class Settings(BaseSettings):
     # something once the caller is a verified subject id rather than a
     # forwarded address, since an address costs nothing to change.
     evaluate_runs_per_day: int = 3
+    # Previews are not purchases, so they get their own, looser cap. Derived
+    # from the two prices above: 30 x USD_PER_TRANSLATION = $0.036, less than
+    # the $0.04 of a single panel this same caller is allowed to buy. So a
+    # caller who spends the whole allowance looking has still cost the day less
+    # than one run, while 30 looks is ~10 per purchasable panel — far above any
+    # honest use. 0 disables, as above.
+    evaluate_starts_per_day: int = 30
     # Bounded by structure, not price — honestly flagged: no per-turn dollar
     # measurement exists yet (unlike USD_PER_VOTE). A turn is at most 4 model
     # calls (analyst.py's recursion budget), a thread is one report's

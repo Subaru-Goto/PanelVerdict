@@ -5,7 +5,14 @@ from decimal import Decimal
 import httpx
 import psycopg
 import pytest
-from app.config import PROFILES, USD_PER_VOTE, PanelProfile, Settings, settings
+from app.config import (
+    PROFILES,
+    USD_PER_TRANSLATION,
+    USD_PER_VOTE,
+    PanelProfile,
+    Settings,
+    settings,
+)
 from app import graph as graph_module
 from app import main
 from app.auth import InvalidSession, SessionUnverifiable
@@ -420,7 +427,7 @@ def test_the_days_budget_is_one_pool_shared_by_every_caller(
     so 064's global pool is what bounds a day. One caller spending the budget
     must refuse the *next* caller, with a message naming the remedy."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
-    run_price = settings.panel.size * USD_PER_VOTE
+    run_price = USD_PER_TRANSLATION + settings.panel.size * USD_PER_VOTE
     monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
     seed_japanese(conn, 5)
 
@@ -443,7 +450,7 @@ def test_chat_turns_draw_from_the_same_days_pool(client, conn, monkeypatch) -> N
     """The pool bounds the day, not one endpoint: the analyst costs money too,
     so a day /evaluate has already spent must refuse /chat as well."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
-    run_price = settings.panel.size * USD_PER_VOTE
+    run_price = USD_PER_TRANSLATION + settings.panel.size * USD_PER_VOTE
     monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
     seed_japanese(conn, 5)
     headers = {"X-API-Key": "edge-secret", "X-Client-Id": "203.0.113.1"}
@@ -466,7 +473,7 @@ def test_a_pool_refusal_does_not_spend_the_callers_own_budget(
     nothing, so it must not have consumed one of the caller's runs either —
     tomorrow's reopened pool owes them their full allowance."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
-    run_price = settings.panel.size * USD_PER_VOTE
+    run_price = USD_PER_TRANSLATION + settings.panel.size * USD_PER_VOTE
     monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
     seed_japanese(conn, 5)
 
@@ -516,9 +523,11 @@ def test_a_run_priced_at_the_cap_is_admitted_not_refused(
     monkeypatch.setitem(
         PROFILES, settings.profile, PanelProfile(size=3, model="stub/model")
     )
-    # A written figure — $0.0006 — not the float product under test.
+    # Written figures — $0.0012 + $0.0006 — not the float product under test.
     monkeypatch.setattr(
-        settings, "global_daily_cap_usd", float(Decimal(str(USD_PER_VOTE)) * 3)
+        settings,
+        "global_daily_cap_usd",
+        float(Decimal(str(USD_PER_TRANSLATION)) + Decimal(str(USD_PER_VOTE)) * 3),
     )
     seed_japanese(conn, 3)
 
@@ -547,7 +556,7 @@ def test_concurrent_runs_cannot_outspend_the_pool(
     over committed rows is stale the moment two gates read it together. The
     pool's advisory lock makes the database arbitrate here too."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
-    run_price = settings.panel.size * USD_PER_VOTE
+    run_price = USD_PER_TRANSLATION + settings.panel.size * USD_PER_VOTE
     # 3.5 slots: a mid-slot cap keeps a float wobble in `3 * run_price` out of
     # a test about the race. The exact-cap edge has its own test.
     monkeypatch.setattr(settings, "global_daily_cap_usd", 3.5 * run_price)
@@ -581,6 +590,9 @@ def test_a_cap_of_zero_is_the_local_escape_hatch(client, conn, monkeypatch) -> N
     on the cheap dev profile was locked out after 25 runs with no remedy but
     hand-written SQL. Zero means unlimited."""
     monkeypatch.setattr(settings, "evaluate_runs_per_day", 0)
+    # Both halves, since a run is now counted in two places: the preview and
+    # the panel. An escape hatch that left previews counted would not be one.
+    monkeypatch.setattr(settings, "evaluate_starts_per_day", 0)
     seed_japanese(conn, 2)
 
     codes = [client.post("/evaluate", json=_REQUEST_BODY).status_code for _ in range(3)]
@@ -1698,3 +1710,63 @@ def test_an_adjust_does_not_buy_the_pause_more_time(client, conn, monkeypatch) -
     )
 
     assert response.status_code == 410
+
+
+# --- Looking at the gate is free (077/#167) ----------------------------------
+
+
+def test_looking_at_the_gate_does_not_spend_the_day(client, conn, monkeypatch) -> None:
+    """The gate exists so a mis-read audience costs a click. Charging the run
+    before the graph reaches `confirm` made every look cost one of three daily
+    runs, so a reader who adjusted twice was locked out having bought nothing.
+    """
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 3)
+    seed_japanese(conn, 5)
+
+    paused = [client.post("/evaluate", json=_UNAPPROVED_BODY) for _ in range(4)]
+
+    assert [r.status_code for r in paused] == [200, 200, 200, 200]
+    assert all(r.json()["status"] == "paused" for r in paused)
+
+
+def test_the_daily_allowance_counts_panels_bought_not_previews(
+    client, conn, monkeypatch
+) -> None:
+    """Accepting is what buys a panel, so accepting is what the cap counts."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 2)
+    seed_japanese(conn, 5)
+
+    accepted = []
+    for _ in range(3):
+        started = client.post("/evaluate", json=_UNAPPROVED_BODY)
+        assert started.status_code == 200
+        accepted.append(
+            client.post(
+                "/evaluate/resume",
+                json={"thread_id": started.json()["thread_id"], "action": "accept"},
+            )
+        )
+
+    assert [r.status_code for r in accepted] == [200, 200, 429]
+
+
+def test_adjusting_the_reading_buys_nothing(client, conn, monkeypatch) -> None:
+    """Re-seating is pure SQL. A reader may adjust as often as they like without
+    it counting against the panels they can still buy."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+    seed_japanese(conn, 5)
+    started = client.post("/evaluate", json=_UNAPPROVED_BODY)
+    thread_id = started.json()["thread_id"]
+    query = started.json()["preview"]["query"]
+
+    for _ in range(3):
+        adjusted = client.post(
+            "/evaluate/resume",
+            json={"thread_id": thread_id, "action": "adjust", "query": _edit(query)},
+        )
+        assert adjusted.status_code == 200, adjusted.text
+
+    bought = client.post(
+        "/evaluate/resume", json={"thread_id": thread_id, "action": "accept"}
+    )
+    assert bought.status_code == 200
