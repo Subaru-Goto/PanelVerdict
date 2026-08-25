@@ -210,8 +210,14 @@
     border:1px solid var(--line);border-radius:var(--pill);padding:2px 9px;margin-left:10px;vertical-align:2px;
     white-space:nowrap;display:inline-block}
   .tag-unmatched{color:var(--amber);border-color:var(--amber)}
-  .roster{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
-  .persona{font-size:12px;font-weight:300;color:var(--ink-2);border:1px solid var(--line);border-radius:var(--pill);padding:5px 12px}
+  /* panel composition strips: 100% stacked, ink ramp, direct labels */
+  .comp{margin-top:28px}
+  .comp-dim{margin-top:14px}
+  .comp-k{font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;color:var(--ink-2);margin-bottom:5px}
+  .strip{display:flex;height:26px;border-radius:3px;overflow:hidden;gap:2px}
+  .seg{display:flex;align-items:center;justify-content:center;font-size:10.5px;font-weight:500;color:var(--ink);
+    min-width:0;white-space:nowrap;overflow:hidden}
+  .seg.d{color:#fff}
   .decision{margin-top:56px;border:1px solid var(--ink);padding:36px 40px}
   .decision p.exp{color:var(--ink-2);font-size:14px;font-weight:300;max-width:560px;margin-top:10px}
   .decision-actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;align-items:center}
@@ -658,15 +664,36 @@
         <textarea id="instr" maxlength="240" aria-label="The instruction each panelist will act"></textarea>
       </div>
 
-      <div class="roster">
-        <span class="persona">F, 34, US, degree</span>
-        <span class="persona">M, 41, US, secondary</span>
-        <span class="persona">F, 47, US, postgraduate</span>
-        <span class="persona">M, 30, US, degree</span>
-        <span class="persona">F, 38, US, degree</span>
-        <span class="persona">M, 44, US, secondary</span>
-        <span class="persona">F, 50, US, degree</span>
-        <span class="persona">+ 17 more</span>
+      <!-- Chips read fine at 24 seats; 200 would be a wall. Composition strips
+           scale: 100% stacked shares per dimension, an ink ramp light-to-dark
+           for ordered classes, every segment direct-labeled with 2px gaps —
+           the contrast relief the labels provide is mandatory, not decoration.
+           Shares are fixture data, like the rest of the prototype. -->
+      <div class="comp">
+        <p class="kicker" style="margin-bottom:2px">Who ends up seated</p>
+        <p class="chart-hint" style="margin-bottom:0">The panel’s make-up inside your filters — the same picture at 24 seats or 200.</p>
+        <div class="comp-dim"><p class="comp-k">Age</p>
+          <div class="strip">
+            <span class="seg" style="width:52%;background:#D8DADD">30–39 · 52%</span>
+            <span class="seg d" style="width:48%;background:var(--ink)">40–50 · 48%</span>
+          </div></div>
+        <div class="comp-dim"><p class="comp-k">Gender</p>
+          <div class="strip">
+            <span class="seg" style="width:51%;background:#D8DADD">Women · 51%</span>
+            <span class="seg d" style="width:49%;background:var(--ink)">Men · 49%</span>
+          </div></div>
+        <div class="comp-dim"><p class="comp-k">Education</p>
+          <div class="strip">
+            <span class="seg" style="width:36%;background:#D8DADD">Secondary · 36%</span>
+            <span class="seg d" style="width:43%;background:var(--ink-2)">Degree · 43%</span>
+            <span class="seg d" style="width:21%;background:var(--ink)">Postgrad · 21%</span>
+          </div></div>
+        <div class="comp-dim"><p class="comp-k">Income</p>
+          <div class="strip">
+            <span class="seg" style="width:28%;background:#D8DADD">Lower · 28%</span>
+            <span class="seg d" style="width:44%;background:var(--ink-2)">Middle · 44%</span>
+            <span class="seg d" style="width:28%;background:var(--ink)">Upper · 28%</span>
+          </div></div>
       </div>
 
     </div>
