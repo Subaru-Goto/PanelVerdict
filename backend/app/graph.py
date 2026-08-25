@@ -138,9 +138,9 @@ def build_evaluate_graph(
     def screen(state: EvaluateState) -> EvaluateState:
         """Check the audience text, the only text used before the gate.
 
-        The headlines wait for `vote`, the step that shows them to a model.
-        Screening is a paid call per text, so checking all three here bought
-        two of them for a run that may never be accepted.
+        Screening is a paid call per text, and the headlines are not read until
+        `vote` — so they are checked there instead, where they first reach a
+        model.
         """
         screen_inputs(screener, [state["description"]])
         return {}

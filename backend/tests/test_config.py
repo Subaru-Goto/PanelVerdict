@@ -1,7 +1,13 @@
 import pytest
 from pydantic import ValidationError
 
-from app.config import PROFILES, Settings
+from app.config import (
+    PROFILES,
+    USD_PER_PREVIEW,
+    USD_PER_TRANSLATION,
+    USD_PER_VOTE,
+    Settings,
+)
 
 _DB = {
     "postgres_user": "u",
@@ -42,3 +48,10 @@ def test_the_profiles_are_a_ladder() -> None:
 
     assert sizes == sorted(sizes)
     assert len(set(sizes)) == len(sizes)
+
+
+def test_the_preview_price_is_its_two_calls() -> None:
+    """`_usd` takes written figures, never computed products, so the preview's
+    price is written down — and this keeps the written figure honest about the
+    parts it stands for."""
+    assert USD_PER_PREVIEW == USD_PER_TRANSLATION + USD_PER_VOTE

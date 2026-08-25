@@ -75,6 +75,12 @@ _REQUEST_BODY = {
     "reading_accepted": True,
 }
 
+
+def _one_run_price() -> float:
+    """What a whole run costs the pool: the preview, then the panel it buys."""
+    return USD_PER_PREVIEW + settings.panel.size * USD_PER_VOTE
+
+
 # The same run, arriving the way a first-time reader's does: unapproved.
 _UNAPPROVED_BODY = _REQUEST_BODY | {"reading_accepted": False}
 
@@ -427,7 +433,7 @@ def test_the_days_budget_is_one_pool_shared_by_every_caller(
     so 064's global pool is what bounds a day. One caller spending the budget
     must refuse the *next* caller, with a message naming the remedy."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
-    run_price = USD_PER_PREVIEW + settings.panel.size * USD_PER_VOTE
+    run_price = _one_run_price()
     monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
     seed_japanese(conn, 5)
 
@@ -450,7 +456,7 @@ def test_chat_turns_draw_from_the_same_days_pool(client, conn, monkeypatch) -> N
     """The pool bounds the day, not one endpoint: the analyst costs money too,
     so a day /evaluate has already spent must refuse /chat as well."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
-    run_price = USD_PER_PREVIEW + settings.panel.size * USD_PER_VOTE
+    run_price = _one_run_price()
     monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
     seed_japanese(conn, 5)
     headers = {"X-API-Key": "edge-secret", "X-Client-Id": "203.0.113.1"}
@@ -473,7 +479,7 @@ def test_a_pool_refusal_does_not_spend_the_callers_own_budget(
     nothing, so it must not have consumed one of the caller's runs either —
     tomorrow's reopened pool owes them their full allowance."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
-    run_price = USD_PER_PREVIEW + settings.panel.size * USD_PER_VOTE
+    run_price = _one_run_price()
     monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
     seed_japanese(conn, 5)
 
@@ -556,7 +562,7 @@ def test_concurrent_runs_cannot_outspend_the_pool(
     over committed rows is stale the moment two gates read it together. The
     pool's advisory lock makes the database arbitrate here too."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
-    run_price = USD_PER_PREVIEW + settings.panel.size * USD_PER_VOTE
+    run_price = _one_run_price()
     # 3.5 slots: a mid-slot cap keeps a float wobble in `3 * run_price` out of
     # a test about the race. The exact-cap edge has its own test.
     monkeypatch.setattr(settings, "global_daily_cap_usd", 3.5 * run_price)
@@ -1716,10 +1722,8 @@ def test_an_adjust_does_not_buy_the_pause_more_time(client, conn, monkeypatch) -
 
 
 def test_looking_at_the_gate_does_not_spend_the_day(client, conn, monkeypatch) -> None:
-    """The gate exists so a mis-read audience costs a click. Charging the run
-    before the graph reaches `confirm` made every look cost one of three daily
-    runs, so a reader who adjusted twice was locked out having bought nothing.
-    """
+    """The gate exists so a mis-read audience costs a click. A preview stops
+    before any vote is cast, so it must not spend one of the day's runs."""
     monkeypatch.setattr(settings, "evaluate_runs_per_day", 3)
     seed_japanese(conn, 5)
 
@@ -1776,8 +1780,8 @@ def test_accepting_a_panel_of_nobody_is_refused_not_charged(
     client, conn, monkeypatch
 ) -> None:
     """An accept with nobody seated has nobody to ask, so the graph sends it
-    back to the gate. Charging first meant a reader could spend their whole day
-    on readings that could never vote."""
+    back to the gate. Refusing above the charge keeps a reading that can never
+    vote from costing a run."""
     monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
     seed_japanese(conn, 5)
     started = client.post("/evaluate", json=_UNAPPROVED_BODY)

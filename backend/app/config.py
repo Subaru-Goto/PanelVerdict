@@ -70,24 +70,19 @@ PROFILES: dict[ProfileName, PanelProfile] = {
 #   the term the old margin existed to absorb.
 USD_PER_VOTE = 0.0002
 
-# An UPPER BOUND, not a measurement of the model in use. The source is
-# docs/research/targeting-call-effort.md, measured 2026-07-31 on
-# `openai/gpt-5-mini` at `TARGET_REASONING_EFFORT = "low"`: five descriptions in a
-# $0.0006-$0.0011 band. The translator now runs on Luna, where mini-derived
-# pricing proved ~2x high for votes (see USD_PER_VOTE), so this over-states the
-# real cost — the safe direction for a spend ceiling, and the honest label for it
-# is "bound", not "price". A Luna measurement would replace it, and the
-# translator's job is due to change, so measure that job rather than this one.
+# An upper bound, not a measurement of the model in use: measured 2026-07-31 on
+# `openai/gpt-5-mini` at `TARGET_REASONING_EFFORT = "low"`, a $0.00061-$0.00111
+# band across five descriptions (docs/research/targeting-call-effort.md). The
+# translator runs on Luna, where mini-derived pricing proved ~2x high for votes,
+# so this over-states the cost — the safe direction for a ceiling.
 USD_PER_TRANSLATION = 0.0012
 
-# What a preview costs the pool: one translation and one screening call, the two
-# model calls a run makes before the gate. Both run on the same small model
-# (targeting_model, screening_model). The screen is priced at USD_PER_VOTE — the
-# one measured single-call figure this file has — which under-states a screen's
-# longer input and over-states nothing else; the translation bound above carries
-# the margin. Headline screening is not here: it moved behind the gate, where
-# the panel price covers it.
-USD_PER_PREVIEW = USD_PER_TRANSLATION + USD_PER_VOTE
+# What a preview costs the pool: the two model calls a run makes before the gate,
+# one translation and one screening. Written as a figure rather than a sum
+# because `_usd` takes written figures only; test_config pins it to its parts.
+# The screening half is priced at USD_PER_VOTE, the one measured single-call
+# figure here. Headline screening is not in it — that sits behind the gate.
+USD_PER_PREVIEW = 0.0014
 
 # What one chat turn charges the day's pool (064/#192). 064 calls a turn "a
 # fraction of a vote" but leaves the analyst's own cost unmeasured, so the pool
@@ -123,10 +118,10 @@ class Settings(BaseSettings):
     # forwarded address, since an address costs nothing to change.
     evaluate_runs_per_day: int = 3
     # Previews are not purchases, so they get their own, looser cap. Derived
-    # from the prices above: 25 x USD_PER_PREVIEW = $0.035, under the $0.04 of a
-    # single panel this same caller may buy. A caller who spends the whole
-    # allowance looking has still cost the day less than one run, and 25 is ~8
-    # previews per purchasable panel — far above honest use. 0 disables.
+    # against the prod panel the deploy runs: 25 x USD_PER_PREVIEW = $0.035,
+    # under the $0.04 of one panel (200 x USD_PER_VOTE) this caller may buy. So
+    # a whole allowance spent looking still costs the day less than one run, and
+    # 25 is ~8 previews per purchasable panel. 0 disables.
     evaluate_previews_per_day: int = 25
     # Bounded by structure, not price — honestly flagged: no per-turn dollar
     # measurement exists yet (unlike USD_PER_VOTE). A turn is at most 4 model
