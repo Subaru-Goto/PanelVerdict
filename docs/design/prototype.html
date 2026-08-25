@@ -607,6 +607,14 @@
     </div>
   </div>
 
+  <div id="aud-refusal" style="display:none;max-width:640px">
+    <div class="notice stop">
+      <b>This was not sent to the panel.</b> The audience field describes who judges, in a few
+      plain words — it does not take instructions, preferences about the versions, or names of
+      real people. Rewrite it as a description of people.
+    </div>
+  </div>
+
   <div id="dupe-refusal" style="display:none;max-width:640px">
     <div class="notice stop">
       <b>The two versions are the same line.</b> A panel cannot prefer one of two identical
@@ -670,6 +678,12 @@
           act it on top of who they already are, and the report will say which part was acted.
         </p>
         <textarea id="instr" maxlength="240" aria-label="The instruction each panelist will act"></textarea>
+        <!-- The edit box bypasses the rewrite model, so the resume payload is
+             re-screened before any vote is bought. -->
+        <div class="notice stop" id="instr-refusal" style="display:none">
+          <b>This instruction was refused.</b> It steers the vote or stops describing a person.
+          Panelists act an identity; they do not take orders about the options.
+        </div>
       </div>
 
 
@@ -1193,6 +1207,12 @@ function fillSample(){
   onCopyInput();
 }
 
+// Stands in for the guard that rides the rewrite call: instruction XOR refusal.
+// The real classes: not-an-audience, vote-steering, a real named person.
+function audienceRefused(text){
+  return /ignore|always (choose|pick|prefer)|prefer (option|version|the first|the second)|pick [ab]\b|you must|option [ab12]\b/i.test(text);
+}
+
 function toPanel(){
   // The screener runs before anything is spent; this stands in for it.
   const text = (flow.a + ' ' + flow.b).toLowerCase();
@@ -1200,6 +1220,12 @@ function toPanel(){
     document.getElementById('screen-refusal').style.display = 'block';
     return;
   }
+  const aud = document.getElementById('input-audience').value;
+  if (aud.trim() && audienceRefused(aud)) {
+    document.getElementById('aud-refusal').style.display = 'block';
+    return;
+  }
+  document.getElementById('aud-refusal').style.display = 'none';
   if (gateNeeded()) { go('step2'); return; }
   attemptRun();
 }
@@ -1272,6 +1298,12 @@ function audienceSummary(){
 }
 
 function acceptPanel(){
+  // The in-place edit bypassed the rewrite model; re-screen it before resuming.
+  const instr = document.getElementById('instr');
+  const refused = document.getElementById('instr-block').style.display !== 'none'
+    && audienceRefused(instr.value);
+  document.getElementById('instr-refusal').style.display = refused ? 'block' : 'none';
+  if (refused) return;
   flow.accepted = audienceKey();
   flow.acceptedSummary = audienceSummary();
   renderRunControls();
