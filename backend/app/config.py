@@ -70,6 +70,20 @@ PROFILES: dict[ProfileName, PanelProfile] = {
 #   the term the old margin existed to absorb.
 USD_PER_VOTE = 0.0002
 
+# An upper bound, not a measurement of the model in use: measured 2026-07-31 on
+# `openai/gpt-5-mini` at `TARGET_REASONING_EFFORT = "low"`, a $0.00061-$0.00111
+# band across five descriptions (docs/research/targeting-call-effort.md). The
+# translator runs on Luna, where mini-derived pricing proved ~2x high for votes,
+# so this over-states the cost — the safe direction for a ceiling.
+USD_PER_TRANSLATION = 0.0012
+
+# What a preview costs the pool: the two model calls a run makes before the gate,
+# one translation and one screening. Written as a figure rather than a sum
+# because `_usd` takes written figures only; test_config pins it to its parts.
+# The screening half is priced at USD_PER_VOTE, the one measured single-call
+# figure here. Headline screening is not in it — that sits behind the gate.
+USD_PER_PREVIEW = 0.0014
+
 # What one chat turn charges the day's pool (064/#192). 064 calls a turn "a
 # fraction of a vote" but leaves the analyst's own cost unmeasured, so the pool
 # rounds up to the one price that is measured. Replace once a turn is measured.
@@ -103,6 +117,12 @@ class Settings(BaseSettings):
     # something once the caller is a verified subject id rather than a
     # forwarded address, since an address costs nothing to change.
     evaluate_runs_per_day: int = 3
+    # Previews are not purchases, so they get their own, looser cap. Derived
+    # against the prod panel the deploy runs: 25 x USD_PER_PREVIEW = $0.035,
+    # under the $0.04 of one panel (200 x USD_PER_VOTE) this caller may buy. So
+    # a whole allowance spent looking still costs the day less than one run, and
+    # 25 is ~8 previews per purchasable panel. 0 disables.
+    evaluate_previews_per_day: int = 25
     # Bounded by structure, not price — honestly flagged: no per-turn dollar
     # measurement exists yet (unlike USD_PER_VOTE). A turn is at most 4 model
     # calls (analyst.py's recursion budget), a thread is one report's

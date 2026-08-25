@@ -32,7 +32,7 @@ from app.auth import (
     deleter_from_settings,
     verifier_from_settings,
 )
-from app.config import USD_PER_TURN, USD_PER_VOTE, settings
+from app.config import USD_PER_PREVIEW, USD_PER_TURN, USD_PER_VOTE, settings
 from app.db import check_connection
 from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.llm import (
@@ -310,6 +310,9 @@ LEDGER_HOURS = 24
 _LEDGER_WINDOW = f"requested_at > now() - interval '{LEDGER_HOURS} hours'"
 _LEDGER_EXPIRED = f"requested_at < now() - interval '{LEDGER_HOURS} hours'"
 _EVALUATE = "/evaluate"
+# Previewing a panel and buying one are different purchases, counted separately:
+# this key bounds previews, `_EVALUATE` bounds panels.
+_PREVIEW = "/evaluate-preview"
 
 
 def _now() -> datetime:
@@ -441,12 +444,18 @@ def _unverified_caller(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def enforce_run_limit(
+def enforce_evaluate_limits(
     request: EvaluateRequest,
     caller: str = Depends(caller_id),
     conn: psycopg.Connection = Depends(get_conn),
 ) -> None:
-    """Postgres-backed runs-per-day gate on the paid run (045/#143).
+    """Charge for the preview, and the panel too when there is no gate.
+
+    Two purchases, counted separately: a preview buys the two model calls a run
+    makes before the gate, a panel buys every vote it is sized to.
+    `/evaluate/resume` charges the panel when a reader accepts; this charges it
+    up front only for a run told the reading is already approved, which never
+    stops to ask.
 
     Declares the body it never reads, and that is the point: dependencies
     resolve before the endpoint's own body is validated, so without this a
@@ -462,12 +471,20 @@ def enforce_run_limit(
     the write sweeps the caller's expired rows so the ledger cannot accumulate
     rows nobody will read again (040's lesson).
     """
-    _charge_ledger(
-        conn,
-        _Charge(_EVALUATE, caller, settings.evaluate_runs_per_day, "runs"),
-        # Priced at what the run may buy: every vote the profile is sized to.
-        spend=_Spend(_EVALUATE, _run_price()),
-    )
+    # A preview buys two model calls, not a panel: the graph stops at the gate
+    # before any vote is cast.
+    charges = [
+        _Charge(_PREVIEW, caller, settings.evaluate_previews_per_day, "previews")
+    ]
+    spend = _Spend(_PREVIEW, _usd(USD_PER_PREVIEW))
+    if request.reading_accepted:
+        # No gate on this run, so there is no accept to charge later. One call
+        # for both halves, so a caller already at their run cap is not charged
+        # for a preview the refusal means never happens.
+        charge, price = _panel_purchase(caller)
+        charges.append(charge)
+        spend = _Spend(_EVALUATE, _usd(USD_PER_PREVIEW) + price)
+    _charge_ledger(conn, *charges, spend=spend)
 
 
 def enforce_turn_limit(
@@ -499,6 +516,14 @@ def enforce_turn_limit(
         # A turn's cost is unmeasured; the pool charges the measured ceiling
         # A turn's real cost is unmeasured; USD_PER_TURN explains the stand-in.
         spend=_Spend("/chat", _usd(USD_PER_TURN)),
+    )
+
+
+def _panel_purchase(caller: str) -> tuple[_Charge, Decimal]:
+    """One panel: a slot from the day's runs, priced at the votes it may buy."""
+    return (
+        _Charge(_EVALUATE, caller, settings.evaluate_runs_per_day, "runs"),
+        _run_price(),
     )
 
 
@@ -801,7 +826,7 @@ def _run_graph(graph, payload, thread_id: str):
 @app.post("/evaluate")
 def evaluate(
     request: EvaluateRequest,
-    _limit: None = Depends(enforce_run_limit),
+    _limit: None = Depends(enforce_evaluate_limits),
     caller: str = Depends(caller_id),
     llm: PanelLLM = Depends(get_panel_llm),
     translator: TargetTranslator = Depends(get_translator),
@@ -812,8 +837,10 @@ def evaluate(
 ) -> PausedRun | CompletedRun:
     """Start a run. Stops at the panel gate unless the reading was approved.
 
-    Charged here, not on the resume: starting triggers a paid translation, so an
-    abandoned run has still cost something.
+    The preview is charged here, because reaching the gate costs two model
+    calls whether or not the reader goes on to buy. The panel is charged where
+    it is bought — on accept, or here too when the reading arrives approved and
+    there is no gate to stop at.
     """
     variants = {"a": request.headline_a, "b": request.headline_b}
     thread_id = str(uuid4())
@@ -878,16 +905,17 @@ def _edited(request: ResumeRequest, values: dict) -> TargetQuery | None:
 
 
 def _expired(started_at: str | None) -> bool:
-    """Has this pause outlived the charge that paid for it?
+    """Has this pause outlived the window a preview is honoured for?
 
-    `/evaluate` charges the run when it starts, and that ledger row is swept
-    after `LEDGER_HOURS`. Accepting later would buy a full panel against a charge
-    no cap can see any more, so the pause dies with it.
+    The window is kept from the gate's original design; the reason written for
+    it there — that the run's charge had already been swept — no longer holds,
+    because the panel is now charged on accept. Whether a pause should expire at
+    all is the gate's own question, not this change's, so the behaviour stands
+    unchanged rather than being re-argued here.
 
-    Measured from when the run started, not from its latest checkpoint: a free
-    adjust every so often would otherwise keep the charge alive forever. An
-    unreadable timestamp counts as expired — refusing costs a click, running
-    costs money.
+    Measured from when the run started, not from its latest checkpoint, so a
+    free adjust every so often cannot keep a pause alive forever. An unreadable
+    timestamp counts as expired — refusing costs a click.
     """
     if started_at is None:
         return True
@@ -920,9 +948,10 @@ def resume_evaluate(
     - **One at a time.** Check-then-act is no guard under load: without the lock,
       simultaneous accepts all pass the check and each buys the whole panel
       against a single charge.
-    - **Not charged again**: `/evaluate` charged this run in full.
-    - Adjust is unbounded. Re-selecting is pure SQL and buys nothing, and the
-      run's one charge already caps what it can spend.
+    - **Charged here**, on accept, because this is where a panel is bought. The
+      preview was charged when the run started; adjusting adds nothing.
+    - Adjust is unbounded. Re-selecting is pure SQL and buys nothing, and an
+      adjust never reaches the charge above.
     """
     graph = build_evaluate_graph(
         conn=conn,
@@ -946,6 +975,25 @@ def resume_evaluate(
                 status_code=410,
                 detail="this panel has expired — start the test again to see a fresh one",
             )
+        if request.action == "accept" and not values.get("panel"):
+            # The graph would send this straight back to the gate: there is
+            # nobody to ask. Refused above the charge, so a reading that can
+            # never vote costs nothing. (Unsafe headline text is refused later,
+            # inside `vote`, and does spend a run — as it did before the gate
+            # existed.)
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "nobody in the pool matches that reading — widen it and look again"
+                ),
+            )
+        if request.action == "accept":
+            # The moment a panel is actually bought. After the free refusals
+            # above, so a run that was never resumable costs nothing, and
+            # inside the lock, so simultaneous accepts cannot each pass a cap
+            # neither has yet recorded.
+            charge, price = _panel_purchase(caller)
+            _charge_ledger(conn, charge, spend=_Spend(_EVALUATE, price))
         state = _run_graph(
             graph,
             Command(

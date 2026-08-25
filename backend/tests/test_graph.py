@@ -191,6 +191,42 @@ def test_refused_text_never_reaches_selection(conn) -> None:
         _graph(conn, screener=Refusing()).invoke(_start(), _config())
 
 
+class CountingScreener:
+    """A screener that records every text it was asked to check."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    def screen(self, text: str) -> ScreeningVerdict:
+        self.seen.append(text)
+        return ScreeningVerdict(flagged=False, reason="")
+
+
+def test_a_preview_screens_the_audience_and_not_the_headlines(conn) -> None:
+    """Each text is checked just before the step that uses it. Nothing before
+    the gate reads a headline, so screening one there is a paid call bought for
+    a run that may never be accepted."""
+    seed_japanese(conn, 5)
+    screener = CountingScreener()
+
+    _graph(conn, screener=screener).invoke(_start(), _config())
+
+    assert screener.seen == ["Japanese homeowners"]
+
+
+def test_the_headlines_are_screened_before_they_reach_the_panel(conn) -> None:
+    """Deferred, never dropped: the vote is the step that shows a headline to a
+    model, so the check has to land before it."""
+    seed_japanese(conn, 5)
+    screener = CountingScreener()
+    graph = _graph(conn, screener=screener)
+    graph.invoke(_start(), _config())
+
+    graph.invoke(Command(resume=GateDecision(action="accept").model_dump()), _config())
+
+    assert sorted(screener.seen) == sorted(["Japanese homeowners", *_VARIANTS.values()])
+
+
 def test_the_same_filter_seats_the_same_people(conn) -> None:
     """PANEL_SEED is fixed, so an unchanged audience is an unchanged panel —
     which is exactly why the gate can skip a repeat run without hiding

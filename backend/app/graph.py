@@ -136,8 +136,13 @@ def build_evaluate_graph(
     """
 
     def screen(state: EvaluateState) -> EvaluateState:
-        """Screen the customer's text before anything else runs."""
-        screen_inputs(screener, [state["description"], *state["variants"].values()])
+        """Check the audience text, the only text used before the gate.
+
+        Screening is a paid call per text, and the headlines are not read until
+        `vote` — so they are checked there instead, where they first reach a
+        model.
+        """
+        screen_inputs(screener, [state["description"]])
         return {}
 
     def select(state: EvaluateState) -> EvaluateState:
@@ -208,7 +213,12 @@ def build_evaluate_graph(
         return {"decision": "accept"}
 
     def vote(state: EvaluateState) -> EvaluateState:
-        """The one paid node. Unchanged from the pipeline."""
+        """The one paid node. The vote loop itself is unchanged.
+
+        The headlines are checked here because this is where they first reach a
+        model, and before the panel is asked, so refused text costs no votes.
+        """
+        screen_inputs(screener, list(state["variants"].values()))
         return {
             "collected": run_vote_loop(
                 conn, state["panel"], variants=state["variants"], llm=llm
