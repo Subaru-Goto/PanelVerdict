@@ -103,6 +103,57 @@ and exercises a real database round-trip 120 times a day.
   secret rather than a variable (#187): run logs are public here, and curl's failure
   messages name the host — secrets are masked in logs, variables are not.
 
+## 6 — Sign in with Google (063/#158)
+
+Until this step is done the deploy behaves exactly as before: `SUPABASE_PROJECT_URL`
+unset means the backend counts a forwarded address rather than a person, so the app
+still runs — it just cannot enforce a per-account limit. Every action below is a
+dashboard action; none of it can be done from the repo.
+
+1. **Google Cloud Console → APIs & Services → Credentials → OAuth client ID (Web).**
+   Authorized JavaScript origins: the Vercel URL. Authorized redirect URI: the one
+   Supabase shows on its Google provider page. Keep the Client ID and Client Secret.
+2. **Supabase → Authentication → Providers → Google:** enable it, paste the Client ID
+   and Secret. Leave every other provider off — a disposable inbox is a free unlimited
+   account factory, which is why 092 chose Google only.
+3. **Supabase → Authentication → JWT signing keys: *Migrate JWT secret*, then
+   *Rotate keys*.** Do not skip this. Supabase has not migrated existing projects off
+   the legacy shared secret, and until it is done
+   `<project>/auth/v1/.well-known/jwks.json` **returns no keys at all** — the backend
+   would then refuse every session it was handed. The backend accepts ES256 and RS256
+   only; the legacy HS256 secret is deliberately not accepted, because a backend that
+   verifies with a shared secret also knows how to mint tokens with it. After rotating,
+   wait out one access-token lifetime (default 1 hour) before revoking the legacy key.
+4. **Render → Environment:** `SUPABASE_PROJECT_URL` = `https://<ref>.supabase.co`
+   (no trailing slash), `SUPABASE_SERVICE_KEY` = the project's secret/service key.
+   The service key bypasses row-level security, so it belongs here and nowhere else.
+5. **Vercel → Environment Variables**, all three `NEXT_PUBLIC_*` and therefore public
+   by design — they identify, they do not authorise:
+   - `NEXT_PUBLIC_SUPABASE_URL` = the same project URL
+   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` = the publishable (`sb_publishable_…`) key,
+     or the legacy `anon` key on an older project
+   - `NEXT_PUBLIC_GOOGLE_CLIENT_ID` = the Client ID from step 1
+
+   **Set these before the build, not after.** Next inlines `NEXT_PUBLIC_*` at build
+   time, so a value added afterwards is not picked up until the next deploy.
+6. **Redeploy both**, then confirm the checks below.
+
+The publishable key in step 5 reaches the project's REST API, so the schema is
+closed to it: every table in `public` gets row-level security with no policies,
+applied by the seed and again at each startup (`persistence.deny_data_api`).
+Nothing to do by hand — but if a table is ever created directly in the Supabase
+SQL editor, it is exposed until one of those runs.
+
+Two things worth knowing before they surprise someone:
+
+- A free Supabase project pauses after a week of inactivity, and a project restored
+  after 2025-11-01 comes back **without** its legacy `anon`/`service_role` keys. If the
+  Vercel variable holds an `anon` key, a pause/restore cycle breaks sign-in. The
+  cron-job.org ping in step 4 is what keeps the project from idling that far.
+- Deleting a user does not invalidate a token already issued to them; it stays valid
+  until it expires (default 1 hour). The backend takes that into account and is
+  documented at `main.forget_me`.
+
 ## Done-when checks (ticket 087's bar)
 
 - `curl <render-url>/health` → `{"status":"ok","db":"up"}`
@@ -110,3 +161,12 @@ and exercises a real database round-trip 120 times a day.
 - cron-job.org shows a run history of green pings 12 minutes apart
 - the keep-alive workflow has one green scheduled run
 - the bill everywhere reads $0.00 — no card is on file anywhere
+
+Once step 6 is done, four more:
+
+- `curl -X POST <render-url>/evaluate -H 'X-API-Key: …' -d '…'` with **no** bearer
+  token → `401`. A run that starts without a signed-in person is the whole bug this
+  guards against.
+- the same call with a token from a *different* Supabase project → `401`
+- signing in on the Vercel page never navigates away — the typed copy survives it
+- `GET /api/me` reports `runs_remaining` and it drops by one after a run

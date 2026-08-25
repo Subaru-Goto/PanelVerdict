@@ -58,8 +58,12 @@ CREATE TABLE IF NOT EXISTS votes (
 -- opportunistically on write.
 CREATE TABLE IF NOT EXISTS request_ledger (
     endpoint     text NOT NULL,
-    caller       text NOT NULL,                     -- the counted identity: forwarded
-                                                    -- client IP (/evaluate), thread id (/chat)
+    caller       text NOT NULL,                     -- the counted identity: the verified
+                                                    -- subject id (/evaluate, /chat-caller),
+                                                    -- thread id (/chat). Opaque by design
+                                                    -- (063/#158) — the address it belongs
+                                                    -- to lives in the provider's auth.users
+                                                    -- and never in a table this app writes.
     requested_at timestamptz NOT NULL DEFAULT now()
 );
 

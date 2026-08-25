@@ -17,13 +17,14 @@ function clientId(request: Request): string | null {
   return request.headers.get("x-vercel-forwarded-for");
 }
 
-export async function proxyPost(
-  path: "/evaluate" | "/chat",
+export async function proxyToBackend(
+  path: "/evaluate" | "/chat" | "/me",
+  method: "GET" | "POST" | "DELETE",
   request: Request,
 ): Promise<Response> {
   const secret = process.env.API_SHARED_SECRET;
   const response = await fetch(`${process.env.API_URL}${path}`, {
-    method: "POST",
+    method,
     // Built from scratch, never spread from the incoming request: this route
     // is public, so every header a caller sent is untrusted input. Only these
     // three reach the backend.
@@ -31,8 +32,20 @@ export async function proxyPost(
       "Content-Type": "application/json",
       ...(secret ? { "X-API-Key": secret } : {}),
       ...(clientId(request) ? { "X-Client-Id": clientId(request)! } : {}),
+      // The one incoming header that is forwarded, and forwarded *because* it
+      // is caller-written (063/#158): the backend verifies its signature
+      // against the project's published keys, so a forged one buys nothing.
+      // Every other header here is stamped by this route precisely because
+      // the backend could not check it. Passed through untouched — this route
+      // does not verify it, and a proxy that half-checked a token would only
+      // add a second opinion to disagree with the real one.
+      ...(request.headers.get("authorization")
+        ? { Authorization: request.headers.get("authorization")! }
+        : {}),
     },
-    body: await request.text(),
+    // GET and DELETE carry nothing; `fetch` rejects a body on either, and
+    // reading one that was never sent would hang on an empty stream.
+    ...(method === "POST" ? { body: await request.text() } : {}),
   });
   // The body is handed over as the stream it already is — /chat's tokens are
   // worth nothing after the conversation moved on, so nothing here buffers.

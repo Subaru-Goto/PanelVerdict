@@ -8,6 +8,8 @@ from factories import DIM, big_five, make_assembled, make_persona, pointing
 from app.assembly import AssembledPersona
 from app.persistence import (
     apply_schema,
+    deny_data_api,
+    load_pool,
     load_votes,
     nearest_panelists,
     persist_persona,
@@ -541,3 +543,63 @@ def test_the_ledger_is_append_only(conn):
 
     assert store_votes(conn, {"fp1": _vote_record(reason="second")}) == 0
     assert load_votes(conn, ["fp1"])["fp1"].reason == "first"
+
+
+def test_every_table_denies_the_data_api_by_default(conn) -> None:
+    """Row-level security on, with no policies, on everything in `public`.
+
+    063/#158 ships a Supabase publishable key to the browser, and that key
+    reaches the project's Data API — which serves whatever `public` holds
+    unless row-level security says otherwise. RLS with no policy denies every
+    role that goes through it, while the tables' owner (the role this backend
+    connects as) bypasses it, so the app is unaffected and the REST surface is
+    empty.
+
+    Asserted over the whole schema rather than a list, so a table added later
+    is covered the day it appears rather than the day someone remembers.
+    """
+    apply_schema(conn)
+    # A stand-in for a table the checkpointer library creates after us: the
+    # sweep must reach tables this file never mentions.
+    conn.execute("CREATE TABLE IF NOT EXISTS latecomer (id int)")
+    conn.commit()
+
+    deny_data_api(conn)
+
+    unprotected = conn.execute(
+        "SELECT relname FROM pg_class c"
+        " JOIN pg_namespace n ON n.oid = c.relnamespace"
+        " WHERE n.nspname = 'public' AND c.relkind = 'r'"
+        " AND NOT c.relrowsecurity"
+    ).fetchall()
+    assert unprotected == []
+
+
+def test_the_owner_can_still_read_what_it_protected(conn) -> None:
+    """RLS that also locked out the application would be a outage, not a
+    control. Postgres exempts a table's owner unless FORCE is asked for, and
+    this backend connects as the owner."""
+    apply_schema(conn)
+    deny_data_api(conn)
+
+    persist_pool(conn, [make_assembled()])
+
+    assert len(load_pool(conn)) == 1
+
+
+def test_the_sweep_works_on_the_autocommit_connection_startup_uses(pg_url) -> None:
+    """The checkpointer's pool is autocommit (main.lifespan), and that is the
+    connection the startup sweep borrows — so the sweep must not assume a
+    transaction it can commit."""
+    with psycopg.connect(pg_url, autocommit=True) as conn:
+        apply_schema(conn)
+
+        deny_data_api(conn)
+
+        unprotected = conn.execute(
+            "SELECT relname FROM pg_class c"
+            " JOIN pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE n.nspname = 'public' AND c.relkind = 'r'"
+            " AND NOT c.relrowsecurity"
+        ).fetchall()
+    assert unprotected == []

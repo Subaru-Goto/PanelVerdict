@@ -6,7 +6,7 @@ from decimal import Decimal
 from typing import NamedTuple
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
@@ -18,6 +18,16 @@ from psycopg_pool import ConnectionPool
 
 from app.analyst import ToolDeps, analysis_facts, stream_analyst
 from app.assembly import Embedder
+from app.auth import (
+    AccountDeleter,
+    DeletionFailed,
+    InvalidSession,
+    SessionUnverifiable,
+    SupabaseVerifier,
+    bearer_token,
+    deleter_from_settings,
+    verifier_from_settings,
+)
 from app.config import USD_PER_TURN, USD_PER_VOTE, settings
 from app.db import check_connection
 from app.llm import (
@@ -28,6 +38,7 @@ from app.llm import (
     remaining_credit,
 )
 from app.panel import votes_with_voters
+from app.persistence import deny_data_api
 from app.pipeline import EmptyPanel, NoVotes, run_panel_test
 from app.schemas import (
     ChatRequest,
@@ -88,24 +99,46 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ) as pool:
         checkpointer = PostgresSaver(pool)
         checkpointer.setup()
+        # After setup(), not before: the sweep must reach the tables the
+        # library just created, which hold analyst transcripts and would
+        # otherwise sit readable over the project's Data API — a surface this
+        # release opens by shipping a publishable key to the browser
+        # (063/#158).
+        with pool.connection() as conn:
+            deny_data_api(conn)
         app.state.checkpointer = checkpointer
+        if settings.api_shared_secret is not None and _VERIFIER is None:
+            # A shared secret set is this deployment saying it is not a laptop.
+            # Sign-in unconfigured alongside it is almost always a missing
+            # variable rather than a decision, and the symptom — every quota
+            # quietly counting an address again — is invisible from outside.
+            logger.warning(
+                "sign-in is not configured (SUPABASE_PROJECT_URL unset): run"
+                " limits count a forwarded address, not an account"
+            )
         yield
 
 
 app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
 
-# The two endpoints that spend money (045/#143). CORS below is a browser
-# courtesy that curl ignores; this middleware is the actual gate, and it runs
-# before any dependency does work — a refused request costs nothing, the same
-# property 013 established for refused content. Timing-safe comparison because
-# the whole point of the secret is an attacker guessing it.
-_PAID_PATHS = ("/evaluate", "/chat")
+# The endpoints that must have come from our own proxy (045/#143). CORS below
+# is a browser courtesy that curl ignores; this middleware is the actual gate,
+# and it runs before any dependency does work — a refused request costs
+# nothing, the same property 013 established for refused content. Timing-safe
+# comparison because the whole point of the secret is an attacker guessing it.
+#
+# /evaluate and /chat are here because they spend money. /me is here because it
+# erases an account (063/#158): it costs nothing, but it is the one irreversible
+# thing a caller can ask for, and a stolen session token should get no further
+# against it than against a paid run. Its GET rides along — no reason to open a
+# door for the half that only reads.
+_GUARDED_PATHS = ("/evaluate", "/chat", "/me")
 
 
 @app.middleware("http")
 async def require_shared_secret(request: Request, call_next):
     secret = settings.api_shared_secret
-    if secret is not None and request.url.path in _PAID_PATHS:
+    if secret is not None and request.url.path in _GUARDED_PATHS:
         # Compared as bytes: Starlette hands header values back latin-1
         # decoded, and `compare_digest` raises TypeError on a str holding a
         # non-ASCII codepoint — so `x-api-key: café` used to become a 500 with
@@ -233,6 +266,13 @@ def get_conn() -> Iterator[psycopg.Connection]:
         yield conn
 
 
+# The ledger's day, written once. `/me` reports the budget that `_charge_ledger`
+# enforces, so both must read the same window and the same key — two literals
+# would let the figure shown drift from the figure applied.
+_LEDGER_WINDOW = "requested_at > now() - interval '24 hours'"
+_EVALUATE = "/evaluate"
+
+
 class _Charge(NamedTuple):
     """One cap to enforce: how many rows this key may hold in the window."""
 
@@ -272,8 +312,75 @@ def _run_price() -> Decimal:
     return _usd(USD_PER_VOTE) * settings.panel.size
 
 
-def caller_id(request: Request) -> str:
-    """Who to count, from the one header a visitor cannot choose.
+# Built once: the verifier holds PyJWT's key-set cache, and a per-request
+# instance would refetch the project's keys on every call.
+_VERIFIER = verifier_from_settings()
+
+
+_DELETER = deleter_from_settings()
+
+
+def get_verifier() -> SupabaseVerifier | None:
+    """The project's token verifier, or None when sign-in is not configured."""
+    return _VERIFIER
+
+
+def get_account_deleter() -> AccountDeleter | None:
+    """The provider's admin client, or None when no elevated key is set."""
+    return _DELETER
+
+
+def _not_signed_in() -> HTTPException:
+    """One sentence for every way of arriving without a session."""
+    return HTTPException(status_code=401, detail="sign in to run a test")
+
+
+def caller_id(
+    request: Request, verifier: SupabaseVerifier | None = Depends(get_verifier)
+) -> str:
+    """Who to count — the verified subject id (063/#158).
+
+    A quota counts a `caller`, so the whole limit is worth exactly what that
+    identity is worth. It used to be an address our proxy forwarded, which
+    bounds a network location rather than a person and costs nothing to change.
+    Now it is the `sub` claim of a signature-checked session token: the one
+    identity a caller cannot mint without a Google account.
+
+    This runs as a dependency rather than in the shared-secret middleware
+    deliberately — 045's middleware guards *the door*, proving a request came
+    from our proxy, and it cannot 401 selectively per endpoint or hand a
+    subject id to anything. A dependency still refuses before the handler and
+    its model calls run, which is what "at the edge" has to mean: a refused
+    request costs nothing (013).
+
+    Unconfigured (`SUPABASE_PROJECT_URL` unset) falls back to the pre-auth
+    identity so local development and CI run without an auth project. That
+    fallback is the honest one: it counts *something* rather than pretending
+    to have verified somebody.
+    """
+    if verifier is None:
+        return _unverified_caller(request)
+    token = bearer_token(request.headers.get("authorization"))
+    if token is None:
+        raise _not_signed_in()
+    try:
+        return verifier.subject(token)
+    except SessionUnverifiable:
+        # Not 401. A 401 asks the visitor to sign in again, and a fresh token
+        # would be checked against the same unreachable key server — so the
+        # one remedy the status code suggests is the one that cannot work.
+        raise HTTPException(
+            status_code=503,
+            detail="sign-in cannot be checked right now — please try again shortly",
+        ) from None
+    except InvalidSession:
+        # Same sentence for absent and forged: which one it was is not the
+        # caller's business, and the remedy is identical.
+        raise _not_signed_in() from None
+
+
+def _unverified_caller(request: Request) -> str:
+    """The pre-auth identity, kept for the unconfigured case only.
 
     X-Client-Id is set by our proxy, which overwrites whatever the caller sent
     using a value its platform supplies — and the proxy is trustworthy here
@@ -313,9 +420,9 @@ def enforce_run_limit(
     """
     _charge_ledger(
         conn,
-        _Charge("/evaluate", caller, settings.evaluate_runs_per_day, "runs"),
+        _Charge(_EVALUATE, caller, settings.evaluate_runs_per_day, "runs"),
         # Priced at what the run may buy: every vote the profile is sized to.
-        spend=_Spend("/evaluate", _run_price()),
+        spend=_Spend(_EVALUATE, _run_price()),
     )
 
 
@@ -381,7 +488,6 @@ def _charge_ledger(
     pooled = spend if spend is not None and cap > 0 else None
     if not active and pooled is None:
         return
-    window = "requested_at > now() - interval '24 hours'"
     with conn.cursor() as cur:
         if pooled is not None:
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("spend-pool",))
@@ -398,7 +504,7 @@ def _charge_ledger(
             )
             cur.execute(
                 "SELECT count(*) FROM request_ledger"
-                f" WHERE endpoint = %s AND caller = %s AND {window}",
+                f" WHERE endpoint = %s AND caller = %s AND {_LEDGER_WINDOW}",
                 (charge.endpoint, charge.key),
             )
             row = cur.fetchone()
@@ -450,8 +556,97 @@ def _charge_ledger(
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "db": "up" if check_connection() else "down"}
+def health(
+    verifier: SupabaseVerifier | None = Depends(get_verifier),
+) -> dict[str, str]:
+    """Ungated on purpose — the keep-warm ping and the daily check both hit it.
+
+    `auth` reports whether sign-in is actually being *enforced*, which is the
+    one failure this deployment could otherwise not see: the frontend and the
+    backend are configured from different places, so a backend missing
+    SUPABASE_PROJECT_URL still serves a frontend that shows the sign-in button,
+    takes the visitor through Google, sends the token — and then ignores it,
+    falling back to counting an address. Everything looks like it works, and
+    the per-account limit silently is not one.
+    """
+    return {
+        "status": "ok",
+        "db": "up" if check_connection() else "down",
+        "auth": "off" if verifier is None else "on",
+    }
+
+
+@app.get("/me")
+def me(
+    caller: str = Depends(caller_id),
+    conn: psycopg.Connection = Depends(get_conn),
+) -> dict[str, int]:
+    """What this account has left to spend today (092/#197).
+
+    A caller's own count is safe to say, and the report the day's pool refuses
+    with is not: `_charge_ledger` withholds the pool figure deliberately,
+    because a shared number counting down is a progress bar for whoever is
+    draining it. This one counts only the reader's own runs, which they could
+    have counted themselves.
+
+    Reads without charging: no row is written, so opening the page does not
+    spend a run.
+    """
+    limit = settings.evaluate_runs_per_day
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM request_ledger"
+            f" WHERE endpoint = %s AND caller = %s AND {_LEDGER_WINDOW}",
+            (_EVALUATE, caller),
+        )
+        row = cur.fetchone()
+    used = int(row[0]) if row else 0
+    return {"runs_per_day": limit, "runs_remaining": max(0, limit - used)}
+
+
+@app.delete("/me", status_code=204)
+def forget_me(
+    caller: str = Depends(caller_id),
+    deleter: AccountDeleter | None = Depends(get_account_deleter),
+) -> Response:
+    """Erase the account, on request (063/#158).
+
+    Cheap, because the subject-id rule means there is nowhere else to look: the
+    address lives in the provider's `auth.users` table and this call removes
+    it. What stays behind is `request_ledger` rows holding an opaque id and a
+    timestamp — and they stay behind *on purpose*, against 063's original
+    "delete our rows" wording:
+
+    - **They are not personal data once the account is gone.** The id linked to
+      a person only through `auth.users`, which this call just erased.
+    - **They expire within the day anyway**, swept by the next write.
+    - **Wiping them would sell runs.** A deleted user's access token stays
+      signature-valid until it expires — Supabase is explicit that deletion
+      "cannot retroactively invalidate an access token that was already issued"
+      — so a delete that also cleared the ledger would hand that still-working
+      token a fresh budget, once per call, for free.
+
+    That last point is worth being honest about in the other direction too: a
+    person can still sign in again and be issued a *new* subject id with a
+    fresh budget. A per-account limit raises the price of a reset from "change
+    a header" to "delete and re-create an account"; it does not make it
+    infinite. The day's global pool (064/#192) remains the real ceiling, which
+    is exactly what 089 said when it declined to treat per-caller limits as
+    one.
+    """
+    if deleter is None:
+        raise HTTPException(
+            status_code=503,
+            detail="account deletion is not available on this deployment",
+        )
+    try:
+        deleter.delete(caller)
+    except DeletionFailed:
+        raise HTTPException(
+            status_code=502,
+            detail="the account could not be deleted — nothing was changed",
+        ) from None
+    return Response(status_code=204)
 
 
 @app.post("/evaluate")

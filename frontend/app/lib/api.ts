@@ -1,3 +1,5 @@
+import { authHeaders } from "./auth";
+
 export type VoteTally = {
   counts: Record<string, number>;
   total: number;
@@ -143,9 +145,16 @@ export async function evaluate(
 ): Promise<EvaluateResponse> {
   // Same origin, through the proxy route (045/#143): the browser never learns
   // the backend URL or the edge secret — neither exists in this bundle.
+  //
+  // The session token does travel from here (063/#158), and it is the one
+  // caller-supplied header the backend is right to read: everything else it
+  // trusts has to be stamped by our proxy, because a caller could have written
+  // it. A signed token is different in kind — the backend checks the signature
+  // rather than the sender. Absent when nobody is signed in, and the refusal
+  // that follows is the correct answer.
   const res = await fetch("/api/evaluate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify({
       target_description: request.targetDescription,
       headline_a: request.headlineA,
@@ -165,5 +174,43 @@ export async function evaluate(
         : `API responded ${res.status}`,
     );
   }
-  return (await res.json()) as EvaluateResponse;
+  const result = (await res.json()) as EvaluateResponse;
+  // After the response, not before: a run refused by a cap spent nothing.
+  runsChanged.forEach((listener) => listener());
+  return result;
+}
+
+/** Watch for the account's remaining runs changing. Returns an unsubscribe.
+ *
+ * A run is the only thing that spends one, and this module is where a run
+ * happens — so the fact originates here rather than being passed between
+ * components that have no reason to know about each other. Without it the
+ * figure on screen keeps saying "3 runs left" after the run that made it 2,
+ * which is worse than saying nothing: it is a budget, so a stale one is wrong.
+ */
+const runsChanged = new Set<() => void>();
+
+export function onRunsChanged(listener: () => void): () => void {
+  runsChanged.add(listener);
+  return () => {
+    runsChanged.delete(listener);
+  };
+}
+
+/** How many runs today's account has left, or null if it could not be read.
+ *
+ * Null rather than zero on failure, deliberately: "0 runs left" tells someone
+ * they are out of runs, and a failed read is not evidence of that.
+ */
+export async function remainingRuns(): Promise<number | null> {
+  const headers = await authHeaders();
+  // Nothing to ask about: a signed-out visitor has no count, and the call
+  // would only ever come back 401.
+  if (!("Authorization" in headers)) return null;
+  const res = await fetch("/api/me", { headers });
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as {
+    runs_remaining?: number;
+  } | null;
+  return typeof body?.runs_remaining === "number" ? body.runs_remaining : null;
 }

@@ -1,4 +1,4 @@
-import { proxyPost } from "../proxy";
+import { proxyToBackend } from "../proxy";
 
 /** Seconds this route may run before the platform kills it.
  *
@@ -9,5 +9,5 @@ import { proxyPost } from "../proxy";
 export const maxDuration = 60;
 
 export async function POST(request: Request): Promise<Response> {
-  return proxyPost("/chat", request);
+  return proxyToBackend("/chat", "POST", request);
 }
