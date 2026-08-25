@@ -607,6 +607,14 @@
     </div>
   </div>
 
+  <div id="dupe-refusal" style="display:none;max-width:640px">
+    <div class="notice stop">
+      <b>The two versions are the same line.</b> A panel cannot prefer one of two identical
+      options — edit either version until they differ. Capitalisation and punctuation count
+      as differences.
+    </div>
+  </div>
+
   <div id="spent-refusal" style="display:none;max-width:640px">
     <div class="notice warn">
       <b>You have used today’s runs.</b> Your allowance refills over the next day. The sample verdict
@@ -1107,7 +1115,12 @@ function onCopyInput(){
   flow.a = a.value; flow.b = b.value;
   document.getElementById('count-a').textContent = `${a.value.length} / 200`;
   document.getElementById('count-b').textContent = `${b.value.length} / 200`;
-  document.getElementById('to-panel').disabled = !(a.value.trim() && b.value.trim());
+  // Identical after whitespace normalisation buys nothing; case and punctuation
+  // stay legal differences. The backend refusal is the authoritative twin.
+  const norm = s => s.trim().replace(/\s+/g, ' ');
+  const dupe = !!norm(a.value) && norm(a.value) === norm(b.value);
+  document.getElementById('dupe-refusal').style.display = dupe ? 'block' : 'none';
+  document.getElementById('to-panel').disabled = !(a.value.trim() && b.value.trim()) || dupe;
   document.getElementById('screen-refusal').style.display = 'none';
   document.getElementById('spent-refusal').style.display = 'none';
   renderRunControls();
