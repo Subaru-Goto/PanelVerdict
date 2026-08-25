@@ -96,6 +96,15 @@ this ceiling, and should be answered with this line rather than with the design.
   the mechanism moved.
 - **Store the Clerk subject id, never the email, never a token.** The app only asks *"same
   person? how many runs used?"* — a subject id answers both, so the database holds no PII.
+
+  > **Corrected 2026-08-25 (063/#158).** The last clause is false once the vendor is
+  > Supabase Auth (062/#157) rather than Clerk: `auth.users` is a real table with an
+  > `email` column *in this project's own Postgres*, alongside the seed and the ledgers.
+  > The narrowed claim, which is true and still worth making: **the tables this
+  > application writes hold only an opaque subject id; the managed `auth.users` table
+  > holds the address, and access to that schema is part of our security surface.** The
+  > discipline the bullet describes is unchanged and is enforced in `schema.sql`.
+  > Sources: `docs/research/supabase-auth-google.md`.
   OAuth tokens are the genuinely dangerous class and Clerk keeps them. Note this delegates
   rather than removes the obligation: Clerk is processor, we remain controller.
 - **The global daily cap is the real backstop.** Per-account quotas only make abuse

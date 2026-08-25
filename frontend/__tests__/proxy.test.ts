@@ -202,3 +202,48 @@ describe("the chat proxy", () => {
     expect(new TextDecoder().decode(second.value)).toContain('"done"');
   });
 });
+
+describe("the proxy and the signed-in session", () => {
+  it("forwards the session token, the one header the backend can check itself", async () => {
+    // 063/#158. Every other header this route sends is stamped here because
+    // the backend could not tell a real one from a forged one. A signed token
+    // it can, so passing it through is safe — and necessary, since the quota
+    // it enforces is per account.
+    vi.stubEnv("API_URL", "http://backend.test");
+    vi.stubEnv("API_SHARED_SECRET", "edge-secret");
+    const backend = vi
+      .fn()
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", backend);
+
+    await evaluateProxy(
+      new Request("http://frontend.test/api/evaluate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer a-session-jwt",
+        },
+        body: "{}",
+      }),
+    );
+
+    const [, init] = backend.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("Authorization")).toBe(
+      "Bearer a-session-jwt",
+    );
+  });
+
+  it("sends no authorization when the browser sent none", async () => {
+    vi.stubEnv("API_URL", "http://backend.test");
+    vi.stubEnv("API_SHARED_SECRET", "edge-secret");
+    const backend = vi
+      .fn()
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", backend);
+
+    await evaluateProxy(proxyRequest({}));
+
+    const [, init] = backend.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("Authorization")).toBeNull();
+  });
+});

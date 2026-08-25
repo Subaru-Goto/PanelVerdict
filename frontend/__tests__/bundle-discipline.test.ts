@@ -25,7 +25,12 @@ describe("the client bundle's discipline", () => {
         const source = readFileSync(file, "utf8");
         return (
           source.includes("API_SHARED_SECRET") ||
-          source.includes("NEXT_PUBLIC_API_URL")
+          source.includes("NEXT_PUBLIC_API_URL") ||
+          // 063/#158: the elevated Supabase key bypasses row-level security
+          // and can delete any user. The publishable key beside it in config
+          // is safe in the bundle and this one never is, so the two must not
+          // be confused by a copy-paste.
+          source.includes("SUPABASE_SERVICE_KEY")
         );
       })
       .map((file) => relative(APP_DIR, file));

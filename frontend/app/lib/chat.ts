@@ -1,3 +1,5 @@
+import { accessToken } from "./auth";
+
 import type { EvaluateResponse } from "./api";
 
 /** One NDJSON line of the streaming /chat response — the TypeScript mirror of
@@ -30,9 +32,16 @@ export async function* streamChat(
   input: ChatInput,
 ): AsyncGenerator<ChatStreamEvent> {
   // Same origin, through the proxy route (045/#143); the stream pipes through.
+  // Signed in like the run is (063/#158): the analyst spends money too, so it
+  // is gated by the same verified identity rather than left as the cheap way
+  // in.
+  const session = await accessToken();
   const res = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(session ? { Authorization: `Bearer ${session}` } : {}),
+    },
     body: JSON.stringify({
       thread_id: input.threadId,
       message: input.message,

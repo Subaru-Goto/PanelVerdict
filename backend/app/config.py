@@ -90,11 +90,19 @@ class Settings(BaseSettings):
     # the browser bundle authenticates nobody. None = guard off, for local dev
     # and CI; the deploy sets it.
     api_shared_secret: SecretStr | None = None
-    # Derived, not tuned (045/#143): a prod run is 200 votes × USD_PER_VOTE
-    # ($0.0002, dashboard-reconciled — see 071) = $0.04, so 25 runs bounds one
-    # caller's worst-case spend at $1.00 per day. Raise it by deciding a new
-    # ceiling, not by feel.
-    evaluate_runs_per_day: int = 25
+    # Derived, not tuned (045/#143, cut to 3 by 092/#197): a prod run is 200
+    # votes × USD_PER_VOTE ($0.0002, dashboard-reconciled — see 071) = $0.04,
+    # so GLOBAL_DAILY_CAP_USD of $1.00 buys ~25 prod runs for the whole day.
+    # 25 per caller was therefore the entire day's pool handed to one person —
+    # a personal limit sitting at the global ceiling bounds nobody. At 3 the
+    # day serves ~8 distinct people before the pool decides. (092 reached the
+    # same conclusion from a ~$0.060/run figure; this comment derives it from
+    # the constants in this file instead, and the conclusion is the same.)
+    #
+    # This became enforceable only with 063/#158: a limit per *caller* means
+    # something once the caller is a verified subject id rather than a
+    # forwarded address, since an address costs nothing to change.
+    evaluate_runs_per_day: int = 3
     # Bounded by structure, not price — honestly flagged: no per-turn dollar
     # measurement exists yet (unlike USD_PER_VOTE). A turn is at most 4 model
     # calls (analyst.py's recursion budget), a thread is one report's
@@ -113,6 +121,19 @@ class Settings(BaseSettings):
     # 064 records why a hardcoded FX rate is worse than a cent of drift.
     # 0 disables, as above.
     global_daily_cap_usd: float = 1.00
+    # The Supabase project sign-in runs against, e.g. https://<ref>.supabase.co
+    # (063/#158). None = sign-in not configured, and `caller_id` then falls back
+    # to the pre-auth identity — the same escape hatch api_shared_secret uses,
+    # so local development and CI need no auth project. The deploy sets it.
+    # Public by nature: it is the host the browser talks to, not a credential.
+    supabase_project_url: str | None = None
+    # Elevated key, backend only, used for exactly one thing: asking Supabase to
+    # delete a user who asked to be deleted. It bypasses Row Level Security
+    # ("full access to your project's data" — guides/api/api-keys, read
+    # 2026-08-24), so it never reaches the browser and nothing else may use it.
+    # None = the deletion endpoint reports itself unavailable rather than
+    # pretending to have deleted an account.
+    supabase_service_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     model_provider: str = "openai"

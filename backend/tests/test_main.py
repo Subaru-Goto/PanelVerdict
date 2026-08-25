@@ -5,9 +5,11 @@ import httpx
 import psycopg
 import pytest
 from app.config import PROFILES, USD_PER_VOTE, PanelProfile, Settings, settings
+from app.auth import InvalidSession
 from app.main import (
     app,
     budget_notice,
+    get_account_deleter,
     get_analyst,
     get_checkpointer,
     get_conn,
@@ -16,6 +18,7 @@ from app.main import (
     get_remaining_credit,
     get_screener,
     get_translator,
+    get_verifier,
 )
 from app.persistence import nearest_panelists, persist_pool
 from app.schemas import EvaluateRequest
@@ -72,6 +75,10 @@ def client(conn, stub_llm, monkeypatch):
         "chat_turns_per_thread_per_day",
         "chat_turns_per_caller_per_day",
         "global_daily_cap_usd",
+        # Without this pin a developer whose .env points at a real Supabase
+        # project would watch every unauthenticated test turn 401.
+        "supabase_project_url",
+        "supabase_service_key",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
     # Every override is a zero-argument callable, never the class itself: FastAPI
@@ -1046,3 +1053,202 @@ def test_a_detected_injection_is_refused_and_costs_no_votes(client, conn) -> Non
     detail = response.json()["detail"]
     assert "Rephrase" in detail
     assert "<script>" not in detail
+
+
+# --- Signed in, verified at the edge (063/#158) ------------------------------
+
+
+class StubVerifier:
+    """Accepts `valid:<subject>` and nothing else — the signature check itself
+    is test_auth's subject, so these tests exercise what the app does with a
+    verdict rather than how the verdict is reached."""
+
+    def subject(self, token: str) -> str:
+        subject = token.removeprefix("valid:")
+        if subject == token:
+            raise InvalidSession
+        return subject
+
+
+class RecordingDeleter:
+    """A stand-in for the provider's admin API, remembering who it was asked
+    to delete."""
+
+    def __init__(self) -> None:
+        self.deleted: list[str] = []
+
+    def delete(self, subject: str) -> None:
+        self.deleted.append(subject)
+
+
+@pytest.fixture
+def signed_in(client, monkeypatch):
+    """The app with sign-in configured, so `caller_id` verifies rather than
+    falling back to the forwarded address."""
+    monkeypatch.setattr(settings, "supabase_project_url", "https://ref.supabase.co")
+    app.dependency_overrides[get_verifier] = lambda: StubVerifier()
+    return client
+
+
+def _as(subject: str, **headers) -> dict[str, str]:
+    return {"Authorization": f"Bearer valid:{subject}"} | headers
+
+
+def test_an_unsigned_request_cannot_start_a_paid_run(
+    signed_in, conn, monkeypatch
+) -> None:
+    """The refusal has to land before anything is bought. A visitor who never
+    signed in has no budget to spend from, so there is nothing to charge and
+    no run to start."""
+    seed_japanese(conn, 5)
+    calls: list[str] = []
+
+    class CountingLLM:
+        configuration = "counting"
+
+        def vote(self, **kwargs):
+            calls.append("vote")
+            raise AssertionError("a signed-out visitor must buy no votes")
+
+    app.dependency_overrides[get_panel_llm] = lambda: CountingLLM()
+
+    response = signed_in.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 401
+    assert calls == []
+
+
+def test_a_forged_token_cannot_start_a_paid_run(signed_in, conn) -> None:
+    """A well-formed request carrying a token the project did not sign buys
+    nothing — which is the whole difference between verifying and trusting."""
+    seed_japanese(conn, 5)
+
+    response = signed_in.post(
+        "/evaluate",
+        json=_REQUEST_BODY,
+        headers={"Authorization": "Bearer forged"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_one_account_keeps_one_budget_across_addresses(
+    signed_in, conn, monkeypatch
+) -> None:
+    """The point of counting a verified subject rather than a forwarded
+    address: moving networks used to mint a fresh budget, and now does not."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+    seed_japanese(conn, 5)
+
+    first = signed_in.post(
+        "/evaluate", json=_REQUEST_BODY, headers=_as("person-1", **{"X-Client-Id": "a"})
+    )
+    second = signed_in.post(
+        "/evaluate", json=_REQUEST_BODY, headers=_as("person-1", **{"X-Client-Id": "b"})
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+
+
+def test_two_accounts_have_budgets_of_their_own(signed_in, conn, monkeypatch) -> None:
+    """A personal limit that one person's use spends for everyone would be a
+    global cap wearing a personal name — the pool (064) is what does that job."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+    seed_japanese(conn, 5)
+
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-1"))
+    other = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-2"))
+
+    assert other.status_code == 200
+
+
+def test_chat_refuses_an_unsigned_request_before_the_stream(signed_in) -> None:
+    """The analyst spends money too, so it is gated the same way — and the
+    refusal must land before there is a stream that cannot carry one."""
+    response = signed_in.post(
+        "/chat",
+        json={"result": _CHAT_RESULT, "thread_id": "t-signed-out", "message": "why?"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_an_account_is_told_how_many_runs_it_has_left(
+    signed_in, conn, monkeypatch
+) -> None:
+    """A caller's own remaining count leaks nothing — the figure that would
+    give an abuser a progress bar is the shared pool's, which stays unsaid
+    (092/#197)."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 3)
+    seed_japanese(conn, 5)
+
+    before = signed_in.get("/me", headers=_as("person-1")).json()
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-1"))
+    after = signed_in.get("/me", headers=_as("person-1")).json()
+
+    assert before == {"runs_per_day": 3, "runs_remaining": 3}
+    assert after == {"runs_per_day": 3, "runs_remaining": 2}
+
+
+def test_the_remaining_count_is_not_readable_without_signing_in(signed_in) -> None:
+    response = signed_in.get("/me")
+
+    assert response.status_code == 401
+
+
+def test_deleting_an_account_asks_the_provider_to_erase_it(signed_in) -> None:
+    """The address is the personal data and it lives in the provider's table,
+    so erasure is that call — there is nowhere else to look."""
+    deleter = RecordingDeleter()
+    app.dependency_overrides[get_account_deleter] = lambda: deleter
+
+    response = signed_in.delete("/me", headers=_as("person-1"))
+
+    assert response.status_code == 204
+    assert deleter.deleted == ["person-1"]
+
+
+def test_deletion_leaves_a_spent_budget_spent(signed_in, conn, monkeypatch) -> None:
+    """Deleting an account must not be a way to buy more runs.
+
+    A deleted user's access token stays signature-valid until it expires (up to
+    an hour, per Supabase's own docs), so a delete that also wiped the ledger
+    would hand that still-working token a fresh budget every time it was
+    called. The rows stay: they hold an opaque id and a timestamp, they expire
+    on their own within the day, and once the account is gone there is nothing
+    left to link them to a person."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+    app.dependency_overrides[get_account_deleter] = lambda: RecordingDeleter()
+    seed_japanese(conn, 5)
+
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-1"))
+    signed_in.delete("/me", headers=_as("person-1"))
+    again = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-1"))
+
+    assert again.status_code == 429
+
+
+def test_deletion_is_refused_rather_than_faked_when_unconfigured(signed_in) -> None:
+    """Reporting success without an elevated key would tell someone their
+    account was erased when it was not."""
+    app.dependency_overrides[get_account_deleter] = lambda: None
+
+    response = signed_in.delete("/me", headers=_as("person-1"))
+
+    assert response.status_code == 503
+
+
+def test_erasing_an_account_still_needs_the_edge_secret(signed_in, monkeypatch) -> None:
+    """A valid session is not the only thing standing in front of a delete.
+
+    Deletion is the one irreversible thing an account can ask for, so it sits
+    behind the edge guard as well: a stolen token used straight against the
+    backend gets no further than a token used against a paid endpoint would.
+    """
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    app.dependency_overrides[get_account_deleter] = lambda: RecordingDeleter()
+
+    response = signed_in.delete("/me", headers=_as("person-1"))
+
+    assert response.status_code == 401

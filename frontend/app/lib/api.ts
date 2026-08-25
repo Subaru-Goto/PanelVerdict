@@ -1,3 +1,5 @@
+import { accessToken } from "./auth";
+
 export type VoteTally = {
   counts: Record<string, number>;
   total: number;
@@ -143,9 +145,20 @@ export async function evaluate(
 ): Promise<EvaluateResponse> {
   // Same origin, through the proxy route (045/#143): the browser never learns
   // the backend URL or the edge secret — neither exists in this bundle.
+  //
+  // The session token does travel from here (063/#158), and it is the one
+  // caller-supplied header the backend is right to read: everything else it
+  // trusts has to be stamped by our proxy, because a caller could have written
+  // it. A signed token is different in kind — the backend checks the signature
+  // rather than the sender. Absent when nobody is signed in, and the refusal
+  // that follows is the correct answer.
+  const session = await accessToken();
   const res = await fetch("/api/evaluate", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(session ? { Authorization: `Bearer ${session}` } : {}),
+    },
     body: JSON.stringify({
       target_description: request.targetDescription,
       headline_a: request.headlineA,
