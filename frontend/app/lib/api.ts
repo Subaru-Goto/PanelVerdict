@@ -180,3 +180,21 @@ export async function evaluate(
   }
   return (await res.json()) as EvaluateResponse;
 }
+
+/** How many runs today's account has left, or null if it could not be read.
+ *
+ * Null rather than zero on failure, deliberately: "0 runs left" tells someone
+ * they are out of runs, and a failed read is not evidence of that.
+ */
+export async function remainingRuns(): Promise<number | null> {
+  const session = await accessToken();
+  if (!session) return null;
+  const res = await fetch("/api/me", {
+    headers: { Authorization: `Bearer ${session}` },
+  });
+  if (!res.ok) return null;
+  const body = (await res.json().catch(() => null)) as {
+    runs_remaining?: number;
+  } | null;
+  return typeof body?.runs_remaining === "number" ? body.runs_remaining : null;
+}

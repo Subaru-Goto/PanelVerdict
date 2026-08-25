@@ -159,3 +159,27 @@ export async function signIn(): Promise<void> {
 export async function signOut(): Promise<void> {
   await authClient()?.auth.signOut();
 }
+
+/** Watch whether anyone is signed in. Returns an unsubscribe.
+ *
+ * Fires once with the state at subscription time and again on every change,
+ * so a caller never has to ask separately — a component that mounted after a
+ * session was restored would otherwise render signed-out until the next event
+ * that never comes.
+ */
+export function onAuthChange(
+  listener: (signedIn: boolean) => void,
+): () => void {
+  const supabase = authClient();
+  if (supabase === null) {
+    listener(false);
+    return () => {};
+  }
+  void supabase.auth
+    .getSession()
+    .then(({ data }) => listener(data.session !== null));
+  const { data } = supabase.auth.onAuthStateChange((_event, session) =>
+    listener(session !== null),
+  );
+  return () => data.subscription.unsubscribe();
+}

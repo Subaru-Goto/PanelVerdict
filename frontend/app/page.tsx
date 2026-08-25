@@ -1,5 +1,6 @@
 import HealthCheck from "./components/health-check";
 import EvaluateForm from "./components/evaluate-form";
+import SignIn from "./components/sign-in";
 
 export default function Home() {
   return (
@@ -7,6 +8,7 @@ export default function Home() {
       <header className="flex flex-col gap-1">
         <h1 className="text-2xl font-semibold">PanelVerdict</h1>
         <HealthCheck />
+        <SignIn />
       </header>
       <EvaluateForm />
     </main>
