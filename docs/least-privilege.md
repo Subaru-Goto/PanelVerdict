@@ -254,3 +254,20 @@ nothing automated will.
 - **No PII redaction.** This product's legitimate inputs are made of names and
   places: "Japanese homeowners in their 40s" is a target description, not a
   leak. A name-and-address redactor would mangle the product's core input.
+
+## What this document does not cover
+
+Prompt injection is one boundary; **stored data is another**, and the two are
+argued separately. Since Google sign-in shipped (063/#158) the shape of the
+second one is:
+
+- The tables this application writes hold an opaque subject id and nothing that
+  could name a person. The address lives in the managed `auth.users` table —
+  which is inside this project's own Postgres, not a vendor's, so access to that
+  schema is part of this security surface rather than someone else's.
+- Every table in `public` has row-level security on and no policies
+  (`persistence.deny_data_api`). The browser holds a Supabase publishable key,
+  and that key reaches the project's REST API; without this the whole schema —
+  including the analyst transcripts the checkpointer stores — would be readable
+  by anyone who opened a console on the site.
+- OAuth tokens are never held: the provider keeps them.

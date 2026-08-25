@@ -17,13 +17,6 @@ function clientId(request: Request): string | null {
   return request.headers.get("x-vercel-forwarded-for");
 }
 
-export async function proxyPost(
-  path: "/evaluate" | "/chat",
-  request: Request,
-): Promise<Response> {
-  return proxyToBackend(path, "POST", request);
-}
-
 export async function proxyToBackend(
   path: "/evaluate" | "/chat" | "/me",
   method: "GET" | "POST" | "DELETE",

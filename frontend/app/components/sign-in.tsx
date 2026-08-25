@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { remainingRuns } from "../lib/api";
-import { onAuthChange, signIn, signInAvailable, signOut } from "../lib/auth";
+import { onRunsChanged, remainingRuns } from "../lib/api";
+import {
+  mountGoogleButton,
+  onAuthChange,
+  signInAvailable,
+  signOut,
+} from "../lib/auth";
 
 /** Signing in, and what it buys you today (063/#158, 092/#197).
  *
@@ -12,37 +17,59 @@ import { onAuthChange, signIn, signInAvailable, signOut } from "../lib/auth";
  * must keep doing is here: never appear in a build that cannot sign anyone in,
  * and show the reader their own remaining runs rather than the shared pool's.
  */
+const LINK_CLASS =
+  "underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
+
 export default function SignIn() {
-  const [signedIn, setSignedIn] = useState(false);
+  // Three states, not two: until the client has looked for a stored session
+  // nobody knows. Starting at `false` would flash "sign in" — and mount
+  // Google's button — at a visitor who is already signed in.
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [runsLeft, setRunsLeft] = useState<number | null>(null);
+  const buttonSlot = useRef<HTMLSpanElement | null>(null);
   const available = signInAvailable();
 
   useEffect(() => onAuthChange(setSignedIn), []);
 
   useEffect(() => {
-    if (!signedIn) return;
+    if (signedIn !== false || !available || buttonSlot.current === null) return;
+    // Google renders its own button into the slot. Failure leaves the slot
+    // empty rather than throwing into React: an unavailable identity provider
+    // is not a reason for the rest of the page to stop working.
+    void mountGoogleButton(buttonSlot.current).catch(() => {});
+  }, [signedIn, available]);
+
+  useEffect(() => {
+    if (signedIn !== true) return;
+    // Re-read whenever a run spends one, not only when the session changes.
     // `live` guards the late answer: signing out while this is in flight would
     // otherwise write a count belonging to a session that has ended. Clearing
     // on the way *out* is the sign-out handler's job rather than this effect's
     // — a synchronous setState here would cascade a render for no reason.
     let live = true;
-    void remainingRuns().then((left) => {
-      if (live) setRunsLeft(left);
-    });
+    const read = () =>
+      void remainingRuns().then((left) => {
+        if (live) setRunsLeft(left);
+      });
+    read();
+    const stop = onRunsChanged(read);
     return () => {
       live = false;
+      stop();
     };
   }, [signedIn]);
 
   // A build with no Supabase project — local development, CI — renders as it
   // did before this existed. A button that cannot work is worse than none.
-  if (!available) return null;
+  // Same for the moment before the session is known: nothing, rather than a
+  // guess that has to be taken back.
+  if (!available || signedIn === null) return null;
 
   return (
     <p className="flex items-center gap-3 text-sm text-zinc-600 dark:text-zinc-400">
       {signedIn ? (
         <>
-          {signedIn && runsLeft !== null && (
+          {runsLeft !== null && (
             <span>
               {runsLeft} {runsLeft === 1 ? "run" : "runs"} left today
             </span>
@@ -56,7 +83,7 @@ export default function SignIn() {
               setRunsLeft(null);
               void signOut();
             }}
-            className="underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            className={LINK_CLASS}
           >
             Sign out
           </button>
@@ -64,13 +91,7 @@ export default function SignIn() {
       ) : (
         <>
           <span>Running a test costs money, so it asks who you are.</span>
-          <button
-            type="button"
-            onClick={() => void signIn()}
-            className="underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-          >
-            Sign in with Google
-          </button>
+          <span ref={buttonSlot} />
         </>
       )}
     </p>

@@ -1,18 +1,18 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { evaluate } from "../app/lib/api";
-import { accessToken } from "../app/lib/auth";
+import { authHeaders } from "../app/lib/auth";
 
 // 063/#158: the browser proves who is spending. The token travels on the one
 // header whose contents the backend can check for itself — everything else a
 // caller sends is untrusted by construction, which is why the proxy builds its
 // headers from scratch.
 
-vi.mock("../app/lib/auth", () => ({ accessToken: vi.fn() }));
+vi.mock("../app/lib/auth", () => ({ authHeaders: vi.fn() }));
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.mocked(accessToken).mockReset();
+  vi.mocked(authHeaders).mockReset();
 });
 
 const INPUT = { targetDescription: "t", headlineA: "a", headlineB: "b" };
@@ -27,7 +27,9 @@ function stubbedFetch() {
 
 describe("a paid call from the browser", () => {
   it("carries the signed-in session as a bearer token", async () => {
-    vi.mocked(accessToken).mockResolvedValue("a-session-jwt");
+    vi.mocked(authHeaders).mockResolvedValue({
+      Authorization: "Bearer a-session-jwt",
+    });
     const fetcher = stubbedFetch();
 
     await evaluate(INPUT);
@@ -41,7 +43,7 @@ describe("a paid call from the browser", () => {
   it("sends no authorization at all when nobody is signed in", async () => {
     // Not an empty bearer, and not a made-up id: the backend's refusal is the
     // correct outcome here, and inventing a header would only obscure it.
-    vi.mocked(accessToken).mockResolvedValue(null);
+    vi.mocked(authHeaders).mockResolvedValue({});
     const fetcher = stubbedFetch();
 
     await evaluate(INPUT);

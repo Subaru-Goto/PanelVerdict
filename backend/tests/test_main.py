@@ -5,7 +5,7 @@ import httpx
 import psycopg
 import pytest
 from app.config import PROFILES, USD_PER_VOTE, PanelProfile, Settings, settings
-from app.auth import InvalidSession
+from app.auth import InvalidSession, SessionUnverifiable
 from app.main import (
     app,
     budget_notice,
@@ -1252,3 +1252,34 @@ def test_erasing_an_account_still_needs_the_edge_secret(signed_in, monkeypatch) 
     response = signed_in.delete("/me", headers=_as("person-1"))
 
     assert response.status_code == 401
+
+
+def test_a_key_server_outage_is_not_reported_as_a_bad_session(signed_in, conn) -> None:
+    """503, not 401. A 401 tells a signed-in person to sign in again, which is
+    the one thing that cannot help when the key server is the thing that is
+    down — and the frontend would loop them through Google forever."""
+
+    class Unreachable:
+        def subject(self, token: str) -> str:
+            raise SessionUnverifiable
+
+    app.dependency_overrides[get_verifier] = lambda: Unreachable()
+    seed_japanese(conn, 5)
+
+    response = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("p"))
+
+    assert response.status_code == 503
+
+
+def test_health_says_whether_sign_in_is_actually_enforced(client, signed_in) -> None:
+    """The failure this exists to catch: a deploy whose backend never got
+    SUPABASE_PROJECT_URL while its frontend did. Every visitor signs in, the
+    button works, the token is ignored, and the quota silently falls back to
+    counting an address — which nothing else in the system would report."""
+    enforced = signed_in.get("/health").json()
+
+    app.dependency_overrides[get_verifier] = lambda: None
+    unenforced = client.get("/health").json()
+
+    assert enforced["auth"] == "on"
+    assert unenforced["auth"] == "off"

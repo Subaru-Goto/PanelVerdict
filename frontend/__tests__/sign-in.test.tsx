@@ -10,27 +10,32 @@ import SignIn from "../app/components/sign-in";
 // remaining runs.
 
 const {
-  signInMock,
+  mountButtonMock,
   signOutMock,
   availableMock,
   onAuthChangeMock,
   remainingRunsMock,
+  onRunsChangedMock,
 } = vi.hoisted(() => ({
-  signInMock: vi.fn(),
+  mountButtonMock: vi.fn(),
   signOutMock: vi.fn(),
   availableMock: vi.fn(),
   onAuthChangeMock: vi.fn(),
   remainingRunsMock: vi.fn(),
+  onRunsChangedMock: vi.fn(),
 }));
 
 vi.mock("../app/lib/auth", () => ({
-  signIn: signInMock,
+  mountGoogleButton: mountButtonMock,
   signOut: signOutMock,
   signInAvailable: availableMock,
   onAuthChange: onAuthChangeMock,
 }));
 
-vi.mock("../app/lib/api", () => ({ remainingRuns: remainingRunsMock }));
+vi.mock("../app/lib/api", () => ({
+  remainingRuns: remainingRunsMock,
+  onRunsChanged: onRunsChangedMock,
+}));
 
 afterEach(() => {
   cleanup();
@@ -41,10 +46,12 @@ afterEach(() => {
 /** Drives the auth subscription the component registers. */
 function withSession(signedIn: boolean) {
   availableMock.mockReturnValue(true);
+  mountButtonMock.mockResolvedValue(undefined);
   onAuthChangeMock.mockImplementation((listener: (v: boolean) => void) => {
     listener(signedIn);
     return () => {};
   });
+  onRunsChangedMock.mockImplementation(() => () => {});
 }
 
 function stubRuns(remaining: number | null) {
@@ -65,6 +72,7 @@ describe("the sign-in control", () => {
     // that cannot work would be worse than offering nothing.
     availableMock.mockReturnValue(false);
     onAuthChangeMock.mockReturnValue(() => {});
+    onRunsChangedMock.mockReturnValue(() => {});
     stubRuns(3);
 
     let container!: HTMLElement;
@@ -75,14 +83,26 @@ describe("the sign-in control", () => {
     expect(container.innerHTML).toBe("");
   });
 
-  it("offers Google to a visitor who is not signed in", async () => {
+  it("hands Google a place to render its own button", async () => {
+    // Google's pre-built button, not our own calling `prompt()`: FedCM puts
+    // One Tap into a cooldown after a dismissal, so a button of ours would
+    // silently do nothing for a visitor who once closed the prompt — the worst
+    // kind of broken, since it looks fine.
     withSession(false);
     stubRuns(3);
 
     await renderSettled();
-    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
 
-    expect(signInMock).toHaveBeenCalled();
+    expect(mountButtonMock).toHaveBeenCalledWith(expect.any(HTMLElement));
+  });
+
+  it("does not offer to sign in someone who already is", async () => {
+    withSession(true);
+    stubRuns(3);
+
+    await renderSettled();
+
+    expect(mountButtonMock).not.toHaveBeenCalled();
   });
 
   it("does not ask the backend who it is before anyone signs in", async () => {
@@ -115,6 +135,26 @@ describe("the sign-in control", () => {
     fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
 
     expect(signOutMock).toHaveBeenCalled();
+  });
+
+  it("re-reads the count after a run spends one", async () => {
+    // The figure is a budget, so a stale one is a wrong one: it would still
+    // read "3 runs left" immediately after the run that made it 2.
+    withSession(true);
+    stubRuns(3);
+    let notify = () => {};
+    onRunsChangedMock.mockImplementation((listener: () => void) => {
+      notify = listener;
+      return () => {};
+    });
+
+    await renderSettled();
+    stubRuns(2);
+    await act(async () => {
+      notify();
+    });
+
+    expect(screen.getByText(/2 runs left today/i)).toBeTruthy();
   });
 
   it("says nothing about runs when the count cannot be read", async () => {

@@ -24,6 +24,9 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 export type Nonce = { raw: string; hashed: string };
 
 export async function createNonce(): Promise<Nonce> {
+  // 32 bytes is Supabase's own generator, copied from their guide rather than
+  // chosen here — the guide specifies the hashing, and this is the input it
+  // specifies it over.
   const raw = btoa(
     String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))),
   );
@@ -86,7 +89,7 @@ declare global {
       accounts: {
         id: {
           initialize(config: Record<string, unknown>): void;
-          prompt(): void;
+          renderButton(parent: HTMLElement, options: Record<string, unknown>): void;
         };
       };
     };
@@ -95,65 +98,74 @@ declare global {
 
 const GSI_SRC = "https://accounts.google.com/gsi/client";
 
+let scriptLoad: Promise<void> | null = null;
+
 function loadGoogleScript(): Promise<void> {
-  if (window.google?.accounts?.id) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>(
-      `script[src="${GSI_SRC}"]`,
-    );
-    if (existing) {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error("google")));
+  // Memoised rather than re-derived from the DOM: a second caller that found
+  // the tag already present but the global not yet assigned used to attach a
+  // `load` listener to a script that had already fired, and wait forever — a
+  // button that renders and then does nothing at all.
+  scriptLoad ??= new Promise<void>((resolve, reject) => {
+    if (window.google?.accounts?.id) {
+      resolve();
       return;
     }
     const script = document.createElement("script");
     script.src = GSI_SRC;
     script.async = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error("google"));
+    script.onerror = () => {
+      scriptLoad = null;
+      reject(new Error("google identity services did not load"));
+    };
     document.head.append(script);
   });
+  return scriptLoad;
 }
 
-/** Sign in with Google without leaving the page.
+/** Render Google's own sign-in button into `container`.
  *
- * The page must not navigate, and that is a product constraint rather than a
- * preference: 092 gates the *run*, so sign-in is asked for with the visitor's
- * copy already typed into an uncontrolled form, and a full-page redirect would
- * lose it. `signInWithOAuth` is a `window.location.assign` with no popup
- * variant; Google's own prompt is an iframe and Supabase documents feeding its
+ * Google's **pre-built button**, not a button of ours calling One Tap's
+ * `prompt()`. The two look interchangeable and are not: FedCM puts the prompt
+ * into a cooldown once a visitor dismisses it, so our own button would
+ * silently do nothing on the next visit — working, then not, with no error and
+ * nothing on screen to explain it.
+ *
+ * The page never navigates, and that is a product constraint rather than a
+ * preference: signing in has to resume into whatever it interrupted, with
+ * whatever was on screen still on screen, and a full-page redirect discards
+ * both. `signInWithOAuth` is a `window.location.assign` with no popup variant;
+ * Google renders this button in an iframe and Supabase documents feeding its
  * credential to `signInWithIdToken`, which is an ordinary fetch.
  *
- * Resolves once a session exists. Rejects if sign-in is unavailable or the
- * visitor dismisses Google's prompt.
+ * Resolves once the button is on screen — not once anyone has signed in.
+ * `onAuthChange` is what reports that.
  */
-export async function signIn(): Promise<void> {
+export async function mountGoogleButton(container: HTMLElement): Promise<void> {
   const supabase = authClient();
   if (supabase === null || !GOOGLE_CLIENT_ID) {
     throw new Error("sign-in is not configured for this build");
   }
   await loadGoogleScript();
   const nonce = await createNonce();
-  const credential = await new Promise<string>((resolve, reject) => {
-    window.google!.accounts.id.initialize({
-      client_id: GOOGLE_CLIENT_ID,
-      // Chrome's third-party-cookie removal means the prompt needs FedCM;
-      // Supabase's guide calls setting this out explicitly.
-      use_fedcm_for_prompt: true,
-      nonce: nonce.hashed,
-      callback: (response: { credential?: string }) =>
-        response.credential
-          ? resolve(response.credential)
-          : reject(new Error("no credential")),
-    });
-    window.google!.accounts.id.prompt();
+  window.google!.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    // Chrome's third-party-cookie removal means this needs FedCM; Supabase's
+    // guide calls setting it out explicitly.
+    use_fedcm_for_prompt: true,
+    nonce: nonce.hashed,
+    callback: async (response: { credential?: string }) => {
+      if (!response.credential) return;
+      await supabase.auth.signInWithIdToken({
+        provider: "google",
+        token: response.credential,
+        // Raw here, hashed above — the way round Supabase's guide specifies,
+        // and the easy thing to get backwards.
+        nonce: nonce.raw,
+      });
+    },
   });
-  const { error } = await supabase.auth.signInWithIdToken({
-    provider: "google",
-    token: credential,
-    nonce: nonce.raw,
-  });
-  if (error) throw new Error(error.message);
+  window.google!.accounts.id.renderButton(container, { type: "standard" });
 }
 
 export async function signOut(): Promise<void> {
@@ -182,4 +194,17 @@ export function onAuthChange(
     listener(session !== null),
   );
   return () => data.subscription.unsubscribe();
+}
+
+/** The session as request headers, or nothing at all.
+ *
+ * One place, because three callers need it and a fourth that quietly forgot
+ * would not fail loudly — it would just spend against the wrong identity, or
+ * be refused with no obvious cause. Empty when nobody is signed in: the
+ * backend's refusal is the right answer, and an empty bearer would only make
+ * it a worse-shaped one.
+ */
+export async function authHeaders(): Promise<Record<string, string>> {
+  const session = await accessToken();
+  return session ? { Authorization: `Bearer ${session}` } : {};
 }

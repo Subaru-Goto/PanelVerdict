@@ -1,4 +1,4 @@
-import { accessToken } from "./auth";
+import { authHeaders } from "./auth";
 
 export type VoteTally = {
   counts: Record<string, number>;
@@ -152,13 +152,9 @@ export async function evaluate(
   // it. A signed token is different in kind — the backend checks the signature
   // rather than the sender. Absent when nobody is signed in, and the refusal
   // that follows is the correct answer.
-  const session = await accessToken();
   const res = await fetch("/api/evaluate", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(session ? { Authorization: `Bearer ${session}` } : {}),
-    },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify({
       target_description: request.targetDescription,
       headline_a: request.headlineA,
@@ -178,7 +174,27 @@ export async function evaluate(
         : `API responded ${res.status}`,
     );
   }
-  return (await res.json()) as EvaluateResponse;
+  const result = (await res.json()) as EvaluateResponse;
+  // After the response, not before: a run refused by a cap spent nothing.
+  runsChanged.forEach((listener) => listener());
+  return result;
+}
+
+/** Watch for the account's remaining runs changing. Returns an unsubscribe.
+ *
+ * A run is the only thing that spends one, and this module is where a run
+ * happens — so the fact originates here rather than being passed between
+ * components that have no reason to know about each other. Without it the
+ * figure on screen keeps saying "3 runs left" after the run that made it 2,
+ * which is worse than saying nothing: it is a budget, so a stale one is wrong.
+ */
+const runsChanged = new Set<() => void>();
+
+export function onRunsChanged(listener: () => void): () => void {
+  runsChanged.add(listener);
+  return () => {
+    runsChanged.delete(listener);
+  };
 }
 
 /** How many runs today's account has left, or null if it could not be read.
@@ -187,11 +203,11 @@ export async function evaluate(
  * they are out of runs, and a failed read is not evidence of that.
  */
 export async function remainingRuns(): Promise<number | null> {
-  const session = await accessToken();
-  if (!session) return null;
-  const res = await fetch("/api/me", {
-    headers: { Authorization: `Bearer ${session}` },
-  });
+  const headers = await authHeaders();
+  // Nothing to ask about: a signed-out visitor has no count, and the call
+  // would only ever come back 401.
+  if (!("Authorization" in headers)) return null;
+  const res = await fetch("/api/me", { headers });
   if (!res.ok) return null;
   const body = (await res.json().catch(() => null)) as {
     runs_remaining?: number;

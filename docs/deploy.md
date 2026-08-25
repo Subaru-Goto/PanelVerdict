@@ -138,6 +138,12 @@ dashboard action; none of it can be done from the repo.
    time, so a value added afterwards is not picked up until the next deploy.
 6. **Redeploy both**, then confirm the checks below.
 
+The publishable key in step 5 reaches the project's REST API, so the schema is
+closed to it: every table in `public` gets row-level security with no policies,
+applied by the seed and again at each startup (`persistence.deny_data_api`).
+Nothing to do by hand — but if a table is ever created directly in the Supabase
+SQL editor, it is exposed until one of those runs.
+
 Two things worth knowing before they surprise someone:
 
 - A free Supabase project pauses after a week of inactivity, and a project restored

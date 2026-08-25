@@ -1,4 +1,4 @@
-import { accessToken } from "./auth";
+import { authHeaders } from "./auth";
 
 import type { EvaluateResponse } from "./api";
 
@@ -35,13 +35,9 @@ export async function* streamChat(
   // Signed in like the run is (063/#158): the analyst spends money too, so it
   // is gated by the same verified identity rather than left as the cheap way
   // in.
-  const session = await accessToken();
   const res = await fetch("/api/chat", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(session ? { Authorization: `Bearer ${session}` } : {}),
-    },
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify({
       thread_id: input.threadId,
       message: input.message,

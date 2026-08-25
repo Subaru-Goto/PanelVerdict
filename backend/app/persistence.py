@@ -77,12 +77,47 @@ def apply_schema(conn: psycopg.Connection) -> None:
         ) from error
 
 
+def deny_data_api(conn: psycopg.Connection) -> None:
+    """Turn row-level security on for every table in `public`, with no policies.
+
+    Supabase serves the whole `public` schema over a REST API that the browser's
+    publishable key can reach (063/#158 ships one). A table with RLS off is
+    readable there by anyone who visits the site and opens a console; a table
+    with RLS on and no policy is readable by nobody who arrives that way, while
+    the owner — the role this backend connects as — is exempt unless FORCE is
+    asked for, which it is not. So the application is unaffected and the REST
+    surface is empty.
+
+    Swept across the schema rather than listed table by table, deliberately:
+    the checkpointer creates its own tables from inside the library (#144), and
+    those hold analyst transcripts. A list would have to be remembered; a sweep
+    covers whatever is there, including tables added after this was written.
+    """
+    conn.execute(
+        "DO $$ DECLARE t record; BEGIN"
+        "  FOR t IN SELECT c.relname FROM pg_class c"
+        "    JOIN pg_namespace n ON n.oid = c.relnamespace"
+        "    WHERE n.nspname = 'public' AND c.relkind = 'r'"
+        "    AND NOT c.relrowsecurity"
+        "  LOOP"
+        "    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',"
+        "                   t.relname);"
+        "  END LOOP;"
+        "END $$;"
+    )
+    conn.commit()
+
+
 def prepare_connection(conn: psycopg.Connection) -> None:
     """Ready a connection for the pool: ensure the schema, then register the
     pgvector adapter so vector columns round-trip as numpy arrays. `register_vector`
     needs the extension to exist, so it must follow `apply_schema`.
     """
     apply_schema(conn)
+    # Every path that creates these tables also closes them to the Data API —
+    # the seed runs from a developer machine against the real project, so a
+    # table can exist there long before the app's own startup sweep runs.
+    deny_data_api(conn)
     register_vector(conn)
 
 

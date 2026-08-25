@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createNonce } from "../app/lib/auth";
+import { authHeaders, createNonce } from "../app/lib/auth";
 
 // 063/#158. The nonce is the one part of Google's pre-built sign-in that is
 // easy to get backwards, and getting it backwards fails at the provider rather
@@ -33,5 +33,15 @@ describe("the sign-in nonce", () => {
     const [first, second] = await Promise.all([createNonce(), createNonce()]);
 
     expect(first.raw).not.toBe(second.raw);
+  });
+});
+
+describe("the session as headers", () => {
+  it("is empty where no session can exist", async () => {
+    // No Supabase project is configured in test, so there is nobody signed in.
+    // An empty object, never an empty bearer: `Authorization: Bearer ` is a
+    // malformed credential rather than an absent one, and the backend would
+    // have to decide what to do with it.
+    expect(await authHeaders()).toEqual({});
   });
 });

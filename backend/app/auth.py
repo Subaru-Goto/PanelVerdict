@@ -22,6 +22,7 @@ The rules this module exists to keep:
   string, so nothing downstream can persist what it never receives.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -29,6 +30,8 @@ import httpx
 import jwt
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 # ES256 is Supabase's recommended signing key type and RS256 its other
 # asymmetric option (`supabase.com/docs/guides/auth/signing-keys`, read
@@ -47,7 +50,20 @@ class InvalidSession(Exception):
 
     The caller learns that their session was not accepted and nothing more: a
     verifier that reports *why* a forged token failed is a signature oracle,
-    and this codebase's refusals are its own sentences anyway (013).
+    and this codebase's refusals are its own sentences anyway (013). The
+    operator gets the reason instead, in the log — the two audiences want
+    opposite things here.
+    """
+
+
+class SessionUnverifiable(Exception):
+    """The token could not be checked at all — the key server was unreachable.
+
+    A different outcome from `InvalidSession` because it has a different
+    remedy. Telling a signed-in person their session is invalid sends them back
+    through Google, which cannot possibly help when the thing that is down is
+    the endpoint their new token would also be checked against; they would loop
+    until they gave up, and the logs would read as a wave of forged tokens.
     """
 
 
@@ -76,17 +92,31 @@ class SupabaseVerifier:
                 audience=self.audience,
                 issuer=self.issuer,
             )
+        except jwt.exceptions.PyJWKClientConnectionError as exc:
+            # Not a verdict on the token — we never got to look at it.
+            logger.warning("session key set unreachable: %s", exc)
+            raise SessionUnverifiable from exc
         except Exception as exc:
-            # Deliberately broad: `get_signing_key_from_jwt` raises its own
-            # error type, `decode` raises another, and a malformed header
-            # raises from neither. Every one of them means the same thing here,
-            # and a class this module forgot to name must not become a 500 that
-            # lets a request past the gate.
+            # Deliberately broad after that: `get_signing_key_from_jwt` raises
+            # its own error type, `decode` raises another, and a malformed
+            # header raises from neither. Every one of them means the same
+            # thing to the caller, and a class this module forgot to name must
+            # not become a 500 that lets a request past the gate.
+            #
+            # Logged because refusals have two indistinguishable causes with
+            # opposite remedies: forged tokens, and a project whose signing
+            # keys were never migrated — which returns an empty key set, so
+            # every honest session fails exactly like an attack. The reason
+            # goes here; the token never does, since a rejected credential is
+            # still a credential (it may be a real one aimed at the wrong
+            # project).
+            logger.warning("session rejected: %s", type(exc).__name__)
             raise InvalidSession from exc
         subject = claims.get("sub")
         if not isinstance(subject, str) or not subject:
             # A token with no subject authenticates nobody: there would be
             # nothing to charge, so there is no one to admit.
+            logger.warning("session rejected: no subject claim")
             raise InvalidSession
         return subject
 

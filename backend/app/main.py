@@ -22,6 +22,7 @@ from app.auth import (
     AccountDeleter,
     DeletionFailed,
     InvalidSession,
+    SessionUnverifiable,
     SupabaseVerifier,
     bearer_token,
     deleter_from_settings,
@@ -37,6 +38,7 @@ from app.llm import (
     remaining_credit,
 )
 from app.panel import votes_with_voters
+from app.persistence import deny_data_api
 from app.pipeline import EmptyPanel, NoVotes, run_panel_test
 from app.schemas import (
     ChatRequest,
@@ -97,7 +99,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ) as pool:
         checkpointer = PostgresSaver(pool)
         checkpointer.setup()
+        # After setup(), not before: the sweep must reach the tables the
+        # library just created, which hold analyst transcripts and would
+        # otherwise sit readable over the project's Data API — a surface this
+        # release opens by shipping a publishable key to the browser
+        # (063/#158).
+        with pool.connection() as conn:
+            deny_data_api(conn)
         app.state.checkpointer = checkpointer
+        if settings.api_shared_secret is not None and _VERIFIER is None:
+            # A shared secret set is this deployment saying it is not a laptop.
+            # Sign-in unconfigured alongside it is almost always a missing
+            # variable rather than a decision, and the symptom — every quota
+            # quietly counting an address again — is invisible from outside.
+            logger.warning(
+                "sign-in is not configured (SUPABASE_PROJECT_URL unset): run"
+                " limits count a forwarded address, not an account"
+            )
         yield
 
 
@@ -248,6 +266,13 @@ def get_conn() -> Iterator[psycopg.Connection]:
         yield conn
 
 
+# The ledger's day, written once. `/me` reports the budget that `_charge_ledger`
+# enforces, so both must read the same window and the same key — two literals
+# would let the figure shown drift from the figure applied.
+_LEDGER_WINDOW = "requested_at > now() - interval '24 hours'"
+_EVALUATE = "/evaluate"
+
+
 class _Charge(NamedTuple):
     """One cap to enforce: how many rows this key may hold in the window."""
 
@@ -305,6 +330,11 @@ def get_account_deleter() -> AccountDeleter | None:
     return _DELETER
 
 
+def _not_signed_in() -> HTTPException:
+    """One sentence for every way of arriving without a session."""
+    return HTTPException(status_code=401, detail="sign in to run a test")
+
+
 def caller_id(
     request: Request, verifier: SupabaseVerifier | None = Depends(get_verifier)
 ) -> str:
@@ -332,13 +362,21 @@ def caller_id(
         return _unverified_caller(request)
     token = bearer_token(request.headers.get("authorization"))
     if token is None:
-        raise HTTPException(status_code=401, detail="sign in to run a test")
+        raise _not_signed_in()
     try:
         return verifier.subject(token)
+    except SessionUnverifiable:
+        # Not 401. A 401 asks the visitor to sign in again, and a fresh token
+        # would be checked against the same unreachable key server — so the
+        # one remedy the status code suggests is the one that cannot work.
+        raise HTTPException(
+            status_code=503,
+            detail="sign-in cannot be checked right now — please try again shortly",
+        ) from None
     except InvalidSession:
         # Same sentence for absent and forged: which one it was is not the
         # caller's business, and the remedy is identical.
-        raise HTTPException(status_code=401, detail="sign in to run a test") from None
+        raise _not_signed_in() from None
 
 
 def _unverified_caller(request: Request) -> str:
@@ -382,9 +420,9 @@ def enforce_run_limit(
     """
     _charge_ledger(
         conn,
-        _Charge("/evaluate", caller, settings.evaluate_runs_per_day, "runs"),
+        _Charge(_EVALUATE, caller, settings.evaluate_runs_per_day, "runs"),
         # Priced at what the run may buy: every vote the profile is sized to.
-        spend=_Spend("/evaluate", _run_price()),
+        spend=_Spend(_EVALUATE, _run_price()),
     )
 
 
@@ -450,7 +488,6 @@ def _charge_ledger(
     pooled = spend if spend is not None and cap > 0 else None
     if not active and pooled is None:
         return
-    window = "requested_at > now() - interval '24 hours'"
     with conn.cursor() as cur:
         if pooled is not None:
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("spend-pool",))
@@ -467,7 +504,7 @@ def _charge_ledger(
             )
             cur.execute(
                 "SELECT count(*) FROM request_ledger"
-                f" WHERE endpoint = %s AND caller = %s AND {window}",
+                f" WHERE endpoint = %s AND caller = %s AND {_LEDGER_WINDOW}",
                 (charge.endpoint, charge.key),
             )
             row = cur.fetchone()
@@ -519,8 +556,24 @@ def _charge_ledger(
 
 
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "db": "up" if check_connection() else "down"}
+def health(
+    verifier: SupabaseVerifier | None = Depends(get_verifier),
+) -> dict[str, str]:
+    """Ungated on purpose — the keep-warm ping and the daily check both hit it.
+
+    `auth` reports whether sign-in is actually being *enforced*, which is the
+    one failure this deployment could otherwise not see: the frontend and the
+    backend are configured from different places, so a backend missing
+    SUPABASE_PROJECT_URL still serves a frontend that shows the sign-in button,
+    takes the visitor through Google, sends the token — and then ignores it,
+    falling back to counting an address. Everything looks like it works, and
+    the per-account limit silently is not one.
+    """
+    return {
+        "status": "ok",
+        "db": "up" if check_connection() else "down",
+        "auth": "off" if verifier is None else "on",
+    }
 
 
 @app.get("/me")
@@ -543,9 +596,8 @@ def me(
     with conn.cursor() as cur:
         cur.execute(
             "SELECT count(*) FROM request_ledger"
-            " WHERE endpoint = %s AND caller = %s"
-            " AND requested_at > now() - interval '24 hours'",
-            ("/evaluate", caller),
+            f" WHERE endpoint = %s AND caller = %s AND {_LEDGER_WINDOW}",
+            (_EVALUATE, caller),
         )
         row = cur.fetchone()
     used = int(row[0]) if row else 0
