@@ -9,14 +9,29 @@ It is deliberately organised around **what would make it false**. An assessment
 that only says why things are safe today ages into a false sense of security the
 moment the system moves, and nothing fails to announce it.
 
-> **Note, 2026-08-25.** This document argues about text the panel *judges*. Enacted
-> context ([094/#200](https://github.com/Subaru-Goto/PanelVerdict/issues/200)) adds a
-> channel where a stranger's text is *obeyed* — a role-play instruction placed in every
-> vote prompt. Position randomisation, delimiting and the fail-open screening choice below
-> were all reasoned about judged content and do not carry over unchanged. That argument is
-> open at [100/#209](https://github.com/Subaru-Goto/PanelVerdict/issues/209) and must be
-> settled before enacted context ships. Everything below still describes the judged
-> channel correctly.
+> **This document's stance is superseded — read it as history until
+> [100/#209](https://github.com/Subaru-Goto/PanelVerdict/issues/209) rewrites it
+> (author, 2026-08-25).**
+>
+> Everything below argues that injection is *tolerable* because the attacker and the
+> victim are the same person. That protects the wrong asset. This deployment exists to
+> **demonstrate competence**, and its visitors include people who will try to break it for
+> that reason — their payoff is a screenshot, not a corrupted verdict, so "they only fooled
+> themselves" defends nothing.
+>
+> Two consequences to assume are coming, rather than relying on the text below:
+>
+> - **Fail-open screening is very likely wrong**, on both channels. The stated trade — *"a
+>   screening outage must not become a product outage"* — is backwards for a demonstration:
+>   an outage embarrasses for an hour, a public injection embarrasses permanently.
+> - **Enacted context ([094/#200](https://github.com/Subaru-Goto/PanelVerdict/issues/200))
+>   adds a second channel that is *obeyed* rather than judged**, where position
+>   randomisation cannot cancel (an instruction is applied to every panelist by design) and
+>   delimiting cannot fence off text that is meant to be followed.
+>
+> What survives unchanged: the *mechanics* described below — where untrusted text enters,
+> how the vote prompt is delimited, what the screener does and does not verify. It is the
+> conclusion drawn from them that does not.
 
 ## The only untrusted input is the customer's own text
 
