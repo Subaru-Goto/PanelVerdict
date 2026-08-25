@@ -16,6 +16,19 @@
     2. Nothing is boxed except a decision the human owns. Sections are separated
        by rules, not cards, so the one bordered panel on the page is the one
        place the human is being asked to act.
+
+  Revised 2026-08-24, after the grilling settled the redesign: the report leads
+  with a probability said in words — no verdict label at hero size, no stat
+  tiles, every number printed exactly once; the gate shows how the audience was
+  read and asks once per audience, not once per run; sign-in happens in page,
+  never by redirect; the analyst dock carries only the conversation and is
+  login-gated with a line saying why, not a dead control. Amended 2026-08-25:
+  the wall moved from the run to the form — signed out, only the demo runs.
+
+  Open question, compared live via the switcher bottom-left: how far the
+  identity diverges from the shared system. "Shared" is the system as-is;
+  "Editorial" and "Instrument" keep its discipline but change type, shape and
+  paper. Reacting to these is the point; two of the three get deleted.
 -->
 <style>
   :root{
@@ -23,29 +36,24 @@
     --line:#E2E3E5; --surface:#FFFFFF; --surface-2:#F4F4F4;
     --red:#DA291C; --amber:#B5850B; --green:#1F7A33;
     --pill:100px;
+    --font-body:"Helvetica Neue",Helvetica,Arial,sans-serif;
+    --font-display:var(--font-body);
+    --nav-bg:rgba(255,255,255,.92);
   }
   *{margin:0;padding:0;box-sizing:border-box}
-  body{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;color:var(--ink);background:var(--surface);
+  :focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+  body{font-family:var(--font-body);color:var(--ink);background:var(--surface);
     -webkit-font-smoothing:antialiased;font-size:15px;line-height:1.5}
   .kicker{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-2);font-weight:500}
-  h1{font-size:40px;font-weight:500;letter-spacing:-.01em}
-  h2{font-size:24px;font-weight:500;letter-spacing:-.01em}
+  h1{font-family:var(--font-display);font-size:40px;font-weight:500;letter-spacing:-.01em}
+  h2{font-family:var(--font-display);font-size:24px;font-weight:500;letter-spacing:-.01em}
   h3{font-size:16px;font-weight:600}
 
   /* ---------- nav ---------- */
   nav{position:sticky;top:0;z-index:50;display:flex;align-items:center;justify-content:space-between;
-    padding:0 40px;height:56px;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+    padding:0 40px;height:56px;background:var(--nav-bg);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
   .wordmark{font-size:13px;font-weight:700;letter-spacing:.32em;text-transform:uppercase;cursor:pointer;background:none;border:none;font-family:inherit;color:inherit}
-  .nav-links{display:flex;gap:6px}
-  .nav-links button{font:inherit;font-size:13px;font-weight:500;color:var(--ink);background:none;border:none;
-    padding:7px 18px;border-radius:var(--pill);cursor:pointer;transition:background .15s}
-  .nav-links button:hover{background:var(--surface-2)}
-  .nav-links button.active{background:var(--ink);color:#fff}
   .nav-right{display:flex;align-items:center;gap:12px}
-  .badge{font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;border:1px solid var(--line);
-    border-radius:var(--pill);padding:6px 14px;color:var(--ink-2);display:flex;align-items:center;gap:8px}
-  .badge .bdot{width:7px;height:7px;border-radius:50%;background:var(--green);flex:none}
-  .badge.spent .bdot{background:var(--amber)}
   .who{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:var(--pill);
     padding:5px 6px 5px 14px;background:none;font:inherit;font-size:13px;font-weight:500;cursor:pointer}
   .who .av{width:24px;height:24px;border-radius:50%;background:var(--ink);color:#fff;font-size:11px;
@@ -73,14 +81,46 @@
   .hero{padding:96px 0 64px;text-align:center}
   .hero p.lede{max-width:660px;margin:16px auto 0;font-size:17px;font-weight:300;color:var(--ink-2)}
   .hero-actions{margin-top:36px;display:flex;justify-content:center;gap:14px}
+  .hero-note{margin-top:16px;font-size:12.5px;font-weight:300;color:var(--ink-3)}
   .principles{margin-top:24px;display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
   .principle{border-top:2px solid var(--ink);padding-top:18px}
   .principle p{margin-top:8px;font-size:13px;font-weight:300;color:var(--ink-2)}
-  .recent{margin-top:72px}
-  .recent .row{display:flex;justify-content:space-between;align-items:baseline;gap:20px;padding:14px 0;border-bottom:1px solid var(--line)}
-  .recent .row:first-child{border-top:1px solid var(--line)}
-  .recent .q{font-size:14px;font-weight:500}
-  .recent .v{font-size:13px;font-weight:300;color:var(--ink-2);white-space:nowrap}
+  /* ---------- the rail: stored sample runs, chat-app style ---------- */
+  .side{display:none;position:fixed;top:56px;left:0;bottom:0;width:248px;z-index:40;
+    border-right:1px solid var(--line);background:var(--surface);padding:20px 14px;
+    flex-direction:column;gap:4px;overflow-y:auto}
+  .side-new{font:inherit;font-size:13px;font-weight:500;color:var(--ink);background:none;
+    border:1.5px solid var(--ink);border-radius:var(--pill);padding:9px 16px;cursor:pointer;margin-bottom:20px}
+  .side-new:hover{background:var(--surface-2)}
+  .side-k{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3);font-weight:600;padding:0 8px 8px}
+  .side-row{font:inherit;text-align:left;background:none;border:none;border-radius:6px;padding:9px 8px;
+    cursor:pointer;transition:background .15s}
+  .side-row:hover{background:var(--surface-2)}
+  .side-row .q{font-size:12.5px;font-weight:400;color:var(--ink);line-height:1.4;
+    overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .side-row .v{display:block;margin-top:3px;font-size:11.5px;font-weight:300;color:var(--ink-3)}
+  .side-search{padding:0 8px 14px}
+  .side-search input{width:100%;font:inherit;font-size:12.5px;border:none;border-bottom:1.5px solid var(--line);
+    padding:6px 2px;outline:none;background:transparent}
+  .side-search input:focus{border-bottom-color:var(--ink)}
+  .side-item{display:flex;align-items:flex-start;gap:2px}
+  .side-item .side-row{flex:1}
+  .side-x{font:inherit;font-size:15px;line-height:1;color:var(--ink-3);background:none;border:none;cursor:pointer;
+    padding:9px 6px;border-radius:6px;opacity:0;transition:opacity .12s}
+  .side-item:hover .side-x,.side-x:focus-visible{opacity:1}
+  .side-x:hover{color:var(--red)}
+  #hist-list{margin-bottom:16px}
+  .rail-toggle{background:none;border:none;cursor:pointer;color:var(--ink-2);padding:6px;border-radius:6px;display:flex}
+  .rail-toggle:hover{background:var(--surface-2);color:var(--ink)}
+  @media(min-width:1100px){
+    .side{display:flex}
+    main{max-width:1368px;padding-left:288px}
+    html.rail-closed .side{display:none}
+    html.rail-closed main{max-width:1080px;padding-left:40px}
+  }
+  @media(max-width:1099px){
+    html.rail-open .side{display:flex;box-shadow:6px 0 30px rgba(23,26,32,.12)}
+  }
   .disclosure{margin-top:88px;border-top:1px solid var(--line);padding-top:20px;text-align:center;
     font-size:12px;font-weight:300;color:var(--ink-3)}
 
@@ -114,6 +154,35 @@
   textarea:focus{border-color:var(--ink)}
   .hint{margin-top:10px;font-size:12px;font-weight:300;color:var(--ink-3);max-width:560px}
   .actions{margin-top:36px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  /* The accepted reading, shown where a misreading can still be fixed — on the
+     report, the money is already spent. */
+  .read-as{margin-top:12px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;
+    font-size:12.5px;font-weight:300;color:var(--ink-2)}
+  .read-as b{font-weight:600;color:var(--ink)}
+  .allowance{font-size:12.5px;font-weight:300;color:var(--ink-3)}
+  .vocab{margin-top:12px;max-width:600px;font-size:12px;font-weight:300;color:var(--ink-2)}
+  .vocab-row{display:flex;gap:12px;padding:4px 0;align-items:baseline}
+  .vocab-k{flex:none;width:64px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--ink)}
+  .vocab-k.not{color:var(--amber)}
+  .cty-row{display:flex;gap:10px;flex-wrap:wrap}
+  .cty{font:inherit;font-size:13px;font-weight:500;color:var(--ink-2);background:none;border:1px solid var(--line);
+    border-radius:var(--pill);padding:8px 18px;cursor:pointer;transition:all .12s}
+  .cty:hover{border-color:var(--ink);color:var(--ink)}
+  .cty.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+  .sel-row{display:flex;gap:28px;flex-wrap:wrap}
+  .sel-row label{display:flex;flex-direction:column;gap:7px;font-size:11px;letter-spacing:.14em;
+    text-transform:uppercase;font-weight:600;color:var(--ink-2)}
+  .sel-row select{font:inherit;font-size:14px;font-weight:400;color:var(--ink);border:none;
+    border-bottom:1.5px solid var(--line);border-radius:0;padding:6px 2px;background:transparent;
+    outline:none;min-width:130px;cursor:pointer}
+  .sel-row select:focus{border-bottom-color:var(--ink)}
+  .age-pair{display:flex;align-items:baseline;gap:10px}
+  .age-in{width:64px;font:inherit;font-size:14px;font-weight:400;color:var(--ink);border:none;
+    border-bottom:1.5px solid var(--line);border-radius:0;padding:6px 2px;background:transparent;outline:none}
+  .age-in:focus{border-bottom-color:var(--ink)}
+  .chip-set{display:flex;gap:8px;flex-wrap:wrap}
+  .cty.sm{font-size:12px;padding:6px 14px;font-weight:400}
+  .opt2{font-size:10px;letter-spacing:.05em;text-transform:none;font-weight:400;color:var(--ink-3)}
 
   /* ---------- notices: one box, a different left rule ---------- */
   .notice{border:1px solid var(--line);border-left:2px solid var(--ink-3);padding:12px 16px;font-size:12.5px;
@@ -128,7 +197,7 @@
   @media(max-width:860px){.panel-grid{grid-template-columns:1fr}}
   .stat-tile{border-top:2px solid var(--ink);padding-top:18px;margin-bottom:36px}
   .stat-tile .kicker{margin-bottom:10px}
-  .hero-number{font-size:72px;font-weight:300;letter-spacing:-.03em;line-height:1}
+  .hero-number{font-family:var(--font-display);font-size:72px;font-weight:300;letter-spacing:-.03em;line-height:1}
   .hero-number small{font-size:22px;color:var(--ink-3);font-weight:300}
   .stat-note{font-size:13px;color:var(--ink-2);margin-top:10px;font-weight:300}
   .trait-row{display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:13px 0;border-bottom:1px solid var(--line)}
@@ -142,12 +211,6 @@
   .persona{font-size:12px;font-weight:300;color:var(--ink-2);border:1px solid var(--line);border-radius:var(--pill);padding:5px 12px}
   .decision{margin-top:56px;border:1px solid var(--ink);padding:36px 40px}
   .decision p.exp{color:var(--ink-2);font-size:14px;font-weight:300;max-width:560px;margin-top:10px}
-  .size-row{margin:26px 0 22px;display:flex;gap:14px;align-items:center;flex-wrap:wrap}
-  .size-row label{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-2);font-weight:600}
-  .wbtn{width:26px;height:26px;border-radius:50%;border:1px solid var(--line);background:none;cursor:pointer;
-    font-size:14px;color:var(--ink-2);line-height:1;transition:all .12s}
-  .wbtn:hover{border-color:var(--ink);color:var(--ink)}
-  .wv{display:inline-block;min-width:34px;text-align:center;font-weight:600;color:var(--ink);font-size:18px;font-variant-numeric:tabular-nums}
   .decision-actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;align-items:center}
   .hitl-note{margin-top:22px;font-size:12px;color:var(--ink-3);font-weight:300}
 
@@ -168,41 +231,41 @@
   /* ---------- step 4: the verdict ---------- */
   .page-head{padding:44px 0 8px;display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap}
   .page-head .meta{color:var(--ink-2);font-size:13px;margin-top:8px;font-weight:300}
-  .rec-line{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:500;letter-spacing:.04em;margin-top:14px}
-  .rec-icon{width:10px;height:10px;border-radius:50%;background:var(--green);flex:none}
-  .rec-nocall .rec-icon{background:var(--amber)}
-  .rec-nocall{color:var(--amber)}
-  .winner{margin-top:24px;border-top:2px solid var(--ink);padding-top:20px}
-  .winner .line{font-size:34px;font-weight:300;letter-spacing:-.02em;margin-top:8px}
-  .winner .loser{font-size:15px;font-weight:300;color:var(--ink-3);margin-top:12px}
-  .stat-band{display:grid;grid-template-columns:repeat(4,1fr);gap:28px;margin-top:48px}
-  @media(max-width:860px){.stat-band{grid-template-columns:1fr 1fr}}
-  .stat-band .stat-tile{margin-bottom:0}
-  .stat-band .hero-number{font-size:52px}
-  .prose{margin-top:44px;max-width:640px;font-size:14px;font-weight:300;color:var(--ink-2)}
+  /* The lead: the copy, then the probability said in words. No label above
+     supporting-text size, no tiles — every number appears exactly once. */
+  .lead{margin-top:24px;border-top:2px solid var(--ink);padding-top:20px}
+  .lead .line{font-family:var(--font-display);font-size:34px;font-weight:300;letter-spacing:-.02em;margin-top:8px}
+  .lead .loser{font-size:15px;font-weight:300;color:var(--ink-3);margin-top:12px}
+  .lead .prob{font-size:21px;font-weight:400;margin-top:30px;max-width:640px}
+  .lead .quals{margin-top:14px;font-size:14px;font-weight:300;color:var(--ink-2)}
+  .lead .quals p+p{margin-top:6px}
+  /* The analyst's reading is the report's argument — body weight, full ink. */
+  .prose{margin-top:44px;max-width:640px;font-size:15px;font-weight:400;color:var(--ink);line-height:1.65}
   .prose p+p{margin-top:12px}
+  .report-band{display:flex;gap:64px;align-items:flex-start;margin-top:56px}
+  .report-band .chart-wrap{flex:1.15;margin-top:0;min-width:0}
+  .report-band .prose{flex:1;margin-top:0;max-width:none}
+  @media(max-width:1000px){.report-band{flex-direction:column;gap:44px}}
   .chart-wrap{margin-top:56px}
   .chart-wrap .kicker{margin-bottom:6px}
   .chart-hint{font-size:12px;color:var(--ink-3);margin-bottom:22px;font-weight:300}
-  .legend{display:flex;gap:22px;margin-top:14px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
-  .legend span{display:flex;align-items:center;gap:8px}
+  .legend{display:flex;flex-wrap:wrap;justify-content:center;gap:26px;margin-top:18px;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+  .legend>span{display:flex;align-items:flex-start;gap:10px}
+  .legend i{flex:none;margin-top:2px}
+  .legend .lg-t{display:flex;flex-direction:column;gap:3px}
+  .legend .lg-t em{font-style:normal;font-size:10px;font-weight:400;letter-spacing:.04em;text-transform:none;color:var(--ink-3)}
   .lg-mean{width:14px;height:0;border-top:1.5px dashed var(--ink)}
   .lg-hdi{width:14px;height:5px;background:var(--ink)}
   .lg-rope{width:14px;height:10px;background:var(--surface-2);border:1px solid var(--line)}
+  .lg-mass{width:14px;height:10px;background:var(--ink);opacity:.12}
 
-  /* votes */
+  /* votes — the reason is content, not a tooltip: visible, keyboard-reachable */
   .votes{margin-top:64px}
-  .vote{padding:14px 0;border-bottom:1px solid var(--line);position:relative}
+  .vote{padding:16px 0;border-bottom:1px solid var(--line)}
   .vote-top{display:flex;justify-content:space-between;align-items:baseline;gap:16px}
   .vote-name{font-size:14px;font-weight:500}
   .vote-val{font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
-  .track{height:8px;background:var(--surface-2);border-radius:4px;margin-top:10px;overflow:hidden}
-  .fill{height:100%;background:var(--ink);border-radius:0 4px 4px 0;transition:width .6s cubic-bezier(.2,.7,.3,1)}
-  .vote .tip{position:absolute;left:0;right:0;bottom:calc(100% - 6px);z-index:20;background:var(--ink);color:#fff;
-    padding:14px 16px;font-size:13px;font-weight:300;line-height:1.55;opacity:0;pointer-events:none;transition:opacity .15s;border-radius:2px}
-  .vote .tip .tip-k{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:#9B9EA3;display:block;margin-bottom:6px;font-weight:600}
-  .vote:hover .tip{opacity:1}
-  .vote:hover{background:var(--surface-2)}
+  .vote-why{margin-top:8px;font-size:13.5px;font-weight:400;color:var(--ink-2);line-height:1.55;max-width:640px}
   .report-actions{margin-top:56px;display:flex;gap:14px;flex-wrap:wrap;align-items:center}
 
   /* ---------- analyst dock ---------- */
@@ -229,6 +292,7 @@
   .dock-foot input{flex:1;font:inherit;font-size:13.5px;border:none;border-bottom:1.5px solid var(--line);
     padding:8px 2px;outline:none;background:transparent}
   .dock-foot input:focus{border-bottom-color:var(--ink)}
+  .dock-gate{padding:18px 20px;border-top:1px solid var(--line);font-size:12.5px;font-weight:300;color:var(--ink-2)}
 
   /* ---------- sign-in sheet ---------- */
   .scrim{position:fixed;inset:0;z-index:80;background:rgba(23,26,32,.34);display:none;place-items:center;padding:24px}
@@ -236,9 +300,13 @@
   .sheet{background:var(--surface);width:100%;max-width:420px;padding:40px;border:1px solid var(--ink)}
   .sheet h2{font-size:22px}
   .sheet p{margin-top:12px;font-size:14px;font-weight:300;color:var(--ink-2)}
+  /* Stands in for the provider's pre-built sign-in button, which renders itself
+     in page and never navigates — the reason it was chosen. Its look, brand
+     colours included, is the provider's, not this palette's. */
   .google{margin-top:28px;width:100%;display:flex;align-items:center;justify-content:center;gap:12px;
-    background:var(--ink);color:#fff;border:none;border-radius:var(--pill);padding:13px 24px;font:inherit;
-    font-size:14px;font-weight:500;cursor:pointer}
+    background:#fff;color:#3C4043;border:1px solid #DADCE0;border-radius:var(--pill);padding:12px 24px;font:inherit;
+    font-size:14px;font-weight:500;cursor:pointer;transition:background .15s}
+  .google:hover{background:#F8F9FA}
   .sheet .fine{margin-top:20px;font-size:11.5px;color:var(--ink-3);font-weight:300}
   .sheet .dismiss{margin-top:18px;width:100%;text-align:center}
 
@@ -251,25 +319,85 @@
   .empty p{margin:12px auto 0;max-width:520px;font-size:14px;font-weight:300;color:var(--ink-2)}
   .empty .actions{justify-content:center}
 
+  /* ---------- identity variants ----------
+     Same system underneath — ink discipline, lines not cards, signal colours
+     reserved for state. What varies is the identity layer: type, shape, paper.
+     One of these is picked by eye; the other two are then deleted. */
+  html[data-id="editorial"]{
+    --pill:2px;
+    --surface:#FBFAF7; --surface-2:#F2EFE9; --line:#E6E1D8;
+    --font-display:Georgia,"Times New Roman",serif;
+    --nav-bg:rgba(251,250,247,.92);
+  }
+  html[data-id="editorial"] h1,
+  html[data-id="editorial"] h2{font-weight:400;letter-spacing:0}
+  html[data-id="editorial"] .hero-number{font-weight:400;letter-spacing:-.01em}
+  html[data-id="editorial"] .lead .line{font-style:italic;font-weight:400}
+  html[data-id="editorial"] .lead .prob{font-family:var(--font-display);font-size:23px}
+  html[data-id="editorial"] .empty h2,
+  html[data-id="editorial"] .run-wrap h2{font-weight:400}
+
+  html[data-id="instrument"]{
+    --pill:0;
+    --line:#D9DADC;
+    --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  html[data-id="instrument"] .kicker,
+  html[data-id="instrument"] .st{font-family:var(--font-mono)}
+  html[data-id="instrument"] .hero-number,
+  html[data-id="instrument"] .count,
+  html[data-id="instrument"] .vote-val,
+  html[data-id="instrument"] .trait-val,
+  html[data-id="instrument"] .meta,
+  html[data-id="instrument"] .allowance,
+  html[data-id="instrument"] .read-as,
+  html[data-id="instrument"] .step-line{font-family:var(--font-mono)}
+  html[data-id="instrument"] h1{font-weight:600;letter-spacing:-.02em}
+  html[data-id="instrument"] .lead .prob{font-family:var(--font-mono);font-size:19px;font-weight:500}
+  html[data-id="instrument"] .btn{font-weight:600}
+
+  /* ---------- the switcher: prototype chrome, not product UI ---------- */
+  .idbar{position:fixed;bottom:24px;left:24px;z-index:70;display:flex;align-items:center;gap:2px;
+    background:var(--ink);color:#fff;border-radius:4px;padding:5px 8px;font-size:11px}
+  .idbar .idlabel{margin-right:8px;margin-left:4px;text-transform:uppercase;letter-spacing:.16em;font-weight:600;opacity:.55}
+  .idbar button{font:inherit;color:#fff;background:none;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;opacity:.6}
+  .idbar button:hover{opacity:1}
+  .idbar button.on{background:rgba(255,255,255,.18);opacity:1}
+  .idbar .iddiv{width:1px;height:16px;background:rgba(255,255,255,.25);margin:0 6px}
+
   @media(max-width:840px){
     nav{flex-wrap:wrap;height:auto;padding:10px 16px;row-gap:8px}
-    .nav-links{order:3;width:100%;justify-content:center;border-top:1px solid var(--line);padding-top:8px}
-    main{padding:0 20px 120px}
+    main{padding:0 20px 150px}
     h1{font-size:30px}
+    .hero{padding:56px 0 48px}
+    .lead .line{font-size:26px}
+    .lead .prob{font-size:19px}
+    .stepper{overflow-x:auto}
+    .st{margin-right:22px;white-space:nowrap}
+    .decision{padding:26px 20px}
+    .sheet{padding:32px 24px}
     .dock{width:100%}
+    .legend{flex-direction:column;gap:12px}
+    .dock-btn{bottom:72px;right:16px}
+    .idbar{left:12px;right:12px;bottom:12px;flex-wrap:wrap;justify-content:center}
   }
 </style>
 </head>
 <body>
 
 <nav>
-  <button class="wordmark" onclick="go('landing')">Panelverdict</button>
-  <div class="nav-links">
-    <button id="nav-flow" class="active" onclick="go('step1')">Test copy</button>
-    <button id="nav-states" onclick="go('states')">States &amp; refusals</button>
+  <!-- No tabs: the product has one function, so the nav carries identity and
+       account, nothing else. The states gallery is review scaffolding and
+       lives in the prototype chrome, bottom-left. -->
+  <div style="display:flex;align-items:center;gap:10px">
+    <button class="rail-toggle" onclick="toggleRail()" aria-label="Show or hide the sample rail">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 6h16M4 12h16M4 18h16"></path>
+      </svg>
+    </button>
+    <button class="wordmark" onclick="go('landing')">Panelverdict</button>
   </div>
   <div class="nav-right">
-    <div class="badge" id="ready-badge"><span class="bdot"></span><span>Panel ready</span></div>
     <button class="signin" id="signin-btn" onclick="openSheet()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
         <circle cx="12" cy="8" r="3.6"></circle><path d="M4.5 20c0-4 3.4-6.2 7.5-6.2s7.5 2.2 7.5 6.2"></path>
@@ -282,21 +410,59 @@
   </div>
 </nav>
 
+<!-- The stored demo runs live in a rail, chat-app style. Not history — there is
+     none by design: the same samples for everyone, free to read. The demo ships
+     two or three configs; the prototype has one fixture, so every row opens it.
+     "New test" hits the wall signed-out, which is the point. -->
+<aside class="side" aria-label="Your tests and sample verdicts">
+  <!-- Signed out the rail is a demo shelf: samples only, no control that needs
+       an account. Signed in it is yours: new test + saved tests, samples gone. -->
+  <button class="side-new" id="side-new" onclick="go('step1')" style="display:none">New test</button>
+  <!-- Owned history (decided 2026-08-25, reopening the blocked history ticket):
+       tests stored to the account, reopenable, deletable, searchable. The
+       prototype keeps them in memory; the real thing stores them server-side
+       against the subject id, and delete must actually delete. -->
+  <div class="side-search" id="side-search" style="display:none">
+    <input id="side-q" oninput="renderHistory()" placeholder="Search your tests" aria-label="Search your tests">
+  </div>
+  <p class="side-k" id="hist-k" style="display:none">Your tests</p>
+  <div id="hist-list"></div>
+  <div id="side-samples">
+    <p class="side-k">Sample verdicts</p>
+    <button class="side-row" onclick="showSample()">
+      <span class="q">“Save 50% this week” vs “Members save half price this week”</span>
+      <span class="v">71% preferred the first</span>
+    </button>
+    <button class="side-row" onclick="showSample()">
+      <span class="q">“Book in 30 seconds” vs “Reserve your slot now”</span>
+      <span class="v">too close to call</span>
+    </button>
+    <button class="side-row" onclick="showSample()">
+      <span class="q">“Built for teams” vs “Built for teams like yours”</span>
+      <span class="v">66% preferred the second</span>
+    </button>
+  </div>
+</aside>
+
 <main>
 
 <!-- ============================== LANDING ============================== -->
 <section id="landing" class="view on">
   <div class="hero">
-    <p class="kicker" style="margin-bottom:18px">Synthetic panel · A/B testing for copy</p>
+    <p class="kicker" style="margin-bottom:18px">Synthetic A/B testing</p>
     <h1>A verdict — and how sure it is.</h1>
     <p class="lede">
       A panel of synthetic readers judges both versions of your copy and reports which one it prefers,
       how wide the lead is, and when the lead is too small to call.
     </p>
+    <!-- One button, swapped by sign-in state (decided 2026-08-25, amending the
+         gate-at-the-run): signed out, the only runnable thing is the demo —
+         fixed headlines, a stored verdict, replayed steps. The form itself is
+         behind Google. Signed in, the same button becomes the run. -->
     <div class="hero-actions">
-      <button class="btn btn-primary" onclick="go('step1')">Run a panel</button>
-      <button class="btn btn-ghost" onclick="showSample()">See a sample verdict</button>
+      <button class="btn btn-primary" id="hero-primary" onclick="showSample()">Run the demo test</button>
     </div>
+    <p class="hero-note" id="hero-note">Fixed headlines, a stored verdict, nothing spent — sign in to run your own test.</p>
   </div>
 
   <div class="principles">
@@ -310,20 +476,13 @@
     </div>
     <div class="principle">
       <h3>You approve the panel</h3>
-      <p>Nothing is spent until you have seen who is judging and confirmed it. The panel is proposed, never assumed.</p>
+      <p>The votes are the cost of a run, and none is cast until you have seen how your audience
+        was read and confirmed it. Reading the audience itself costs a little.</p>
     </div>
-  </div>
-
-  <div class="recent">
-    <p class="kicker" style="margin-bottom:16px">Recent verdicts</p>
-    <div class="row"><span class="q">“Save 50% this week” vs “Members save half price this week”</span><span class="v">Clear lean · A · 71%</span></div>
-    <div class="row"><span class="q">“Book in 30 seconds” vs “Reserve your slot now”</span><span class="v">No call · gap too small</span></div>
-    <div class="row"><span class="q">“Built for teams” vs “Built for teams like yours”</span><span class="v">Clear lean · B · 66%</span></div>
   </div>
 
   <p class="disclosure">
     The panel is synthetic personas, not people, and every verdict on this site is generated by an AI system.
-    A preference share is not a predicted click-through rate.
   </p>
 </section>
 
@@ -332,8 +491,7 @@
   <div class="flow-head">
     <h1>Two versions, one panel.</h1>
     <p class="sub">
-      Paste both versions of the line you are choosing between. Next you will see who is proposed to
-      judge them — nothing is spent until you approve that panel.
+      Paste both versions of the line you are choosing between.
     </p>
     <div class="stepper" id="stepper-1"></div>
   </div>
@@ -349,16 +507,86 @@
     </div>
   </div>
 
+  <!-- Geography is a control, not text: the pool holds exactly three countries,
+       and free text is where it hurt most ("Ohio" silently became the whole US).
+       The translator is told geography is out of its scope. Free text stays for
+       everything else — query translation is half the RAG story. -->
   <div class="field" style="max-width:640px">
     <div class="kicker">
-      <span>Who should judge this? <span class="opt">— optional</span></span>
-      <span class="count">Blank means a general panel</span>
+      <span>Country</span>
+      <span class="count">The pool holds these three</span>
     </div>
-    <textarea id="input-audience" placeholder="Parents in the UK and Ireland who shop for groceries online, aged 30–50."></textarea>
-    <p class="hint">
-      Plain words are fine. The next step shows which of these traits the pool could actually match,
-      and names any it could not — an unmatched trait is a caveat on the verdict, not a silent failure.
-    </p>
+    <div class="cty-row">
+      <button class="cty on" data-c="US" onclick="toggleCountry('US')">United States</button>
+      <button class="cty on" data-c="DE" onclick="toggleCountry('DE')">Germany</button>
+      <button class="cty on" data-c="JP" onclick="toggleCountry('JP')">Japan</button>
+    </div>
+  </div>
+
+  <!-- Demographics are selects, not text (amended 2026-08-25): the pool serves
+       exactly these four dimensions, real briefs speak them, and a control
+       cannot be misread. The translator no longer reads demographics. -->
+  <div class="field" style="max-width:640px">
+    <div class="kicker">
+      <span>Demographics <span class="opt">— optional</span></span>
+      <span class="count">Any means unfiltered</span>
+    </div>
+    <div class="sel-row">
+      <label>Age
+        <span class="age-pair">
+          <input class="age-in" id="age-min" type="number" min="18" max="100" placeholder="any" oninput="onAudienceInput()" aria-label="Minimum age">
+          <span style="color:var(--ink-3)">to</span>
+          <input class="age-in" id="age-max" type="number" min="18" max="100" placeholder="any" oninput="onAudienceInput()" aria-label="Maximum age">
+        </span>
+      </label>
+      <label>Gender
+        <select id="sel-gender" onchange="onAudienceInput()">
+          <option>Any</option><option>Women</option><option>Men</option>
+        </select></label>
+    </div>
+    <!-- Multi-choice, matching the backend: education and income_bands are
+         lists. Nothing picked means unfiltered. -->
+    <div class="sel-row" style="margin-top:24px">
+      <label>Education <span class="opt2">none picked = all</span>
+        <span class="chip-set" id="edu-set">
+          <button class="cty sm" data-v="Secondary" onclick="toggleChip(this)">Secondary</button>
+          <button class="cty sm" data-v="Degree" onclick="toggleChip(this)">Degree</button>
+          <button class="cty sm" data-v="Postgraduate" onclick="toggleChip(this)">Postgraduate</button>
+        </span>
+      </label>
+      <label>Income <span class="opt2">none picked = all</span>
+        <span class="chip-set" id="income-set">
+          <button class="cty sm" data-v="Lower" onclick="toggleChip(this)">Lower</button>
+          <button class="cty sm" data-v="Middle" onclick="toggleChip(this)">Middle</button>
+          <button class="cty sm" data-v="Upper" onclick="toggleChip(this)">Upper</button>
+        </span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Enacted context: what data cannot serve, instruction can. The words are
+       inserted into every panelist's vote prompt on top of surveyed
+       demographics — role-played, disclosed at the gate, carried on the
+       verdict, screened like the headlines. Needs its own validation ticket
+       (the 014 manipulation-check method) before the real build. -->
+  <div class="field" style="max-width:640px">
+    <div class="kicker">
+      <span>Who else are they? <span class="opt">— optional</span></span>
+      <span class="count">Blank means demographics only</span>
+    </div>
+    <textarea id="input-audience" oninput="onAudienceInput()" placeholder="Parents who shop for groceries online."></textarea>
+    <div class="vocab">
+      <div class="vocab-row"><span class="vocab-k">Matched</span>
+        <span>country and the demographics above are sampled from surveyed data</span></div>
+      <div class="vocab-row"><span class="vocab-k not">Enacted</span>
+        <span>what you write here is role-played — each panelist is told to be this, and the verdict says so</span></div>
+    </div>
+    <!-- An audience already accepted is not re-approved on every run: same
+         selections, same words, same seats. Any change reopens the gate. -->
+    <div class="read-as" id="read-as" style="display:none">
+      <span><b>Reading accepted:</b> 30–50 · United States · “parents who shop for groceries online” enacted · <span id="read-as-size">24</span> seated</span>
+      <button class="btn-link" onclick="go('step2')">Change</button>
+    </div>
   </div>
 
   <div id="screen-refusal" style="display:none;max-width:640px">
@@ -368,19 +596,27 @@
     </div>
   </div>
 
+  <div id="spent-refusal" style="display:none;max-width:640px">
+    <div class="notice warn">
+      <b>You have used today’s runs.</b> Your allowance refills over the next day. The sample verdict
+      stays free to read, and this copy stays where it is.
+    </div>
+  </div>
+
   <div class="actions">
     <button class="btn btn-primary" id="to-panel" onclick="toPanel()" disabled>Preview the panel</button>
-    <button class="btn-link" onclick="fillSample()">Fill in a sample</button>
+    <span class="allowance" id="allowance" style="display:none"></span>
   </div>
 </section>
 
 <!-- ============================== STEP 2 ============================== -->
 <section id="step2" class="view">
   <div class="flow-head">
-    <h1>This panel, if you approve it.</h1>
+    <h1>How your audience was read.</h1>
     <p class="sub">
-      These are the readers proposed to judge your copy. Change the size, or go back and change who you
-      asked for. The run starts — and the first money is spent — only when you confirm.
+      Every trait you asked for, and what the pool did with it. Accept the reading, or adjust it
+      and come back. The votes are bought only when you accept, and an audience you have already
+      accepted is not asked about twice.
     </p>
     <div class="stepper" id="stepper-2"></div>
   </div>
@@ -403,61 +639,58 @@
       <p class="kicker" style="margin-bottom:6px">What the pool could match</p>
       <p class="chart-hint">Every trait you asked for, and what the pool did with it.</p>
       <div class="trait-row">
-        <span class="trait-name">Country <span class="tag">Matched</span></span>
-        <span class="trait-val">United Kingdom, Ireland</span>
+        <span class="trait-name">Country <span class="tag">Selected</span></span>
+        <span class="trait-val">United States</span>
       </div>
       <div class="trait-row">
-        <span class="trait-name">Age <span class="tag">Matched</span></span>
+        <span class="trait-name">Age <span class="tag">Selected</span></span>
         <span class="trait-val">30–50</span>
       </div>
       <div class="trait-row">
-        <span class="trait-name">Shops for groceries online <span class="tag tag-unmatched">Not matched</span></span>
-        <span class="trait-val">no such trait in the pool</span>
+        <span class="trait-name">“Parents who shop for groceries online” <span class="tag tag-unmatched">Enacted</span></span>
+        <span class="trait-val">told to each panelist, not sampled</span>
       </div>
 
       <div class="notice warn">
-        <b>One trait could not be matched.</b> The pool holds no “shops for groceries online” attribute, so the
-        panel is not filtered on it. The verdict will carry this caveat, and it is repeated on the report.
+        <b>Part of this audience is enacted, not matched.</b> The pool holds no parenthood or shopping
+        data; each panelist will be instructed to be a parent who shops for groceries online, on top
+        of their surveyed demographics. That part of the verdict rests on the model’s portrayal, and
+        the report says so.
       </div>
 
       <div class="roster">
-        <span class="persona">F, 34, UK, degree</span>
-        <span class="persona">M, 41, IE, secondary</span>
-        <span class="persona">F, 47, UK, postgraduate</span>
-        <span class="persona">M, 30, UK, degree</span>
-        <span class="persona">F, 38, IE, degree</span>
-        <span class="persona">M, 44, UK, secondary</span>
-        <span class="persona">F, 50, UK, degree</span>
+        <span class="persona">F, 34, US, degree</span>
+        <span class="persona">M, 41, US, secondary</span>
+        <span class="persona">F, 47, US, postgraduate</span>
+        <span class="persona">M, 30, US, degree</span>
+        <span class="persona">F, 38, US, degree</span>
+        <span class="persona">M, 44, US, secondary</span>
+        <span class="persona">F, 50, US, degree</span>
         <span class="persona">+ 17 more</span>
       </div>
 
-      <div class="decision">
-        <h2>Approve this panel?</h2>
-        <p class="exp">
-          Confirming starts the run. Each reader casts one vote, and a run of this size is the unit
-          your daily allowance is counted in.
-        </p>
-
-        <div class="size-row">
-          <label for="panel-size">Panel size</label>
-          <button class="wbtn" onclick="bumpPanel(-4)" aria-label="Fewer readers">−</button>
-          <span class="wv" id="panel-size">24</span>
-          <button class="wbtn" onclick="bumpPanel(4)" aria-label="More readers">+</button>
-          <span style="font-size:12.5px;font-weight:300;color:var(--ink-3)">
-            A smaller panel is cheaper and less certain. A larger one narrows the range.
-          </span>
-        </div>
-
-        <div class="decision-actions">
-          <button class="btn btn-primary" onclick="startRun()">Confirm and run the panel</button>
-          <button class="btn btn-ghost" onclick="go('step1')">Change the copy</button>
-        </div>
-
-        <p class="hitl-note">
-          Nothing has been spent yet. Leaving this page costs nothing.
-        </p>
-      </div>
     </div>
+  </div>
+
+  <!-- Full width: the one decision on the page does not share a column.
+       Panel size is the system's, not a knob — it moves the statistics
+       (the interval narrows with panel size), so runs stay comparable. -->
+  <div class="decision">
+    <h2>Approve this reading?</h2>
+    <p class="exp">
+      Accepting starts the run. Each reader casts one vote, and a run is the unit your
+      daily allowance is counted in.
+    </p>
+
+    <div class="decision-actions">
+      <button class="btn btn-primary" onclick="acceptPanel()">Looks right — run the panel</button>
+      <button class="btn btn-ghost" onclick="adjustAudience()">Adjust the audience</button>
+    </div>
+
+    <p class="hitl-note">
+      Nothing has been spent. Selections and your words reach this page as they are —
+      the first model call is the run itself.
+    </p>
   </div>
 </section>
 
@@ -489,75 +722,72 @@
   <div class="page-head">
     <div>
       <p class="kicker">Verdict</p>
-      <div class="rec-line" id="rec-line"><span class="rec-icon"></span><span id="rec-text">The panel leans clearly</span></div>
-      <p class="meta" id="report-meta">24 readers · UK and Ireland, 30–50 · one trait unmatched</p>
+      <p class="meta" id="report-meta">United States, 30–50 · context enacted</p>
     </div>
     <button class="btn btn-quiet" onclick="go('step1')">Test another line</button>
   </div>
 
-  <div class="winner">
-    <p class="kicker">Preferred</p>
+  <!-- The lead never asserts a winner — the panel does not produce one, it
+       produces a probability and a preference, and one sentence carries both.
+       The same template covers the whole continuum: at 94% it reads as
+       confidence; at 55% it reads as self-evidently weak, no label needed. -->
+  <div class="lead">
     <div class="line" id="winner-line">“Save 50% this week”</div>
     <div class="loser" id="loser-line">over “Members save half price this week”</div>
-  </div>
-
-  <div class="stat-band">
-    <div class="stat-tile">
-      <p class="kicker">Preferred A</p>
-      <div class="hero-number">71<small>%</small></div>
-      <p class="stat-note">of the panel chose the first line</p>
-    </div>
-    <div class="stat-tile">
-      <p class="kicker">Chance A is better</p>
-      <div class="hero-number">94<small>%</small></div>
-      <p class="stat-note">given these votes, and this panel only</p>
-    </div>
-    <div class="stat-tile">
-      <p class="kicker">Chance B is better</p>
-      <div class="hero-number">2<small>%</small></div>
-      <p class="stat-note">the outcome the panel argues against</p>
-    </div>
-    <div class="stat-tile">
-      <p class="kicker">Practically a tie</p>
-      <div class="hero-number">4<small>%</small></div>
-      <p class="stat-note">the gap is real but too small to act on</p>
+    <p class="prob">94% likely people genuinely prefer this one.</p>
+    <div class="quals">
+      <p>Wins too small to matter don’t count towards that number.</p>
+      <p><span id="pref-count">17 of 24</span> panelists preferred it.</p>
     </div>
   </div>
 
-  <div class="prose">
-    <p>
-      Most of the plausible range sits on A’s side of even, and the gap is wide enough to be worth acting
-      on rather than dismissing as noise. If you have to choose today, choose A.
-    </p>
-    <p>
-      This is a panel of 24 synthetic readers, not a live audience. It says which line reads better to
-      readers like these; it does not predict how many people will click.
-    </p>
-  </div>
-
-  <div class="notice warn" style="max-width:640px">
-    <b>One trait was not matched.</b> The pool holds no “shops for groceries online” attribute, so the panel
-    was not filtered on it. Treat the verdict as a read from UK and Ireland adults aged 30–50, no narrower.
-  </div>
-
+  <!-- Chart and reading share a row: the evidence and its interpretation side
+       by side, instead of a narrow column in a wide page. -->
+  <div class="report-band">
   <div class="chart-wrap">
     <p class="kicker">Where the true preference could sit</p>
     <p class="chart-hint">
-      The curve is every share the votes make plausible. The band in the middle is the zone where the two
-      lines are close enough to call a tie.
+      The curve is every share of readers the votes make plausible. The band in the middle is where
+      the two lines are effectively tied.
     </p>
-    <svg id="posterior" viewBox="0 0 600 210" width="100%" style="max-width:600px;display:block" role="img"
-         aria-label="Plausible range for the share preferring A, centred on 71 percent"></svg>
+    <svg id="posterior" viewBox="0 0 600 210" width="100%" style="max-width:600px;display:block;margin:0 auto" role="img"
+         aria-label="Plausible range for the share preferring A, centred on 71 percent; 94 percent of the curve lies past the tie zone"></svg>
+  </div>
+
+  <!-- The opening summary lives here, in the report body — the dock carries
+       only the conversation. It adds no number the page already prints. -->
+  <div class="prose">
+    <p class="kicker" style="margin-bottom:10px">The analyst’s reading</p>
+    <p>
+      The most common reason given: a percentage is a number a reader can act on, where “half price”
+      makes them stop and translate. The readers who went the other way all pointed to “members” —
+      it made the line feel addressed to them. If belonging matters to your audience, that is the
+      thread to pull in a next pair.
+    </p>
+    <p>
+      This is a panel of synthetic readers, not a live audience. It says which line reads better to
+      readers like these; it does not predict how many people will click.
+    </p>
+  </div>
+  </div>
+
+  <!-- Legend and caveat span both columns: they belong to the whole band. -->
     <div class="legend">
-      <span><i class="lg-mean"></i> Most likely</span>
-      <span><i class="lg-hdi"></i> Plausible range</span>
-      <span><i class="lg-rope"></i> Practically a tie</span>
+      <span><i class="lg-mass"></i><span class="lg-t">Genuinely preferred<em>(posterior probability)</em></span></span>
+      <span><i class="lg-mean"></i><span class="lg-t">Most likely<em>(mean)</em></span></span>
+      <span><i class="lg-hdi"></i><span class="lg-t">Plausible range<em>(95% HDI)</em></span></span>
+      <span><i class="lg-rope"></i><span class="lg-t">Practically a tie<em>(ROPE)</em></span></span>
     </div>
+
+  <div class="notice warn">
+    <b>Part of this audience was enacted, not matched.</b> “Parents who shop for groceries online” was
+    instructed, not sampled — the pool holds no such data. The demographics are surveyed; that part of
+    the portrayal is the model’s.
   </div>
 
   <div class="votes">
     <p class="kicker" style="margin-bottom:6px">How each reader voted</p>
-    <p class="chart-hint">Hover a row for the reason that reader gave. The bar is that reader’s confidence.</p>
+    <p class="chart-hint">Each reader’s reason, in their own words.</p>
     <div id="vote-list"></div>
   </div>
 
@@ -578,17 +808,19 @@
   </div>
 
   <div class="state-block">
-    <h3>Not signed in, and a run was requested</h3>
-    <p class="when">The gate sits at the run, not at the door: the form and a sample verdict are readable signed-out.</p>
+    <h3>Not signed in, and the form was requested</h3>
+    <p class="when">Signed out, only the demo runs. The form itself is behind Google, and any attempt to
+      enter it — the hero button, a report’s “test another line” — answers with the sheet.</p>
     <button class="btn btn-ghost" onclick="openSheet()">Show the sign-in sheet</button>
   </div>
 
   <div class="state-block">
     <h3>This account’s runs for today are spent</h3>
-    <p class="when">A per-person allowance, refilled on a rolling 24-hour window.</p>
+    <p class="when">A personal allowance of three runs a day, shown as a count on the form while any
+      remain — with three, spending them on typos deserves a warning, not a surprise.</p>
     <div class="notice warn" style="max-width:640px">
-      <b>You have used today’s runs.</b> Your allowance refills over the next day. Reports you have already
-      run stay readable, and the analyst is still free to ask.
+      <b>You have used today’s runs.</b> Your allowance refills over the next day. The sample verdict
+      stays free to read, and the analyst still answers about reports you have open.
     </div>
   </div>
 
@@ -656,7 +888,7 @@
   Ask the analyst
 </button>
 
-<aside class="dock" id="dock" aria-label="Analyst">
+<aside class="dock" id="dock" role="dialog" aria-label="Analyst">
   <div class="dock-head">
     <div>
       <p class="kicker">Analyst</p>
@@ -665,32 +897,53 @@
     <button class="btn-link" onclick="closeDock()">Close</button>
   </div>
   <div class="dock-body" id="dock-body"></div>
-  <div class="chips">
+  <!-- Login-gated with a line saying why — never a dead control. -->
+  <div class="dock-gate" id="dock-gate" style="display:none">
+    Sign in to ask the analyst. Every answer is written for your question, which costs money —
+    the same reason a run asks first.
+    <div style="margin-top:12px">
+      <button class="btn btn-ghost" style="padding:8px 20px;font-size:13px" onclick="openSheet()">Sign in</button>
+    </div>
+  </div>
+  <div class="chips" id="dock-chips">
     <button class="chip" onclick="ask('Why is this not a tie?')">Why is this not a tie?</button>
     <button class="chip" onclick="ask('How sure are we about the winner?')">How sure are we?</button>
     <button class="chip" onclick="ask('Who was on this panel?')">Who was on this panel?</button>
   </div>
-  <form class="dock-foot" onsubmit="event.preventDefault();ask(this.q.value);this.q.value=''">
+  <form class="dock-foot" id="dock-foot" onsubmit="event.preventDefault();ask(this.q.value);this.q.value=''">
     <input name="q" placeholder="Ask about this verdict" autocomplete="off">
     <button class="btn btn-primary" style="padding:9px 20px;font-size:13px">Send</button>
   </form>
 </aside>
 
+<!-- Prototype chrome: compare identity directions in place. Not product UI. -->
+<div class="idbar" role="radiogroup" aria-label="Identity variant">
+  <span class="idlabel">Identity</span>
+  <button data-id="shared" class="on" onclick="setIdentity('shared')">Shared</button>
+  <button data-id="editorial" onclick="setIdentity('editorial')">Editorial</button>
+  <button data-id="instrument" onclick="setIdentity('instrument')">Instrument</button>
+  <span class="iddiv"></span>
+  <button id="states-toggle" onclick="toggleStates()">States &amp; refusals</button>
+</div>
+
 <!-- ============================== SIGN-IN SHEET ============================== -->
 <div class="scrim" id="scrim" onclick="if(event.target===this)closeSheet()">
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
     <p class="kicker">One step</p>
-    <h2 id="sheet-title" style="margin-top:8px">Sign in to run a panel.</h2>
+    <h2 id="sheet-title" style="margin-top:8px">Sign in to run your own test.</h2>
     <p>
-      Signing in is how a run is counted to a person rather than to a network address, so one visitor
-      cannot drink the day’s budget. Your copy stays where it is.
+      The demo is free to watch; a test of your own spends money, so it is counted to a person
+      rather than to a network address. A signed-in account gets three runs a day. Signing in
+      happens on this page, with no redirect.
     </p>
+    <!-- The provider renders this button itself in the real thing, and signing in
+         never leaves the page — the reason the redirect flow was rejected. -->
     <button class="google" onclick="signIn()">
-      <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
-        <path fill="#fff" d="M12 11v3.2h5.3a4.6 4.6 0 0 1-1.9 3l3 2.3A9 9 0 0 0 21 12a10 10 0 0 0-.2-1.8z"></path>
-        <path fill="#fff" opacity=".85" d="M12 21a8.7 8.7 0 0 0 6-2.2l-3-2.3A5.5 5.5 0 0 1 6.9 14l-3.1 2.4A9 9 0 0 0 12 21"></path>
-        <path fill="#fff" opacity=".7" d="M6.9 14a5.4 5.4 0 0 1 0-3.4L3.8 8.2a9 9 0 0 0 0 8.1z"></path>
-        <path fill="#fff" opacity=".85" d="M12 6.6a4.9 4.9 0 0 1 3.4 1.3l2.6-2.6A8.7 8.7 0 0 0 12 3a9 9 0 0 0-8.2 5.2l3.1 2.4A5.4 5.4 0 0 1 12 6.6"></path>
+      <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+        <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.7-6.7C35.7 2.5 30.2 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.4 17.7 9.5 24 9.5z"/>
+        <path fill="#4285F4" d="M46.5 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.7c-.6 3-2.3 5.5-4.8 7.2l7.5 5.8C43.9 38 46.5 31.9 46.5 24.5z"/>
+        <path fill="#FBBC05" d="M10.5 28.7a14.5 14.5 0 0 1 0-9.4l-7.9-6.1a24 24 0 0 0 0 21.6z"/>
+        <path fill="#34A853" d="M24 48c6.2 0 11.5-2 15.2-5.6l-7.5-5.8c-2 1.4-4.6 2.2-7.7 2.2-6.3 0-11.6-3.9-13.5-9.3l-7.9 6.1C6.5 42.6 14.6 48 24 48z"/>
       </svg>
       Continue with Google
     </button>
@@ -708,26 +961,40 @@ const flow = {
   view: 'landing',
   step: 1,
   signedIn: false,
+  runsLeft: null,    // set on sign-in; the decided allowance is three runs a day
+  countries: { US: true, DE: true, JP: true }, // 080: geography is chosen, not typed
+  accepted: null,    // the audience key (text + countries) whose reading was accepted
+  pendingRun: false, // a run was requested, then interrupted by the sign-in sheet
   panelSize: 24,
   a: '',
   b: '',
+  demo: false,
   runTimer: null,
-  dockSeeded: false,
+  beforeStates: null, // where the states gallery was opened from
+  pendingView: null,  // a form view blocked by the wall, resumed after sign-in
+  history: [],        // this account's saved tests (in-memory stand-in)
+  histSeq: 0,
 };
 
-const STEPS = ['Copy', 'Panel', 'Voting', 'Verdict'];
+const STEPS = ['Copy', 'Audience', 'Voting', 'Verdict'];
 
 /* ------------------------------------------------------------------ nav */
 function go(view){
+  // Signed out, the form does not exist: the only runnable thing is the demo.
+  // Any attempt to enter the flow answers with the sheet, and sign-in resumes it.
+  if ((view === 'step1' || view === 'step2') && !flow.signedIn) {
+    flow.pendingView = view;
+    openSheet();
+    return;
+  }
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('on', v.id === view));
   flow.view = view;
-  document.getElementById('nav-flow').classList.toggle('active', view !== 'states' && view !== 'landing');
-  document.getElementById('nav-states').classList.toggle('active', view === 'states');
+  document.getElementById('states-toggle').classList.toggle('on', view === 'states');
   const step = {step1:1, step2:2, step3:3, step4:4}[view];
   if (step) { flow.step = step; renderSteppers(); }
   document.getElementById('dock-btn').style.display = view === 'step4' ? 'flex' : 'none';
   if (view !== 'step4') closeDock();
-  if (view !== 'step3' && flow.runTimer) { clearInterval(flow.runTimer); flow.runTimer = null; }
+  if (view !== 'step3' && flow.runTimer) { clearTimeout(flow.runTimer); flow.runTimer = null; }
   window.scrollTo({top:0, behavior:'instant'});
 }
 
@@ -745,19 +1012,61 @@ function renderSteppers(){
 }
 
 /* ------------------------------------------------------------------ auth */
-function openSheet(){ document.getElementById('scrim').classList.add('on'); }
-function closeSheet(){ document.getElementById('scrim').classList.remove('on'); }
+/* In page, never a redirect: every piece of user state here is in memory, so a
+   navigation would destroy the copy, the report and the analyst thread. */
+let sheetReturnFocus = null;
+
+function openSheet(){
+  sheetReturnFocus = document.activeElement;
+  document.getElementById('scrim').classList.add('on');
+  document.querySelector('.google').focus();
+}
+
+function closeSheet(){
+  flow.pendingRun = false;
+  flow.pendingView = null;
+  document.getElementById('scrim').classList.remove('on');
+  if (sheetReturnFocus) { sheetReturnFocus.focus(); sheetReturnFocus = null; }
+}
+
 function signIn(){
   flow.signedIn = true;
+  flow.runsLeft = 3;
   document.getElementById('signin-btn').style.display = 'none';
   document.getElementById('who-btn').style.display = 'flex';
-  closeSheet();
-  if (flow.view === 'step2') startRun();
+  document.getElementById('scrim').classList.remove('on');
+  if (sheetReturnFocus) { sheetReturnFocus.focus(); sheetReturnFocus = null; }
+  renderRunControls();
+  renderDockGate();
+  renderHero();
+  renderHistory();
+  if (flow.pendingRun) { flow.pendingRun = false; attemptRun(); }
+  else if (flow.pendingView) { const v = flow.pendingView; flow.pendingView = null; go(v); }
 }
+
 function signOut(){
   flow.signedIn = false;
+  flow.runsLeft = null;
   document.getElementById('signin-btn').style.display = 'flex';
   document.getElementById('who-btn').style.display = 'none';
+  renderRunControls();
+  renderDockGate();
+  renderHero();
+  renderHistory();
+}
+
+function renderHero(){
+  const p = document.getElementById('hero-primary');
+  const n = document.getElementById('hero-note');
+  if (flow.signedIn) {
+    p.textContent = 'Run your own test';
+    p.onclick = () => go('step1');
+    n.textContent = 'Three runs a day.';
+  } else {
+    p.textContent = 'Run the demo test';
+    p.onclick = showSample;
+    n.textContent = 'Fixed headlines, a stored verdict, nothing spent — sign in to run your own test.';
+  }
 }
 
 /* ------------------------------------------------------------------ step 1 */
@@ -769,13 +1078,73 @@ function onCopyInput(){
   document.getElementById('count-b').textContent = `${b.value.length} / 200`;
   document.getElementById('to-panel').disabled = !(a.value.trim() && b.value.trim());
   document.getElementById('screen-refusal').style.display = 'none';
+  document.getElementById('spent-refusal').style.display = 'none';
+  renderRunControls();
+}
+
+function onAudienceInput(){ renderRunControls(); }
+
+/* The gate fires on the first run and whenever the audience text changes. Same
+   text, same reading, same seats — a repeat approval would be a repaint, and it
+   trains the reader to dismiss the one approval that matters. */
+function audienceKey(){
+  const cts = ['US', 'DE', 'JP'].filter(c => flow.countries[c]).join(',');
+  const chips = ['edu-set', 'income-set'].map(id =>
+    [...document.querySelectorAll('#' + id + ' .cty.on')].map(b => b.dataset.v).join(',')).join('|');
+  const age = document.getElementById('age-min').value + '-' + document.getElementById('age-max').value;
+  const gender = document.getElementById('sel-gender').value;
+  return document.getElementById('input-audience').value.trim() +
+    '|' + cts + '|' + age + '|' + gender + '|' + chips;
+}
+
+function gateNeeded(){
+  return flow.accepted === null || audienceKey() !== flow.accepted;
+}
+
+function toggleChip(btn){
+  btn.classList.toggle('on');
+  onAudienceInput();
+}
+
+function setChips(setId, values){
+  document.querySelectorAll('#' + setId + ' .cty').forEach(b =>
+    b.classList.toggle('on', values.includes(b.dataset.v)));
+}
+
+function toggleCountry(c){
+  const on = ['US', 'DE', 'JP'].filter(k => flow.countries[k]);
+  if (flow.countries[c] && on.length === 1) return; // a panel needs at least one country
+  flow.countries[c] = !flow.countries[c];
+  document.querySelectorAll('.cty').forEach(b => b.classList.toggle('on', !!flow.countries[b.dataset.c]));
+  renderRunControls();
+}
+
+function renderRunControls(){
+  const need = gateNeeded();
+  document.getElementById('to-panel').textContent = need ? 'Preview the panel' : 'Run the panel';
+  document.getElementById('read-as').style.display = need ? 'none' : 'flex';
+  const al = document.getElementById('allowance');
+  if (flow.signedIn) {
+    al.style.display = 'inline';
+    al.textContent = flow.runsLeft === 0 ? 'No runs left today'
+      : flow.runsLeft === 1 ? '1 run left today'
+      : `${flow.runsLeft} runs left today`;
+  } else {
+    al.style.display = 'none';
+  }
 }
 
 function fillSample(){
   document.getElementById('input-a').value = 'Save 50% this week';
   document.getElementById('input-b').value = 'Members save half price this week';
-  document.getElementById('input-audience').value =
-    'Parents in the UK and Ireland who shop for groceries online, aged 30–50.';
+  document.getElementById('input-audience').value = 'Parents who shop for groceries online.';
+  document.getElementById('age-min').value = 30;
+  document.getElementById('age-max').value = 50;
+  document.getElementById('sel-gender').value = 'Any';
+  setChips('edu-set', []);
+  setChips('income-set', []);
+  flow.countries = { US: true, DE: false, JP: false };
+  document.querySelectorAll('.cty').forEach(b => b.classList.toggle('on', !!flow.countries[b.dataset.c]));
   onCopyInput();
 }
 
@@ -786,17 +1155,36 @@ function toPanel(){
     document.getElementById('screen-refusal').style.display = 'block';
     return;
   }
-  go('step2');
+  if (gateNeeded()) { go('step2'); return; }
+  attemptRun();
 }
 
 /* ------------------------------------------------------------------ step 2 */
-function bumpPanel(delta){
-  flow.panelSize = Math.max(8, Math.min(48, flow.panelSize + delta));
-  document.getElementById('panel-size').textContent = flow.panelSize;
-  document.getElementById('panel-size-display').textContent = flow.panelSize;
+function acceptPanel(){
+  flow.accepted = audienceKey();
+  renderRunControls();
+  attemptRun();
 }
 
-/* ------------------------------------------------------------------ step 3 */
+function adjustAudience(){
+  go('step1');
+  document.getElementById('input-audience').focus();
+}
+
+/* ------------------------------------------------------------------ the run */
+function attemptRun(){
+  // The gate sits at the run: identity is asked for by the button that spends.
+  if (!flow.signedIn) { flow.pendingRun = true; openSheet(); return; }
+  if (flow.runsLeft <= 0) {
+    go('step1');
+    document.getElementById('spent-refusal').style.display = 'block';
+    return;
+  }
+  flow.runsLeft -= 1;
+  renderRunControls();
+  startRun(false);
+}
+
 const RUN_STEPS = [
   { sub: () => `${flow.panelSize} readers` },
   { sub: () => 'both versions cleared' },
@@ -804,51 +1192,65 @@ const RUN_STEPS = [
   { sub: () => 'plausible range narrowed' },
 ];
 
-function startRun(){
-  if (!flow.signedIn) { openSheet(); return; }
+/* The sample is a replay of a stored run, so its steps play that run's own
+   timings — a demo may not animate an invented duration. These four figures
+   stand in for the per-step timings captured when the fixture is seeded. */
+const REPLAY_MS = [900, 600, 2600, 700];
+
+function startRun(demo){
+  flow.demo = !!demo;
   go('step3');
-  document.getElementById('run-headline').textContent =
-    `${flow.panelSize} readers, one line each.`;
+  document.getElementById('run-headline').textContent = `${flow.panelSize} readers, one line each.`;
+  document.getElementById('run-note').textContent = demo
+    ? 'A replay of the stored run this sample came from — its own timings, nothing spent.'
+    : 'A run of this size usually takes under a minute.';
   const lines = [...document.querySelectorAll('#stream .step-line')];
   lines.forEach((l, i) => { l.className = 'step-line'; document.getElementById('sub-' + i).textContent = ''; });
   let i = 0;
   lines[0].classList.add('run');
-  flow.runTimer = setInterval(() => {
+  const tick = () => {
     lines[i].className = 'step-line done';
-    document.getElementById('sub-' + i).textContent = RUN_STEPS[i].sub();
+    document.getElementById('sub-' + i).textContent = demo
+      ? `${RUN_STEPS[i].sub()} · ${(REPLAY_MS[i] / 1000).toFixed(1)} s`
+      : RUN_STEPS[i].sub();
     i++;
-    if (i < lines.length) { lines[i].classList.add('run'); return; }
-    clearInterval(flow.runTimer); flow.runTimer = null;
-    setTimeout(showReport, 500);
-  }, 1100);
+    if (i < lines.length) {
+      lines[i].classList.add('run');
+      flow.runTimer = setTimeout(tick, demo ? REPLAY_MS[i] : 1100);
+      return;
+    }
+    flow.runTimer = setTimeout(showReport, 500);
+  };
+  flow.runTimer = setTimeout(tick, demo ? REPLAY_MS[0] : 1100);
 }
 
 function cancelRun(){
-  if (flow.runTimer) { clearInterval(flow.runTimer); flow.runTimer = null; }
-  go('step2');
+  if (flow.runTimer) { clearTimeout(flow.runTimer); flow.runTimer = null; }
+  go(flow.demo ? 'landing' : 'step2');
 }
 
 /* ------------------------------------------------------------------ step 4 */
+// A vote is exactly what the backend returns: a choice, a reason, a voter.
+// There is no per-vote confidence in the pipeline, so none is shown.
 const VOTES = [
-  ['F, 34, UK, degree', 'A', 0.86, 'Fifty per cent is a number I can act on. “Half price” makes me pause to work out what it means.'],
-  ['M, 41, IE, secondary', 'A', 0.74, 'Short and it names the discount. I would not read past the second one on a phone.'],
-  ['F, 47, UK, postgraduate', 'B', 0.61, '“Members” tells me who it is for. The first one could be anyone shouting.'],
-  ['M, 30, UK, degree', 'A', 0.92, 'The urgency is in “this week”, and the first line gets to it faster.'],
-  ['F, 38, IE, degree', 'A', 0.68, 'I trust a percentage more than a phrase. “Half price” from what, exactly?'],
-  ['M, 44, UK, secondary', 'A', 0.55, 'Barely. The second one is fine, but it takes longer to say the same thing.'],
-  ['F, 50, UK, degree', 'B', 0.71, 'The word “members” makes it feel like something I already belong to.'],
-  ['M, 36, IE, degree', 'A', 0.81, 'Plain and specific. I would click that.'],
+  ['F, 34, US, degree', 'A', 'Fifty per cent is a number I can act on. “Half price” makes me pause to work out what it means.'],
+  ['M, 41, US, secondary', 'A', 'Short and it names the discount. I would not read past the second one on a phone.'],
+  ['F, 47, US, postgraduate', 'B', 'It says who it is for — “members”. The first one could be anyone shouting.'],
+  ['M, 30, US, degree', 'A', 'The urgency is in “this week”, and the first line gets to it faster.'],
+  ['F, 38, US, degree', 'A', 'I trust a percentage more than a phrase. “Half price” from what, exactly?'],
+  ['M, 44, US, secondary', 'A', 'Barely. The second one is fine, but it takes longer to say the same thing.'],
+  ['F, 50, US, degree', 'B', 'The word “members” makes it feel like something I already belong to.'],
+  ['M, 36, US, degree', 'A', 'Plain and specific. I would click that.'],
 ];
 
 function renderVotes(){
-  document.getElementById('vote-list').innerHTML = VOTES.map(([who, side, conf, why]) => `
+  document.getElementById('vote-list').innerHTML = VOTES.map(([who, side, why]) => `
     <div class="vote">
       <div class="vote-top">
         <span class="vote-name">${who}</span>
-        <span class="vote-val">chose ${side} · ${Math.round(conf * 100)}% confident</span>
+        <span class="vote-val">chose ${side}</span>
       </div>
-      <div class="track"><div class="fill" style="width:${Math.round(conf * 100)}%"></div></div>
-      <div class="tip"><span class="tip-k">In their words</span>${why}</div>
+      <p class="vote-why">“${why}”</p>
     </div>`).join('') +
     `<p style="padding:16px 0;font-size:13px;font-weight:300;color:var(--ink-3)">
        + ${Math.max(0, flow.panelSize - VOTES.length)} more readers, all reasons included in the full report.
@@ -859,7 +1261,13 @@ function renderVotes(){
 function renderChart(){
   const svg = document.getElementById('posterior');
   const W = 600, TOP = 26, BASE = 168, CRI_Y = 184;
-  const mean = 0.71, sd = 0.085, lo = 0.56, hi = 0.85, ropeLo = 0.47, ropeHi = 0.53;
+  // Coherent fixture: with mean .71 and sd .09, the mass past the tie zone
+  // (share > .57, the product's real band) is 94% — the lead's number IS the
+  // shaded area of this curve. The prototype's earlier .47–.53 band made that
+  // mass ~98%, silently contradicting the headline.
+  // lo/hi are the 95% interval (the product's credible_mass), not a 90% one:
+  // .71 ± 1.96 × .09 → 53–89.
+  const mean = 0.71, sd = 0.09, lo = 0.53, hi = 0.89, ropeLo = 0.43, ropeHi = 0.57;
   const x = p => 20 + p * (W - 40);
   const dens = p => Math.exp(-((p - mean) ** 2) / (2 * sd * sd));
   const y = d => BASE - d * (BASE - TOP);
@@ -867,9 +1275,22 @@ function renderChart(){
   let pts = [];
   for (let i = 0; i <= 120; i++) { const p = i / 120; pts.push(`${x(p).toFixed(1)},${y(dens(p)).toFixed(1)}`); }
 
+  // The area past the tie zone — the mass the headline's 94% counts.
+  let shade = [`${x(ropeHi).toFixed(1)},${BASE}`];
+  for (let i = 0; i <= 60; i++) { const p = ropeHi + (1 - ropeHi) * i / 60; shade.push(`${x(p).toFixed(1)},${y(dens(p)).toFixed(1)}`); }
+  shade.push(`${x(1).toFixed(1)},${BASE}`);
+
   svg.innerHTML = `
     <rect x="${x(ropeLo)}" y="${TOP - 8}" width="${x(ropeHi) - x(ropeLo)}" height="${BASE - TOP + 8}"
           fill="var(--surface-2)"></rect>
+    <polygon points="${shade.join(' ')}" fill="var(--ink)" opacity=".08"></polygon>
+    <text x="${W - 20}" y="48" text-anchor="end" font-size="14" font-weight="600"
+          fill="var(--ink)" font-family="inherit">94%</text>
+    <text x="${W - 20}" y="62" text-anchor="end" font-size="9" letter-spacing=".8"
+          fill="var(--ink-2)" font-family="inherit" style="text-transform:uppercase">posterior</text>
+    <text x="${W - 20}" y="74" text-anchor="end" font-size="9" letter-spacing=".8"
+          fill="var(--ink-2)" font-family="inherit" style="text-transform:uppercase">probability</text>
+    <line x1="${W - 62}" y1="82" x2="${x(0.805)}" y2="112" stroke="var(--ink-3)" stroke-width="1"></line>
     <line x1="20" y1="${BASE}" x2="${W - 20}" y2="${BASE}" stroke="var(--line)" stroke-width="1"></line>
     <polyline points="${pts.join(' ')}" fill="none" stroke="var(--ink)" stroke-width="1.75"></polyline>
     <line x1="${x(mean)}" y1="${TOP - 8}" x2="${x(mean)}" y2="${BASE}" stroke="var(--ink)"
@@ -878,46 +1299,115 @@ function renderChart(){
           fill="var(--ink)" font-family="inherit">71%</text>
     <line x1="${x(lo)}" y1="${CRI_Y}" x2="${x(hi)}" y2="${CRI_Y}" stroke="var(--ink)" stroke-width="6"
           stroke-linecap="butt"></line>
-    <text x="${x(lo)}" y="${CRI_Y + 18}" font-size="11" fill="var(--ink-3)" font-family="inherit">56%</text>
-    <text x="${x(hi)}" y="${CRI_Y + 18}" text-anchor="end" font-size="11" fill="var(--ink-3)" font-family="inherit">85%</text>
+    <text x="${x(lo)}" y="${CRI_Y + 18}" font-size="11" fill="var(--ink-3)" font-family="inherit">53%</text>
+    <text x="${x(hi)}" y="${CRI_Y + 18}" text-anchor="end" font-size="11" fill="var(--ink-3)" font-family="inherit">89%</text>
     <text x="${x(0.5)}" y="${BASE + 16}" text-anchor="middle" font-size="11" fill="var(--ink-3)" font-family="inherit">even</text>
     <text x="20" y="${BASE + 16}" font-size="11" fill="var(--ink-3)" font-family="inherit">all prefer B</text>
     <text x="${W - 20}" y="${BASE + 16}" text-anchor="end" font-size="11" fill="var(--ink-3)" font-family="inherit">all prefer A</text>`;
 }
 
-function showReport(){
+function renderReport(){
   const a = flow.a || 'Save 50% this week';
   const b = flow.b || 'Members save half price this week';
   document.getElementById('winner-line').textContent = `“${a}”`;
   document.getElementById('loser-line').textContent = `over “${b}”`;
-  document.getElementById('report-meta').textContent =
-    `${flow.panelSize} readers · UK and Ireland, 30–50 · one trait unmatched`;
+  document.getElementById('report-meta').textContent = 'United States, 30–50 · context enacted';
+  document.getElementById('pref-count').textContent =
+    `${Math.round(flow.panelSize * 0.71)} of ${flow.panelSize}`;
   renderVotes();
   renderChart();
-  seedDock();
+}
+
+function showReport(){
+  renderReport();
+  if (!flow.demo) recordRun();
   go('step4');
 }
 
-function showSample(){ fillSample(); showReport(); }
+function recordRun(){
+  flow.history.unshift({ id: ++flow.histSeq, a: flow.a, b: flow.b, size: flow.panelSize, v: '71% preferred the first' });
+  renderHistory();
+}
+
+function renderHistory(){
+  document.getElementById('side-new').style.display = flow.signedIn ? '' : 'none';
+  document.getElementById('side-samples').style.display = flow.signedIn ? 'none' : '';
+  const q = (document.getElementById('side-q').value || '').trim().toLowerCase();
+  const show = flow.signedIn && flow.history.length > 0;
+  document.getElementById('hist-k').style.display = show ? 'block' : 'none';
+  document.getElementById('side-search').style.display = show ? 'block' : 'none';
+  const items = flow.history.filter(h => (h.a + ' ' + h.b).toLowerCase().includes(q));
+  document.getElementById('hist-list').innerHTML = show ? items.map(h => `
+    <div class="side-item">
+      <button class="side-row" onclick="openHistory(${h.id})">
+        <span class="q">“${h.a}” vs “${h.b}”</span>
+        <span class="v">${h.v}</span>
+      </button>
+      <button class="side-x" onclick="deleteHistory(${h.id})" aria-label="Delete this test">×</button>
+    </div>`).join('') : '';
+}
+
+function openHistory(id){
+  const h = flow.history.find(x => x.id === id);
+  if (!h) return;
+  flow.a = h.a; flow.b = h.b; flow.panelSize = h.size;
+  document.getElementById('input-a').value = h.a;
+  document.getElementById('input-b').value = h.b;
+  renderReport();
+  go('step4');
+}
+
+function deleteHistory(id){
+  flow.history = flow.history.filter(x => x.id !== id);
+  renderHistory();
+}
+
+function showSample(){
+  fillSample();
+  flow.panelSize = 24;
+  startRun(true);
+}
 
 /* ------------------------------------------------------------------ analyst */
+/* The dock carries only the conversation — the opening summary lives in the
+   report body, so an open dock never prints the page a second time. */
 const ANSWERS = {
   'why is this not a tie?':
-    'Because only about 4% of the plausible range falls inside the tie zone. The panel’s preference for A is not just real, it is wide enough that acting on it is reasonable. If the curve had straddled even, I would be telling you the opposite.',
+    'Because only about 6% of the plausible range falls inside the tie zone. The panel’s preference for A is not just real, it is wide enough that acting on it is reasonable. If the curve had straddled even, I would be telling you the opposite.',
   'how sure are we about the winner?':
     'Fairly, with a caveat. Given these 24 votes there is a 94% chance A is genuinely preferred by readers like these. That is a statement about this panel, not about your customers — a synthetic panel can be wrong about a real audience in ways these numbers cannot see.',
   'who was on this panel?':
-    'Twenty-four readers in the UK and Ireland, aged 30 to 50, spread across secondary, degree and postgraduate education. You also asked for people who shop for groceries online; the pool has no such trait, so the panel was not filtered on it.',
+    'Twenty-four readers in the United States, aged 30 to 50, spread across secondary, degree and postgraduate education. You also asked for parents who shop for groceries online — the pool holds no such data, so each panelist was instructed to be one, on top of their surveyed demographics. Their reasons come from that portrayal.',
 };
 
 const OFF_TOPIC =
   'That is outside what I can help with — I only read this verdict, the panel behind it, and how to interpret it. Ask me why the panel leaned the way it did, or what the range means.';
 
-function seedDock(){
-  if (flow.dockSeeded) return;
-  flow.dockSeeded = true;
-  addTurn('analyst',
-    'The panel leans clearly to the first line: 71% of 24 readers preferred it, and the plausible range sits well clear of even. The most common reason given was that a percentage is easier to act on than “half price”. Ask me anything about how this was reached.');
+let dockReturnFocus = null;
+
+function renderDockGate(){
+  const gated = !flow.signedIn;
+  document.getElementById('dock-gate').style.display = gated ? 'block' : 'none';
+  document.getElementById('dock-chips').style.display = gated ? 'none' : 'flex';
+  document.getElementById('dock-foot').style.display = gated ? 'none' : 'flex';
+}
+
+function openDock(){
+  if (!document.getElementById('dock').classList.contains('on')) {
+    dockReturnFocus = document.activeElement;
+  }
+  renderDockGate();
+  document.getElementById('dock').classList.add('on');
+  if (flow.signedIn) document.querySelector('#dock-foot input').focus();
+  else document.querySelector('#dock-gate button').focus();
+}
+
+function closeDock(){
+  const dock = document.getElementById('dock');
+  if (!dock.classList.contains('on')) return;
+  dock.classList.remove('on');
+  if (dockReturnFocus && document.contains(dockReturnFocus)) dockReturnFocus.focus();
+  dockReturnFocus = null;
 }
 
 function addTurn(role, text, refusal){
@@ -930,6 +1420,7 @@ function addTurn(role, text, refusal){
 }
 
 function ask(q){
+  if (!flow.signedIn) { openDock(); return; }
   if (!q || !q.trim()) return;
   openDock();
   addTurn('reader', q);
@@ -941,13 +1432,53 @@ function ask(q){
   }, 420);
 }
 
-function askOffTopic(){ go('step4'); setTimeout(() => ask('What is a good curry recipe?'), 260); }
+function ensureReport(){
+  if (!document.getElementById('vote-list').innerHTML) { fillSample(); renderReport(); }
+}
 
-function openDock(){ seedDock(); document.getElementById('dock').classList.add('on'); }
-function closeDock(){ document.getElementById('dock').classList.remove('on'); }
+function askOffTopic(){
+  if (!flow.signedIn) signIn(); // the gallery demonstrates the refusal, not the gate
+  ensureReport();
+  go('step4');
+  setTimeout(() => ask('What is a good curry recipe?'), 260);
+}
+
+/* Escape closes the top-most layer — the sheet first, then the dock. */
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (document.getElementById('scrim').classList.contains('on')) closeSheet();
+  else closeDock();
+});
+
+function toggleRail(){
+  const wide = window.matchMedia('(min-width:1100px)').matches;
+  document.documentElement.classList.toggle(wide ? 'rail-closed' : 'rail-open');
+}
+
+function toggleStates(){
+  if (flow.view === 'states') { go(flow.beforeStates || 'landing'); }
+  else { flow.beforeStates = flow.view; go('states'); }
+}
+
+/* ------------------------------------------------------------------ identity */
+function setIdentity(v){
+  document.documentElement.dataset.id = v;
+  document.querySelectorAll('.idbar button').forEach(b => b.classList.toggle('on', b.dataset.id === v));
+}
 
 /* ------------------------------------------------------------------ boot */
+// Review deep-links: #report jumps to the rendered sample report, #form to the signed-in form.
+if (location.hash === '#report') { fillSample(); renderReport(); flow.signedIn = false; }
+if (location.hash === '#form') { signIn(); fillSample(); }
+if (location.hash === '#gate') { signIn(); fillSample(); }
 renderSteppers();
+renderRunControls();
+renderDockGate();
+renderHero();
+renderHistory();
+if (location.hash === '#report') go('step4');
+if (location.hash === '#form') go('step1');
+if (location.hash === '#gate') go('step2');
 </script>
 </body>
 </html>
