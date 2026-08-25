@@ -678,9 +678,11 @@
           act it on top of who they already are, and the report will say which part was acted.
         </p>
         <textarea id="instr" maxlength="240" aria-label="The instruction each panelist will act" oninput="onInstrInput()"></textarea>
-        <!-- The draft is cached, so going back to it is free. -->
-        <div style="margin-top:8px">
+        <!-- The draft is cached, so going back to it is free — and its check
+             verdict is cached too, so running it never costs a check. -->
+        <div style="margin-top:8px;display:flex;gap:16px;align-items:baseline;flex-wrap:wrap">
           <button class="btn-link" id="restore-instr" style="display:none" onclick="restoreInstr()">Restore the model’s draft</button>
+          <span class="allowance" id="check-count" style="display:none"></span>
         </div>
         <!-- The edit box bypasses the rewrite model, so the resume payload is
              re-screened before any vote is bought. -->
@@ -1030,6 +1032,8 @@ const flow = {
   acceptedSummary: '',
   instrFor: null,     // the audience text the shown instruction was written from
   instrDraft: '',     // the model's cached draft — restoring it is free
+  editChecks: 10,     // daily checks for EDITED instructions; placeholder figure,
+                      // the real bound awaits a cost measurement (see the ticket)
   history: [],        // this account's saved tests (in-memory stand-in)
   histSeq: 0,
 };
@@ -1290,6 +1294,9 @@ function onInstrInput(){
   const edited = document.getElementById('instr').value !== flow.instrDraft;
   document.getElementById('restore-instr').style.display = edited ? 'inline' : 'none';
   document.getElementById('instr-refusal').style.display = 'none';
+  const cc = document.getElementById('check-count');
+  cc.style.display = edited ? 'inline' : 'none';
+  cc.textContent = `Edited text is checked before it runs — ${flow.editChecks} checks left today`;
 }
 
 function restoreInstr(){
@@ -1317,13 +1324,36 @@ function audienceSummary(){
   return parts.join(' · ');
 }
 
+function showInstrNotice(html){
+  const n = document.getElementById('instr-refusal');
+  n.innerHTML = html;
+  n.style.display = 'block';
+}
+
 function acceptPanel(){
-  // The in-place edit bypassed the rewrite model; re-screen it before resuming.
+  const box = document.getElementById('instr-block').style.display !== 'none';
   const instr = document.getElementById('instr');
-  const refused = document.getElementById('instr-block').style.display !== 'none'
-    && audienceRefused(instr.value);
-  document.getElementById('instr-refusal').style.display = refused ? 'block' : 'none';
-  if (refused) return;
+  const edited = box && instr.value !== flow.instrDraft;
+  if (edited) {
+    // An edit bypassed the rewrite call, so it buys a fresh check — and every
+    // check counts toward the daily bound, refused or not: probing the
+    // classifier is not free. The unedited draft's verdict is cached, so
+    // accepting it never costs one.
+    if (flow.editChecks <= 0) {
+      showInstrNotice(`<b>No checks left today.</b> Edited instructions are checked before they
+        run, and today’s checks are spent. Restore the model’s draft to run without one —
+        your runs are untouched, and checks refill tomorrow.`);
+      return;
+    }
+    flow.editChecks -= 1;
+    onInstrInput();
+    if (audienceRefused(instr.value)) {
+      showInstrNotice(`<b>This instruction was refused.</b> It steers the vote or stops
+        describing a person. Panelists act an identity; they do not take orders about the
+        options. ${flow.editChecks} checks left today.`);
+      return;
+    }
+  }
   flow.accepted = audienceKey();
   flow.acceptedSummary = audienceSummary();
   renderRunControls();
