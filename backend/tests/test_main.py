@@ -5,19 +5,10 @@ from decimal import Decimal
 import httpx
 import psycopg
 import pytest
-from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatResult
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver
-from openai import APIStatusError
-from pgvector.psycopg import register_vector
-from pydantic import SecretStr
-
+from app.config import PROFILES, USD_PER_VOTE, PanelProfile, Settings, settings
 from app import graph as graph_module
 from app import main
 from app.auth import InvalidSession, SessionUnverifiable
-from app.config import PROFILES, USD_PER_VOTE, PanelProfile, Settings, settings
 from app.main import (
     LEDGER_HOURS,
     app,
@@ -38,6 +29,14 @@ from app.persistence import nearest_panelists, persist_pool
 from app.schemas import EvaluateRequest
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
+from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatResult
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from openai import APIStatusError
+from pgvector.psycopg import register_vector
+from pydantic import SecretStr
 from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
@@ -1314,6 +1313,38 @@ def test_health_says_whether_sign_in_is_actually_enforced(client, signed_in) -> 
 
     assert enforced["auth"] == "on"
     assert unenforced["auth"] == "off"
+
+
+def test_a_run_is_labelled_with_the_id_the_caller_is_given(
+    client, conn, monkeypatch
+) -> None:
+    """The correlation handle a trace needs. Without it a LangSmith run and the
+    log lines for the same request share nothing, and the only way to pair them
+    is by wall-clock. The wider log-correlation problem stays 047/#145's."""
+    seen: dict = {}
+    real = main.build_evaluate_graph
+
+    def spy(**kwargs):
+        graph = real(**kwargs)
+        invoke = graph.invoke
+
+        def record(payload, config, *args, **rest):
+            seen["config"] = config
+            return invoke(payload, config, *args, **rest)
+
+        monkeypatch.setattr(graph, "invoke", record)
+        return graph
+
+    monkeypatch.setattr(main, "build_evaluate_graph", spy)
+    seed_japanese(conn, 5)
+
+    response = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 200
+    assert (
+        seen["config"]["metadata"]["thread_id"]
+        == seen["config"]["configurable"]["thread_id"]
+    )
 
 
 def test_health_says_whether_inputs_are_being_traced(client) -> None:

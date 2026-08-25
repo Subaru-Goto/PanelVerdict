@@ -10,9 +10,10 @@ from typing import Literal
 
 import psycopg
 import pytest
+from testcontainers.postgres import PostgresContainer
+
 from app.persistence import prepare_connection
 from app.vote import VoteResponse
-from testcontainers.postgres import PostgresContainer
 from tests.factories import voted
 
 

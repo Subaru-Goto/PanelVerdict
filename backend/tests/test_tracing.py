@@ -8,8 +8,19 @@ here is the mechanism rather than a detail.
 
 import os
 
+import pytest
+
 from app.config import Settings
 from app.tracing import configure_tracing
+
+
+@pytest.fixture(autouse=True)
+def isolated_env(monkeypatch):
+    """Exports land in a copy of the environment. `monkeypatch.delenv` records
+    nothing for a variable that was already absent, so without this the fake key
+    these tests set would outlive them."""
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+
 
 _DB = {
     "postgres_user": "u",
@@ -19,9 +30,8 @@ _DB = {
 
 
 def _settings(**overrides) -> Settings:
-    """Explicit every time: `Settings` also reads the repo's own `.env`, and a
-    test that inherited the developer's real tracing config would pass or fail
-    depending on whose machine ran it."""
+    """Explicit every time: `Settings` also reads the repo's `.env`, so
+    inheriting it would make these pass or fail per machine."""
     return Settings(
         **_DB,
         **{
@@ -35,9 +45,8 @@ def _settings(**overrides) -> Settings:
 
 
 def test_the_flag_alone_does_not_turn_tracing_on(monkeypatch) -> None:
-    """The one that matters: a key-less deploy with the flag set would build a
-    tracer that fails on every model call — errors on the hot path, and not one
-    trace to show for them. Half-configured reads as off, not as on."""
+    """A key-less deploy with the flag set would build a tracer that fails on
+    every model call and shows no trace for any of them."""
     monkeypatch.delenv("LANGSMITH_TRACING", raising=False)
 
     assert configure_tracing(_settings(langsmith_tracing=True)) is False
@@ -47,9 +56,8 @@ def test_the_flag_alone_does_not_turn_tracing_on(monkeypatch) -> None:
 def test_a_configured_project_reaches_the_variables_the_sdk_reads(
     monkeypatch,
 ) -> None:
-    """The gap this module exists to close. `Settings` can hold a perfectly good
-    key from the `.env` file while `os.environ` — the only place LangChain's
-    tracer looks — holds nothing, so tracing is configured and silent."""
+    """`Settings` can hold a good key from `.env` while `os.environ` — where the
+    tracer looks — holds nothing, leaving tracing configured and silent."""
     for name in ("LANGSMITH_TRACING", "LANGSMITH_API_KEY", "LANGSMITH_PROJECT"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("LANGSMITH_ENDPOINT", raising=False)

@@ -251,9 +251,8 @@ describe("the proxy and the signed-in session", () => {
 
 describe("the tracing disclosure's source", () => {
   it("reports what the backend says, so one deployment answers for both", async () => {
-    // The alternative — a NEXT_PUBLIC_ flag set beside the backend's — is two
-    // places to set one fact, and the drift stays invisible until someone
-    // opens both dashboards.
+    // A NEXT_PUBLIC_ flag set beside the backend's would be two places to set
+    // one fact, and the drift stays invisible.
     vi.stubEnv("API_URL", "http://backend.test");
     vi.stubGlobal(
       "fetch",
@@ -268,9 +267,8 @@ describe("the tracing disclosure's source", () => {
   });
 
   it("says not-tracing when the backend cannot be reached", async () => {
-    // Off, not on, and it is the safe default rather than the optimistic one:
-    // a backend this page cannot reach is a backend that cannot accept a run
-    // either, so there is nothing being traced to disclose.
+    // Safe rather than optimistic: a backend this page cannot reach cannot
+    // accept a run either, so nothing is being traced to disclose.
     vi.stubEnv("API_URL", "http://backend.test");
     vi.stubGlobal(
       "fetch",
@@ -281,10 +279,7 @@ describe("the tracing disclosure's source", () => {
   });
 
   it("gives up rather than holding the page open", async () => {
-    // The page is server-rendered, so this fetch sits in front of the reader's
-    // first byte. Node's fetch has no default timeout, and the backend is on a
-    // free tier that sleeps — without a bound, one cold start is a page that
-    // never paints. A deadline the disclosure misses is better than that.
+    // Without a bound, one cold start is a page that never paints.
     vi.stubEnv("API_URL", "http://backend.test");
     const backend = vi.fn().mockImplementation(({ signal }: RequestInit = {}) =>
       new Promise((_, reject) =>

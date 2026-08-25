@@ -20,17 +20,14 @@ function clientId(request: Request): string | null {
 /** Whether this deployment is tracing, for the server-rendered form.
  *
  * Lives here because this file is where the backend URL is allowed to exist.
- * The page is a server component and could hold it safely, but "only
- * `app/api/` knows the backend's address" is worth the one import.
- *
  * Unreachable counts as not tracing: a backend the page cannot reach cannot
- * accept a run either, so there is nothing being traced to warn about.
+ * accept a run either, so nothing is being traced to warn about.
  */
 export async function backendTracing({
-  // Node's `fetch` has no default timeout, and this call sits in front of the
-  // reader's first byte on a backend that sleeps on its free tier — unbounded,
-  // one cold start is a page that never paints. Two seconds is far above a warm
-  // /health (a keep-warm ping runs every 12 minutes) and far below a cold one.
+  // A budget, not a measurement. This call sits in front of the reader's first
+  // byte and Node's `fetch` has no default timeout. A sleeping backend "wakes
+  // in ~1 minute" (docs/deploy.md), so waiting one out would cost the page a
+  // minute to decide one line — give up in seconds and render without it.
   timeoutMs = 2000,
 }: { timeoutMs?: number } = {}): Promise<boolean> {
   try {

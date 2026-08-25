@@ -70,8 +70,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 # At import, before the first model client exists: `init_chat_model` reads the
-# tracing environment when it builds a client, so exporting any later would
-# trace nothing until the process restarted.
+# tracing environment when it builds a client.
 _TRACING = configure_tracing()
 if _TRACING:
     # The project, never the key. A deploy that sends reader input off our
@@ -604,8 +603,8 @@ def _charge_ledger(
 def tracing_enabled() -> bool:
     """Whether this process is really sending traces.
 
-    A dependency rather than a bare read of `_TRACING`, so a test can say what a
-    traced deployment reports without turning tracing on for the test run.
+    A dependency so a test can report a traced deployment without turning
+    tracing on for the test run.
     """
     return _TRACING
 
@@ -744,6 +743,14 @@ def _outcome(
     was adjusted.
     """
     paused = state.get("__interrupt__")
+    # The same id the trace is labelled with, so a run in LangSmith and the
+    # lines it wrote here can be paired. The vote loop logs a different id
+    # (`panel usage test_id=...`); unifying the two is a separate job.
+    logger.info(
+        "evaluate thread_id=%s: %s",
+        thread_id,
+        "paused at the panel gate" if paused else "complete",
+    )
     if paused:
         return PausedRun(
             thread_id=thread_id, preview=PanelPreview.model_validate(paused[0].value)
@@ -769,7 +776,16 @@ def _run_graph(graph, payload, thread_id: str):
     model text.
     """
     try:
-        return graph.invoke(payload, {"configurable": {"thread_id": thread_id}})
+        return graph.invoke(
+            payload,
+            {
+                "configurable": {"thread_id": thread_id},
+                # Repeated as metadata because only `model` and `checkpoint_ns`
+                # are copied out of `configurable` for a trace. This is the one
+                # handle a LangSmith run and this request's log lines share.
+                "metadata": {"thread_id": thread_id},
+            },
+        )
     except UnsafeInput as error:
         # 400, not 422: the text is well-formed; what it says was refused.
         raise HTTPException(status_code=400, detail=str(error)) from error
