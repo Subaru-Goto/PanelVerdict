@@ -51,11 +51,20 @@ from tests.factories import (
 # assertion is that the endpoint forwards the configured size, not what the size is.
 _SIZE = settings.panel.size
 
+# `reading_accepted` says this audience's reading was already approved, so the
+# panel gate (076/#166) does not stop the run. Set here because most of these
+# tests are about what a *finished* run answers, and routing every one of them
+# through the gate would test the gate over and over instead. The gate's own
+# behaviour is tested below, through the same endpoint.
 _REQUEST_BODY = {
     "target_description": "Japanese homeowners",
     "headline_a": "Save 50% today",
     "headline_b": "Limited time: half price",
+    "reading_accepted": True,
 }
+
+# The same run, arriving the way a first-time reader's does: unapproved.
+_UNAPPROVED_BODY = _REQUEST_BODY | {"reading_accepted": False}
 
 
 @pytest.fixture
@@ -1283,3 +1292,97 @@ def test_health_says_whether_sign_in_is_actually_enforced(client, signed_in) -> 
 
     assert enforced["auth"] == "on"
     assert unenforced["auth"] == "off"
+
+
+# --- The panel gate over the wire (076/#166) ---------------------------------
+
+
+def test_a_first_run_answers_with_the_panel_rather_than_a_verdict(client, conn) -> None:
+    """What a reader gets before they have approved anything: who would be
+    seated, and what finding out would cost."""
+    seed_japanese(conn, 5)
+
+    body = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+
+    assert body["status"] == "paused"
+    assert body["thread_id"]
+    assert body["preview"]["matched"] == 5
+    assert body["preview"]["estimated_usd"] > 0
+
+
+def test_accepting_over_the_wire_returns_the_verdict(client, conn) -> None:
+    seed_japanese(conn, 5)
+    paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+
+    body = client.post(
+        "/evaluate/resume",
+        json={"thread_id": paused["thread_id"], "action": "accept"},
+    ).json()
+
+    assert body["status"] == "complete"
+    assert body["counts"]["voted"] == 5
+
+
+def test_adjusting_over_the_wire_stops_again_at_the_new_reading(client, conn) -> None:
+    """An edited reading is a new reading, so it comes back to the gate rather
+    than running on — a resume is not automatically an approval."""
+    seed_japanese(conn, 5)
+    paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+
+    body = client.post(
+        "/evaluate/resume",
+        json={
+            "thread_id": paused["thread_id"],
+            "action": "adjust",
+            "query": paused["preview"]["query"],
+        },
+    ).json()
+
+    assert body["status"] == "paused"
+
+
+def test_resuming_a_run_nobody_started_is_not_a_way_to_start_one(client) -> None:
+    """Otherwise the resume endpoint would be an unmetered `/evaluate`: it
+    charges nothing, because the start already did."""
+    response = client.post(
+        "/evaluate/resume", json={"thread_id": "never-existed", "action": "accept"}
+    )
+
+    assert response.status_code == 404
+
+
+def test_the_gate_does_not_charge_the_run_twice(client, conn, monkeypatch) -> None:
+    """One run, one charge. The start pays for what the whole run may buy; the
+    accept spends it. Billing both would halve everybody's allowance for
+    reading the thing they were asked to read."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+    seed_japanese(conn, 5)
+    paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+
+    accepted = client.post(
+        "/evaluate/resume",
+        json={"thread_id": paused["thread_id"], "action": "accept"},
+    )
+
+    assert accepted.status_code == 200
+    assert accepted.json()["status"] == "complete"
+
+
+def test_a_paused_run_buys_nothing(client, conn) -> None:
+    """The gate's whole claim, at the edge this time."""
+    seed_japanese(conn, 5)
+
+    class CountingLLM:
+        configuration = "counting"
+        asked = 0
+
+        def vote(self, **kwargs):
+            type(self).asked += 1
+            raise AssertionError("a run waiting for approval must buy no votes")
+
+    app.dependency_overrides[get_panel_llm] = lambda: CountingLLM()
+
+    response = client.post("/evaluate", json=_UNAPPROVED_BODY)
+
+    assert response.json()["status"] == "paused"
+    assert CountingLLM.asked == 0

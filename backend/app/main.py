@@ -3,7 +3,8 @@ import logging
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from decimal import Decimal
-from typing import NamedTuple
+from typing import Literal, NamedTuple
+from uuid import uuid4
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -12,9 +13,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.types import Command
 from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
+from pydantic import BaseModel
 
 from app.analyst import ToolDeps, analysis_facts, stream_analyst
 from app.assembly import Embedder
@@ -39,14 +42,16 @@ from app.llm import (
 )
 from app.panel import votes_with_voters
 from app.persistence import deny_data_api
-from app.pipeline import EmptyPanel, NoVotes, run_panel_test
+from app.graph import GateDecision, PanelPreview, build_evaluate_graph
+from app.pipeline import EmptyPanel, NoVotes
 from app.schemas import (
     ChatRequest,
     EvaluateRequest,
+    ResumeRequest,
     EvaluateResponse,
     Notice,
 )
-from app.screening import OpenRouterScreener, Screener, UnsafeInput, screen_inputs
+from app.screening import OpenRouterScreener, Screener, UnsafeInput
 from app.targeting import TargetTranslator
 from app.vote import OutOfCredit, PanelLLM
 
@@ -649,50 +654,64 @@ def forget_me(
     return Response(status_code=204)
 
 
-@app.post("/evaluate")
-def evaluate(
-    request: EvaluateRequest,
-    _limit: None = Depends(enforce_run_limit),
-    llm: PanelLLM = Depends(get_panel_llm),
-    translator: TargetTranslator = Depends(get_translator),
-    conn: psycopg.Connection = Depends(get_conn),
-    credit: float | None = Depends(get_remaining_credit),
-    screener: Screener | None = Depends(get_screener),
-) -> EvaluateResponse:
-    variants = {"a": request.headline_a, "b": request.headline_b}
-    # Before the panel, because this is the last moment the customer's text has
-    # been copied only once — and before a single vote is bought, so a refused
-    # run costs nothing.
-    try:
-        screen_inputs(screener, [request.target_description, *variants.values()])
-    except UnsafeInput as error:
-        # 400 and not 422: the text is well-formed, it is what it says that was
-        # refused. The sentence is this codebase's own and names the remedy;
-        # the screener's own words never travel.
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    # Both refusal messages are safe to forward by construction: `EmptyPanel` is this
-    # codebase's own sentence, and `NoVotes` carries exception types only — never the
-    # failure text, which can include provider responses and the model's own output.
-    try:
-        result = run_panel_test(
-            conn,
-            description=request.target_description,
-            variants=variants,
-            size=settings.panel.size,
-            translator=translator,
-            llm=llm,
+def get_checkpointer(request: Request) -> BaseCheckpointSaver:
+    """The lifespan's process-lifetime saver, exposed as a dependency so tests
+    can swap in an InMemorySaver — thread durability is test_analyst's
+    subject, not a tax on every endpoint test."""
+    return request.app.state.checkpointer
+
+
+class PausedRun(BaseModel):
+    """The run is holding at the panel gate, waiting for a human (076/#166)."""
+
+    status: Literal["paused"] = "paused"
+    # Travels to the client and back: the pause outlives the request, and the
+    # process.
+    thread_id: str
+    preview: PanelPreview
+
+
+class CompletedRun(EvaluateResponse):
+    """A finished run. `status` is additive — every older field is still here."""
+
+    status: Literal["complete"] = "complete"
+
+
+def _evaluate_graph(
+    conn: psycopg.Connection,
+    translator: TargetTranslator,
+    llm: PanelLLM,
+    screener: Screener | None,
+    checkpointer: BaseCheckpointSaver,
+):
+    return build_evaluate_graph(
+        conn=conn,
+        translator=translator,
+        llm=llm,
+        screener=screener,
+        checkpointer=checkpointer,
+    )
+
+
+def _outcome(
+    state: dict,
+    *,
+    thread_id: str,
+    variants: dict[str, str],
+    credit: float | None,
+) -> PausedRun | CompletedRun:
+    """Read the graph's final state, for both start and resume.
+
+    Either call can return either shape: a resume pauses again when the reading
+    was adjusted.
+    """
+    paused = state.get("__interrupt__")
+    if paused:
+        return PausedRun(
+            thread_id=thread_id, preview=PanelPreview.model_validate(paused[0].value)
         )
-    except EmptyPanel as error:
-        # The request is the problem — the target names an audience this pool cannot
-        # serve — so the code says "fix what you asked", not "the service failed".
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    except NoVotes as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    except OutOfCredit as error:
-        # The account's fault, not the server's, and the remedy is in the message:
-        # the text is this codebase's own sentence, never the provider's.
-        raise HTTPException(status_code=402, detail=str(error)) from error
-    return EvaluateResponse(
+    result = state["result"]
+    return CompletedRun(
         verdict=result.verdict,
         tally=result.tally,
         counts=result.counts,
@@ -704,11 +723,91 @@ def evaluate(
     )
 
 
-def get_checkpointer(request: Request) -> BaseCheckpointSaver:
-    """The lifespan's process-lifetime saver, exposed as a dependency so tests
-    can swap in an InMemorySaver — thread durability is test_analyst's
-    subject, not a tax on every endpoint test."""
-    return request.app.state.checkpointer
+def _run_graph(graph, payload, thread_id: str):
+    """Run the graph and map its refusals to status codes.
+
+    Every message forwarded here is this codebase's own: `EmptyPanel` is a fixed
+    sentence and `NoVotes` carries exception type names only, never provider or
+    model text.
+    """
+    try:
+        return graph.invoke(payload, {"configurable": {"thread_id": thread_id}})
+    except UnsafeInput as error:
+        # 400, not 422: the text is well-formed; what it says was refused.
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except EmptyPanel as error:
+        # The target names an audience this pool cannot serve: fix the request.
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except NoVotes as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except OutOfCredit as error:
+        raise HTTPException(status_code=402, detail=str(error)) from error
+
+
+@app.post("/evaluate")
+def evaluate(
+    request: EvaluateRequest,
+    _limit: None = Depends(enforce_run_limit),
+    llm: PanelLLM = Depends(get_panel_llm),
+    translator: TargetTranslator = Depends(get_translator),
+    conn: psycopg.Connection = Depends(get_conn),
+    credit: float | None = Depends(get_remaining_credit),
+    screener: Screener | None = Depends(get_screener),
+    checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
+) -> PausedRun | CompletedRun:
+    """Start a run. Stops at the panel gate unless the reading was approved.
+
+    Charged here, not on the resume: starting triggers a paid translation, so an
+    abandoned run has still cost something.
+    """
+    variants = {"a": request.headline_a, "b": request.headline_b}
+    thread_id = str(uuid4())
+    graph = _evaluate_graph(conn, translator, llm, screener, checkpointer)
+    state = _run_graph(
+        graph,
+        {
+            "description": request.target_description,
+            "variants": variants,
+            "size": settings.panel.size,
+            "reading_accepted": request.reading_accepted,
+        },
+        thread_id,
+    )
+    return _outcome(state, thread_id=thread_id, variants=variants, credit=credit)
+
+
+@app.post("/evaluate/resume")
+def resume_evaluate(
+    request: ResumeRequest,
+    llm: PanelLLM = Depends(get_panel_llm),
+    translator: TargetTranslator = Depends(get_translator),
+    conn: psycopg.Connection = Depends(get_conn),
+    credit: float | None = Depends(get_remaining_credit),
+    screener: Screener | None = Depends(get_screener),
+    checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
+) -> PausedRun | CompletedRun:
+    """Answer the panel gate: accept and buy the votes, or adjust the reading.
+
+    - Not charged again: `/evaluate` already charged this run in full.
+    - An unknown thread id is a 404, not a new run — otherwise resuming would be
+      an unmetered way to start one.
+    """
+    graph = _evaluate_graph(conn, translator, llm, screener, checkpointer)
+    config = {"configurable": {"thread_id": request.thread_id}}
+    snapshot = graph.get_state(config)
+    if not snapshot.next:
+        raise HTTPException(status_code=404, detail="no run is waiting on that id")
+    variants = snapshot.values["variants"]
+    state = _run_graph(
+        graph,
+        Command(
+            resume=GateDecision(action=request.action, query=request.query).model_dump()
+        ),
+        request.thread_id,
+    )
+    return _outcome(
+        state, thread_id=request.thread_id, variants=variants, credit=credit
+    )
 
 
 @app.post("/chat")

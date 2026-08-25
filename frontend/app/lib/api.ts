@@ -138,11 +138,47 @@ export type EvaluateInput = {
   targetDescription: string;
   headlineA: string;
   headlineB: string;
+  /** This reading was already approved, so the panel gate should not stop the
+   *  run again. The client says it; the server never infers it. */
+  readingAccepted?: boolean;
+};
+
+/** Who a run would seat and what it would cost, shown while the run holds at
+ *  the gate — before anything is bought. */
+export type PanelPreview = {
+  query: TargetQuery;
+  matched: number;
+  composition: PanelComposition | null;
+  notices: Notice[];
+  estimated_usd: number;
+};
+
+/** Who is on the panel, in the same words the report uses. */
+export type PanelComposition = {
+  age_min: number;
+  age_median: number;
+  age_max: number;
+  countries: Record<string, number>;
+  genders: Record<string, number>;
+  education_levels: Record<string, number>;
+  income_bands: Record<string, number>;
+};
+
+/** A run either holds at the gate or finishes. Either call can return either:
+ *  a resume pauses again when the reading was adjusted. */
+export type EvaluateOutcome =
+  | { status: "paused"; thread_id: string; preview: PanelPreview }
+  | ({ status: "complete" } & EvaluateResponse);
+
+export type GateAnswer = {
+  threadId: string;
+  action: "accept" | "adjust";
+  query?: TargetQuery;
 };
 
 export async function evaluate(
   request: EvaluateInput,
-): Promise<EvaluateResponse> {
+): Promise<EvaluateOutcome> {
   // Same origin, through the proxy route (045/#143): the browser never learns
   // the backend URL or the edge secret — neither exists in this bundle.
   //
@@ -159,6 +195,7 @@ export async function evaluate(
       target_description: request.targetDescription,
       headline_a: request.headlineA,
       headline_b: request.headlineB,
+      reading_accepted: request.readingAccepted ?? false,
     }),
   });
   if (!res.ok) {
@@ -174,20 +211,50 @@ export async function evaluate(
         : `API responded ${res.status}`,
     );
   }
-  const result = (await res.json()) as EvaluateResponse;
-  // After the response, not before: a run refused by a cap spent nothing.
-  runsChanged.forEach((listener) => listener());
-  return result;
+  const outcome = (await res.json()) as EvaluateOutcome;
+  // Only a finished run spent one — a run holding at the gate bought nothing.
+  if (outcome.status === "complete") {
+    runsChanged.forEach((listener) => listener());
+  }
+  return outcome;
+}
+
+/** Answer the panel gate: accept and buy the votes, or adjust the reading.
+ *
+ * Carries the session, because this is the call that spends. */
+export async function resumeEvaluate(
+  answer: GateAnswer,
+): Promise<EvaluateOutcome> {
+  const res = await fetch("/api/evaluate/resume", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify({
+      thread_id: answer.threadId,
+      action: answer.action,
+      ...(answer.query ? { query: answer.query } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as {
+      detail?: string;
+    } | null;
+    throw new Error(
+      typeof body?.detail === "string"
+        ? body.detail
+        : `API responded ${res.status}`,
+    );
+  }
+  const outcome = (await res.json()) as EvaluateOutcome;
+  if (outcome.status === "complete") {
+    runsChanged.forEach((listener) => listener());
+  }
+  return outcome;
 }
 
 /** Watch for the account's remaining runs changing. Returns an unsubscribe.
  *
- * A run is the only thing that spends one, and this module is where a run
- * happens — so the fact originates here rather than being passed between
- * components that have no reason to know about each other. Without it the
- * figure on screen keeps saying "3 runs left" after the run that made it 2,
- * which is worse than saying nothing: it is a budget, so a stale one is wrong.
- */
+ * Lives here because a run is the only thing that spends one. Without it the
+ * figure keeps reading "3 runs left" after the run that made it 2. */
 const runsChanged = new Set<() => void>();
 
 export function onRunsChanged(listener: () => void): () => void {
@@ -199,9 +266,8 @@ export function onRunsChanged(listener: () => void): () => void {
 
 /** How many runs today's account has left, or null if it could not be read.
  *
- * Null rather than zero on failure, deliberately: "0 runs left" tells someone
- * they are out of runs, and a failed read is not evidence of that.
- */
+ * Null rather than zero: "0 runs left" would tell someone they are out when a
+ * read simply failed. */
 export async function remainingRuns(): Promise<number | null> {
   const headers = await authHeaders();
   // Nothing to ask about: a signed-out visitor has no count, and the call

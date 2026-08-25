@@ -18,7 +18,7 @@ function clientId(request: Request): string | null {
 }
 
 export async function proxyToBackend(
-  path: "/evaluate" | "/chat" | "/me",
+  path: "/evaluate" | "/evaluate/resume" | "/chat" | "/me",
   method: "GET" | "POST" | "DELETE",
   request: Request,
 ): Promise<Response> {
