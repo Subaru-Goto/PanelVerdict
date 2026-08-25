@@ -3,6 +3,7 @@
 import { useEffect, useState, type SubmitEvent } from "react";
 
 import { useEvaluate } from "../lib/use-evaluate";
+import PanelGate from "./panel-gate";
 import Report from "./report";
 
 const INPUT_CLASS =
@@ -81,7 +82,7 @@ export default function EvaluateForm() {
   const [targetDescription, setTargetDescription] = useState("");
   const [headlineA, setHeadlineA] = useState("");
   const [headlineB, setHeadlineB] = useState("");
-  const { state, submit, reset } = useEvaluate();
+  const { state, submit, answerGate, reset } = useEvaluate();
 
   function onSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -108,6 +109,17 @@ export default function EvaluateForm() {
         </button>
         <Report result={state.result} />
       </div>
+    );
+  }
+
+  // Holding at the gate: the reader decides whether to buy the votes.
+  if (state.phase === "gated") {
+    return (
+      <PanelGate
+        preview={state.preview}
+        onAccept={() => void answerGate("accept")}
+        onBack={reset}
+      />
     );
   }
 

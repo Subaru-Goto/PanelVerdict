@@ -1,9 +1,11 @@
 import hmac
 import logging
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import NamedTuple
+from typing import Literal, NamedTuple
+from uuid import uuid4
 
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -12,9 +14,11 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.types import Command
 from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
+from pydantic import BaseModel
 
 from app.analyst import ToolDeps, analysis_facts, stream_analyst
 from app.assembly import Embedder
@@ -39,14 +43,17 @@ from app.llm import (
 )
 from app.panel import votes_with_voters
 from app.persistence import deny_data_api
-from app.pipeline import EmptyPanel, NoVotes, run_panel_test
+from app.graph import GateDecision, PanelPreview, build_evaluate_graph
+from app.pipeline import EmptyPanel, NoVotes
 from app.schemas import (
     ChatRequest,
     EvaluateRequest,
+    ResumeRequest,
+    TargetQuery,
     EvaluateResponse,
     Notice,
 )
-from app.screening import OpenRouterScreener, Screener, UnsafeInput, screen_inputs
+from app.screening import OpenRouterScreener, Screener, UnsafeInput
 from app.targeting import TargetTranslator
 from app.vote import OutOfCredit, PanelLLM
 
@@ -135,10 +142,21 @@ app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
 _GUARDED_PATHS = ("/evaluate", "/chat", "/me")
 
 
+def _is_guarded(path: str) -> bool:
+    """Match a guarded route or anything under it.
+
+    Exact membership let `/evaluate/resume` — the call that actually buys the
+    votes — past the guard while `/evaluate` sat behind it.
+    """
+    return path in _GUARDED_PATHS or any(
+        path.startswith(f"{guarded}/") for guarded in _GUARDED_PATHS
+    )
+
+
 @app.middleware("http")
 async def require_shared_secret(request: Request, call_next):
     secret = settings.api_shared_secret
-    if secret is not None and request.url.path in _GUARDED_PATHS:
+    if secret is not None and _is_guarded(request.url.path):
         # Compared as bytes: Starlette hands header values back latin-1
         # decoded, and `compare_digest` raises TypeError on a str holding a
         # non-ASCII codepoint — so `x-api-key: café` used to become a 500 with
@@ -266,11 +284,18 @@ def get_conn() -> Iterator[psycopg.Connection]:
         yield conn
 
 
-# The ledger's day, written once. `/me` reports the budget that `_charge_ledger`
-# enforces, so both must read the same window and the same key — two literals
-# would let the figure shown drift from the figure applied.
-_LEDGER_WINDOW = "requested_at > now() - interval '24 hours'"
+# The ledger's day, written once, because four things read it: the cap, the
+# sweep, the remaining-runs figure `/me` reports, and how long a paused run may
+# be redeemed for. Two literals would let any of them drift from the others.
+LEDGER_HOURS = 24
+_LEDGER_WINDOW = f"requested_at > now() - interval '{LEDGER_HOURS} hours'"
+_LEDGER_EXPIRED = f"requested_at < now() - interval '{LEDGER_HOURS} hours'"
 _EVALUATE = "/evaluate"
+
+
+def _now() -> datetime:
+    """Wrapped so tests can move the clock."""
+    return datetime.now(UTC)
 
 
 class _Charge(NamedTuple):
@@ -499,7 +524,7 @@ def _charge_ledger(
         for charge in active:
             cur.execute(
                 "DELETE FROM request_ledger WHERE endpoint = %s AND caller = %s"
-                " AND requested_at < now() - interval '24 hours'",
+                f" AND {_LEDGER_EXPIRED}",
                 (charge.endpoint, charge.key),
             )
             cur.execute(
@@ -523,7 +548,8 @@ def _charge_ledger(
                 )
         if pooled is not None:
             cur.execute(
-                "DELETE FROM spend_ledger WHERE spent_at < now() - interval '24 hours'"
+                "DELETE FROM spend_ledger WHERE spent_at < now()"
+                f" - interval '{LEDGER_HOURS} hours'"
             )
             cur.execute(
                 "SELECT coalesce(sum(usd), 0) FROM spend_ledger"
@@ -649,50 +675,48 @@ def forget_me(
     return Response(status_code=204)
 
 
-@app.post("/evaluate")
-def evaluate(
-    request: EvaluateRequest,
-    _limit: None = Depends(enforce_run_limit),
-    llm: PanelLLM = Depends(get_panel_llm),
-    translator: TargetTranslator = Depends(get_translator),
-    conn: psycopg.Connection = Depends(get_conn),
-    credit: float | None = Depends(get_remaining_credit),
-    screener: Screener | None = Depends(get_screener),
-) -> EvaluateResponse:
-    variants = {"a": request.headline_a, "b": request.headline_b}
-    # Before the panel, because this is the last moment the customer's text has
-    # been copied only once — and before a single vote is bought, so a refused
-    # run costs nothing.
-    try:
-        screen_inputs(screener, [request.target_description, *variants.values()])
-    except UnsafeInput as error:
-        # 400 and not 422: the text is well-formed, it is what it says that was
-        # refused. The sentence is this codebase's own and names the remedy;
-        # the screener's own words never travel.
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    # Both refusal messages are safe to forward by construction: `EmptyPanel` is this
-    # codebase's own sentence, and `NoVotes` carries exception types only — never the
-    # failure text, which can include provider responses and the model's own output.
-    try:
-        result = run_panel_test(
-            conn,
-            description=request.target_description,
-            variants=variants,
-            size=settings.panel.size,
-            translator=translator,
-            llm=llm,
+def get_checkpointer(request: Request) -> BaseCheckpointSaver:
+    """The lifespan's process-lifetime saver, exposed as a dependency so tests
+    can swap in an InMemorySaver — thread durability is test_analyst's
+    subject, not a tax on every endpoint test."""
+    return request.app.state.checkpointer
+
+
+class PausedRun(BaseModel):
+    """The run is holding at the panel gate, waiting for a human (076/#166)."""
+
+    status: Literal["paused"] = "paused"
+    # Travels to the client and back: the pause outlives the request, and the
+    # process.
+    thread_id: str
+    preview: PanelPreview
+
+
+class CompletedRun(EvaluateResponse):
+    """A finished run. `status` is additive — every older field is still here."""
+
+    status: Literal["complete"] = "complete"
+
+
+def _outcome(
+    state: dict,
+    *,
+    thread_id: str,
+    variants: dict[str, str],
+    credit: float | None,
+) -> PausedRun | CompletedRun:
+    """Read the graph's final state, for both start and resume.
+
+    Either call can return either shape: a resume pauses again when the reading
+    was adjusted.
+    """
+    paused = state.get("__interrupt__")
+    if paused:
+        return PausedRun(
+            thread_id=thread_id, preview=PanelPreview.model_validate(paused[0].value)
         )
-    except EmptyPanel as error:
-        # The request is the problem — the target names an audience this pool cannot
-        # serve — so the code says "fix what you asked", not "the service failed".
-        raise HTTPException(status_code=422, detail=str(error)) from error
-    except NoVotes as error:
-        raise HTTPException(status_code=502, detail=str(error)) from error
-    except OutOfCredit as error:
-        # The account's fault, not the server's, and the remedy is in the message:
-        # the text is this codebase's own sentence, never the provider's.
-        raise HTTPException(status_code=402, detail=str(error)) from error
-    return EvaluateResponse(
+    result = state["result"]
+    return CompletedRun(
         verdict=result.verdict,
         tally=result.tally,
         counts=result.counts,
@@ -704,11 +728,190 @@ def evaluate(
     )
 
 
-def get_checkpointer(request: Request) -> BaseCheckpointSaver:
-    """The lifespan's process-lifetime saver, exposed as a dependency so tests
-    can swap in an InMemorySaver — thread durability is test_analyst's
-    subject, not a tax on every endpoint test."""
-    return request.app.state.checkpointer
+def _run_graph(graph, payload, thread_id: str):
+    """Run the graph and map its refusals to status codes.
+
+    Every message forwarded here is this codebase's own: `EmptyPanel` is a fixed
+    sentence and `NoVotes` carries exception type names only, never provider or
+    model text.
+    """
+    try:
+        return graph.invoke(payload, {"configurable": {"thread_id": thread_id}})
+    except UnsafeInput as error:
+        # 400, not 422: the text is well-formed; what it says was refused.
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except EmptyPanel as error:
+        # The target names an audience this pool cannot serve: fix the request.
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except NoVotes as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except OutOfCredit as error:
+        raise HTTPException(status_code=402, detail=str(error)) from error
+
+
+@app.post("/evaluate")
+def evaluate(
+    request: EvaluateRequest,
+    _limit: None = Depends(enforce_run_limit),
+    caller: str = Depends(caller_id),
+    llm: PanelLLM = Depends(get_panel_llm),
+    translator: TargetTranslator = Depends(get_translator),
+    conn: psycopg.Connection = Depends(get_conn),
+    credit: float | None = Depends(get_remaining_credit),
+    screener: Screener | None = Depends(get_screener),
+    checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
+) -> PausedRun | CompletedRun:
+    """Start a run. Stops at the panel gate unless the reading was approved.
+
+    Charged here, not on the resume: starting triggers a paid translation, so an
+    abandoned run has still cost something.
+    """
+    variants = {"a": request.headline_a, "b": request.headline_b}
+    thread_id = str(uuid4())
+    graph = build_evaluate_graph(
+        conn=conn,
+        translator=translator,
+        llm=llm,
+        screener=screener,
+        checkpointer=checkpointer,
+    )
+    state = _run_graph(
+        graph,
+        {
+            "description": request.target_description,
+            "variants": variants,
+            "size": settings.panel.size,
+            "reading_accepted": request.reading_accepted,
+            "owner": caller,
+            "started_at": _now().isoformat(),
+        },
+        thread_id,
+    )
+    return _outcome(state, thread_id=thread_id, variants=variants, credit=credit)
+
+
+@contextmanager
+def _only_one_answer(conn: psycopg.Connection, thread_id: str) -> Iterator[None]:
+    """Hold a run while it is being answered, or refuse.
+
+    A session lock, not a transaction lock: the vote loop commits per chunk, and
+    a transaction lock would be released by the first of them.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_try_advisory_lock(hashtext(%s))", (f"resume:{thread_id}",)
+        )
+        row = cur.fetchone()
+    if not (row and row[0]):
+        raise HTTPException(
+            status_code=409, detail="this run is already being answered"
+        )
+    try:
+        yield
+    finally:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_unlock(hashtext(%s))", (f"resume:{thread_id}",)
+            )
+
+
+def _edited(request: ResumeRequest, values: dict) -> TargetQuery | None:
+    """Build the edited reading from the filter fields a caller may set.
+
+    `coverage` and `notices` are rebuilt here rather than taken from the caller.
+    Coverage is `requested` because an explicit edit is, by definition, exactly
+    what was asked for; the notices explained the *original words* and no longer
+    describe this filter.
+    """
+    if request.query is None:
+        return None
+    return TargetQuery(**request.query.model_dump(), coverage="requested", notices=[])
+
+
+def _expired(started_at: str | None) -> bool:
+    """Has this pause outlived the charge that paid for it?
+
+    `/evaluate` charges the run when it starts, and that ledger row is swept
+    after `LEDGER_HOURS`. Accepting later would buy a full panel against a charge
+    no cap can see any more, so the pause dies with it.
+
+    Measured from when the run started, not from its latest checkpoint: a free
+    adjust every so often would otherwise keep the charge alive forever. An
+    unreadable timestamp counts as expired — refusing costs a click, running
+    costs money.
+    """
+    if started_at is None:
+        return True
+    try:
+        started = datetime.fromisoformat(started_at)
+    except ValueError:
+        return True
+    return _now() - started > timedelta(hours=LEDGER_HOURS)
+
+
+@app.post("/evaluate/resume")
+def resume_evaluate(
+    request: ResumeRequest,
+    caller: str = Depends(caller_id),
+    llm: PanelLLM = Depends(get_panel_llm),
+    translator: TargetTranslator = Depends(get_translator),
+    conn: psycopg.Connection = Depends(get_conn),
+    credit: float | None = Depends(get_remaining_credit),
+    screener: Screener | None = Depends(get_screener),
+    checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
+) -> PausedRun | CompletedRun:
+    """Answer the panel gate: accept and buy the votes, or adjust the reading.
+
+    - **Only the owner.** A thread id is not a credential — it travels through
+      logs, screenshots and support pastes. Anything but the caller who started
+      the run gets the same 404 an unknown id gets, so the endpoint never
+      confirms that someone else's run exists.
+    - **Only at the gate.** A run that died inside the vote node is still
+      "pending", and resuming it would re-enter the paid node for free.
+    - **One at a time.** Check-then-act is no guard under load: without the lock,
+      simultaneous accepts all pass the check and each buys the whole panel
+      against a single charge.
+    - **Not charged again**: `/evaluate` charged this run in full.
+    - Adjust is unbounded. Re-selecting is pure SQL and buys nothing, and the
+      run's one charge already caps what it can spend.
+    """
+    graph = build_evaluate_graph(
+        conn=conn,
+        translator=translator,
+        llm=llm,
+        screener=screener,
+        checkpointer=checkpointer,
+    )
+    config = {"configurable": {"thread_id": request.thread_id}}
+    with _only_one_answer(conn, request.thread_id):
+        snapshot = graph.get_state(config)
+        values = snapshot.values or {}
+        # One sentence for "no such run" and "not yours": which it was is not
+        # the caller's business.
+        if snapshot.next != ("confirm",) or values.get("owner") != caller:
+            raise HTTPException(
+                status_code=404, detail="no run is waiting for you on that id"
+            )
+        if _expired(values.get("started_at")):
+            raise HTTPException(
+                status_code=410,
+                detail="this panel has expired — start the test again to see a fresh one",
+            )
+        state = _run_graph(
+            graph,
+            Command(
+                resume=GateDecision(
+                    action=request.action, query=_edited(request, values)
+                ).model_dump()
+            ),
+            request.thread_id,
+        )
+    return _outcome(
+        state,
+        thread_id=request.thread_id,
+        variants=values["variants"],
+        credit=credit,
+    )
 
 
 @app.post("/chat")

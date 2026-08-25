@@ -35,6 +35,8 @@ describe("evaluate", () => {
       target_description: "Japanese homeowners",
       headline_a: "Save 50% today",
       headline_b: "Members save half",
+      // Nothing approved yet, so the panel gate stops this run.
+      reading_accepted: false,
     });
     expect(result).toEqual(RESPONSE);
   });

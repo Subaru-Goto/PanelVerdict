@@ -1,6 +1,7 @@
 """One real panel run, end to end, with the receipt written down.
 
-Drives `run_panel_test` — the exact path `/evaluate` ships — against the live adapter
+Drives `run_panel_test` — the same select/vote/assemble steps `/evaluate` ships,
+without its panel gate — against the live adapter
 and the seeded pool, so what is measured is what customers get: chunking, adaptive
 stopping, the vote cache, and per-chunk commits, all under real concurrency. This is
 the only module in the repo that constructs the live adapter outside FastAPI, and it

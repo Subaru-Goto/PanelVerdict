@@ -232,29 +232,32 @@ def _chunk_votes(
     return PanelVotes(records=records, usage=tuple(usage), failures=fresh.failures)
 
 
-def run_panel_test(
+@dataclass(frozen=True)
+class CollectedVotes:
+    """What the vote loop bought. `assemble_result` turns it into a verdict."""
+
+    votes: PanelVotes
+    asked: int
+    stop_reason: StopReason | None
+    credit_exhausted: bool
+
+
+def run_vote_loop(
     conn: psycopg.Connection,
+    panel: list[Persona],
     *,
-    description: str,
     variants: dict[str, str],
-    size: int,
-    translator: TargetTranslator,
     llm: PanelLLM,
-) -> PanelTestResult:
+) -> CollectedVotes:
     """Vote in chunks, stop when the report would already make a call.
 
     The stopping bar is `credible_mass` itself — the run stops exactly when the
     render-time recommendation would fire, so there is no second threshold to
-    source. A run that loses some votes reports the counts and offers the verdict;
-    only a run with *no* votes has nothing to report, and there is no
-    partial-run rule beyond that.
-    """
-    selection = select_panel(conn, description, size=size, translator=translator)
-    # Refused before the panel model is touched: nothing has been spent yet on a
-    # target nobody matches, and nothing should be.
-    if not selection.panel:
-        raise EmptyPanel(f"no persona matches this target (size {size} requested)")
+    source.
 
+    Lifted out of `run_panel_test` unchanged: byte-identical replay (010e) is
+    what makes a re-run free, and the $0 demo depends on it.
+    """
     # Stamped on the votes this run pays for. A cached vote keeps the test_id of
     # the run that paid for it — the ledger records provenance, and identity across
     # runs is the fingerprint's job, not this id's.
@@ -271,8 +274,8 @@ def run_panel_test(
     asked = 0
     streak = 0
     last_reading: tuple[StopReason, str] | None = None
-    for start in range(0, len(selection.panel), VOTE_CONCURRENCY):
-        chunk_panel = selection.panel[start : start + VOTE_CONCURRENCY]
+    for start in range(0, len(panel), VOTE_CONCURRENCY):
+        chunk_panel = panel[start : start + VOTE_CONCURRENCY]
         chunk = _chunk_votes(
             conn, chunk_panel, test_id=test_id, variants=variants, llm=llm
         )
@@ -315,8 +318,29 @@ def run_panel_test(
         perf_counter() - started,
         total_usage(votes.usage),
     )
+    return CollectedVotes(
+        votes=votes,
+        asked=asked,
+        stop_reason=stop_reason,
+        credit_exhausted=credit_exhausted,
+    )
 
-    if credit_exhausted and not votes.records:
+
+def assemble_result(
+    selection: PanelSelection,
+    collected: CollectedVotes,
+    *,
+    variants: dict[str, str],
+    size: int,
+) -> PanelTestResult:
+    """Read what was bought as a verdict, or refuse to.
+
+    A run that loses some votes reports the counts and offers the verdict; only
+    a run with *no* votes has nothing to report, and there is no partial-run
+    rule beyond that.
+    """
+    votes = collected.votes
+    if collected.credit_exhausted and not votes.records:
         raise OutOfCredit(
             "OpenRouter credit is exhausted and no vote was cast — rejected "
             "requests are not charged. Top up and re-run: votes from earlier runs "
@@ -338,8 +362,35 @@ def run_panel_test(
             voted=len(votes.records),
         ),
         notices=selection.notices
-        + _stopped_early_notice(stop_reason, asked, len(selection.panel))
-        + _credit_notice(credit_exhausted, len(votes.records), len(selection.panel))
+        + _stopped_early_notice(
+            collected.stop_reason, collected.asked, len(selection.panel)
+        )
+        + _credit_notice(
+            collected.credit_exhausted, len(votes.records), len(selection.panel)
+        )
         + _vote_shortfall_notice(votes, len(selection.panel)),
-        stop_reason=stop_reason,
+        stop_reason=collected.stop_reason,
     )
+
+
+def run_panel_test(
+    conn: psycopg.Connection,
+    *,
+    description: str,
+    variants: dict[str, str],
+    size: int,
+    translator: TargetTranslator,
+    llm: PanelLLM,
+) -> PanelTestResult:
+    """Select a panel, buy its votes, read the verdict — the whole run, ungated.
+
+    The graph (`app/graph.py`) calls the same three steps with a human gate
+    between the first and the second.
+    """
+    selection = select_panel(conn, description, size=size, translator=translator)
+    # Refused before the panel model is touched: nothing has been spent yet on a
+    # target nobody matches, and nothing should be.
+    if not selection.panel:
+        raise EmptyPanel(f"no persona matches this target (size {size} requested)")
+    collected = run_vote_loop(conn, selection.panel, variants=variants, llm=llm)
+    return assemble_result(selection, collected, variants=variants, size=size)

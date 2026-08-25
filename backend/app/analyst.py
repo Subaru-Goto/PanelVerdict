@@ -28,7 +28,7 @@ from openai import APIStatusError
 from pydantic import BaseModel
 
 from app.assembly import Embedder
-from app.panel import persona_summary
+from app.panel import persona_summary, voter_summary
 from app.persistence import nearest_panelists
 from app.schemas import (
     ChatStreamEvent,
@@ -43,6 +43,8 @@ from app.schemas import (
     PanelCounts,
     PanelVerdict,
     PanelVote,
+    Persona,
+    VoterSummary,
     StopReason,
     TokenEvent,
     ToolEvent,
@@ -212,10 +214,22 @@ def _grouped[Attribute: str](values: Iterable[Attribute]) -> dict[Attribute, int
     return dict(sorted(counts.items(), key=lambda pair: (-pair[1], pair[0])))
 
 
+def composition_of(people: Sequence[Persona]) -> PanelComposition | None:
+    """Panel composition read off personas rather than votes.
+
+    Shared with the panel gate (076/#166) so it and the report use the same
+    words for the same panel.
+    """
+    return _composition_of_voters([voter_summary(person) for person in people])
+
+
 def _composition(votes: Sequence[PanelVote]) -> PanelComposition | None:
-    if not votes:
+    return _composition_of_voters([vote.voter for vote in votes])
+
+
+def _composition_of_voters(voters: Sequence[VoterSummary]) -> PanelComposition | None:
+    if not voters:
         return None
-    voters = [vote.voter for vote in votes]
     ages = sorted(voter.age for voter in voters)
     return PanelComposition(
         age_min=ages[0],
