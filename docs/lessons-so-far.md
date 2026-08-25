@@ -286,6 +286,13 @@ own 0.95 bar, two confirming boundaries), simulated it before it spent
 enabled at 0.4% false `decisive` while keeping the savings. The lesson stands: it
 shipped only after being priced.
 
+**A test that constructs an input the model does not emit proves nothing.** Counted three
+times on one ticket: the fixture has to come from the producer, or the test asserts
+against a shape only the test believes in. 039's culture-tag fallback had passing tests
+for regions the translator could never return, so the fallback looked exercised and was
+dead. Build the fixture by calling the thing that makes it, or record which producer the
+literal was copied from and when.
+
 **When a test fails, the test may be wrong.** It happened twice on one branch — the
 uniform prior integrates to 1/8 not 1/16, and a wide band does not make a small batch
 a tie. Both times the code was right. Verify independently before deciding which side
