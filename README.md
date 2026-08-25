@@ -158,7 +158,7 @@ from a cited source. Two consequences worth knowing:
   ([041](https://github.com/Subaru-Goto/PanelVerdict/issues/139),
   [043](https://github.com/Subaru-Goto/PanelVerdict/issues/141)).
 
-**3. There is no per-user identity, so the spend guard counts addresses.** The
+**3. The spend guard counts verified accounts.** (Corrected 2026-08-25 — this read "there is no per-user identity, so the spend guard counts addresses" until [063/#158](https://github.com/Subaru-Goto/PanelVerdict/issues/158) shipped Google sign-in: runs are now counted against a verified subject id, three a day.) The
 paid endpoints are no longer open — a shared secret admits only calls made
 through the frontend's server-side proxy, and a Postgres-backed ledger caps runs
 per caller and analyst turns per thread and per caller, refusing before anything

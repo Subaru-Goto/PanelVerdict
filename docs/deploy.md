@@ -7,6 +7,8 @@ the budget is zero); ticket
 This is the operator's checklist — what to click, in what order, and why the order
 matters. **Ship dark**: the URL stays unannounced until auth (#158) and the
 cost-ceiling implementation hold — the edge secret and rate limits landed with #143.
+**Both conditions are met as of 2026-08-25** (#158 merged in PR #204, the cap in #192), so
+announcing is now a decision rather than a blocker.
 Unannounced, never secret (#187): the backend URL is guessable by construction (a
 Render URL derives from its service name), so dark means *unlinked*, and the actual
 protection is the edge gate plus the rest of the safety spine. Since #143 the browser
