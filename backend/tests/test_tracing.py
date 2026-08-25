@@ -11,6 +11,8 @@ import os
 import pytest
 
 from app.config import Settings
+from langsmith.utils import tracing_is_enabled
+
 from app.tracing import configure_tracing
 
 
@@ -73,3 +75,30 @@ def test_a_configured_project_reaches_the_variables_the_sdk_reads(
     assert os.environ["LANGSMITH_API_KEY"] == "lsv2-not-a-real-key"
     assert os.environ["LANGSMITH_PROJECT"] == "test-project"
     assert os.environ["LANGSMITH_ENDPOINT"] == "https://eu.api.smith.langchain.com"
+
+
+def test_an_older_tracing_variable_cannot_trace_behind_the_disclosure(
+    monkeypatch,
+) -> None:
+    """The failure that matters most. `LANGCHAIN_TRACING_V2` outranks
+    `LANGSMITH_TRACING` in the SDK's own lookup, so a machine with the older
+    name exported would send every headline to LangSmith while `/health`
+    reported "off" and the form showed no disclosure."""
+    monkeypatch.setenv("LANGCHAIN_TRACING_V2", "true")
+
+    assert configure_tracing(_settings()) is False
+    assert tracing_is_enabled() is False
+
+
+def test_the_answer_is_what_the_sdk_thinks_not_what_we_set(monkeypatch) -> None:
+    """The return value decides whether readers are warned, so it is read back
+    from the SDK rather than inferred from the settings we just exported."""
+    monkeypatch.delenv("LANGCHAIN_TRACING_V2", raising=False)
+
+    assert (
+        configure_tracing(
+            _settings(langsmith_tracing=True, langsmith_api_key="lsv2-not-a-real-key")
+        )
+        is True
+    )
+    assert tracing_is_enabled() is True

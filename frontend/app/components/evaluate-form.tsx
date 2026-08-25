@@ -172,9 +172,10 @@ export default function EvaluateForm({
             limits. */}
         {tracing && (
           <p className="text-xs text-zinc-500">
-            Runs are traced for debugging: what you type here — your audience
-            and both headlines — is sent to LangSmith, outside our
-            infrastructure. Don&rsquo;t paste anything unreleased.
+            Runs are traced for debugging: what you type — your audience,
+            both headlines, and anything you later ask the analyst — is sent to
+            LangSmith, outside our infrastructure. Don&rsquo;t paste anything
+            unreleased.
           </p>
         )}
       </form>

@@ -4,17 +4,26 @@ import os
 # environment variable outranks that file. Without this, a developer with
 # tracing switched on ships a trace for every test run — dashboard noise, and
 # free-tier quota spent on stubs. The suite never traces, on anyone's machine.
-os.environ["LANGSMITH_TRACING"] = "false"
+#
+# All four names, because the SDK stops at the first one set and the older
+# `LANGCHAIN_*` pair outranks the one we would rather write.
+for _switch in (
+    "LANGSMITH_TRACING_V2",
+    "LANGCHAIN_TRACING_V2",
+    "LANGSMITH_TRACING",
+    "LANGCHAIN_TRACING",
+):
+    os.environ[_switch] = "false"
 
-from typing import Literal
+from typing import Literal  # noqa: E402
 
-import psycopg
-import pytest
-from testcontainers.postgres import PostgresContainer
+import psycopg  # noqa: E402
+import pytest  # noqa: E402
+from testcontainers.postgres import PostgresContainer  # noqa: E402
 
-from app.persistence import prepare_connection
-from app.vote import VoteResponse
-from tests.factories import voted
+from app.persistence import prepare_connection  # noqa: E402
+from app.vote import VoteResponse  # noqa: E402
+from tests.factories import voted  # noqa: E402
 
 
 class StubLLM:

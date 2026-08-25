@@ -24,11 +24,13 @@ function clientId(request: Request): string | null {
  * accept a run either, so nothing is being traced to warn about.
  */
 export async function backendTracing({
-  // A budget, not a measurement. This call sits in front of the reader's first
-  // byte and Node's `fetch` has no default timeout. A sleeping backend "wakes
-  // in ~1 minute" (docs/deploy.md), so waiting one out would cost the page a
-  // minute to decide one line — give up in seconds and render without it.
-  timeoutMs = 2000,
+  // Derived, not picked: /health opens its own database connection with
+  // `connect_timeout=3` (backend/app/db.py), so a budget under 3s can abort a
+  // backend that is alive, slow, and tracing — dropping the disclosure exactly
+  // when it is owed. One second over that floor. A backend still silent after
+  // it is one that "wakes in ~1 minute" (docs/deploy.md); waiting that out
+  // would cost the page a minute to decide one line.
+  timeoutMs = 4000,
 }: { timeoutMs?: number } = {}): Promise<boolean> {
   try {
     const response = await fetch(`${process.env.API_URL}/health`, {
