@@ -677,7 +677,11 @@
           Written from your words by a small model. Edit it directly if it reads wrong — panelists
           act it on top of who they already are, and the report will say which part was acted.
         </p>
-        <textarea id="instr" maxlength="240" aria-label="The instruction each panelist will act"></textarea>
+        <textarea id="instr" maxlength="240" aria-label="The instruction each panelist will act" oninput="onInstrInput()"></textarea>
+        <!-- The draft is cached, so going back to it is free. -->
+        <div style="margin-top:8px">
+          <button class="btn-link" id="restore-instr" style="display:none" onclick="restoreInstr()">Restore the model’s draft</button>
+        </div>
         <!-- The edit box bypasses the rewrite model, so the resume payload is
              re-screened before any vote is bought. -->
         <div class="notice stop" id="instr-refusal" style="display:none">
@@ -1025,6 +1029,7 @@ const flow = {
   pendingView: null,  // a form view blocked by the wall, resumed after sign-in
   acceptedSummary: '',
   instrFor: null,     // the audience text the shown instruction was written from
+  instrDraft: '',     // the model's cached draft — restoring it is free
   history: [],        // this account's saved tests (in-memory stand-in)
   histSeq: 0,
 };
@@ -1272,9 +1277,24 @@ function renderGate(){
     // One small-model call per audience change, never per run. An in-place
     // edit below costs nothing and needs no regeneration — the edit IS the
     // instruction that runs.
-    document.getElementById('instr').value = generateInstruction(c.text);
+    flow.instrDraft = generateInstruction(c.text);
+    document.getElementById('instr').value = flow.instrDraft;
     flow.instrFor = c.text;
   }
+  onInstrInput();
+}
+
+function onInstrInput(){
+  // The model's version is a draft, the box is authoritative; the way back
+  // to the draft is free because it is cached.
+  const edited = document.getElementById('instr').value !== flow.instrDraft;
+  document.getElementById('restore-instr').style.display = edited ? 'inline' : 'none';
+  document.getElementById('instr-refusal').style.display = 'none';
+}
+
+function restoreInstr(){
+  document.getElementById('instr').value = flow.instrDraft;
+  onInstrInput();
 }
 
 function generateInstruction(text){
