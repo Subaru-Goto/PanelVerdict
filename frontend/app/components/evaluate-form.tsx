@@ -78,7 +78,14 @@ function Waiting() {
   );
 }
 
-export default function EvaluateForm() {
+export default function EvaluateForm({
+  // Passed in from the server-rendered page rather than fetched here, so the
+  // line is in the first paint. A disclosure arriving after hydration leaves a
+  // window in which someone has already typed.
+  tracing = false,
+}: {
+  tracing?: boolean;
+}) {
   const [targetDescription, setTargetDescription] = useState("");
   const [headlineA, setHeadlineA] = useState("");
   const [headlineB, setHeadlineB] = useState("");
@@ -156,9 +163,21 @@ export default function EvaluateForm() {
             disclosure sits with the submit control rather than in a footer —
             told before the exchange, where the telling can still change it. */}
         <p className="text-xs text-zinc-500">
-          PanelVerdict is an AI system: the panel is synthetic personas, and
-          the verdict and analyst answers are AI-generated.
+          PanelVerdict is an AI system: the panel is synthetic personas, and the
+          verdict and analyst answers are AI-generated.
         </p>
+        {/* Only when this deployment is really tracing — the backend's own
+            answer, not a second flag here that could disagree with it. A
+            deterrent, not a control: the controls are the screener and the
+            limits. */}
+        {tracing && (
+          <p className="text-xs text-zinc-500">
+            Runs are traced for debugging: what you type — your audience,
+            both headlines, and anything you later ask the analyst — is sent to
+            LangSmith, outside our infrastructure. Don&rsquo;t paste anything
+            unreleased.
+          </p>
+        )}
       </form>
 
       {state.phase === "loading" && <Waiting />}

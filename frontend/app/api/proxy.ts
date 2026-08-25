@@ -17,6 +17,37 @@ function clientId(request: Request): string | null {
   return request.headers.get("x-vercel-forwarded-for");
 }
 
+/** Whether this deployment is tracing, for the server-rendered form.
+ *
+ * Lives here because this file is where the backend URL is allowed to exist.
+ * Unreachable counts as not tracing: a backend the page cannot reach cannot
+ * accept a run either, so nothing is being traced to warn about.
+ */
+export async function backendTracing({
+  // Derived, not picked: /health opens its own database connection with
+  // `connect_timeout=3` (backend/app/db.py), so a budget under 3s can abort a
+  // backend that is alive, slow, and tracing — dropping the disclosure exactly
+  // when it is owed. One second over that floor. A backend still silent after
+  // it is one that "wakes in ~1 minute" (docs/deploy.md); waiting that out
+  // would cost the page a minute to decide one line.
+  timeoutMs = 4000,
+}: { timeoutMs?: number } = {}): Promise<boolean> {
+  try {
+    const response = await fetch(`${process.env.API_URL}/health`, {
+      // The disclosure must describe this deployment now, not whichever one
+      // was up when the page was last built. This is also what makes the page
+      // render at request time rather than being prerendered.
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return false;
+    const health = (await response.json()) as { tracing?: string };
+    return health.tracing === "on";
+  } catch {
+    return false;
+  }
+}
+
 export async function proxyToBackend(
   path: "/evaluate" | "/evaluate/resume" | "/chat" | "/me",
   method: "GET" | "POST" | "DELETE",

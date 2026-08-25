@@ -34,6 +34,7 @@ from app.auth import (
 )
 from app.config import USD_PER_TURN, USD_PER_VOTE, settings
 from app.db import check_connection
+from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.llm import (
     OpenRouterEmbedder,
     OpenRouterPanelLLM,
@@ -43,18 +44,18 @@ from app.llm import (
 )
 from app.panel import votes_with_voters
 from app.persistence import deny_data_api
-from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.pipeline import EmptyPanel, NoVotes
 from app.schemas import (
     ChatRequest,
     EvaluateRequest,
-    ResumeRequest,
-    TargetQuery,
     EvaluateResponse,
     Notice,
+    ResumeRequest,
+    TargetQuery,
 )
 from app.screening import OpenRouterScreener, Screener, UnsafeInput
 from app.targeting import TargetTranslator
+from app.tracing import configure_tracing
 from app.vote import OutOfCredit, PanelLLM
 
 # Uvicorn configures its own loggers and leaves the root one alone, so every
@@ -67,6 +68,24 @@ from app.vote import OutOfCredit, PanelLLM
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 logger = logging.getLogger(__name__)
+
+# At import, before the first model client exists: `init_chat_model` reads the
+# tracing environment when it builds a client.
+_TRACING = configure_tracing()
+if _TRACING:
+    # The project, never the key. A deploy that sends reader input off our
+    # infrastructure should say so in its own logs.
+    logger.info(
+        "langsmith tracing is on: project=%s endpoint=%s",
+        settings.langsmith_project,
+        settings.langsmith_endpoint,
+    )
+elif settings.langsmith_tracing:
+    # This deployment believes it is tracing and nothing else would say
+    # otherwise.
+    logger.warning(
+        "LANGSMITH_TRACING is set but LANGSMITH_API_KEY is not: tracing stays off"
+    )
 
 
 @asynccontextmanager
@@ -581,9 +600,19 @@ def _charge_ledger(
     conn.commit()
 
 
+def tracing_enabled() -> bool:
+    """Whether this process is really sending traces.
+
+    A dependency so a test can report a traced deployment without turning
+    tracing on for the test run.
+    """
+    return _TRACING
+
+
 @app.get("/health")
 def health(
     verifier: SupabaseVerifier | None = Depends(get_verifier),
+    tracing: bool = Depends(tracing_enabled),
 ) -> dict[str, str]:
     """Ungated on purpose — the keep-warm ping and the daily check both hit it.
 
@@ -599,6 +628,9 @@ def health(
         "status": "ok",
         "db": "up" if check_connection() else "down",
         "auth": "off" if verifier is None else "on",
+        # The form's disclosure line reads this. One deployment answers for
+        # both, so the page cannot disagree with what is actually happening.
+        "tracing": "on" if tracing else "off",
     }
 
 
@@ -711,6 +743,14 @@ def _outcome(
     was adjusted.
     """
     paused = state.get("__interrupt__")
+    # The same id the trace is labelled with, so a run in LangSmith and the
+    # lines it wrote here can be paired. The vote loop logs a different id
+    # (`panel usage test_id=...`); unifying the two is a separate job.
+    logger.info(
+        "evaluate thread_id=%s: %s",
+        thread_id,
+        "paused at the panel gate" if paused else "complete",
+    )
     if paused:
         return PausedRun(
             thread_id=thread_id, preview=PanelPreview.model_validate(paused[0].value)
@@ -736,7 +776,16 @@ def _run_graph(graph, payload, thread_id: str):
     model text.
     """
     try:
-        return graph.invoke(payload, {"configurable": {"thread_id": thread_id}})
+        return graph.invoke(
+            payload,
+            {
+                "configurable": {"thread_id": thread_id},
+                # Repeated as metadata because only `model` and `checkpoint_ns`
+                # are copied out of `configurable` for a trace. This is the one
+                # handle a LangSmith run and this request's log lines share.
+                "metadata": {"thread_id": thread_id},
+            },
+        )
     except UnsafeInput as error:
         # 400, not 422: the text is well-formed; what it says was refused.
         raise HTTPException(status_code=400, detail=str(error)) from error

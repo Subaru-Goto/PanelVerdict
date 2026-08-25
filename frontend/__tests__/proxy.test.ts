@@ -8,6 +8,7 @@ import {
   maxDuration as evaluateMaxDuration,
   POST as evaluateProxy,
 } from "../app/api/evaluate/route";
+import { backendTracing } from "../app/api/proxy";
 
 // 045/#143: the browser never holds the edge secret — these route handlers do,
 // server-side. The tests stub the backend fetch the way api.test.ts stubs it.
@@ -245,5 +246,48 @@ describe("the proxy and the signed-in session", () => {
 
     const [, init] = backend.mock.calls[0] as [string, RequestInit];
     expect(new Headers(init.headers).get("Authorization")).toBeNull();
+  });
+});
+
+describe("the tracing disclosure's source", () => {
+  it("reports what the backend says, so one deployment answers for both", async () => {
+    // A NEXT_PUBLIC_ flag set beside the backend's would be two places to set
+    // one fact, and the drift stays invisible.
+    vi.stubEnv("API_URL", "http://backend.test");
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ status: "ok", tracing: "on" })),
+        ),
+    );
+
+    expect(await backendTracing()).toBe(true);
+  });
+
+  it("says not-tracing when the backend cannot be reached", async () => {
+    // Safe rather than optimistic: a backend this page cannot reach cannot
+    // accept a run either, so nothing is being traced to disclose.
+    vi.stubEnv("API_URL", "http://backend.test");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("ECONNREFUSED")),
+    );
+
+    expect(await backendTracing()).toBe(false);
+  });
+
+  it("gives up rather than holding the page open", async () => {
+    // Without a bound, one cold start is a page that never paints.
+    vi.stubEnv("API_URL", "http://backend.test");
+    const backend = vi.fn().mockImplementation(({ signal }: RequestInit = {}) =>
+      new Promise((_, reject) =>
+        signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+      ),
+    );
+    vi.stubGlobal("fetch", (_url: string, init: RequestInit) => backend(init));
+
+    expect(await backendTracing({ timeoutMs: 5 })).toBe(false);
   });
 });

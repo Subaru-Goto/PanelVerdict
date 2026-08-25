@@ -42,9 +42,25 @@ describe("EvaluateForm", () => {
     // the exchange, not in a footer after it.
     render(<EvaluateForm />);
 
-    expect(
-      screen.getByText(/PanelVerdict is an AI system/),
-    ).toBeTruthy();
+    expect(screen.getByText(/PanelVerdict is an AI system/)).toBeTruthy();
+  });
+
+  it("says nothing about tracing when this deployment is not tracing", () => {
+    // The default, and the one that must not over-warn: a page claiming the
+    // reader's unreleased copy leaves our infrastructure, when it does not,
+    // is as much a false statement as the silence in the other direction.
+    render(<EvaluateForm tracing={false} />);
+
+    expect(screen.queryByText(/traced for debugging/i)).toBeNull();
+  });
+
+  it("discloses tracing on the form when this deployment traces", () => {
+    // A reader's input can be unreleased marketing copy, so the telling
+    // belongs beside the input where it can still change what they type —
+    // not in a policy page after the fact.
+    render(<EvaluateForm tracing />);
+
+    expect(screen.getByText(/traced for debugging/i)).toBeTruthy();
   });
 
   it("runs on headlines alone — the audience is optional", () => {

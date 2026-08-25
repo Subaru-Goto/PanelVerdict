@@ -23,6 +23,7 @@ from app.main import (
     get_screener,
     get_translator,
     get_verifier,
+    tracing_enabled,
 )
 from app.persistence import nearest_panelists, persist_pool
 from app.schemas import EvaluateRequest
@@ -1312,6 +1313,52 @@ def test_health_says_whether_sign_in_is_actually_enforced(client, signed_in) -> 
 
     assert enforced["auth"] == "on"
     assert unenforced["auth"] == "off"
+
+
+def test_a_run_is_labelled_with_the_id_the_caller_is_given(
+    client, conn, monkeypatch
+) -> None:
+    """The correlation handle a trace needs. Without it a LangSmith run and the
+    log lines for the same request share nothing, and the only way to pair them
+    is by wall-clock. The wider log-correlation problem stays 047/#145's."""
+    seen: dict = {}
+    real = main.build_evaluate_graph
+
+    def spy(**kwargs):
+        graph = real(**kwargs)
+        invoke = graph.invoke
+
+        def record(payload, config, *args, **rest):
+            seen["config"] = config
+            return invoke(payload, config, *args, **rest)
+
+        monkeypatch.setattr(graph, "invoke", record)
+        return graph
+
+    monkeypatch.setattr(main, "build_evaluate_graph", spy)
+    seed_japanese(conn, 5)
+
+    response = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 200
+    assert (
+        seen["config"]["metadata"]["thread_id"]
+        == seen["config"]["configurable"]["thread_id"]
+    )
+
+
+def test_health_says_whether_inputs_are_being_traced(client) -> None:
+    """Tracing sends the reader's headlines off our infrastructure and the form
+    must disclose it, so the form has to be able to ask. Reported here rather
+    than mirrored in the frontend's own config: two places to set one fact is a
+    page that can claim inputs are traced when they are not."""
+    off = client.get("/health").json()
+
+    app.dependency_overrides[tracing_enabled] = lambda: True
+    on = client.get("/health").json()
+
+    assert off["tracing"] == "off"
+    assert on["tracing"] == "on"
 
 
 # --- The panel gate over the wire (076/#166) ---------------------------------
