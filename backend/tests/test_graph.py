@@ -324,3 +324,26 @@ def test_what_a_restart_restores_is_the_panel_a_human_approved(conn, pg_url) -> 
 
     assert len(seated) == 5
     assert resumed["result"].counts.voted == 5
+
+
+def test_a_second_run_of_the_same_test_replays_for_nothing(conn) -> None:
+    """The replay guarantee, exercised through the graph rather than asserted.
+
+    Votes are cached on the fingerprint of the exact question asked, so running
+    the same headlines past the same panel a second time buys no model calls at
+    all. The $0 demo depends on this, which is why the vote loop was moved into
+    a node unedited.
+    """
+    seed_japanese(conn, 5)
+    first_llm, second_llm = CountingLLM(), CountingLLM()
+
+    first = _graph(conn, llm=first_llm).invoke(
+        _start(reading_accepted=True), _config("t-paid")
+    )
+    second = _graph(conn, llm=second_llm).invoke(
+        _start(reading_accepted=True), _config("t-replay")
+    )
+
+    assert first_llm.asked == 5
+    assert second_llm.asked == 0
+    assert second["result"].tally.counts == first["result"].tally.counts

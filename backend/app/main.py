@@ -1,7 +1,8 @@
 import hmac
 import logging
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal, NamedTuple
 from uuid import uuid4
@@ -48,6 +49,7 @@ from app.schemas import (
     ChatRequest,
     EvaluateRequest,
     ResumeRequest,
+    TargetQuery,
     EvaluateResponse,
     Notice,
 )
@@ -140,10 +142,21 @@ app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
 _GUARDED_PATHS = ("/evaluate", "/chat", "/me")
 
 
+def _is_guarded(path: str) -> bool:
+    """Match a guarded route or anything under it.
+
+    Exact membership let `/evaluate/resume` — the call that actually buys the
+    votes — past the guard while `/evaluate` sat behind it.
+    """
+    return path in _GUARDED_PATHS or any(
+        path.startswith(f"{guarded}/") for guarded in _GUARDED_PATHS
+    )
+
+
 @app.middleware("http")
 async def require_shared_secret(request: Request, call_next):
     secret = settings.api_shared_secret
-    if secret is not None and request.url.path in _GUARDED_PATHS:
+    if secret is not None and _is_guarded(request.url.path):
         # Compared as bytes: Starlette hands header values back latin-1
         # decoded, and `compare_digest` raises TypeError on a str holding a
         # non-ASCII codepoint — so `x-api-key: café` used to become a 500 with
@@ -271,11 +284,18 @@ def get_conn() -> Iterator[psycopg.Connection]:
         yield conn
 
 
-# The ledger's day, written once. `/me` reports the budget that `_charge_ledger`
-# enforces, so both must read the same window and the same key — two literals
-# would let the figure shown drift from the figure applied.
-_LEDGER_WINDOW = "requested_at > now() - interval '24 hours'"
+# The ledger's day, written once, because four things read it: the cap, the
+# sweep, the remaining-runs figure `/me` reports, and how long a paused run may
+# be redeemed for. Two literals would let any of them drift from the others.
+LEDGER_HOURS = 24
+_LEDGER_WINDOW = f"requested_at > now() - interval '{LEDGER_HOURS} hours'"
+_LEDGER_EXPIRED = f"requested_at < now() - interval '{LEDGER_HOURS} hours'"
 _EVALUATE = "/evaluate"
+
+
+def _now() -> datetime:
+    """Wrapped so tests can move the clock."""
+    return datetime.now(UTC)
 
 
 class _Charge(NamedTuple):
@@ -504,7 +524,7 @@ def _charge_ledger(
         for charge in active:
             cur.execute(
                 "DELETE FROM request_ledger WHERE endpoint = %s AND caller = %s"
-                " AND requested_at < now() - interval '24 hours'",
+                f" AND {_LEDGER_EXPIRED}",
                 (charge.endpoint, charge.key),
             )
             cur.execute(
@@ -528,7 +548,8 @@ def _charge_ledger(
                 )
         if pooled is not None:
             cur.execute(
-                "DELETE FROM spend_ledger WHERE spent_at < now() - interval '24 hours'"
+                "DELETE FROM spend_ledger WHERE spent_at < now()"
+                f" - interval '{LEDGER_HOURS} hours'"
             )
             cur.execute(
                 "SELECT coalesce(sum(usd), 0) FROM spend_ledger"
@@ -677,22 +698,6 @@ class CompletedRun(EvaluateResponse):
     status: Literal["complete"] = "complete"
 
 
-def _evaluate_graph(
-    conn: psycopg.Connection,
-    translator: TargetTranslator,
-    llm: PanelLLM,
-    screener: Screener | None,
-    checkpointer: BaseCheckpointSaver,
-):
-    return build_evaluate_graph(
-        conn=conn,
-        translator=translator,
-        llm=llm,
-        screener=screener,
-        checkpointer=checkpointer,
-    )
-
-
 def _outcome(
     state: dict,
     *,
@@ -748,6 +753,7 @@ def _run_graph(graph, payload, thread_id: str):
 def evaluate(
     request: EvaluateRequest,
     _limit: None = Depends(enforce_run_limit),
+    caller: str = Depends(caller_id),
     llm: PanelLLM = Depends(get_panel_llm),
     translator: TargetTranslator = Depends(get_translator),
     conn: psycopg.Connection = Depends(get_conn),
@@ -762,7 +768,13 @@ def evaluate(
     """
     variants = {"a": request.headline_a, "b": request.headline_b}
     thread_id = str(uuid4())
-    graph = _evaluate_graph(conn, translator, llm, screener, checkpointer)
+    graph = build_evaluate_graph(
+        conn=conn,
+        translator=translator,
+        llm=llm,
+        screener=screener,
+        checkpointer=checkpointer,
+    )
     state = _run_graph(
         graph,
         {
@@ -770,15 +782,77 @@ def evaluate(
             "variants": variants,
             "size": settings.panel.size,
             "reading_accepted": request.reading_accepted,
+            "owner": caller,
+            "started_at": _now().isoformat(),
         },
         thread_id,
     )
     return _outcome(state, thread_id=thread_id, variants=variants, credit=credit)
 
 
+@contextmanager
+def _only_one_answer(conn: psycopg.Connection, thread_id: str) -> Iterator[None]:
+    """Hold a run while it is being answered, or refuse.
+
+    A session lock, not a transaction lock: the vote loop commits per chunk, and
+    a transaction lock would be released by the first of them.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_try_advisory_lock(hashtext(%s))", (f"resume:{thread_id}",)
+        )
+        row = cur.fetchone()
+    if not (row and row[0]):
+        raise HTTPException(
+            status_code=409, detail="this run is already being answered"
+        )
+    try:
+        yield
+    finally:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT pg_advisory_unlock(hashtext(%s))", (f"resume:{thread_id}",)
+            )
+
+
+def _edited(request: ResumeRequest, values: dict) -> TargetQuery | None:
+    """Build the edited reading from the filter fields a caller may set.
+
+    `coverage` and `notices` are rebuilt here rather than taken from the caller.
+    Coverage is `requested` because an explicit edit is, by definition, exactly
+    what was asked for; the notices explained the *original words* and no longer
+    describe this filter.
+    """
+    if request.query is None:
+        return None
+    return TargetQuery(**request.query.model_dump(), coverage="requested", notices=[])
+
+
+def _expired(started_at: str | None) -> bool:
+    """Has this pause outlived the charge that paid for it?
+
+    `/evaluate` charges the run when it starts, and that ledger row is swept
+    after `LEDGER_HOURS`. Accepting later would buy a full panel against a charge
+    no cap can see any more, so the pause dies with it.
+
+    Measured from when the run started, not from its latest checkpoint: a free
+    adjust every so often would otherwise keep the charge alive forever. An
+    unreadable timestamp counts as expired — refusing costs a click, running
+    costs money.
+    """
+    if started_at is None:
+        return True
+    try:
+        started = datetime.fromisoformat(started_at)
+    except ValueError:
+        return True
+    return _now() - started > timedelta(hours=LEDGER_HOURS)
+
+
 @app.post("/evaluate/resume")
 def resume_evaluate(
     request: ResumeRequest,
+    caller: str = Depends(caller_id),
     llm: PanelLLM = Depends(get_panel_llm),
     translator: TargetTranslator = Depends(get_translator),
     conn: psycopg.Connection = Depends(get_conn),
@@ -788,25 +862,55 @@ def resume_evaluate(
 ) -> PausedRun | CompletedRun:
     """Answer the panel gate: accept and buy the votes, or adjust the reading.
 
-    - Not charged again: `/evaluate` already charged this run in full.
-    - An unknown thread id is a 404, not a new run — otherwise resuming would be
-      an unmetered way to start one.
+    - **Only the owner.** A thread id is not a credential — it travels through
+      logs, screenshots and support pastes. Anything but the caller who started
+      the run gets the same 404 an unknown id gets, so the endpoint never
+      confirms that someone else's run exists.
+    - **Only at the gate.** A run that died inside the vote node is still
+      "pending", and resuming it would re-enter the paid node for free.
+    - **One at a time.** Check-then-act is no guard under load: without the lock,
+      simultaneous accepts all pass the check and each buys the whole panel
+      against a single charge.
+    - **Not charged again**: `/evaluate` charged this run in full.
+    - Adjust is unbounded. Re-selecting is pure SQL and buys nothing, and the
+      run's one charge already caps what it can spend.
     """
-    graph = _evaluate_graph(conn, translator, llm, screener, checkpointer)
-    config = {"configurable": {"thread_id": request.thread_id}}
-    snapshot = graph.get_state(config)
-    if not snapshot.next:
-        raise HTTPException(status_code=404, detail="no run is waiting on that id")
-    variants = snapshot.values["variants"]
-    state = _run_graph(
-        graph,
-        Command(
-            resume=GateDecision(action=request.action, query=request.query).model_dump()
-        ),
-        request.thread_id,
+    graph = build_evaluate_graph(
+        conn=conn,
+        translator=translator,
+        llm=llm,
+        screener=screener,
+        checkpointer=checkpointer,
     )
+    config = {"configurable": {"thread_id": request.thread_id}}
+    with _only_one_answer(conn, request.thread_id):
+        snapshot = graph.get_state(config)
+        values = snapshot.values or {}
+        # One sentence for "no such run" and "not yours": which it was is not
+        # the caller's business.
+        if snapshot.next != ("confirm",) or values.get("owner") != caller:
+            raise HTTPException(
+                status_code=404, detail="no run is waiting for you on that id"
+            )
+        if _expired(values.get("started_at")):
+            raise HTTPException(
+                status_code=410,
+                detail="this panel has expired — start the test again to see a fresh one",
+            )
+        state = _run_graph(
+            graph,
+            Command(
+                resume=GateDecision(
+                    action=request.action, query=_edited(request, values)
+                ).model_dump()
+            ),
+            request.thread_id,
+        )
     return _outcome(
-        state, thread_id=request.thread_id, variants=variants, credit=credit
+        state,
+        thread_id=request.thread_id,
+        variants=values["variants"],
+        credit=credit,
     )
 
 

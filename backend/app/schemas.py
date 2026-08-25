@@ -438,22 +438,45 @@ class EvaluateRequest(BaseModel):
     target_description: str = Field(max_length=MAX_TARGET_DESCRIPTION_CHARS)
     headline_a: str = Field(min_length=1, max_length=MAX_HEADLINE_CHARS)
     headline_b: str = Field(min_length=1, max_length=MAX_HEADLINE_CHARS)
-    # The reader already approved how this audience reads, so the panel gate
-    # does not stop them again. The gate fires on the first run and whenever the
-    # audience changes — one that fires on every run trains people to dismiss it
-    # unread. Claimed by the client: only something that showed an approval
-    # knows one happened.
+    # Skip the panel gate: this reading was already approved. Claimed by the
+    # client, because only something that showed an approval knows one happened.
     reading_accepted: bool = False
+
+
+class PanelEdit(BaseModel):
+    """The parts of a reading a human may edit at the gate.
+
+    Narrower than `TargetQuery`, which also carries `coverage` and `notices` —
+    the report's account of how the customer's words were read. Those are the
+    system's testimony about itself, not a filter. A caller-supplied one would
+    falsify the report's provenance and put chosen text in front of the analyst,
+    which reads `query` as context.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    countries: list[Locale] = []
+    min_age: int = Field(
+        default=MIN_PERSONA_AGE, ge=MIN_PERSONA_AGE, le=MAX_PERSONA_AGE
+    )
+    max_age: int = Field(
+        default=MAX_PERSONA_AGE, ge=MIN_PERSONA_AGE, le=MAX_PERSONA_AGE
+    )
+    gender: Gender | None = None
+    income_quintiles: list[int] = []
+    education: list[EducationLevel] = []
+    traits: list[TraitRequest] = []
 
 
 class ResumeRequest(BaseModel):
     """A human's answer to the panel gate (076/#166)."""
 
-    thread_id: str = Field(min_length=1, max_length=64)
+    # 36 = the length of the uuid4 `/evaluate` mints.
+    thread_id: str = Field(min_length=1, max_length=36)
     action: Literal["accept", "adjust"]
     # The edited reading, when adjusting. Re-selects with SQL only — never a
     # second translation, which is paid and could disagree with the edit.
-    query: TargetQuery | None = None
+    query: PanelEdit | None = None
 
 
 class ToolEvent(BaseModel):

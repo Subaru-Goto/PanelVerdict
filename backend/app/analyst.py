@@ -215,12 +215,10 @@ def _grouped[Attribute: str](values: Iterable[Attribute]) -> dict[Attribute, int
 
 
 def composition_of(people: Sequence[Persona]) -> PanelComposition | None:
-    """The same counts, read off the panel instead of off the votes.
+    """Panel composition read off personas rather than votes.
 
-    Shared rather than reimplemented so the panel gate (076/#166) and the report
-    describe a panel in identical words: the preview and the report then
-    corroborate each other by inspection, which is the point of showing a
-    composition before the money as well as after.
+    Shared with the panel gate (076/#166) so it and the report use the same
+    words for the same panel.
     """
     return _composition_of_voters([voter_summary(person) for person in people])
 

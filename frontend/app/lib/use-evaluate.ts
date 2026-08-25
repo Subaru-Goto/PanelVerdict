@@ -9,7 +9,7 @@ import {
   type EvaluateOutcome,
   type EvaluateResponse,
   type PanelPreview,
-  type TargetQuery,
+  type PanelEdit,
 } from "./api";
 
 /** The request's four phases as one value, so contradictory combinations —
@@ -59,7 +59,7 @@ export function useEvaluate() {
    *  reading and returns to the gate, since nobody has accepted that one yet. */
   async function answerGate(
     action: "accept" | "adjust",
-    query?: TargetQuery,
+    query?: PanelEdit,
   ): Promise<void> {
     if (state.phase !== "gated") return;
     const threadId = state.threadId;

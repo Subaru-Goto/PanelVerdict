@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import type { PanelPreview } from "../lib/api";
 
 /** The panel gate: who would be seated, and the choice to pay for them.
@@ -26,15 +28,16 @@ function counted(groups: Record<string, number>): string {
 
 export default function PanelGate({
   preview,
-  busy,
   onAccept,
   onBack,
 }: {
   preview: PanelPreview;
-  busy: boolean;
   onAccept: () => void;
   onBack: () => void;
 }) {
+  // Disables itself rather than taking a prop for it. Two clicks land before
+  // React swaps this view out, and each one would buy the panel.
+  const [sent, setSent] = useState(false);
   const { composition } = preview;
   const nobody = preview.matched === 0;
 
@@ -78,16 +81,19 @@ export default function PanelGate({
       <div className="flex items-center gap-3">
         <button
           type="button"
-          onClick={onAccept}
-          disabled={busy || nobody}
+          onClick={() => {
+            setSent(true);
+            onAccept();
+          }}
+          disabled={sent || nobody}
           className="rounded bg-zinc-900 px-4 py-2 text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
         >
-          {busy ? "Asking the panel…" : "Run the panel"}
+          {sent ? "Asking the panel…" : "Run the panel"}
         </button>
         <button
           type="button"
           onClick={onBack}
-          disabled={busy}
+          disabled={sent}
           className="text-sm underline underline-offset-2 disabled:opacity-50"
         >
           Change the audience

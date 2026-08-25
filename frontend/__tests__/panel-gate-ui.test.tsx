@@ -39,7 +39,7 @@ const preview = PREVIEW as any;
 
 describe("the panel gate", () => {
   it("says how many people would be seated and what it would cost", async () => {
-    render(<PanelGate preview={preview} busy={false} onAccept={vi.fn()} onBack={vi.fn()} />);
+    render(<PanelGate preview={preview} onAccept={vi.fn()} onBack={vi.fn()} />);
 
     expect(screen.getByText(/5 people/i)).toBeTruthy();
     expect(screen.getByText(/\$0\.00/)).toBeTruthy();
@@ -47,7 +47,7 @@ describe("the panel gate", () => {
 
   it("only spends when a person says so", async () => {
     const onAccept = vi.fn();
-    render(<PanelGate preview={preview} busy={false} onAccept={onAccept} onBack={vi.fn()} />);
+    render(<PanelGate preview={preview} onAccept={onAccept} onBack={vi.fn()} />);
 
     expect(onAccept).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
@@ -55,23 +55,26 @@ describe("the panel gate", () => {
     expect(onAccept).toHaveBeenCalledTimes(1);
   });
 
-  it("cannot be accepted twice while the run is already going", async () => {
-    // The label changes to say what is happening; the guard is that it is
-    // disabled, so a second click cannot buy a second panel.
+  it("cannot be accepted twice", async () => {
+    // Two clicks can land before React swaps this view out, and each one would
+    // buy the panel.
     const onAccept = vi.fn();
-    render(<PanelGate preview={preview} busy onAccept={onAccept} onBack={vi.fn()} />);
+    render(<PanelGate preview={preview} onAccept={onAccept} onBack={vi.fn()} />);
 
-    const running = screen.getByRole("button", { name: /asking the panel/i });
-    fireEvent.click(running);
+    const run = screen.getByRole("button", { name: /run the panel/i });
+    fireEvent.click(run);
+    fireEvent.click(run);
 
-    expect(running).toHaveProperty("disabled", true);
-    expect(onAccept).not.toHaveBeenCalled();
+    expect(onAccept).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByRole("button", { name: /asking the panel/i }),
+    ).toHaveProperty("disabled", true);
   });
 
   it("offers a way back that spends nothing", async () => {
     const onBack = vi.fn();
     const onAccept = vi.fn();
-    render(<PanelGate preview={preview} busy={false} onAccept={onAccept} onBack={onBack} />);
+    render(<PanelGate preview={preview} onAccept={onAccept} onBack={onBack} />);
 
     fireEvent.click(screen.getByRole("button", { name: /change/i }));
 
@@ -83,7 +86,7 @@ describe("the panel gate", () => {
     render(
       <PanelGate
         preview={{ ...preview, matched: 0, composition: null }}
-        busy={false}
+       
         onAccept={vi.fn()}
         onBack={vi.fn()}
       />,

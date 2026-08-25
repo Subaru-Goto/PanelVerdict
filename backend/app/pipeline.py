@@ -234,12 +234,7 @@ def _chunk_votes(
 
 @dataclass(frozen=True)
 class CollectedVotes:
-    """What the vote loop bought, before it is read as a verdict.
-
-    Separate from `PanelTestResult`: this is what the run *spent*, that is what
-    it *means*. The split lets the graph put a human between selecting a panel
-    and paying for it, without the vote loop knowing a gate exists.
-    """
+    """What the vote loop bought. `assemble_result` turns it into a verdict."""
 
     votes: PanelVotes
     asked: int
@@ -247,7 +242,7 @@ class CollectedVotes:
     credit_exhausted: bool
 
 
-def buy_panel_votes(
+def run_vote_loop(
     conn: psycopg.Connection,
     panel: list[Persona],
     *,
@@ -259,9 +254,6 @@ def buy_panel_votes(
     The stopping bar is `credible_mass` itself — the run stops exactly when the
     render-time recommendation would fire, so there is no second threshold to
     source.
-
-    Not to be confused with `vote.collect_panel_votes`, the per-chunk fan-out
-    this calls.
 
     Lifted out of `run_panel_test` unchanged: byte-identical replay (010e) is
     what makes a re-run free, and the $0 demo depends on it.
@@ -392,13 +384,13 @@ def run_panel_test(
 ) -> PanelTestResult:
     """Select a panel, buy its votes, read the verdict — the whole run, ungated.
 
-    The three steps are separately callable because the graph puts a human gate
-    between the first and the second. This composes them in the same order.
+    The graph (`app/graph.py`) calls the same three steps with a human gate
+    between the first and the second.
     """
     selection = select_panel(conn, description, size=size, translator=translator)
     # Refused before the panel model is touched: nothing has been spent yet on a
     # target nobody matches, and nothing should be.
     if not selection.panel:
         raise EmptyPanel(f"no persona matches this target (size {size} requested)")
-    collected = buy_panel_votes(conn, selection.panel, variants=variants, llm=llm)
+    collected = run_vote_loop(conn, selection.panel, variants=variants, llm=llm)
     return assemble_result(selection, collected, variants=variants, size=size)

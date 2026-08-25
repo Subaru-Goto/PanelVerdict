@@ -170,11 +170,51 @@ export type EvaluateOutcome =
   | { status: "paused"; thread_id: string; preview: PanelPreview }
   | ({ status: "complete" } & EvaluateResponse);
 
+/** The parts of a reading a human may edit at the gate.
+ *
+ * Narrower than `TargetQuery` on purpose: `coverage` and `notices` are the
+ * report's account of how the words were read, not a filter, and the backend
+ * refuses them here.
+ */
+export type PanelEdit = {
+  countries: Locale[];
+  min_age: number;
+  max_age: number;
+  gender: Gender | null;
+  income_quintiles: number[];
+  education: EducationLevel[];
+  traits: TraitRequest[];
+};
+
 export type GateAnswer = {
   threadId: string;
   action: "accept" | "adjust";
-  query?: TargetQuery;
+  query?: PanelEdit;
 };
+
+/** Read a proxy response as an outcome, or throw the backend's own sentence.
+ *
+ * The backend's refusals are safe to show: fixed sentences and exception type
+ * names, never provider text.
+ */
+async function outcomeOf(res: Response): Promise<EvaluateOutcome> {
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as {
+      detail?: string;
+    } | null;
+    throw new Error(
+      typeof body?.detail === "string"
+        ? body.detail
+        : `API responded ${res.status}`,
+    );
+  }
+  const outcome = (await res.json()) as EvaluateOutcome;
+  // Only a finished run spent one — a run holding at the gate bought nothing.
+  if (outcome.status === "complete") {
+    runsChanged.forEach((listener) => listener());
+  }
+  return outcome;
+}
 
 export async function evaluate(
   request: EvaluateInput,
@@ -198,25 +238,7 @@ export async function evaluate(
       reading_accepted: request.readingAccepted ?? false,
     }),
   });
-  if (!res.ok) {
-    // The backend's refusals are written for humans and safe by construction
-    // (fixed sentences and exception type names — never provider text), so the
-    // detail is the error message when present.
-    const body = (await res.json().catch(() => null)) as {
-      detail?: string;
-    } | null;
-    throw new Error(
-      typeof body?.detail === "string"
-        ? body.detail
-        : `API responded ${res.status}`,
-    );
-  }
-  const outcome = (await res.json()) as EvaluateOutcome;
-  // Only a finished run spent one — a run holding at the gate bought nothing.
-  if (outcome.status === "complete") {
-    runsChanged.forEach((listener) => listener());
-  }
-  return outcome;
+  return outcomeOf(res);
 }
 
 /** Answer the panel gate: accept and buy the votes, or adjust the reading.
@@ -234,21 +256,7 @@ export async function resumeEvaluate(
       ...(answer.query ? { query: answer.query } : {}),
     }),
   });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as {
-      detail?: string;
-    } | null;
-    throw new Error(
-      typeof body?.detail === "string"
-        ? body.detail
-        : `API responded ${res.status}`,
-    );
-  }
-  const outcome = (await res.json()) as EvaluateOutcome;
-  if (outcome.status === "complete") {
-    runsChanged.forEach((listener) => listener());
-  }
-  return outcome;
+  return outcomeOf(res);
 }
 
 /** Watch for the account's remaining runs changing. Returns an unsubscribe.

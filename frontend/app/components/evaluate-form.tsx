@@ -117,7 +117,6 @@ export default function EvaluateForm() {
     return (
       <PanelGate
         preview={state.preview}
-        busy={false}
         onAccept={() => void answerGate("accept")}
         onBack={reset}
       />

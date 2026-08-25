@@ -17,6 +17,9 @@ put in state, because state is serialized to Postgres at every step. The graph
 is built per request, which is also how a resume can land on a different worker
 than the start did.
 
+Named nodes give per-stage LangSmith spans for free once 065/#159 turns tracing
+on. Nothing here is built for that.
+
 Tickets: 076/#166 (this graph), 067 (why hand-authored), 077/#167 (the gate's
 interface).
 """
@@ -37,7 +40,7 @@ from app.pipeline import (
     EmptyPanel,
     PanelTestResult,
     assemble_result,
-    buy_panel_votes,
+    run_vote_loop,
 )
 from app.schemas import Notice, Persona, TargetQuery
 from app.screening import Screener, screen_inputs
@@ -92,6 +95,11 @@ class EvaluateState(TypedDict, total=False):
     query: TargetQuery | None
     panel: list[Persona]
     notices: list[Notice]
+    # Who started the run, and when. The resume endpoint checks both: a thread
+    # id is not a credential, and a pause must not outlive the charge that paid
+    # for it.
+    owner: str
+    started_at: str
     decision: Literal["accept", "adjust"] | None
     # What a human edited the reading to. Kept apart from `query` so `select`
     # can tell whether the reading actually changed.
@@ -202,7 +210,7 @@ def build_evaluate_graph(
     def vote(state: EvaluateState) -> EvaluateState:
         """The one paid node. Unchanged from the pipeline."""
         return {
-            "collected": buy_panel_votes(
+            "collected": run_vote_loop(
                 conn, state["panel"], variants=state["variants"], llm=llm
             )
         }
@@ -226,7 +234,7 @@ def build_evaluate_graph(
         """Route to `vote` only for an accepted, non-empty panel.
 
         An accept with nobody seated has nobody to ask, so it returns to the
-        gate. The interface will not offer it; this does not rely on that.
+        gate instead.
         """
         if state.get("decision") == "adjust" or not state["panel"]:
             return "select"
