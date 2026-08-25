@@ -70,15 +70,24 @@ PROFILES: dict[ProfileName, PanelProfile] = {
 #   the term the old margin existed to absorb.
 USD_PER_VOTE = 0.0002
 
-# MEASURED at the effort this app actually runs (`TARGET_REASONING_EFFORT = "low"`,
-# app/llm.py): five descriptions landed in a $0.0006-$0.0011 band —
-# docs/research/targeting-call-effort.md, 2026-08-05. Rounded up from the worst of
-# them, the same allowance USD_PER_VOTE takes.
-#
-# This is what starting a run costs before anyone has agreed to buy a panel: one
-# translation, and nothing else. A prod panel is 200 x USD_PER_VOTE = $0.04, so a
-# preview is ~1/33 of the thing it previews.
+# An UPPER BOUND, not a measurement of the model in use. The source is
+# docs/research/targeting-call-effort.md, measured 2026-07-31 on
+# `openai/gpt-5-mini` at `TARGET_REASONING_EFFORT = "low"`: five descriptions in a
+# $0.0006-$0.0011 band. The translator now runs on Luna, where mini-derived
+# pricing proved ~2x high for votes (see USD_PER_VOTE), so this over-states the
+# real cost — the safe direction for a spend ceiling, and the honest label for it
+# is "bound", not "price". A Luna measurement would replace it, and the
+# translator's job is due to change, so measure that job rather than this one.
 USD_PER_TRANSLATION = 0.0012
+
+# What a preview costs the pool: one translation and one screening call, the two
+# model calls a run makes before the gate. Both run on the same small model
+# (targeting_model, screening_model). The screen is priced at USD_PER_VOTE — the
+# one measured single-call figure this file has — which under-states a screen's
+# longer input and over-states nothing else; the translation bound above carries
+# the margin. Headline screening is not here: it moved behind the gate, where
+# the panel price covers it.
+USD_PER_PREVIEW = USD_PER_TRANSLATION + USD_PER_VOTE
 
 # What one chat turn charges the day's pool (064/#192). 064 calls a turn "a
 # fraction of a vote" but leaves the analyst's own cost unmeasured, so the pool
@@ -114,12 +123,11 @@ class Settings(BaseSettings):
     # forwarded address, since an address costs nothing to change.
     evaluate_runs_per_day: int = 3
     # Previews are not purchases, so they get their own, looser cap. Derived
-    # from the two prices above: 30 x USD_PER_TRANSLATION = $0.036, less than
-    # the $0.04 of a single panel this same caller is allowed to buy. So a
-    # caller who spends the whole allowance looking has still cost the day less
-    # than one run, while 30 looks is ~10 per purchasable panel — far above any
-    # honest use. 0 disables, as above.
-    evaluate_starts_per_day: int = 30
+    # from the prices above: 25 x USD_PER_PREVIEW = $0.035, under the $0.04 of a
+    # single panel this same caller may buy. A caller who spends the whole
+    # allowance looking has still cost the day less than one run, and 25 is ~8
+    # previews per purchasable panel — far above honest use. 0 disables.
+    evaluate_previews_per_day: int = 25
     # Bounded by structure, not price — honestly flagged: no per-turn dollar
     # measurement exists yet (unlike USD_PER_VOTE). A turn is at most 4 model
     # calls (analyst.py's recursion budget), a thread is one report's
