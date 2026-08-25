@@ -25,10 +25,9 @@
   login-gated with a line saying why, not a dead control. Amended 2026-08-25:
   the wall moved from the run to the form — signed out, only the demo runs.
 
-  Open question, compared live via the switcher bottom-left: how far the
-  identity diverges from the shared system. "Shared" is the system as-is;
-  "Editorial" and "Instrument" keep its discipline but change type, shape and
-  paper. Reacting to these is the point; two of the three get deleted.
+  Identity settled 2026-08-25: the shared system wins, chosen by eye against
+  built editorial and instrument variants — both deleted, per their own terms.
+  Wording may still move through the cold-reader pass.
 -->
 <style>
   :root{
@@ -328,51 +327,12 @@
   .empty p{margin:12px auto 0;max-width:520px;font-size:14px;font-weight:300;color:var(--ink-2)}
   .empty .actions{justify-content:center}
 
-  /* ---------- identity variants ----------
-     Same system underneath — ink discipline, lines not cards, signal colours
-     reserved for state. What varies is the identity layer: type, shape, paper.
-     One of these is picked by eye; the other two are then deleted. */
-  html[data-id="editorial"]{
-    --pill:2px;
-    --surface:#FBFAF7; --surface-2:#F2EFE9; --line:#E6E1D8;
-    --font-display:Georgia,"Times New Roman",serif;
-    --nav-bg:rgba(251,250,247,.92);
-  }
-  html[data-id="editorial"] h1,
-  html[data-id="editorial"] h2{font-weight:400;letter-spacing:0}
-  html[data-id="editorial"] .hero-number{font-weight:400;letter-spacing:-.01em}
-  html[data-id="editorial"] .lead .line{font-style:italic;font-weight:400}
-  html[data-id="editorial"] .lead .prob{font-family:var(--font-display);font-size:23px}
-  html[data-id="editorial"] .empty h2,
-  html[data-id="editorial"] .run-wrap h2{font-weight:400}
-
-  html[data-id="instrument"]{
-    --pill:0;
-    --line:#D9DADC;
-    --font-mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-  }
-  html[data-id="instrument"] .kicker,
-  html[data-id="instrument"] .st{font-family:var(--font-mono)}
-  html[data-id="instrument"] .hero-number,
-  html[data-id="instrument"] .count,
-  html[data-id="instrument"] .vote-val,
-  html[data-id="instrument"] .trait-val,
-  html[data-id="instrument"] .meta,
-  html[data-id="instrument"] .allowance,
-  html[data-id="instrument"] .read-as,
-  html[data-id="instrument"] .step-line{font-family:var(--font-mono)}
-  html[data-id="instrument"] h1{font-weight:600;letter-spacing:-.02em}
-  html[data-id="instrument"] .lead .prob{font-family:var(--font-mono);font-size:19px;font-weight:500}
-  html[data-id="instrument"] .btn{font-weight:600}
-
   /* ---------- the switcher: prototype chrome, not product UI ---------- */
   .idbar{position:fixed;bottom:24px;left:24px;z-index:70;display:flex;align-items:center;gap:2px;
     background:var(--ink);color:#fff;border-radius:4px;padding:5px 8px;font-size:11px}
-  .idbar .idlabel{margin-right:8px;margin-left:4px;text-transform:uppercase;letter-spacing:.16em;font-weight:600;opacity:.55}
   .idbar button{font:inherit;color:#fff;background:none;border:none;padding:5px 10px;border-radius:3px;cursor:pointer;opacity:.6}
   .idbar button:hover{opacity:1}
   .idbar button.on{background:rgba(255,255,255,.18);opacity:1}
-  .idbar .iddiv{width:1px;height:16px;background:rgba(255,255,255,.25);margin:0 6px}
 
   @media(max-width:840px){
     nav{flex-wrap:wrap;height:auto;padding:10px 16px;row-gap:8px}
@@ -973,13 +933,9 @@
   </form>
 </aside>
 
-<!-- Prototype chrome: compare identity directions in place. Not product UI. -->
-<div class="idbar" role="radiogroup" aria-label="Identity variant">
-  <span class="idlabel">Identity</span>
-  <button data-id="shared" class="on" onclick="setIdentity('shared')">Shared</button>
-  <button data-id="editorial" onclick="setIdentity('editorial')">Editorial</button>
-  <button data-id="instrument" onclick="setIdentity('instrument')">Instrument</button>
-  <span class="iddiv"></span>
+<!-- Prototype chrome: the states gallery, for review. Identity settled
+     2026-08-25: the shared system, chosen by eye against built alternatives. -->
+<div class="idbar">
   <button id="states-toggle" onclick="toggleStates()">States &amp; refusals</button>
 </div>
 
@@ -1655,11 +1611,6 @@ function toggleStates(){
 }
 
 /* ------------------------------------------------------------------ identity */
-function setIdentity(v){
-  document.documentElement.dataset.id = v;
-  document.querySelectorAll('.idbar button').forEach(b => b.classList.toggle('on', b.dataset.id === v));
-}
-
 /* ------------------------------------------------------------------ boot */
 // Review deep-links: #report jumps to the rendered sample report, #form to the signed-in form.
 if (location.hash === '#report') { fillSample(); renderReport(); flow.signedIn = false; }
