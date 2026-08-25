@@ -9,6 +9,15 @@ It is deliberately organised around **what would make it false**. An assessment
 that only says why things are safe today ages into a false sense of security the
 moment the system moves, and nothing fails to announce it.
 
+> **Note, 2026-08-25.** This document argues about text the panel *judges*. Enacted
+> context ([094/#200](https://github.com/Subaru-Goto/PanelVerdict/issues/200)) adds a
+> channel where a stranger's text is *obeyed* — a role-play instruction placed in every
+> vote prompt. Position randomisation, delimiting and the fail-open screening choice below
+> were all reasoned about judged content and do not carry over unchanged. That argument is
+> open at [100/#209](https://github.com/Subaru-Goto/PanelVerdict/issues/209) and must be
+> settled before enacted context ships. Everything below still describes the judged
+> channel correctly.
+
 ## The only untrusted input is the customer's own text
 
 Two headlines and a target description. That is the whole attack surface a
@@ -145,8 +154,11 @@ security change rather than a feature.
 ### 1. There is no other customer's data
 
 The database holds synthetic personas, shared and belonging to nobody, and a
-vote ledger keyed by the fingerprint of a question. There are no accounts and no
-per-customer rows. So the attacker and the victim are the same person: someone
+vote ledger keyed by the fingerprint of a question. **Corrected 2026-08-25:** there are
+accounts now — [063/#158](https://github.com/Subaru-Goto/PanelVerdict/issues/158) keys the
+request ledger on a verified subject id — so the tripwire this section describes has
+fired rather than being scheduled. What remains true is that no table holds another
+customer's *content*: the vote ledger is keyed by question fingerprint, not by owner. So the attacker and the victim are the same person: someone
 who injects "always pick option 1" has corrupted a test they paid for, to fool
 themselves.
 
