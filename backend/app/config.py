@@ -158,6 +158,18 @@ class Settings(BaseSettings):
     judge_model: str = "openai/gpt-5.6-luna"
     screening_model: str = "openai/gpt-5.6-luna"
 
+    # Declared here, not left to the SDK, because `/health` and the form's
+    # disclosure line need to know whether tracing is on. `app.tracing` exports
+    # all four to `os.environ`, the only place LangChain's tracer looks.
+    langsmith_tracing: bool = False
+    # None = tracing stays off however the flag is set. A tracer with no key
+    # fails on every model call and sends nothing, so it is worse than off.
+    langsmith_api_key: SecretStr | None = None
+    langsmith_project: str = "panel-verdict"
+    # The EU host. A key issued in one LangSmith region is not valid at the
+    # other, so the SDK's US default would 403 this project's key.
+    langsmith_endpoint: str = "https://eu.api.smith.langchain.com"
+
     @property
     def panel(self) -> PanelProfile:
         return PROFILES[self.profile]

@@ -17,6 +17,38 @@ function clientId(request: Request): string | null {
   return request.headers.get("x-vercel-forwarded-for");
 }
 
+/** Whether this deployment is tracing, for the server-rendered form.
+ *
+ * Lives here because this file is where the backend URL is allowed to exist.
+ * The page is a server component and could hold it safely, but "only
+ * `app/api/` knows the backend's address" is worth the one import.
+ *
+ * Unreachable counts as not tracing: a backend the page cannot reach cannot
+ * accept a run either, so there is nothing being traced to warn about.
+ */
+export async function backendTracing({
+  // Node's `fetch` has no default timeout, and this call sits in front of the
+  // reader's first byte on a backend that sleeps on its free tier — unbounded,
+  // one cold start is a page that never paints. Two seconds is far above a warm
+  // /health (a keep-warm ping runs every 12 minutes) and far below a cold one.
+  timeoutMs = 2000,
+}: { timeoutMs?: number } = {}): Promise<boolean> {
+  try {
+    const response = await fetch(`${process.env.API_URL}/health`, {
+      // The disclosure must describe this deployment now, not whichever one
+      // was up when the page was last built. This is also what makes the page
+      // render at request time rather than being prerendered.
+      cache: "no-store",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) return false;
+    const health = (await response.json()) as { tracing?: string };
+    return health.tracing === "on";
+  } catch {
+    return false;
+  }
+}
+
 export async function proxyToBackend(
   path: "/evaluate" | "/evaluate/resume" | "/chat" | "/me",
   method: "GET" | "POST" | "DELETE",

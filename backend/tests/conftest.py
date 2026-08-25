@@ -1,11 +1,18 @@
+import os
+
+# Before any `app` import: `app.config` reads `.env` at import, and a real
+# environment variable outranks that file. Without this, a developer with
+# tracing switched on ships a trace for every test run — dashboard noise, and
+# free-tier quota spent on stubs. The suite never traces, on anyone's machine.
+os.environ["LANGSMITH_TRACING"] = "false"
+
 from typing import Literal
 
 import psycopg
 import pytest
-from testcontainers.postgres import PostgresContainer
-
 from app.persistence import prepare_connection
 from app.vote import VoteResponse
+from testcontainers.postgres import PostgresContainer
 from tests.factories import voted
 
 

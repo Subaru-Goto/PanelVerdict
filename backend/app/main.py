@@ -34,6 +34,7 @@ from app.auth import (
 )
 from app.config import USD_PER_TURN, USD_PER_VOTE, settings
 from app.db import check_connection
+from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.llm import (
     OpenRouterEmbedder,
     OpenRouterPanelLLM,
@@ -43,18 +44,18 @@ from app.llm import (
 )
 from app.panel import votes_with_voters
 from app.persistence import deny_data_api
-from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.pipeline import EmptyPanel, NoVotes
 from app.schemas import (
     ChatRequest,
     EvaluateRequest,
-    ResumeRequest,
-    TargetQuery,
     EvaluateResponse,
     Notice,
+    ResumeRequest,
+    TargetQuery,
 )
 from app.screening import OpenRouterScreener, Screener, UnsafeInput
 from app.targeting import TargetTranslator
+from app.tracing import configure_tracing
 from app.vote import OutOfCredit, PanelLLM
 
 # Uvicorn configures its own loggers and leaves the root one alone, so every
@@ -67,6 +68,25 @@ from app.vote import OutOfCredit, PanelLLM
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
 logger = logging.getLogger(__name__)
+
+# At import, before the first model client exists: `init_chat_model` reads the
+# tracing environment when it builds a client, so exporting any later would
+# trace nothing until the process restarted.
+_TRACING = configure_tracing()
+if _TRACING:
+    # The project, never the key. A deploy that sends reader input off our
+    # infrastructure should say so in its own logs.
+    logger.info(
+        "langsmith tracing is on: project=%s endpoint=%s",
+        settings.langsmith_project,
+        settings.langsmith_endpoint,
+    )
+elif settings.langsmith_tracing:
+    # This deployment believes it is tracing and nothing else would say
+    # otherwise.
+    logger.warning(
+        "LANGSMITH_TRACING is set but LANGSMITH_API_KEY is not: tracing stays off"
+    )
 
 
 @asynccontextmanager
@@ -581,9 +601,19 @@ def _charge_ledger(
     conn.commit()
 
 
+def tracing_enabled() -> bool:
+    """Whether this process is really sending traces.
+
+    A dependency rather than a bare read of `_TRACING`, so a test can say what a
+    traced deployment reports without turning tracing on for the test run.
+    """
+    return _TRACING
+
+
 @app.get("/health")
 def health(
     verifier: SupabaseVerifier | None = Depends(get_verifier),
+    tracing: bool = Depends(tracing_enabled),
 ) -> dict[str, str]:
     """Ungated on purpose — the keep-warm ping and the daily check both hit it.
 
@@ -599,6 +629,9 @@ def health(
         "status": "ok",
         "db": "up" if check_connection() else "down",
         "auth": "off" if verifier is None else "on",
+        # The form's disclosure line reads this. One deployment answers for
+        # both, so the page cannot disagree with what is actually happening.
+        "tracing": "on" if tracing else "off",
     }
 
 

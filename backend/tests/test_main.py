@@ -5,10 +5,19 @@ from decimal import Decimal
 import httpx
 import psycopg
 import pytest
-from app.config import PROFILES, USD_PER_VOTE, PanelProfile, Settings, settings
+from fastapi.testclient import TestClient
+from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.outputs import ChatResult
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.postgres import PostgresSaver
+from openai import APIStatusError
+from pgvector.psycopg import register_vector
+from pydantic import SecretStr
+
 from app import graph as graph_module
 from app import main
 from app.auth import InvalidSession, SessionUnverifiable
+from app.config import PROFILES, USD_PER_VOTE, PanelProfile, Settings, settings
 from app.main import (
     LEDGER_HOURS,
     app,
@@ -23,19 +32,12 @@ from app.main import (
     get_screener,
     get_translator,
     get_verifier,
+    tracing_enabled,
 )
 from app.persistence import nearest_panelists, persist_pool
 from app.schemas import EvaluateRequest
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
-from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatResult
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver
-from openai import APIStatusError
-from pgvector.psycopg import register_vector
-from pydantic import SecretStr
 from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
@@ -1312,6 +1314,20 @@ def test_health_says_whether_sign_in_is_actually_enforced(client, signed_in) -> 
 
     assert enforced["auth"] == "on"
     assert unenforced["auth"] == "off"
+
+
+def test_health_says_whether_inputs_are_being_traced(client) -> None:
+    """Tracing sends the reader's headlines off our infrastructure and the form
+    must disclose it, so the form has to be able to ask. Reported here rather
+    than mirrored in the frontend's own config: two places to set one fact is a
+    page that can claim inputs are traced when they are not."""
+    off = client.get("/health").json()
+
+    app.dependency_overrides[tracing_enabled] = lambda: True
+    on = client.get("/health").json()
+
+    assert off["tracing"] == "off"
+    assert on["tracing"] == "on"
 
 
 # --- The panel gate over the wire (076/#166) ---------------------------------
