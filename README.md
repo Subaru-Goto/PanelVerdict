@@ -144,16 +144,25 @@ This is the most significant limitation in the project, and the numbers are in
   different things. `preference` remains the shipped framing because nothing in the
   run gives grounds to change it, not because it won.
 
-**2. There is no document-based retrieval corpus.** Retrieval today is
-`nearest_panelists` — a pgvector similarity search over persona summaries inside the
-analyst's tool set. No prose is chunked, embedded, or retrieved, so when the analyst
-explains what a credible interval means it answers from its own weights rather than
-from a cited source. Two consequences worth knowing:
+**2. The explanation corpus is small, and evaluated on questions we wrote
+ourselves.** (Corrected 2026-08-26 — this read "there is no document-based retrieval
+corpus" until [018/#124](https://github.com/Subaru-Goto/PanelVerdict/issues/124)
+shipped one.) The analyst no longer answers "what does a credible interval mean"
+from its own weights: it retrieves from committed documents and shows the source.
+What is honest to say about it:
 
-- The corpus that would fix it is specified and open:
-  [018](https://github.com/Subaru-Goto/PanelVerdict/issues/124).
-- The persona search that exists is weak on its own terms — it returns five
-  panelists out of up to 200 and is blind to which variant they chose, so it
+- It is **two documents, fifteen passages** — what the verdict means and who the
+  panel is. Anything outside that returns nothing and the analyst says so, which is
+  the intended behaviour rather than a gap being hidden.
+- It was checked on **fourteen question–section pairs written by the corpus's own
+  author**, which is the failure mode this project has been bitten by before: a
+  probe set built from the same imagination as the thing under test cannot find what
+  that imagination missed. Numbers and limits:
+  [`docs/research/corpus-retrieval-check.md`](docs/research/corpus-retrieval-check.md).
+- **No figure appears in any document**, so a retrieved passage cannot contradict
+  the numbers on the report beside it.
+- The persona search that exists alongside it is weak on its own terms — it returns
+  five panelists out of up to 200 and is blind to which variant they chose, so it
   characterises individuals rather than the panel
   ([041](https://github.com/Subaru-Goto/PanelVerdict/issues/139),
   [043](https://github.com/Subaru-Goto/PanelVerdict/issues/141)).

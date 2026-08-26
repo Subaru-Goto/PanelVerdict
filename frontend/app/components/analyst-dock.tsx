@@ -8,9 +8,11 @@ import {
   type AnalystTurn,
 } from "../lib/use-analyst";
 
-/** The final chip copy. Each maps to a tool the demo has to show — the first
- *  two to analyze_results, the third to search_personas. None can spend
- *  anything, and that is now true of every tool the analyst has rather than a
+/** The final chip copy. Each maps to a tool the demo has to show. Which tool a
+ *  chip reaches is the analyst's routing decision, not a fixed mapping — the
+ *  first two ask what a figure means and now route through explain_the_report,
+ *  the third describes people and reaches search_personas. None can spend
+ *  anything, and that is true of every tool the analyst has rather than a
  *  property of this list. */
 /** PENDING USER SIGN-OFF (not yet approved): how close to the bottom still
  *  counts as "following along". A feel parameter, judged in a browser. */

@@ -12,7 +12,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.analyst import ToolDeps, stream_analyst
+from app.analyst import ToolDeps, build_tools, stream_analyst
 from tests.factories import (
     ScriptedChatModel,
     StreamingScriptedChatModel,
@@ -75,14 +75,16 @@ class TestStreamAnalyst:
         events = ndjson_events(_lines(model, conn=conn, thread_id="s-2"))
 
         errors = [e for e in events if e["type"] == "error"]
-        # 8 = 2 * len(tools) + 2 with the three tools a default request binds.
-        # `run_panel_test` is not among them — it spends money, so it is bound
-        # only when the caller opts in — and the budget tightened with the tool
-        # surface, which is the formula doing exactly what it is for.
+        # Derived here the way it is derived there, rather than written down: the
+        # budget is `2 * len(tools) + 2`, so it moves whenever the tool surface
+        # does — which is the formula doing exactly what it is for, and a
+        # hardcoded copy here would just turn that into a broken test. The
+        # message is the assertion; the number is arithmetic both sides agree on.
+        steps = 2 * len(build_tools(_result(), _deps(conn))) + 2
         assert errors == [
             {
                 "type": "error",
-                "message": "analyst was still calling tools after 8 steps",
+                "message": f"analyst was still calling tools after {steps} steps",
             }
         ]
         assert events[-1]["type"] == "error"

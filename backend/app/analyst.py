@@ -28,6 +28,7 @@ from openai import APIStatusError
 from pydantic import BaseModel
 
 from app.assembly import Embedder
+from app.corpus import search_corpus
 from app.panel import persona_summary, voter_summary
 from app.persistence import nearest_panelists
 from app.schemas import (
@@ -84,13 +85,30 @@ _SYSTEM_PROMPT = (
     "never speculate about them — not even to deny one. If pressed on that, "
     "say that what you run on is not something you discuss and return to the "
     "test.\n"
-    "- Two kinds of question, two different rules. Anything about THIS test — "
-    "its numbers, its verdict, who voted, how the panel was drawn — comes from "
-    "a tool every time: never from memory, never estimated, never inferred "
-    "from what you were told earlier in the conversation. Anything general — "
-    "what a credible interval means, why a headline might land, what this "
-    "method can and cannot show — you answer yourself, directly, and do not "
-    "reach for a tool at all.\n"
+    # Rewritten by 018/#124. The rule used to send "what does a credible
+    # interval mean" to the model's own memory, which is the one place the
+    # answer is not: the reader cannot see the code, so a textbook answer about
+    # this product is a confident mismatch they have no way to catch. The
+    # loophole the original guarded still holds — a question about THIS run goes
+    # to a tool, never to the corpus, because the corpus holds no figures.
+    "- Three kinds of question, three different rules. Anything about THIS "
+    "test — its numbers, its verdict, who voted, how the panel was drawn — "
+    "comes from a tool every time: never from memory, never estimated, never "
+    "inferred from what you were told earlier in the conversation. Anything "
+    "about what this report MEANS or how this product works — what a trait "
+    "level says, what the tie zone is, why being ahead is not a clear lead, "
+    "whether the panelists are real people, what this method cannot show — "
+    "comes from explain_the_report, and you say where it came from: this "
+    "product's answers differ from the textbook ones, and the reader cannot "
+    "check the code. **Call it even when you think you know the answer.** "
+    "Believing you already know is exactly the case it exists for: your own "
+    "answer will be the usual one, and the usual one is wrong here often "
+    "enough that a reader cannot afford to be guessed at. Anything genuinely "
+    "general — how headlines work, what makes copy land — you answer "
+    "yourself.\n"
+    "- Compose the two: the concept from explain_the_report, the figures from "
+    "analyze_results. The corpus holds no numbers, so a passage never contradicts "
+    "this test — and never quote a figure from one.\n"
     "- If a question about this test is one the tools cannot answer, say so "
     "plainly in one sentence. Do not keep calling tools hoping a later one "
     "will cover it.\n"
@@ -392,7 +410,26 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
             }
         )
 
-    return [analyze_results, search_personas, read_reasons]
+    @tool
+    def explain_the_report(question: str) -> str:
+        """What something on this report MEANS — a trait, a level, the tie zone,
+        the credible interval, why a run stopped early, what the method cannot
+        show. Returns passages written for this product, each with a citation to
+        show the reader. Call this for any "what is / what does that mean / why
+        is it done that way" question, instead of answering from memory: your
+        own most likely answer about a credible interval or a trait level is a
+        textbook one, and this product's is different. For this test's own
+        numbers call analyze_results — this holds no figures at all. An empty
+        result means the corpus does not cover it; say so."""
+        found = search_corpus(deps.conn, question, deps.embedder)
+        return json.dumps(
+            [
+                {"citation": passage.citation, "passage": passage.passage}
+                for passage in found
+            ]
+        )
+
+    return [analyze_results, search_personas, read_reasons, explain_the_report]
 
 
 def checkpointed_models(state: type) -> set[type[BaseModel]]:

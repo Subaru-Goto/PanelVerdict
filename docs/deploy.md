@@ -53,8 +53,14 @@ idempotent and the seed resumes, so re-running costs nothing when the pool is al
 there — but nothing re-runs it for you, and a table the code expects and the database
 lacks is a 500 on every request that touches it. `request_ledger` (045/#143) is the
 first case: without it both paid endpoints fail. `spend_ledger` (064/#192, the global
-daily cap) is the second, with the same symptom. Re-running the same seed command
-creates them.
+daily cap) is the second, with the same symptom. `corpus_chunks` (018/#124, the
+analyst's explanation corpus) is the third — without it every "what does this mean"
+question ends the turn, which is the flagship interaction.
+
+The corpus is also the one case with a cheap remedy: `uv run python -m app.seed
+--corpus-only` creates the table and reseeds it for a handful of embeddings, instead
+of re-running `--size full` and paying for a plausibility-QC pass nobody needs.
+Re-running the same seed command creates all three.
 
 ## 2 — Render (the backend)
 
