@@ -213,3 +213,25 @@ def test_the_human_arm_leaves_the_persona_prompt_alone() -> None:
         render_persona_prompt(BASE_PERSONAS[1]),
         render_persona_prompt(BASE_PERSONAS[2]),
     }
+
+
+def test_the_generated_arm_swaps_the_sentence_and_nothing_else() -> None:
+    """094 asks whether the model's instruction enacts better than the customer's
+    own words. That is only answerable if the fence, the placement and the
+    stimulus are identical between the two arms."""
+    from experiments.enacted_context import plan_cells
+    from experiments.enacted_design import ENACTED, GENERATED
+
+    kwargs = dict(contexts=ENACTED[:1], pairs=PAIRS[:1], replicates=1, nonce=_NONCE)
+    verbatim = plan_cells(rendering="fenced", **kwargs)
+    generated = plan_cells(rendering="generated", **kwargs)
+
+    assert len(verbatim) == len(generated)
+    for a, b in zip(verbatim, generated):
+        assert a.options == b.options
+        assert ENACTED[0].words in a.prompt
+        assert GENERATED[ENACTED[0].id] in b.prompt
+        # Same frame, same delimiter, same persona — only the sentence differs.
+        assert a.prompt.replace(ENACTED[0].words, "") == b.prompt.replace(
+            GENERATED[ENACTED[0].id], ""
+        )

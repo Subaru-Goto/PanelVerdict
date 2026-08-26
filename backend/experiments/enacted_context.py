@@ -50,6 +50,7 @@ from experiments.design import (
 )
 from experiments.enacted_design import (
     ATTACKS,
+    GENERATED,
     BASELINE,
     CONTEXTS,
     ENACTED,
@@ -66,7 +67,10 @@ from experiments.manipulation_check import Cell, vote_cell
 #   fenced — in the system prompt, inside a nonce block framed as a description
 #   bare   — in the system prompt, spliced in as if we had written it (ablation)
 #   human  — in the task message, inside the fence the headlines already have
-Rendering = Literal["fenced", "bare", "human"]
+#   generated — 094's shape: the small model's second-person instruction, fenced
+#               in the system prompt like `fenced`, so the only thing that varies
+#               between those two arms is whose sentence it is
+Rendering = Literal["fenced", "bare", "human", "generated"]
 
 _DEFAULT_WORKERS = 8
 
@@ -170,6 +174,11 @@ def plan_cells(
     for context in contexts:
         for persona in personas:
             persona_prompt = render_persona_prompt(persona)
+            words = (
+                GENERATED.get(context.id, context.words)
+                if rendering == "generated"
+                else context.words
+            )
             # In the `human` arm the words are not in the system prompt at all —
             # `HumanTurnPanelLLM` puts them in the task, inside the fence the
             # headlines already have.
@@ -178,9 +187,9 @@ def plan_cells(
                 if rendering == "human"
                 else render_enacted(
                     persona_prompt,
-                    context.words,
+                    words,
                     nonce=nonce,
-                    fenced=rendering == "fenced",
+                    fenced=rendering != "bare",
                 )
             )
             for pair in pairs:
@@ -294,7 +303,7 @@ def main() -> None:
     parser.add_argument("--replicates", type=int, default=6)
     parser.add_argument(
         "--rendering",
-        choices=("fenced", "bare", "human"),
+        choices=("fenced", "bare", "human", "generated"),
         default="fenced",
         help="where the customer's words go; `bare` is the ablation, never the product",
     )

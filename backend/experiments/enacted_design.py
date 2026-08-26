@@ -123,6 +123,26 @@ ATTACKS: tuple[EnactedContext, ...] = (
 
 BASELINE = EnactedContext(id="none", role="baseline", words="")
 
+# What `OpenRouterRolePlayGenerator` wrote from each context's words, recorded
+# 2026-08-26 on `openai/gpt-5.6-luna` rather than generated at run time: an arm
+# whose stimulus is re-drawn per run cannot be compared with one whose stimulus is
+# fixed, and 094 asks whether the *generated* text enacts better than the words
+# themselves. Regenerate with `app.llm.OpenRouterRolePlayGenerator.draft`.
+GENERATED: dict[str, str] = {
+    "parent": (
+        "You are a parent of young children. You are actively involved in caring "
+        "for and raising them."
+    ),
+    "grocery_online": (
+        "You do the weekly grocery shop online. You are someone who uses online "
+        "shopping for this regular household task."
+    ),
+    "runner": (
+        "You are a keen long-distance runner. Endurance training and distance "
+        "running are a regular part of your life."
+    ),
+}
+
 CONTEXTS: tuple[EnactedContext, ...] = (BASELINE, *ENACTED, *ATTACKS)
 
 

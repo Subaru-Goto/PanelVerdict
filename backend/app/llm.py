@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from openai import APIStatusError
 
 from app.config import LANGCHAIN_INTEGRATION
+from app.roleplay import RolePlayDraft, build_roleplay_messages
 from app.schemas import (
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
@@ -523,6 +524,38 @@ class OpenRouterTargetTranslator:
         result = self._model.invoke(build_target_messages(description))
         if not isinstance(result, TargetRequest):
             raise RuntimeError(f"translator returned no structured target: {result!r}")
+        return result
+
+
+class OpenRouterRolePlayGenerator:
+    """RolePlayGenerator backed by an OpenRouter chat model via LangChain.
+
+    Built like the translator it replaces, because it is the same call in the same
+    place with an easier job — so the bounds the translator's own measurements
+    produced still apply, and a cheaper model is now in scope for it (016/#123's
+    subject changed rather than vanished).
+
+    The delimiter is per-generator and random, so the marker a customer's words
+    would have to close does not exist when they are typed.
+    """
+
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
+        self._nonce = f"<<{secrets.token_hex(8)}>>"
+        self._model = init_chat_model(
+            model=model,
+            model_provider=LANGCHAIN_INTEGRATION,
+            base_url=base_url,
+            api_key=api_key,
+            max_retries=2,
+            timeout=VOTE_READ_TIMEOUT_SECONDS,
+            max_tokens=TARGET_MAX_COMPLETION_TOKENS,
+            reasoning_effort=TARGET_REASONING_EFFORT,
+        ).with_structured_output(RolePlayDraft)
+
+    def draft(self, *, words: str) -> RolePlayDraft:
+        result = self._model.invoke(build_roleplay_messages(words, nonce=self._nonce))
+        if not isinstance(result, RolePlayDraft):
+            raise RuntimeError(f"generator returned no structured draft: {result!r}")
         return result
 
 
