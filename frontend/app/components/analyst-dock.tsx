@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { ANALYST_DISCLOSURE } from "../lib/disclosure";
 import {
   readerTurns,
   type Analyst,
@@ -99,10 +100,7 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
               exchange — a footer mention or an "assistant" label does not
               count. It renders in the header so it is on screen before a
               first message can be typed. */}
-          <p className="text-xs text-zinc-500">
-            The analyst is an AI system, not a person. Answers come from this
-            test&apos;s own numbers. Every panelist is synthetic.
-          </p>
+          <p className="text-xs text-zinc-500">{ANALYST_DISCLOSURE}</p>
         </div>
         <button
           type="button"

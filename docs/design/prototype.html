@@ -160,6 +160,10 @@
     font-size:12.5px;font-weight:300;color:var(--ink-2)}
   .read-as b{font-weight:600;color:var(--ink)}
   .allowance{font-size:12.5px;font-weight:300;color:var(--ink-3)}
+  /* Art. 50(1) disclosure. Sized like the other small print but never
+     optional: it rides the control that starts an exchange with the AI
+     system, which is why it is not in the footer (098). */
+  .disclosure-in-context{font-size:12.5px;font-weight:300;color:var(--ink-3);max-width:640px;margin-top:14px;line-height:1.5}
   .vocab{margin-top:12px;max-width:600px;font-size:12px;font-weight:300;color:var(--ink-2)}
   .vocab-row{display:flex;gap:12px;padding:4px 0;align-items:baseline}
   .vocab-k{flex:none;width:86px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:600;color:var(--ink)}
@@ -284,7 +288,12 @@
     background:var(--surface);border-left:1px solid var(--line);border-top:1px solid var(--line);
     display:none;flex-direction:column;box-shadow:0 -6px 40px rgba(23,26,32,.10)}
   .dock.on{display:flex}
-  .dock-head{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--line)}
+  .dock-head{display:flex;align-items:flex-start;justify-content:space-between;padding:16px 20px 10px}
+  /* Its own row rather than a line beside Close: the disclosure is a
+     sentence, and sharing a flex row with a button wrapped it around
+     one. It carries the head's rule so the header still closes (098). */
+  .dock-disclosure{padding:0 20px 14px;border-bottom:1px solid var(--line);
+    font-size:12.5px;font-weight:300;color:var(--ink-3);line-height:1.5}
   .dock-body{flex:1;overflow-y:auto;padding:20px}
   .turn{margin-bottom:20px}
   .turn .kicker{margin-bottom:6px}
@@ -594,6 +603,10 @@
     <button class="btn btn-primary" id="to-panel" onclick="toPanel()" disabled>Preview the panel</button>
     <span class="allowance" id="allowance" style="display:none"></span>
   </div>
+  <p class="disclosure-in-context">
+    PanelVerdict is an AI system: the panel is synthetic personas, and the verdict and analyst
+    answers are AI-generated.
+  </p>
 </section>
 
 <!-- ============================== STEP 2 ============================== -->
@@ -913,6 +926,7 @@
     </div>
     <button class="btn-link" onclick="closeDock()">Close</button>
   </div>
+  <p class="dock-disclosure">The analyst is an AI system, not a person. Answers come from this test&rsquo;s own numbers. Every panelist is synthetic.</p>
   <div class="dock-body" id="dock-body"></div>
   <!-- Login-gated with a line saying why — never a dead control. -->
   <div class="dock-gate" id="dock-gate" style="display:none">

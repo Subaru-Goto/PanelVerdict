@@ -10,6 +10,7 @@ import {
   type Gender,
   type Locale,
 } from "../lib/api";
+import { AI_SYSTEM_DISCLOSURE } from "../lib/disclosure";
 import { useEvaluate } from "../lib/use-evaluate";
 import PanelGate from "./panel-gate";
 import Report from "./report";
@@ -310,10 +311,7 @@ export default function EvaluateForm({
         {/* Submitting counts as interacting with an AI system, so the
             disclosure sits with the submit control rather than in a footer —
             told before the exchange, where the telling can still change it. */}
-        <p className="text-xs text-zinc-500">
-          PanelVerdict is an AI system: the panel is synthetic personas, and the
-          verdict and analyst answers are AI-generated.
-        </p>
+        <p className="text-xs text-zinc-500">{AI_SYSTEM_DISCLOSURE}</p>
         {/* Only when this deployment is really tracing — the backend's own
             answer, not a second flag here that could disagree with it. A
             deterrent, not a control: the controls are the screener and the

@@ -9,6 +9,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import EvaluateForm from "../app/components/evaluate-form";
+import { AI_SYSTEM_DISCLOSURE } from "../app/lib/disclosure";
 import { makeResponse } from "./fixtures";
 
 const { evaluateMock, resumeMock } = vi.hoisted(() => ({
@@ -51,7 +52,7 @@ describe("EvaluateForm", () => {
     // the exchange, not in a footer after it.
     render(<EvaluateForm />);
 
-    expect(screen.getByText(/PanelVerdict is an AI system/)).toBeTruthy();
+    expect(screen.getByText(AI_SYSTEM_DISCLOSURE)).toBeTruthy();
   });
 
   it("says nothing about tracing when this deployment is not tracing", () => {
