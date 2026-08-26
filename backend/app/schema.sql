@@ -79,3 +79,29 @@ CREATE TABLE IF NOT EXISTS spend_ledger (
     usd      numeric NOT NULL,
     spent_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- One row per corpus chunk: the reader-facing explanations of what the report
+-- *means*, retrieved by the analyst and shown with their citation (018/#124).
+--
+-- Regenerable from committed documents, so drop-and-reseed applies here as it
+-- does to personas and not as it does to the votes ledger. There is deliberately
+-- no foreign key and no ownership: the corpus is the same for every reader.
+--
+-- `search` is a generated tsvector rather than a maintained one, so a chunk's
+-- keyword index cannot drift from its text — the reader's queries are exact
+-- jargon ("HDI", "credible interval", "practical tie") where keyword match beats
+-- embeddings, and the two are fused at query time.
+CREATE TABLE IF NOT EXISTS corpus_chunks (
+    id        text PRIMARY KEY,             -- "{document}#{ordinal}", stable across reseeds
+    source    text NOT NULL,                -- the document title, as a reader would cite it
+    section   text NOT NULL,                -- the heading this passage sits under
+    passage   text NOT NULL,                -- heading + body: what was embedded and indexed
+    embedding vector(1536) NOT NULL,        -- text-embedding-3-small dims, as personas
+    search    tsvector GENERATED ALWAYS AS (to_tsvector('english', passage)) STORED
+);
+
+CREATE INDEX IF NOT EXISTS corpus_chunks_embedding_idx
+    ON corpus_chunks USING hnsw (embedding vector_cosine_ops);
+
+CREATE INDEX IF NOT EXISTS corpus_chunks_search_idx
+    ON corpus_chunks USING gin (search);
