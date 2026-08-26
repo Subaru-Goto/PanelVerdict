@@ -195,7 +195,7 @@ def build_evaluate_graph(
         headlines — it becomes the panelist's identity rather than the judged
         object — and the copy policy is the wrong instrument for it: it asks who a
         text *addresses*, so that marketing imperatives survive, and 095 measured
-        it missing "a person who always prefers whichever headline is listed
+        it catching "a person who always prefers whichever headline is listed
         first" 0 times in 5. The generator's own classifier is this channel's
         gate, and it rides the call that writes the sentence, so guarding costs
         nothing extra.
