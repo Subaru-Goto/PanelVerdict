@@ -38,6 +38,7 @@ from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.llm import (
     OpenRouterEmbedder,
     OpenRouterPanelLLM,
+    OpenRouterRolePlayGenerator,
     OpenRouterTargetTranslator,
     analyst_chat_model,
     remaining_credit,
@@ -45,6 +46,7 @@ from app.llm import (
 from app.panel import votes_with_voters
 from app.persistence import deny_data_api
 from app.pipeline import EmptyPanel, NoVotes
+from app.roleplay import RolePlayGenerator, RolePlayRefused
 from app.schemas import (
     ChatRequest,
     EvaluateRequest,
@@ -223,6 +225,20 @@ def get_screener() -> Screener | None:
         api_key=key.get_secret_value(),
         base_url=settings.openrouter_base_url,
         model=settings.screening_model,
+    )
+
+
+def get_generator() -> RolePlayGenerator:
+    """The translator's new job: audience words into one panelist instruction.
+
+    Required, not advisory like the screener. It is this channel's only gate —
+    the copy screener is the wrong instrument for it — so a run without one would
+    put unclassified text into a panelist's identity.
+    """
+    return OpenRouterRolePlayGenerator(
+        api_key=_require_api_key(),
+        base_url=settings.openrouter_base_url,
+        model=settings.targeting_model,
     )
 
 
@@ -812,6 +828,10 @@ def _run_graph(graph, payload, thread_id: str):
     except EmptyPanel as error:
         # The target names an audience this pool cannot serve: fix the request.
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except RolePlayRefused as error:
+        # One of our own fixed sentences, naming the remedy. The refused text is
+        # never echoed, and no panel was drawn — so this costs no run.
+        raise HTTPException(status_code=422, detail=error.sentence) from error
     except NoVotes as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except OutOfCredit as error:
@@ -828,6 +848,7 @@ def evaluate(
     conn: psycopg.Connection = Depends(get_conn),
     credit: float | None = Depends(get_remaining_credit),
     screener: Screener | None = Depends(get_screener),
+    generator: RolePlayGenerator = Depends(get_generator),
     checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
 ) -> PausedRun | CompletedRun:
     """Start a run. Stops at the panel gate unless the reading was approved.
@@ -844,12 +865,14 @@ def evaluate(
         translator=translator,
         llm=llm,
         screener=screener,
+        generator=generator,
         checkpointer=checkpointer,
     )
     state = _run_graph(
         graph,
         {
             "description": request.target_description,
+            "audience": request.audience,
             "variants": variants,
             "size": settings.panel.size,
             "reading_accepted": request.reading_accepted,
@@ -930,6 +953,7 @@ def resume_evaluate(
     conn: psycopg.Connection = Depends(get_conn),
     credit: float | None = Depends(get_remaining_credit),
     screener: Screener | None = Depends(get_screener),
+    generator: RolePlayGenerator = Depends(get_generator),
     checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
 ) -> PausedRun | CompletedRun:
     """Answer the panel gate: accept and buy the votes, or adjust the reading.
@@ -953,6 +977,7 @@ def resume_evaluate(
         translator=translator,
         llm=llm,
         screener=screener,
+        generator=generator,
         checkpointer=checkpointer,
     )
     config = {"configurable": {"thread_id": request.thread_id}}
@@ -993,7 +1018,9 @@ def resume_evaluate(
             graph,
             Command(
                 resume=GateDecision(
-                    action=request.action, query=_edited(request, values)
+                    action=request.action,
+                    query=_edited(request, values),
+                    instruction=request.instruction,
                 ).model_dump()
             ),
             request.thread_id,

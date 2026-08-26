@@ -427,6 +427,16 @@ class PanelCounts(BaseModel):
 # allowlist narrow enough to be worth having would refuse real copy.
 MAX_HEADLINE_CHARS = 500
 MAX_TARGET_DESCRIPTION_CHARS = 2000
+# Tighter than a target description, and for a different reason than size. This
+# text is rewritten into one sentence every panelist is told to be, and a pile of
+# clauses — "sporty vegan parents who shop online and work night shifts" — makes
+# each panelist act all of it at once, degrading the portrayal with every clause.
+# So the cap is about how much one identity can carry, not about request size.
+#
+# 200 is the prototype's figure (`docs/design/prototype.html`), carried over
+# rather than derived: what a portrayal can hold before it thins is measurable
+# and has not been measured. Flagged as owed on 094 rather than dressed up.
+MAX_AUDIENCE_CHARS = 200
 # The analyst's composer. A question is longer than a headline and shorter than
 # an essay; the cap exists because this text reaches a model's context and the
 # checkpointed transcript, and nothing else bounded it.
@@ -441,6 +451,9 @@ class EvaluateRequest(BaseModel):
     # Skip the panel gate: this reading was already approved. Claimed by the
     # client, because only something that showed an approval knows one happened.
     reading_accepted: bool = False
+    # Who the readers are, beyond anything the pool can be filtered by. Blank
+    # means demographics only, and costs no model call at all.
+    audience: str = Field(default="", max_length=MAX_AUDIENCE_CHARS)
 
 
 class PanelEdit(BaseModel):
@@ -477,6 +490,11 @@ class ResumeRequest(BaseModel):
     # The edited reading, when adjusting. Re-selects with SQL only — never a
     # second translation, which is paid and could disagree with the edit.
     query: PanelEdit | None = None
+    # The role-play sentence as the reader left it at the gate. None means they
+    # did not touch the draft — the case that costs no check, since the draft was
+    # already classified when it was written. "" is a real answer meaning
+    # "demographics only after all", and is not the same as None.
+    instruction: str | None = Field(default=None, max_length=MAX_AUDIENCE_CHARS)
 
 
 class ToolEvent(BaseModel):

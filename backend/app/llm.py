@@ -14,7 +14,10 @@ from pydantic import ValidationError
 from app.config import LANGCHAIN_INTEGRATION
 from app.roleplay import (
     RolePlayDraft,
+    RolePlayVerdict,
+    build_check_messages,
     build_roleplay_messages,
+    checked_instruction,
     without_task_talk,
 )
 from app.schemas import (
@@ -601,7 +604,7 @@ class OpenRouterRolePlayGenerator:
 
     def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         self._nonce = f"<<{secrets.token_hex(8)}>>"
-        self._model = init_chat_model(
+        client = init_chat_model(
             model=model,
             model_provider=LANGCHAIN_INTEGRATION,
             base_url=base_url,
@@ -610,7 +613,12 @@ class OpenRouterRolePlayGenerator:
             timeout=VOTE_READ_TIMEOUT_SECONDS,
             max_tokens=TARGET_MAX_COMPLETION_TOKENS,
             reasoning_effort=TARGET_REASONING_EFFORT,
-        ).with_structured_output(RolePlayDraft)
+        )
+        self._model = client.with_structured_output(RolePlayDraft)
+        # A second binding of the same client, not a second client: the two calls
+        # differ only in what they are allowed to answer with. `RolePlayVerdict`
+        # has no text field, which is what stops a check from becoming a rewrite.
+        self._checker = client.with_structured_output(RolePlayVerdict)
 
     def draft(self, *, words: str) -> RolePlayDraft:
         # `RolePlayDraft` carries a cross-field invariant — instruction XOR
@@ -637,6 +645,28 @@ class OpenRouterRolePlayGenerator:
                 f"generator returned {type(result).__name__}, not a structured draft"
             )
         return without_task_talk(result)
+
+    def check(self, *, instruction: str) -> RolePlayDraft:
+        """Classify a sentence a human edited, without letting it be rewritten.
+
+        The gate's field is editable by design — that edit *is* the
+        human-in-the-loop — so the text that reaches a panel prompt is the one the
+        reader left there, not the one this model wrote. That path goes round the
+        generator, so it gets the classification here instead.
+
+        The returned instruction is the caller's own string. The model's only
+        output is a class.
+        """
+        result = self._checker.invoke(
+            build_check_messages(instruction, nonce=self._nonce)
+        )
+        if not isinstance(result, RolePlayVerdict):
+            # The type, never the value, for `draft`'s reason: what came back was
+            # produced from text a customer typed.
+            raise RuntimeError(
+                f"checker returned {type(result).__name__}, not a structured verdict"
+            )
+        return checked_instruction(instruction, refusal=result.refusal)
 
 
 class OpenRouterEmbedder:

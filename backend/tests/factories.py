@@ -27,6 +27,7 @@ from app.schemas import (
     VoterSummary,
 )
 from app.vote import VoteResponse
+from app.roleplay import RolePlayDraft, checked_instruction
 
 DIM = 1536
 
@@ -269,3 +270,27 @@ class StreamingScriptedChatModel(ScriptedChatModel):
         # scripted text byte for byte — the invariant the stream tests assert.
         for part in re.findall(r"\S+\s*", message.text):
             yield ChatGenerationChunk(message=AIMessageChunk(content=part))
+
+
+class StubGenerator:
+    """A role-play generator with no model behind it.
+
+    `refusals` maps a text to the class it should be refused with; anything else
+    is turned into an instruction the same way every time, so a test can tell a
+    generated sentence from an edited one by looking at it.
+    """
+
+    def __init__(self, refusals: dict[str, str] | None = None) -> None:
+        self.refusals = refusals or {}
+        self.drafted: list[str] = []
+        self.checked: list[str] = []
+
+    def draft(self, *, words: str) -> RolePlayDraft:
+        self.drafted.append(words)
+        if words in self.refusals:
+            return RolePlayDraft(instruction="", refusal=self.refusals[words])
+        return RolePlayDraft(instruction=f"You are {words}.")
+
+    def check(self, *, instruction: str) -> RolePlayDraft:
+        self.checked.append(instruction)
+        return checked_instruction(instruction, refusal=self.refusals.get(instruction))

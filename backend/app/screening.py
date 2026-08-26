@@ -127,6 +127,19 @@ class OpenRouterScreener:
         # the policy and the thing being judged cannot share a message. Passed
         # as plain tuples rather than through a prompt template on purpose:
         # a template would format `{...}` in the customer's own text.
+        #
+        # One place in this codebase breaks that rule on purpose, and it is worth
+        # naming here so the exception is a decision rather than a lapse: the
+        # enacted context (094) puts the approved role-play sentence into the
+        # *panelist's* system prompt. It is the only untrusted text that is part
+        # of an identity rather than an object being judged, and identity is what
+        # a system prompt is — it already holds the demographics and the
+        # temperament. 095 measured the alternative and it cost the panel its
+        # discrimination: with the words beside the headlines, in the block framed
+        # as the thing being judged, the panel moved on a pair no description
+        # should touch. The rule is honoured everywhere it is about a judged
+        # object, which is everywhere else, including the call below and the
+        # role-play generator's own two prompts.
         result = self._model.invoke([("system", _POLICY), ("human", text)])
         if not isinstance(result, ScreeningVerdict):
             # `raise`, not `assert`: asserts are stripped under `python -O`, and

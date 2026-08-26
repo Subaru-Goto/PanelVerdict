@@ -28,12 +28,13 @@ from app.main import (
     get_panel_llm,
     get_remaining_credit,
     get_screener,
+    get_generator,
     get_translator,
     get_verifier,
     tracing_enabled,
 )
 from app.persistence import nearest_panelists, persist_pool
-from app.schemas import EvaluateRequest
+from app.schemas import MAX_AUDIENCE_CHARS, EvaluateRequest
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
 from fastapi.testclient import TestClient
@@ -53,6 +54,7 @@ from tests.factories import (
     make_persona,
     ndjson_events,
     pointing,
+    StubGenerator,
     seed_japanese,
     tool_call_message,
     voted,
@@ -74,6 +76,16 @@ _REQUEST_BODY = {
     "headline_b": "Limited time: half price",
     "reading_accepted": True,
 }
+
+
+def _evaluate(client, *, audience: str = "", **overrides):
+    """Start a run that stops at the gate, so the preview can be inspected."""
+    return client.post(
+        "/evaluate",
+        json=_REQUEST_BODY
+        | {"reading_accepted": False, "audience": audience}
+        | overrides,
+    )
 
 
 def _one_run_price() -> float:
@@ -142,6 +154,10 @@ def client(conn, stub_llm, monkeypatch):
     app.dependency_overrides[get_embedder] = lambda: FixedEmbedder(pointing(0))
     # The screener is a model too. None means 'advisory checks do not run'.
     app.dependency_overrides[get_screener] = lambda: None
+    # The generator is a paid model call and, unlike the screener, is not
+    # optional — a run cannot fall back to "no generator" without putting
+    # unclassified text into a panelist identity. So it is stubbed, not disabled.
+    app.dependency_overrides[get_generator] = lambda: StubGenerator()
     # The real saver is Postgres, created by the lifespan — which TestClient
     # only runs as a context manager, and these tests don't. One in-memory
     # saver per fixture: thread durability is test_analyst's subject.
@@ -1843,3 +1859,62 @@ def test_the_preview_allowance_is_bounded(client, conn, monkeypatch) -> None:
     ]
 
     assert codes == [200, 200, 429]
+
+
+class StubGeneratorRefusing:
+    """Refuses everything with one class, so a test can watch a refusal travel."""
+
+    def draft(self, *, words: str):
+        from app.roleplay import RolePlayDraft
+
+        return RolePlayDraft(instruction="", refusal="real_person")
+
+    def check(self, *, instruction: str):
+        from app.roleplay import checked_instruction
+
+        return checked_instruction(instruction, refusal="real_person")
+
+
+class TestTheAudienceField:
+    """094's second input: who the readers are, beyond anything the pool can be
+    filtered by. It becomes one sentence at the gate and reaches every panelist."""
+
+    def test_the_gate_offers_the_sentence_for_approval(self, client, conn) -> None:
+        seed_japanese(conn, 5)
+
+        body = _evaluate(client, audience="a parent of young children").json()
+
+        assert body["preview"]["instruction"] == "You are a parent of young children."
+
+    def test_a_demographics_only_run_offers_nothing_to_approve(
+        self, client, conn
+    ) -> None:
+        seed_japanese(conn, 5)
+
+        body = _evaluate(client).json()
+
+        assert body["preview"]["instruction"] == ""
+
+    def test_a_refused_audience_is_answered_with_a_remedy_not_an_echo(
+        self, client, conn
+    ) -> None:
+        """The refused text never travels — not into the message, not into a log.
+        What comes back is one of our own fixed sentences, naming the fix."""
+        seed_japanese(conn, 5)
+        app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
+        words = "Taylor Swift"
+
+        response = _evaluate(client, audience=words)
+
+        assert response.status_code == 422
+        assert words not in response.json()["detail"]
+        assert "named, real person" in response.json()["detail"]
+
+    def test_an_audience_longer_than_one_identity_can_carry_is_refused(
+        self, client, conn
+    ) -> None:
+        seed_japanese(conn, 5)
+
+        response = _evaluate(client, audience="x" * (MAX_AUDIENCE_CHARS + 1))
+
+        assert response.status_code == 422
