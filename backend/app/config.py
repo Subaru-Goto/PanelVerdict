@@ -177,7 +177,6 @@ class Settings(BaseSettings):
     profile: ProfileName = "dev"
     # Plain Luna, not `-pro`: `TARGET_REASONING_EFFORT = "low"` is a measured setting
     # (targeting-call-effort.md), and `-pro` is the same model served with reasoning mode
-    # fixed at `pro` — so the effort argument may be ignored while output pushes toward
     # TARGET_MAX_COMPLETION_TOKENS, which is the interaction that doc exists to prevent.
     targeting_model: str = "openai/gpt-5.6-luna"
     # Plain Luna for latency, not cost: this one streams to a reader, so time-to-first-token
