@@ -408,10 +408,10 @@ class PanelCounts(BaseModel):
     voted: int
 
 
-# PENDING USER SIGN-OFF (not yet approved): both are judgements about what the
-# product is, not measurements. A headline is a headline — the placeholders in
-# the form run to a few dozen characters — and a target description is a
-# sentence or two of prose; each cap is a generous multiple of that, because
+# PENDING USER SIGN-OFF (not yet approved): a judgement about what the
+# product is, not a measurement. A headline is a headline — the placeholders in
+# the form run to a few dozen characters — and the cap is a generous multiple
+# of that, because
 # being slightly too tight refuses a real customer while being slightly too
 # loose wastes a few hundred tokens. Nobody has surveyed real submissions, so
 # there is no distribution behind these the way there is behind the vote
@@ -420,13 +420,13 @@ class PanelCounts(BaseModel):
 # Size matters more here than in an ordinary API: a headline is rendered into
 # every panelist's prompt, so an unbounded field is not one oversized request
 # but a whole run of them, and the same text reaches the report, the analyst's
-# context and the vote cache key.
+# context and the vote cache key. (The target-description cap retired with the
+# field itself — demographics are controls now, 094.)
 #
 # Only size, not format. The ticket asked for "size/format limits" and format
 # is deliberately absent: a headline is free text in any language, so any
 # allowlist narrow enough to be worth having would refuse real copy.
 MAX_HEADLINE_CHARS = 500
-MAX_TARGET_DESCRIPTION_CHARS = 2000
 # Signed off 2026-08-26 as a launch value (094/#200); revisiting it with usage
 # evidence is 107/#228 — raising is a one-constant change, lowering after launch
 # breaks saved inputs, which is why it starts tight.
@@ -459,9 +459,58 @@ MAX_INSTRUCTION_CHARS = 2 * MAX_AUDIENCE_CHARS
 MAX_CHAT_MESSAGE_CHARS = 2000
 
 
+class PanelEdit(BaseModel):
+    """The demographic controls: the reading as a human sets it.
+
+    One shape for both doors — the form's controls and the gate's edit — so what
+    can be asked for and what can be corrected can never drift apart.
+
+    Narrower than `TargetQuery`, which also carries `coverage` and `notices` —
+    the report's account of how the customer's words were read. Those are the
+    system's testimony about itself, not a filter. A caller-supplied one would
+    falsify the report's provenance and put chosen text in front of the analyst,
+    which reads `query` as context.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    countries: list[Locale] = []
+    min_age: int = Field(
+        default=MIN_PERSONA_AGE, ge=MIN_PERSONA_AGE, le=MAX_PERSONA_AGE
+    )
+    max_age: int = Field(
+        default=MAX_PERSONA_AGE, ge=MIN_PERSONA_AGE, le=MAX_PERSONA_AGE
+    )
+    gender: Gender | None = None
+    income_quintiles: list[int] = []
+    education: list[EducationLevel] = []
+    # No traits: temperament left targeting when the controls arrived (094).
+    # It remains the panel's internal diversity, not a thing customers aim.
+
+    @model_validator(mode="after")
+    def _ages_in_order(self) -> "PanelEdit":
+        """Both ends pass their own bounds, so only the pair can say the range
+        is empty by construction. Refused in the contract, before anything is
+        charged — the guard TargetRequest carried, kept through the controls."""
+        if self.min_age > self.max_age:
+            raise ValueError(
+                f"the age range is empty: from {self.min_age} to {self.max_age} "
+                "— swap the two ends"
+            )
+        return self
+
+
 class EvaluateRequest(BaseModel):
-    # Unbounded below: blank is a real choice, and means the whole pool.
-    target_description: str = Field(max_length=MAX_TARGET_DESCRIPTION_CHARS)
+    # Forbid, not ignore: the frontend deploys separately, so a stale client can
+    # still send the retired `target_description`. Ignoring it would run the
+    # whole pool against a target the customer named — a paid run answering a
+    # different question than asked. A 422 is the honest window behaviour.
+    model_config = ConfigDict(extra="forbid")
+
+    # The demographic controls (094): read straight into SQL, no model involved.
+    # The default is the whole pool — leaving every control alone is a real
+    # choice, not an omission.
+    target: PanelEdit = PanelEdit()
     headline_a: str = Field(min_length=1, max_length=MAX_HEADLINE_CHARS)
     headline_b: str = Field(min_length=1, max_length=MAX_HEADLINE_CHARS)
     # Skip the panel gate: this reading was already approved. Claimed by the
@@ -492,31 +541,6 @@ class EvaluateRequest(BaseModel):
                 "approved there"
             )
         return self
-
-
-class PanelEdit(BaseModel):
-    """The parts of a reading a human may edit at the gate.
-
-    Narrower than `TargetQuery`, which also carries `coverage` and `notices` —
-    the report's account of how the customer's words were read. Those are the
-    system's testimony about itself, not a filter. A caller-supplied one would
-    falsify the report's provenance and put chosen text in front of the analyst,
-    which reads `query` as context.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    countries: list[Locale] = []
-    min_age: int = Field(
-        default=MIN_PERSONA_AGE, ge=MIN_PERSONA_AGE, le=MAX_PERSONA_AGE
-    )
-    max_age: int = Field(
-        default=MAX_PERSONA_AGE, ge=MIN_PERSONA_AGE, le=MAX_PERSONA_AGE
-    )
-    gender: Gender | None = None
-    income_quintiles: list[int] = []
-    education: list[EducationLevel] = []
-    traits: list[TraitRequest] = []
 
 
 class ResumeRequest(BaseModel):

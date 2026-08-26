@@ -19,6 +19,10 @@ const { evaluateMock, resumeMock } = vi.hoisted(() => ({
 vi.mock("../app/lib/api", () => ({
   evaluate: evaluateMock,
   resumeEvaluate: resumeMock,
+  // The real constants: the mock replaces the paid calls, not the vocabulary.
+  LOCALES: ["US", "JP", "DE"],
+  MIN_PANEL_AGE: 18,
+  MAX_PANEL_AGE: 100,
 }));
 
 const RESPONSE = makeResponse();
@@ -30,9 +34,7 @@ afterEach(() => {
 });
 
 async function fillAndSubmit() {
-  fireEvent.change(screen.getByLabelText(/who should judge/i), {
-    target: { value: "Japanese homeowners" },
-  });
+  fireEvent.click(screen.getByRole("checkbox", { name: /japan/i }));
   fireEvent.change(screen.getByLabelText(/headline a/i), {
     target: { value: "Save 50% today" },
   });
@@ -88,26 +90,69 @@ describe("EvaluateForm", () => {
 
     expect(button.hasAttribute("disabled")).toBe(false);
     fireEvent.click(button);
-    expect(evaluateMock).toHaveBeenCalledWith({
-      targetDescription: "",
-      audience: "",
-      headlineA: "Save 50% today",
-      headlineB: "Members save half",
-    });
+    expect(evaluateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ countries: [] }),
+        audience: "",
+        headlineA: "Save 50% today",
+        headlineB: "Members save half",
+      }),
+    );
   });
 
-  it("sends all three fields to evaluate", async () => {
+  it("sends the controls and both headlines to evaluate", async () => {
     evaluateMock.mockResolvedValue(RESPONSE);
     render(<EvaluateForm />);
 
     await fillAndSubmit();
 
-    expect(evaluateMock).toHaveBeenCalledWith({
-      targetDescription: "Japanese homeowners",
-      audience: "",
-      headlineA: "Save 50% today",
-      headlineB: "Members save half",
+    expect(evaluateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ countries: ["JP"] }),
+        headlineA: "Save 50% today",
+        headlineB: "Members save half",
+      }),
+    );
+  });
+
+  it("keeps submit unclickable while the age range is empty", () => {
+    // Both ends pass their own bounds, so only the pair says the range is
+    // empty; the backend refuses it too, but a submit that cannot succeed
+    // should not be clickable.
+    render(<EvaluateForm />);
+
+    fireEvent.change(screen.getByLabelText(/age from/i), {
+      target: { value: "50" },
     });
+    fireEvent.change(screen.getByLabelText(/age to/i), {
+      target: { value: "30" },
+    });
+    fireEvent.change(screen.getByLabelText(/headline a/i), {
+      target: { value: "a" },
+    });
+    fireEvent.change(screen.getByLabelText(/headline b/i), {
+      target: { value: "b" },
+    });
+
+    expect(
+      (screen.getByRole("button", { name: /evaluate/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("offers the four controls and no free-text target", () => {
+    // Demographics come from controls because controls cannot be misread
+    // (094): country, age, gender, education, income — and the retired
+    // description field must not quietly survive.
+    render(<EvaluateForm />);
+
+    expect(screen.queryByLabelText(/who should judge/i)).toBeNull();
+    expect(screen.getByRole("checkbox", { name: /japan/i })).toBeTruthy();
+    expect(screen.getByLabelText(/age from/i)).toBeTruthy();
+    expect(screen.getByLabelText(/age to/i)).toBeTruthy();
+    expect(screen.getByLabelText(/gender/i)).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /tertiary/i })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /q1/i })).toBeTruthy();
   });
 
   it("renders notices with warnings distinguishable from readings", async () => {

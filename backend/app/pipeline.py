@@ -428,8 +428,9 @@ def run_panel_test(
 ) -> PanelTestResult:
     """Select a panel, buy its votes, read the verdict — the whole run, ungated.
 
-    The graph (`app/graph.py`) calls the same three steps with a human gate
-    between the first and the second.
+    The experiment pipeline only: the product's graph settles its reading from
+    the controls and never translates (094), so this is the one caller the
+    translator has left.
     """
     selection = select_panel(conn, description, size=size, translator=translator)
     # Refused before the panel model is touched: nothing has been spent yet on a

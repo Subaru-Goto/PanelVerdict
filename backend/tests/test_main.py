@@ -7,7 +7,6 @@ import psycopg
 import pytest
 from app.config import (
     PROFILES,
-    USD_PER_PREVIEW,
     USD_PER_ROLEPLAY,
     USD_PER_VOTE,
     PanelProfile,
@@ -30,7 +29,6 @@ from app.main import (
     get_remaining_credit,
     get_screener,
     get_generator,
-    get_translator,
     get_verifier,
     tracing_enabled,
 )
@@ -49,7 +47,6 @@ from pydantic import SecretStr
 from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
-    StubTranslator,
     make_assembled,
     make_panel_vote,
     make_persona,
@@ -72,7 +69,7 @@ _SIZE = settings.panel.size
 # through the gate would test the gate over and over instead. The gate's own
 # behaviour is tested below, through the same endpoint.
 _REQUEST_BODY = {
-    "target_description": "Japanese homeowners",
+    "target": {"countries": ["JP"]},
     "headline_a": "Save 50% today",
     "headline_b": "Limited time: half price",
     "reading_accepted": True,
@@ -90,8 +87,9 @@ def _evaluate(client, *, audience: str = "", **overrides):
 
 
 def _one_run_price() -> float:
-    """What a whole run costs the pool: the preview, then the panel it buys."""
-    return USD_PER_PREVIEW + settings.panel.size * USD_PER_VOTE
+    """What a whole run costs the pool. The gate visit itself is free since the
+    controls replaced translation (094): only the votes are paid."""
+    return settings.panel.size * USD_PER_VOTE
 
 
 # The same run, arriving the way a first-time reader's does: unapproved.
@@ -106,7 +104,7 @@ _EDITABLE = (
     "gender",
     "income_quintiles",
     "education",
-    "traits",
+    # No traits: temperament left targeting with the controls (094).
 )
 
 
@@ -117,7 +115,7 @@ def _edit(query: dict) -> dict:
 @pytest.fixture
 def client(conn, stub_llm, monkeypatch):
     """The app with every paid or external dependency replaced: the testcontainer
-    connection, a canned translator, and a stub panel model.
+    connection and a stub panel model.
 
     The edge guard's settings are pinned to their declared defaults, not left
     to the ambient environment: `Settings` reads the repo-root `.env`, so a
@@ -138,10 +136,9 @@ def client(conn, stub_llm, monkeypatch):
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
     # Every override is a zero-argument callable, never the class itself: FastAPI
-    # reads an override's signature as a dependency, so `StubTranslator` bare would
-    # turn its `request: TargetRequest` parameter into the endpoint's body model.
+    # reads a bare class's __init__ signature as a dependency and would turn its
+    # parameters into the endpoint's body model.
     app.dependency_overrides[get_conn] = lambda: conn
-    app.dependency_overrides[get_translator] = lambda: StubTranslator()
     app.dependency_overrides[get_panel_llm] = lambda: stub_llm(
         chosen="option_1", reason="clear discount framing"
     )
@@ -172,16 +169,11 @@ def test_a_caller_without_the_shared_secret_cannot_start_a_paid_run(
     client, conn, monkeypatch
 ) -> None:
     """045/#143: the browser's proxy holds the secret; a caller without it gets
-    401 and — the property that matters — costs nothing: neither the translator
-    nor the panel model is ever invoked. CORS is a browser courtesy, so this
-    refusal is the only thing standing between curl and $0.145 a run."""
+    401 and — the property that matters — costs nothing: the panel model is
+    never invoked. CORS is a browser courtesy, so this refusal is the only
+    thing standing between curl and $0.145 a run."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
-    calls = {"translate": 0, "vote": 0}
-
-    class CountingTranslator:
-        def translate(self, request):
-            calls["translate"] += 1
-            return StubTranslator().translate(request)
+    calls = {"vote": 0}
 
     class CountingLLM:
         configuration = "stub"
@@ -190,14 +182,13 @@ def test_a_caller_without_the_shared_secret_cannot_start_a_paid_run(
             calls["vote"] += 1
             return voted()
 
-    app.dependency_overrides[get_translator] = lambda: CountingTranslator()
     app.dependency_overrides[get_panel_llm] = lambda: CountingLLM()
     seed_japanese(conn, 5)
 
     response = client.post("/evaluate", json=_REQUEST_BODY)
 
     assert response.status_code == 401
-    assert calls == {"translate": 0, "vote": 0}
+    assert calls == {"vote": 0}
 
 
 def test_the_proxy_with_the_right_secret_passes_the_gate(
@@ -550,7 +541,7 @@ def test_a_run_priced_at_the_cap_is_admitted_not_refused(
     monkeypatch.setattr(
         settings,
         "global_daily_cap_usd",
-        float(Decimal(str(USD_PER_PREVIEW)) + Decimal(str(USD_PER_VOTE)) * 3),
+        float(Decimal(str(USD_PER_VOTE)) * 3),
     )
     seed_japanese(conn, 3)
 
@@ -1062,7 +1053,7 @@ class TestInputLimits:
 
     def _payload(self, **over: str) -> dict[str, str]:
         return {
-            "target_description": "US adults",
+            "target": {"countries": ["US"]},
             "headline_a": "Save 50%",
             "headline_b": "Half price",
         } | over
@@ -1072,9 +1063,13 @@ class TestInputLimits:
             client.post("/evaluate", json=self._payload(headline_a="x" * 5000))
         ).status_code == 422
 
-    def test_an_oversized_target_is_refused(self, client) -> None:
+    def test_a_malformed_target_is_refused(self, client) -> None:
+        """The controls are validated shape, not free text: an unknown filter
+        must 422 rather than silently widen or narrow the panel."""
         assert (
-            client.post("/evaluate", json=self._payload(target_description="x" * 5000))
+            client.post(
+                "/evaluate", json=self._payload(target={"coverage": "requested"})
+            )
         ).status_code == 422
 
     def test_an_empty_headline_is_refused(self, client) -> None:
@@ -1089,8 +1084,6 @@ class TestInputLimits:
         about the cap being generous enough for real copy — not about anything
         the endpoint then does with it."""
         EvaluateRequest(
-            target_description="Japanese homeowners in their 40s who research "
-            "carefully before buying anything expensive. " * 3,
             headline_a="Members save half price this week — ends Sunday",
             headline_b="Save 50% today",
         )
@@ -1099,8 +1092,10 @@ class TestInputLimits:
 def test_every_untrusted_field_reaches_the_screener_before_the_panel(
     client, conn
 ) -> None:
-    """The wiring, which nothing else asserts: both headlines and the target are
-    screened, and screening happens before any panelist is bought."""
+    """The wiring, which nothing else asserts: both headlines are screened, and
+    screening happens before any panelist is bought. The target stopped being
+    text when the controls replaced translation (094), so there is nothing of
+    it to screen — the audience has its own classifier, not this screener."""
     seen: list[str] = []
 
     class Recording:
@@ -1115,7 +1110,6 @@ def test_every_untrusted_field_reaches_the_screener_before_the_panel(
 
     assert response.status_code == 200
     assert set(seen) == {
-        _REQUEST_BODY["target_description"],
         _REQUEST_BODY["headline_a"],
         _REQUEST_BODY["headline_b"],
     }
@@ -1929,21 +1923,24 @@ class TestTheRewriteIsCharged:
     def _cap(self, monkeypatch, usd: Decimal) -> None:
         monkeypatch.setattr(settings, "global_daily_cap_usd", float(usd))
 
-    def test_a_demographics_only_preview_still_costs_two_calls(
+    def test_a_demographics_only_preview_costs_the_pool_nothing(
         self, client, conn, monkeypatch
     ) -> None:
+        """Controls are SQL and the gate is free (094): a budget smaller than
+        any model call still admits the visit — there is nothing to pay for.
+        (Not zero: a cap of 0 is the documented disable switch.)"""
         seed_japanese(conn, 5)
-        self._cap(monkeypatch, Decimal(str(USD_PER_PREVIEW)))
+        self._cap(monkeypatch, Decimal(str(USD_PER_VOTE)))
 
         assert _evaluate(client).status_code == 200
 
-    def test_audience_words_cost_the_pool_one_call_more(
+    def test_audience_words_cost_the_pool_one_call(
         self, client, conn, monkeypatch
     ) -> None:
-        """Same budget, same panel — the only difference is that a sentence had
-        to be written, and the pool is asked to pay for it."""
+        """Same sub-rewrite budget, same panel — the only difference is that a
+        sentence had to be written, and the pool is asked to pay for it."""
         seed_japanese(conn, 5)
-        self._cap(monkeypatch, Decimal(str(USD_PER_PREVIEW)))
+        self._cap(monkeypatch, Decimal(str(USD_PER_VOTE)))
 
         response = _evaluate(client, audience="a parent of young children")
 
@@ -1956,14 +1953,14 @@ class TestTheRewriteIsCharged:
         )
 
     def _budget_for_one_gated_run(self) -> Decimal:
-        """Written figures only: preview + rewrite + the panel the profile buys.
+        """Written figures only: the rewrite + the panel the profile buys. The
+        gate visit itself is free since the controls replaced translation.
 
         The panel is charged at the profile's size, not the number of personas
         seeded — the purchase is priced on what a run may buy.
         """
         return (
-            Decimal(str(USD_PER_PREVIEW))
-            + Decimal(str(USD_PER_ROLEPLAY))
+            Decimal(str(USD_PER_ROLEPLAY))
             + Decimal(str(USD_PER_VOTE)) * settings.panel.size
         )
 
@@ -2001,10 +1998,7 @@ class TestTheRewriteIsCharged:
     ) -> None:
         """The other half, so the refusal above is the price and not the words."""
         seed_japanese(conn, 5)
-        self._cap(
-            monkeypatch,
-            Decimal(str(USD_PER_PREVIEW)) + Decimal(str(USD_PER_ROLEPLAY)),
-        )
+        self._cap(monkeypatch, Decimal(str(USD_PER_ROLEPLAY)))
 
         response = _evaluate(client, audience="a parent of young children")
 
@@ -2169,3 +2163,126 @@ def test_a_draft_can_always_be_edited_back(client, conn) -> None:
         ResumeRequest(thread_id="t", action="accept", instruction=longest).instruction
         == longest
     )
+
+
+# ---------------------------------------------------------------------------
+# 094/#200: the four controls replace translated demographics end to end.
+# Demographics come from controls because controls cannot be misread; no model
+# reads them, and the run's reading is exactly what the caller set.
+
+
+def test_the_controls_are_the_reading_and_no_model_reads_them(client, conn) -> None:
+    seed_japanese(conn, 5)
+
+    paused = _evaluate(
+        client,
+        target={"countries": ["JP"], "min_age": 30, "max_age": 50},
+    )
+
+    assert paused.status_code == 200
+    query = paused.json()["preview"]["query"]
+    assert query["countries"] == ["JP"]
+    assert (query["min_age"], query["max_age"]) == (30, 50)
+    # Controls cannot be misread, so there is no coverage ladder to report.
+    assert query["coverage"] == "requested"
+
+
+def test_no_controls_means_the_whole_pool_and_says_so(client, conn) -> None:
+    seed_japanese(conn, 5)
+
+    paused = _evaluate(client, target={})
+
+    assert paused.status_code == 200, paused.text
+    messages = [n["message"] for n in paused.json()["preview"]["notices"]]
+    assert any("cross-section" in m for m in messages)
+
+
+def test_the_old_free_text_field_is_refused_not_ignored(client, conn) -> None:
+    """The frontend deploys separately from the backend, so a stale client can
+    send `target_description` to a backend that no longer reads it. Ignoring
+    it would run the whole pool against a target the customer named — a paid
+    run answering a different question than asked. Refusal is the honest
+    window behaviour."""
+    seed_japanese(conn, 5)
+
+    refused = client.post(
+        "/evaluate",
+        json={
+            "target_description": "Japanese homeowners",
+            "headline_a": "a",
+            "headline_b": "b",
+        },
+    )
+
+    assert refused.status_code == 422
+
+
+def test_a_demographics_only_preview_spends_nothing(client, conn) -> None:
+    """No translation, no pre-gate screening, no audience: the first model
+    call is the run itself, so reaching the gate must cost the pool $0."""
+    seed_japanese(conn, 5)
+
+    paused = _evaluate(client, target={"countries": ["JP"]})
+
+    assert paused.status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT coalesce(sum(usd), 0) FROM spend_ledger")
+        row = cur.fetchone()
+    assert row is not None and float(row[0]) == 0.0
+
+
+def test_an_audience_preview_spends_exactly_one_rewrite(client, conn) -> None:
+    seed_japanese(conn, 5)
+
+    paused = _evaluate(client, audience="keen runners", target={"countries": ["JP"]})
+
+    assert paused.status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT coalesce(sum(usd), 0) FROM spend_ledger")
+        row = cur.fetchone()
+    assert row is not None and float(row[0]) == float(USD_PER_ROLEPLAY)
+
+
+def test_an_inverted_age_range_is_refused_in_the_contract(client, conn) -> None:
+    """Both ends pass their own bounds, so only the pair can say it is empty by
+    construction. Refused before any dependency runs — the old TargetRequest
+    had this guard and the controls must not lose it — instead of surfacing as
+    a paid-preview "no persona matches"."""
+    seed_japanese(conn, 5)
+
+    refused = _evaluate(client, target={"min_age": 50, "max_age": 30})
+
+    assert refused.status_code == 422
+    # A schema refusal, not a paid preview that found an empty room: the
+    # attempt must not have been recorded against the caller's allowance.
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM request_ledger")
+        row = cur.fetchone()
+    assert row is not None and row[0] == 0
+
+
+def test_a_skipped_gate_charges_the_one_check_once(client, conn, monkeypatch) -> None:
+    """With reading_accepted the rewrite never runs — the validator forces the
+    approved instruction through — so the only roleplay-priced call is the
+    check in _approved_on_entry. A budget of exactly check + panel must admit
+    the run; charging the phantom rewrite too would refuse it."""
+    seed_japanese(conn, 5)
+    monkeypatch.setattr(
+        settings,
+        "global_daily_cap_usd",
+        float(
+            Decimal(str(USD_PER_ROLEPLAY))
+            + Decimal(str(USD_PER_VOTE)) * settings.panel.size
+        ),
+    )
+
+    response = client.post(
+        "/evaluate",
+        json=_REQUEST_BODY
+        | {
+            "audience": "keen runners",
+            "instruction": "You are a keen runner.",
+        },
+    )
+
+    assert response.status_code == 200, response.text

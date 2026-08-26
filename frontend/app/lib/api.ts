@@ -94,6 +94,13 @@ export type CoverageRung = "requested" | "approximated" | "unmatched";
 
 export type Locale = "US" | "JP" | "DE";
 
+/** Every locale the pool holds, and its age span — mirrors the backend's
+ *  Locale enum and MIN/MAX_PERSONA_AGE. One place, so the form's controls and
+ *  the gate's fact rows cannot drift apart. */
+export const LOCALES: Locale[] = ["US", "JP", "DE"];
+export const MIN_PANEL_AGE = 18;
+export const MAX_PANEL_AGE = 100;
+
 export type EducationLevel = "below_secondary" | "secondary" | "tertiary";
 
 export type TargetQuery = {
@@ -135,7 +142,9 @@ export type EvaluateResponse = {
 /** An object rather than three same-typed positional strings — a swap would
  *  type-check. Named once here; the hook reuses it. */
 export type EvaluateInput = {
-  targetDescription: string;
+  /** The demographic controls (094): read by SQL, never by a model. Absent or
+   *  empty means the whole pool — a real choice, not an omission. */
+  target?: Partial<PanelEdit>;
   headlineA: string;
   headlineB: string;
   /** Who the readers are beyond anything the pool can be filtered by — life
@@ -193,7 +202,7 @@ export type PanelEdit = {
   gender: Gender | null;
   income_quintiles: number[];
   education: EducationLevel[];
-  traits: TraitRequest[];
+  // No traits: temperament left targeting with the controls (094).
 };
 
 export type GateAnswer = {
@@ -246,7 +255,7 @@ export async function evaluate(
     method: "POST",
     headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify({
-      target_description: request.targetDescription,
+      target: request.target ?? {},
       headline_a: request.headlineA,
       headline_b: request.headlineB,
       reading_accepted: request.readingAccepted ?? false,

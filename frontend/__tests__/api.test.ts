@@ -20,7 +20,7 @@ describe("evaluate", () => {
     const fetchMock = mockFetch(200, RESPONSE);
 
     const result = await evaluate({
-      targetDescription: "Japanese homeowners",
+      target: { countries: ["JP"] },
       headlineA: "Save 50% today",
       headlineB: "Members save half",
     });
@@ -32,7 +32,10 @@ describe("evaluate", () => {
     // The exact keys EvaluateRequest requires — the missing target_description
     // is what made every submit a 422 before this slice.
     expect(JSON.parse(init.body as string)).toEqual({
-      target_description: "Japanese homeowners",
+      // The controls are the reading (094): structured, read by SQL, and the
+      // retired target_description must never reappear — the backend forbids
+      // unknown fields exactly so a stale bundle fails loudly.
+      target: { countries: ["JP"] },
       headline_a: "Save 50% today",
       headline_b: "Members save half",
       // Nothing approved yet, so the panel gate stops this run.
@@ -48,7 +51,6 @@ describe("evaluate", () => {
     const fetchMock = mockFetch(200, RESPONSE);
 
     await evaluate({
-      targetDescription: "",
       headlineA: "a",
       headlineB: "b",
       audience: "night-shift workers who commute by car",
@@ -69,7 +71,7 @@ describe("evaluate", () => {
     });
 
     await expect(
-      evaluate({ targetDescription: "x", headlineA: "a", headlineB: "b" }),
+      evaluate({ headlineA: "a", headlineB: "b" }),
     ).rejects.toThrow(/Top up and re-run/);
   });
 
@@ -81,7 +83,7 @@ describe("evaluate", () => {
     });
 
     await expect(
-      evaluate({ targetDescription: "x", headlineA: "a", headlineB: "b" }),
+      evaluate({ headlineA: "a", headlineB: "b" }),
     ).rejects.toThrow("API responded 422");
   });
 });

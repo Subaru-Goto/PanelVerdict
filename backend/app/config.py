@@ -95,13 +95,6 @@ USD_PER_VOTE = 0.0002
 # so this over-states the cost — the safe direction for a ceiling.
 USD_PER_TRANSLATION = 0.0012
 
-# What a preview costs the pool: the two model calls a run makes before the gate,
-# one translation and one screening. Written as a figure rather than a sum
-# because `_usd` takes written figures only; test_config pins it to its parts.
-# The screening half is priced at USD_PER_VOTE, the one measured single-call
-# figure here. Headline screening is not in it — that sits behind the gate.
-USD_PER_PREVIEW = 0.0014
-
 # What one rewrite charges the day's pool: the audience words turned into one
 # panelist instruction, plus the classification that rides the same call.
 #
@@ -148,11 +141,11 @@ class Settings(BaseSettings):
     # something once the caller is a verified subject id rather than a
     # forwarded address, since an address costs nothing to change.
     evaluate_runs_per_day: int = 3
-    # Previews are not purchases, so they get their own, looser cap. Derived
-    # against the prod panel the deploy runs: 25 x USD_PER_PREVIEW = $0.035,
-    # under the $0.04 of one panel (200 x USD_PER_VOTE) this caller may buy. So
-    # a whole allowance spent looking still costs the day less than one run, and
-    # 25 is ~8 previews per purchasable panel. 0 disables.
+    # Previews are not purchases, so they get their own, looser cap. A
+    # demographics-only preview costs the pool nothing since the controls
+    # replaced translation (094), so the cap now bounds probing rather than
+    # spend; the worst case is 25 rewrites, 25 x USD_PER_ROLEPLAY = $0.03,
+    # still under the $0.04 of one panel (200 x USD_PER_VOTE). 0 disables.
     evaluate_previews_per_day: int = 25
     # Bounded by structure, not price — honestly flagged: no per-turn dollar
     # measurement exists yet (unlike USD_PER_VOTE). A turn's model calls are

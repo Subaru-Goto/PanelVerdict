@@ -16,7 +16,7 @@ vi.mock("../app/lib/auth", () => ({ authHeaders: vi.fn().mockResolvedValue({}) }
 
 afterEach(() => vi.unstubAllGlobals());
 
-const INPUT = { targetDescription: "t", headlineA: "a", headlineB: "b" };
+const INPUT = { headlineA: "a", headlineB: "b" };
 
 const QUERY: TargetQuery = {
   countries: ["JP"],
