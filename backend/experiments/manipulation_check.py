@@ -329,7 +329,6 @@ def main() -> None:
         framing.id: OpenRouterPanelLLM(
             api_key=settings.openrouter_api_key.get_secret_value(),
             base_url=settings.openrouter_base_url,
-            provider=settings.model_provider,
             model=args.model,
             question=framing.question,
         )

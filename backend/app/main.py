@@ -208,7 +208,6 @@ def get_panel_llm() -> PanelLLM:
     return OpenRouterPanelLLM(
         api_key=_require_api_key(),
         base_url=settings.openrouter_base_url,
-        provider=settings.model_provider,
         model=settings.panel.model,
     )
 
@@ -223,7 +222,6 @@ def get_screener() -> Screener | None:
     return OpenRouterScreener(
         api_key=key.get_secret_value(),
         base_url=settings.openrouter_base_url,
-        provider=settings.model_provider,
         model=settings.screening_model,
     )
 
@@ -233,7 +231,6 @@ def get_translator() -> TargetTranslator:
     return OpenRouterTargetTranslator(
         api_key=_require_api_key(),
         base_url=settings.openrouter_base_url,
-        provider=settings.model_provider,
         model=settings.targeting_model,
     )
 
@@ -244,7 +241,6 @@ def get_embedder() -> Embedder:
     return OpenRouterEmbedder(
         api_key=_require_api_key(),
         base_url=settings.openrouter_base_url,
-        provider=settings.model_provider,
         model=settings.embedding_model,
     )
 
@@ -253,7 +249,6 @@ def get_analyst() -> BaseChatModel:
     return analyst_chat_model(
         api_key=_require_api_key(),
         base_url=settings.openrouter_base_url,
-        provider=settings.model_provider,
         model=settings.analyst_model,
     )
 

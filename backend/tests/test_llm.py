@@ -290,7 +290,6 @@ def test_a_reasoning_effort_is_sent_as_the_unified_object() -> None:
     llm = OpenRouterPanelLLM(
         api_key="test",
         base_url="http://openrouter.invalid",
-        provider="openai",
         model="openai/gpt-5-mini",
         reasoning_effort="low",
     )
@@ -310,7 +309,6 @@ def test_the_default_arm_sends_no_reasoning_parameter_at_all() -> None:
     llm = OpenRouterPanelLLM(
         api_key="test",
         base_url="http://openrouter.invalid",
-        provider="openai",
         model="openai/gpt-5-mini",
     )
     bound = _bound_model(llm)
@@ -331,7 +329,6 @@ def test_two_adapters_built_the_same_way_share_a_cache_key() -> None:
     base = {
         "api_key": "test",
         "base_url": "http://openrouter.invalid",
-        "provider": "openai",
     }
 
     first = OpenRouterPanelLLM(**base, model="openai/gpt-5-mini")
@@ -374,7 +371,6 @@ def test_configuration_declares_everything_the_adapter_binds() -> None:
     base = {
         "api_key": "test",
         "base_url": "http://openrouter.invalid",
-        "provider": "openai",
     }
     configurations = [
         OpenRouterPanelLLM(**base, model="openai/gpt-5-mini").configuration,
@@ -399,13 +395,15 @@ def test_how_a_vote_is_carried_is_not_part_of_its_identity() -> None:
     wire delivered it, so changing the carrier must not re-key votes already
     paid for.
 
-    Worth pinning because the tempting change is the wrong one: `provider` is a
-    constructor argument the adapter binds, and a reader working from the test
-    above would fold it in for consistency. That silently orphans every row in
-    the `votes` ledger — the next run re-buys the panel and reports success,
-    because a cache miss is indistinguishable from a first ask.
+    Worth pinning because the tempting change is the wrong one: a reader adding
+    a constructor argument would fold it in for consistency. That silently
+    orphans every row in the `votes` ledger — the next run re-buys the panel and
+    reports success, because a cache miss is indistinguishable from a first ask.
+    (Which langchain client builds the request used to be such an argument. It is
+    now `llm.LANGCHAIN_INTEGRATION`, a constant, so it cannot reach the key by
+    accident — but the next argument can.)
     """
-    asked = {"model": "openai/gpt-5-mini", "provider": "openai"}
+    asked = {"model": "openai/gpt-5-mini"}
 
     assert (
         OpenRouterPanelLLM(
@@ -415,9 +413,9 @@ def test_how_a_vote_is_carried_is_not_part_of_its_identity() -> None:
             api_key="two", base_url="http://two.invalid", **asked
         ).configuration
     )
-    # Spelled as the exact key set rather than a `not in` check: `provider`'s
-    # value is a substring of every model id here, so absence cannot be asserted
-    # on the serialized text.
+    # Spelled as the exact key set rather than a `not in` check: what must be
+    # absent cannot be asserted on the serialized text, since a carrier's name is
+    # a substring of the model ids here.
     assert set(
         json.loads(OpenRouterPanelLLM(api_key="k", base_url="u", **asked).configuration)
     ) == {
@@ -435,7 +433,6 @@ def test_the_vote_call_carries_the_measured_read_timeout() -> None:
     llm = OpenRouterPanelLLM(
         api_key="test",
         base_url="http://openrouter.invalid",
-        provider="openai",
         model="openai/gpt-5-mini",
     )
 
@@ -459,7 +456,6 @@ def test_the_translator_caps_its_output_and_asks_for_little_reasoning() -> None:
     translator = OpenRouterTargetTranslator(
         api_key="test",
         base_url="http://openrouter.invalid",
-        provider="openai",
         model="openai/gpt-5-mini",
     )
     bound = translator._model.steps[0]
@@ -485,7 +481,6 @@ def test_every_paid_call_is_bounded_and_none_inherits_the_sdk_default() -> None:
     transport = {
         "api_key": "test",
         "base_url": "http://openrouter.invalid",
-        "provider": "openai",
     }
     bound = {
         "translator": OpenRouterTargetTranslator(
@@ -528,7 +523,6 @@ class TestOutOfCreditTranslation:
         llm = OpenRouterPanelLLM(
             api_key="test",
             base_url="http://openrouter.invalid",
-            provider="openai",
             model="openai/gpt-5-mini",
         )
         llm._model = self._Raising(status)

@@ -10,6 +10,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from openai import APIStatusError
 
+from app.config import LANGCHAIN_INTEGRATION
 from app.schemas import (
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
@@ -28,6 +29,7 @@ from app.vote import OutOfCredit, VoteResponse, VoteUsage
 
 
 VOTE_QUESTION = "Which do you prefer?"
+
 
 # OpenRouter's documented vocabulary for the GPT-5 series. Named as a closed set because
 # an unrecognised effort is accepted by the request and then silently does nothing, which
@@ -303,7 +305,6 @@ class OpenRouterPanelLLM:
         *,
         api_key: str,
         base_url: str,
-        provider: str,
         model: str,
         question: str = VOTE_QUESTION,
         reasoning_effort: ReasoningEffort | None = None,
@@ -368,7 +369,7 @@ class OpenRouterPanelLLM:
         # Left unset by default, so the default arm is the provider's own default effort.
         self._model = init_chat_model(
             model=model,
-            model_provider=provider,
+            model_provider=LANGCHAIN_INTEGRATION,
             base_url=base_url,
             api_key=api_key,
             max_retries=2,
@@ -402,9 +403,7 @@ class OpenRouterPanelLLM:
         return _vote_response(result, seconds=seconds)
 
 
-def analyst_chat_model(
-    *, api_key: str, base_url: str, provider: str, model: str
-) -> BaseChatModel:
+def analyst_chat_model(*, api_key: str, base_url: str, model: str) -> BaseChatModel:
     """The bare chat model `create_agent` drives for the analyst.
 
     Just construction: tool binding, the loop, and error shaping all belong to
@@ -414,7 +413,7 @@ def analyst_chat_model(
     """
     return init_chat_model(
         model=model,
-        model_provider=provider,
+        model_provider=LANGCHAIN_INTEGRATION,
         base_url=base_url,
         api_key=api_key,
         max_retries=2,
@@ -454,9 +453,7 @@ class OpenRouterTargetTranslator:
     to them.
     """
 
-    def __init__(
-        self, *, api_key: str, base_url: str, provider: str, model: str
-    ) -> None:
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         # Bounded like a vote rather than by a new constant, because the client-side
         # deadline was already derived treating this as one more request of the same
         # family as a vote — so an unbounded translator contradicted a derivation the
@@ -477,7 +474,7 @@ class OpenRouterTargetTranslator:
         # because every figure in targeting-call-effort.md came off `cost`.
         self._model = init_chat_model(
             model=model,
-            model_provider=provider,
+            model_provider=LANGCHAIN_INTEGRATION,
             base_url=base_url,
             api_key=api_key,
             max_retries=2,
@@ -496,9 +493,7 @@ class OpenRouterTargetTranslator:
 class OpenRouterEmbedder:
     """Embedder backed by OpenRouter's embeddings endpoint via LangChain."""
 
-    def __init__(
-        self, *, api_key: str, base_url: str, provider: str, model: str
-    ) -> None:
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         # `provider=`, not `model_provider=`: the embeddings initialiser spells the
         # same argument differently from the chat one.
         # The vote's timeout is reused as a **ceiling**, not an estimate: an embedding
@@ -514,7 +509,7 @@ class OpenRouterEmbedder:
         # the module uses, which is the point.
         self._embeddings = init_embeddings(
             model=model,
-            provider=provider,
+            provider=LANGCHAIN_INTEGRATION,
             base_url=base_url,
             api_key=api_key,
             max_retries=2,
@@ -529,15 +524,13 @@ class OpenRouterJudge:
     """Judge backed by an OpenRouter chat model via LangChain: it scores an
     output against written criteria rather than a reference answer (G-Eval)."""
 
-    def __init__(
-        self, *, api_key: str, base_url: str, provider: str, model: str
-    ) -> None:
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         # Same model and provider as a vote, so the same bound, per `analyst_chat_model`'s
         # precedent for reusing it rather than minting a second number. This one runs
         # inside the seed CLI, where an unbounded hang stalls a paid pool build.
         self._model = init_chat_model(
             model=model,
-            model_provider=provider,
+            model_provider=LANGCHAIN_INTEGRATION,
             base_url=base_url,
             api_key=api_key,
             max_retries=2,
