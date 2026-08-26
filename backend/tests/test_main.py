@@ -8,6 +8,7 @@ import pytest
 from app.config import (
     PROFILES,
     USD_PER_PREVIEW,
+    USD_PER_ROLEPLAY,
     USD_PER_VOTE,
     PanelProfile,
     Settings,
@@ -1918,3 +1919,93 @@ class TestTheAudienceField:
         response = _evaluate(client, audience="x" * (MAX_AUDIENCE_CHARS + 1))
 
         assert response.status_code == 422
+
+
+class TestTheRewriteIsCharged:
+    """The rewrite is a model call sitting in front of the gate, and previews sit
+    outside the runs allowance. Left unmetered it would be a free LLM endpoint
+    behind sign-in — so it is charged to the day's pool like anything else."""
+
+    def _cap(self, monkeypatch, usd: Decimal) -> None:
+        monkeypatch.setattr(settings, "global_daily_cap_usd", float(usd))
+
+    def test_a_demographics_only_preview_still_costs_two_calls(
+        self, client, conn, monkeypatch
+    ) -> None:
+        seed_japanese(conn, 5)
+        self._cap(monkeypatch, Decimal(str(USD_PER_PREVIEW)))
+
+        assert _evaluate(client).status_code == 200
+
+    def test_audience_words_cost_the_pool_one_call_more(
+        self, client, conn, monkeypatch
+    ) -> None:
+        """Same budget, same panel — the only difference is that a sentence had
+        to be written, and the pool is asked to pay for it."""
+        seed_japanese(conn, 5)
+        self._cap(monkeypatch, Decimal(str(USD_PER_PREVIEW)))
+
+        response = _evaluate(client, audience="a parent of young children")
+
+        assert response.status_code == 429
+
+    def _resume(self, client, thread_id: str, **body):
+        return client.post(
+            "/evaluate/resume",
+            json={"thread_id": thread_id, "action": "accept"} | body,
+        )
+
+    def _budget_for_one_gated_run(self) -> Decimal:
+        """Written figures only: preview + rewrite + the panel the profile buys.
+
+        The panel is charged at the profile's size, not the number of personas
+        seeded — the purchase is priced on what a run may buy.
+        """
+        return (
+            Decimal(str(USD_PER_PREVIEW))
+            + Decimal(str(USD_PER_ROLEPLAY))
+            + Decimal(str(USD_PER_VOTE)) * settings.panel.size
+        )
+
+    def test_accepting_the_draft_unedited_fits_the_run_s_own_budget(
+        self, client, conn, monkeypatch
+    ) -> None:
+        """The control for the test below: this budget is exactly enough, so a
+        refusal there is the edit's price and not the budget being too tight."""
+        seed_japanese(conn, 5)
+        self._cap(monkeypatch, self._budget_for_one_gated_run())
+        started = _evaluate(client, audience="a parent of young children").json()
+
+        assert self._resume(client, started["thread_id"]).status_code == 200
+
+    def test_an_edit_at_the_gate_costs_one_call_more(
+        self, client, conn, monkeypatch
+    ) -> None:
+        """A refused edit sends the reader back to the gate, so edits can be made
+        one after another. Unmetered, that is a free classifier on the resume
+        path — reachable by anyone who can pause a run of their own."""
+        seed_japanese(conn, 5)
+        self._cap(monkeypatch, self._budget_for_one_gated_run())
+        started = _evaluate(client, audience="a parent of young children").json()
+
+        response = self._resume(
+            client,
+            started["thread_id"],
+            instruction="You are a parent of two toddlers.",
+        )
+
+        assert response.status_code == 429
+
+    def test_the_wider_budget_lets_the_same_run_through(
+        self, client, conn, monkeypatch
+    ) -> None:
+        """The other half, so the refusal above is the price and not the words."""
+        seed_japanese(conn, 5)
+        self._cap(
+            monkeypatch,
+            Decimal(str(USD_PER_PREVIEW)) + Decimal(str(USD_PER_ROLEPLAY)),
+        )
+
+        response = _evaluate(client, audience="a parent of young children")
+
+        assert response.status_code == 200

@@ -504,3 +504,33 @@ class TestEnactedContext:
             graph.invoke(_start(audience="a named celebrity"), _config())
 
         assert refused.value.refusal == "real_person"
+
+    def test_the_verdict_says_the_portrayal_was_instructed_not_sampled(
+        self, conn
+    ) -> None:
+        """The honesty condition this feature is allowed to exist under. The
+        demographics behind a verdict are surveyed; this part of the panel is a
+        model acting a description, and a report that does not say so is claiming
+        evidence it does not have."""
+        seed_japanese(conn, 5)
+        graph = _graph(conn)
+        graph.invoke(_start(audience="a parent of young children"), _config())
+
+        state = graph.invoke(
+            Command(resume=GateDecision(action="accept").model_dump()), _config()
+        )
+
+        caveat = [n for n in state["result"].notices if "instructed" in n.message]
+        assert caveat, state["result"].notices
+        assert "You are a parent of young children." in caveat[0].message
+
+    def test_a_demographics_only_verdict_carries_no_such_caveat(self, conn) -> None:
+        seed_japanese(conn, 5)
+        graph = _graph(conn)
+        graph.invoke(_start(), _config())
+
+        state = graph.invoke(
+            Command(resume=GateDecision(action="accept").model_dump()), _config()
+        )
+
+        assert not [n for n in state["result"].notices if "instructed" in n.message]

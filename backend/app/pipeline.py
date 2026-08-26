@@ -334,12 +334,43 @@ def run_vote_loop(
     )
 
 
+def _enacted_notice(enacted: str) -> tuple[Notice, ...]:
+    """What the report owes a reader when part of the panel was told who to be.
+
+    The demographics behind a verdict are surveyed — real people answered a real
+    survey, and the pool is drawn from their answers. This part of the portrayal
+    is not: it is a model acting a sentence a customer wrote. Both are in the same
+    verdict, and a report that does not separate them is claiming evidence it does
+    not have (094/#200).
+
+    The sentence itself is quoted, because a caveat that says "some instruction
+    was given" leaves the reader guessing which part of the panel to discount.
+    """
+    if not enacted:
+        return ()
+    return (
+        Notice(
+            # `reading`, not `warning`: the panel *is* the one asked for. What
+            # this says is the interpretation the verdict rests on, which is the
+            # distinction that severity exists to draw.
+            severity="reading",
+            message=(
+                "Every panelist was instructed: "
+                f"\u201c{enacted}\u201d — instructed, not sampled. Their age, "
+                "gender, education and income come from survey data; this part of "
+                "the portrayal is the model's."
+            ),
+        ),
+    )
+
+
 def assemble_result(
     selection: PanelSelection,
     collected: CollectedVotes,
     *,
     variants: dict[str, str],
     size: int,
+    enacted: str = "",
 ) -> PanelTestResult:
     """Read what was bought as a verdict, or refuse to.
 
@@ -370,6 +401,7 @@ def assemble_result(
             voted=len(votes.records),
         ),
         notices=selection.notices
+        + _enacted_notice(enacted)
         + _stopped_early_notice(
             collected.stop_reason, collected.asked, len(selection.panel)
         )

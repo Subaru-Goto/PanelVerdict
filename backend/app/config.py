@@ -102,6 +102,19 @@ USD_PER_TRANSLATION = 0.0012
 # figure here. Headline screening is not in it — that sits behind the gate.
 USD_PER_PREVIEW = 0.0014
 
+# What one rewrite charges the day's pool: the audience words turned into one
+# panelist instruction, plus the classification that rides the same call.
+#
+# The translator's figure, not a new one, because it is the translator's call —
+# same model, same `TARGET_MAX_COMPLETION_TOKENS`, same `TARGET_REASONING_EFFORT`,
+# reading the same field. 016/#123's subject changed job rather than vanishing,
+# and an upper bound measured on the harder version of a task is still an upper
+# bound on the easier one.
+#
+# Charged only when the reader wrote audience words: blank calls nothing, which
+# is likely the common case (094/#200).
+USD_PER_ROLEPLAY = USD_PER_TRANSLATION
+
 # What one chat turn charges the day's pool (064/#192). 064 calls a turn "a
 # fraction of a vote" but leaves the analyst's own cost unmeasured, so the pool
 # rounds up to the one price that is measured. Replace once a turn is measured.

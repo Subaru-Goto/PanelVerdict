@@ -336,6 +336,7 @@ def build_evaluate_graph(
                 state["collected"],
                 variants=state["variants"],
                 size=state["size"],
+                enacted=state.get("instruction", ""),
             )
         }
 

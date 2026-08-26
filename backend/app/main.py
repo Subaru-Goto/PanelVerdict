@@ -32,7 +32,13 @@ from app.auth import (
     deleter_from_settings,
     verifier_from_settings,
 )
-from app.config import USD_PER_PREVIEW, USD_PER_TURN, USD_PER_VOTE, settings
+from app.config import (
+    USD_PER_PREVIEW,
+    USD_PER_ROLEPLAY,
+    USD_PER_TURN,
+    USD_PER_VOTE,
+    settings,
+)
 from app.db import check_connection
 from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.llm import (
@@ -482,19 +488,26 @@ def enforce_evaluate_limits(
     the write sweeps the caller's expired rows so the ledger cannot accumulate
     rows nobody will read again (040's lesson).
     """
-    # A preview buys two model calls, not a panel: the graph stops at the gate
-    # before any vote is cast.
+    # A preview buys model calls, not a panel: the graph stops at the gate before
+    # any vote is cast. Two calls for a demographics-only run — one translation
+    # and one screening — and a third when the reader wrote audience words, which
+    # have to be rewritten into the sentence the gate offers for approval.
     charges = [
         _Charge(_PREVIEW, caller, settings.evaluate_previews_per_day, "previews")
     ]
-    spend = _Spend(_PREVIEW, _usd(USD_PER_PREVIEW))
+    # Two written figures summed in Decimal, never one computed float: `_usd`
+    # takes written figures only, for the reason its docstring gives.
+    preview_usd = _usd(USD_PER_PREVIEW)
+    if request.audience.strip():
+        preview_usd += _usd(USD_PER_ROLEPLAY)
+    spend = _Spend(_PREVIEW, preview_usd)
     if request.reading_accepted:
         # No gate on this run, so there is no accept to charge later. One call
         # for both halves, so a caller already at their run cap is not charged
         # for a preview the refusal means never happens.
         charge, price = _panel_purchase(caller)
         charges.append(charge)
-        spend = _Spend(_EVALUATE, _usd(USD_PER_PREVIEW) + price)
+        spend = _Spend(_EVALUATE, preview_usd + price)
     _charge_ledger(conn, *charges, spend=spend)
 
 
@@ -909,6 +922,25 @@ def _only_one_answer(conn: psycopg.Connection, thread_id: str) -> Iterator[None]
             )
 
 
+def _check_price(request: ResumeRequest, values: dict) -> Decimal:
+    """What classifying the reader's edited sentence costs the day's pool.
+
+    Only a real edit is checked, so only a real edit is charged: restoring the
+    model's own draft costs nothing, because its verdict was reached when it was
+    written. A refused edit returns the reader to the gate, so edits can be made
+    one after another — which is exactly why this is metered rather than trusted
+    to be occasional.
+
+    The per-caller bound on how many checks a day may hold is still owed (094):
+    it needs a measurement of the call's real cost, and the pool bounds the day
+    in the meantime.
+    """
+    edited = request.instruction
+    if edited is None or not edited.strip() or edited == values.get("instruction", ""):
+        return Decimal(0)
+    return _usd(USD_PER_ROLEPLAY)
+
+
 def _edited(request: ResumeRequest, values: dict) -> TargetQuery | None:
     """Build the edited reading from the filter fields a caller may set.
 
@@ -1013,7 +1045,11 @@ def resume_evaluate(
             # inside the lock, so simultaneous accepts cannot each pass a cap
             # neither has yet recorded.
             charge, price = _panel_purchase(caller)
-            _charge_ledger(conn, charge, spend=_Spend(_EVALUATE, price))
+            _charge_ledger(
+                conn,
+                charge,
+                spend=_Spend(_EVALUATE, price + _check_price(request, values)),
+            )
         state = _run_graph(
             graph,
             Command(
