@@ -9,6 +9,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT_ENV = Path(__file__).resolve().parents[2] / ".env"
 
 
+# Which LangChain integration builds the client — NOT which vendor serves the model.
+# It is "openai" because OpenRouter speaks the OpenAI wire protocol for everything it
+# routes to, so an Anthropic or Google model reached through OpenRouter is still built
+# by `langchain-openai`. Verified 2026-08-26: `init_chat_model("anthropic/claude-haiku-4.5",
+# model_provider="openai", base_url=<openrouter>)` returns a ChatOpenAI and OpenRouter
+# reports serving `anthropic/claude-haiku-4.5`.
+#
+# A module constant rather than a `Settings` field (036 made it one, and
+# tech-debt/#171 recorded the clump it created): it is a property of the endpoint this
+# app talks to, not of the model, so it is not the thing anyone changes to swap a model.
+# Swapping a model is one string — `targeting_model`, `analyst_model`, `judge_model`,
+# `screening_model`, or the profile's — and this stays put. If a future endpoint does not
+# speak the OpenAI protocol, that is one constant here and a new client, not a field
+# threaded through every call site. It lives here rather than in `llm.py` so that
+# `screening.py` does not have to import the vote path to reach one word.
+LANGCHAIN_INTEGRATION = "openai"
+
+
 @dataclass(frozen=True)
 class PanelProfile:
     """What one run of the panel is sized and priced to be.

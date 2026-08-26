@@ -10,6 +10,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from openai import APIStatusError
 
+from app.config import LANGCHAIN_INTEGRATION
 from app.schemas import (
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
@@ -28,22 +29,6 @@ from app.vote import OutOfCredit, VoteResponse, VoteUsage
 
 
 VOTE_QUESTION = "Which do you prefer?"
-
-# Which LangChain integration builds the client — NOT which vendor serves the model.
-# It is "openai" because OpenRouter speaks the OpenAI wire protocol for everything it
-# routes to, so an Anthropic or Google model reached through OpenRouter is still built
-# by `langchain-openai`. Verified 2026-08-26: `init_chat_model("anthropic/claude-haiku-4.5",
-# model_provider="openai", base_url=<openrouter>)` returns a ChatOpenAI and OpenRouter
-# reports serving `anthropic/claude-haiku-4.5`.
-#
-# A constant rather than a setting (036 made it `Settings.model_provider`, and
-# tech-debt/#171 recorded the clump it created): it is a property of the endpoint this
-# app talks to, not of the model, so it is not the thing anyone changes to swap a model.
-# Swapping a model is one string — `targeting_model`, `analyst_model`, `judge_model`,
-# `screening_model`, or the profile's — and this stays put. If a future endpoint does not
-# speak the OpenAI protocol, that is one constant here and a new client, not a field
-# threaded through every call site.
-LANGCHAIN_INTEGRATION = "openai"
 
 
 # OpenRouter's documented vocabulary for the GPT-5 series. Named as a closed set because
@@ -418,9 +403,7 @@ class OpenRouterPanelLLM:
         return _vote_response(result, seconds=seconds)
 
 
-def analyst_chat_model(
-    *, api_key: str, base_url: str, model: str
-) -> BaseChatModel:
+def analyst_chat_model(*, api_key: str, base_url: str, model: str) -> BaseChatModel:
     """The bare chat model `create_agent` drives for the analyst.
 
     Just construction: tool binding, the loop, and error shaping all belong to
@@ -470,9 +453,7 @@ class OpenRouterTargetTranslator:
     to them.
     """
 
-    def __init__(
-        self, *, api_key: str, base_url: str, model: str
-    ) -> None:
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         # Bounded like a vote rather than by a new constant, because the client-side
         # deadline was already derived treating this as one more request of the same
         # family as a vote — so an unbounded translator contradicted a derivation the
@@ -512,9 +493,7 @@ class OpenRouterTargetTranslator:
 class OpenRouterEmbedder:
     """Embedder backed by OpenRouter's embeddings endpoint via LangChain."""
 
-    def __init__(
-        self, *, api_key: str, base_url: str, model: str
-    ) -> None:
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         # `provider=`, not `model_provider=`: the embeddings initialiser spells the
         # same argument differently from the chat one.
         # The vote's timeout is reused as a **ceiling**, not an estimate: an embedding
@@ -545,9 +524,7 @@ class OpenRouterJudge:
     """Judge backed by an OpenRouter chat model via LangChain: it scores an
     output against written criteria rather than a reference answer (G-Eval)."""
 
-    def __init__(
-        self, *, api_key: str, base_url: str, model: str
-    ) -> None:
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         # Same model and provider as a vote, so the same bound, per `analyst_chat_model`'s
         # precedent for reusing it rather than minting a second number. This one runs
         # inside the seed CLI, where an unbounded hang stalls a paid pool build.

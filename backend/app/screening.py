@@ -30,7 +30,7 @@ from typing import Protocol
 
 from langchain.chat_models import init_chat_model
 
-from app.llm import LANGCHAIN_INTEGRATION
+from app.config import LANGCHAIN_INTEGRATION
 from openai import APIStatusError
 from pydantic import BaseModel
 
@@ -109,9 +109,7 @@ class OpenRouterScreener:
     has a name for that.
     """
 
-    def __init__(
-        self, *, api_key: str, base_url: str, model: str
-    ) -> None:
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         self.model_name = model
         self._model = init_chat_model(
             model=model,
