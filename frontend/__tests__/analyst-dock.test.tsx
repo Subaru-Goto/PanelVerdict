@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AnalystDock from "../app/components/analyst-dock";
+import { ANALYST_DISCLOSURE } from "../app/lib/disclosure";
 import { useAnalyst } from "../app/lib/use-analyst";
 import { makeResponse, manualStream } from "./fixtures";
 
@@ -50,9 +51,7 @@ describe("AnalystDock", () => {
     // Art. 50(1): the disclosure must be in-context at latest at the first
     // interaction. The header renders it the moment the dock opens, so it is
     // on screen before the input can be used.
-    expect(
-      screen.getByText(/The analyst is an AI system, not a person/),
-    ).toBeTruthy();
+    expect(screen.getByText(ANALYST_DISCLOSURE)).toBeTruthy();
   });
 
   it("opens with the suggestion chips and streams a chip's answer", async () => {
