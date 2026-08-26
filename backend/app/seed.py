@@ -15,6 +15,7 @@ import psycopg
 from app.assembly import Embedder, assemble_pool
 from app.config import settings
 from app.llm import OpenRouterEmbedder, OpenRouterJudge
+from app.corpus import seed_corpus
 from app.persistence import persist_persona, prepare_connection
 from app.plausibility import format_report, run_plausibility_qc
 from app.schemas import Locale
@@ -99,10 +100,37 @@ def _pool_size(conn: psycopg.Connection) -> int:
         return 0
 
 
+def _reseed_corpus() -> None:
+    """Rebuild only the explanation corpus (018/#124).
+
+    Its own path because the two seeds have nothing in common but a connection.
+    The pool is hundreds of paid generations and resumes; the corpus is a handful
+    of embeddings over documents committed to git, and is always replaced whole.
+    Editing a sentence in a document should not mean rerunning the pool.
+    """
+    if settings.openrouter_api_key is None:
+        raise SystemExit("openrouter_api_key is not set; cannot embed the corpus.")
+    embedder = OpenRouterEmbedder(
+        api_key=settings.openrouter_api_key.get_secret_value(),
+        base_url=settings.openrouter_base_url,
+        model=settings.embedding_model,
+    )
+    with psycopg.connect(settings.database_url, autocommit=True) as conn:
+        prepare_connection(conn)
+        print(f"Corpus: {seed_corpus(conn, embedder)} passages.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed the persona pool.")
     add_pool_args(parser)
     parser.add_argument("--qc-sample", type=int, default=50)
+    parser.add_argument(
+        "--corpus-only",
+        action="store_true",
+        help="reseed only the explanation corpus and exit. A handful of "
+        "embeddings, so it costs almost nothing — which is the point: editing a "
+        "document should not mean paying to regenerate the pool",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -111,6 +139,10 @@ def main() -> None:
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    if args.corpus_only:
+        _reseed_corpus()
+        return
 
     quotas = build_quotas(args.size, args.countries)
     requested = sum(quotas.values())
@@ -152,6 +184,10 @@ def main() -> None:
         prepare_connection(conn)
         result = seed_pool(conn, quotas, master_seed=args.seed, embedder=embedder)
         print(f"Done: {result.written} written, {result.skipped} already present.")
+        # After the pool, because both need the schema and this is the cheap
+        # half: the corpus is a handful of chunks, so it is always rebuilt rather
+        # than resumed. Documents live in git, so the table can only be stale.
+        print(f"Corpus: {seed_corpus(conn, embedder)} passages.")
         report = run_plausibility_qc(conn, judge=judge, sample_size=args.qc_sample)
     print(format_report(report))
 

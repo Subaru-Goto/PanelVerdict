@@ -265,7 +265,12 @@ class TestToolSurface:
     def test_every_tool_reads_and_none_of_them_spends(self, conn) -> None:
         names = {tool.name for tool in build_tools(_result(), _deps(conn))}
 
-        assert names == {"analyze_results", "search_personas", "read_reasons"}
+        assert names == {
+            "analyze_results",
+            "search_personas",
+            "read_reasons",
+            "explain_the_report",
+        }
         assert "run_panel_test" not in names
 
 
@@ -594,3 +599,54 @@ class TestAnalystAgent:
             isinstance(m, HumanMessage) and "secret" in str(m.content)
             for m in second_thread_prompt
         )
+
+
+class TestExplainingWhatTheReportMeans:
+    """018/#124. The reader cannot see the code, so a concept question answered
+    from the model's weights is a confident mismatch with what the system did,
+    delivered to somebody with no way to check it."""
+
+    def test_the_answer_comes_back_with_something_to_check(self, conn) -> None:
+        from app.corpus import seed_corpus
+        from tests.test_corpus_retrieval import FakeEmbedder
+
+        seed_corpus(conn, FakeEmbedder())
+        (explain,) = [
+            t
+            for t in build_tools(_result(), _deps(conn, embedder=FakeEmbedder()))
+            if t.name == "explain_the_report"
+        ]
+
+        answer = json.loads(explain.invoke({"question": "what is a practical tie"}))
+
+        assert answer, "the corpus should have a passage on this"
+        assert all(passage["citation"] for passage in answer)
+
+    def test_a_question_the_corpus_cannot_answer_returns_nothing(self, conn) -> None:
+        """So the analyst says it does not know, rather than being handed the
+        nearest passage and citing it."""
+        from app.corpus import seed_corpus
+        from tests.test_corpus_retrieval import FakeEmbedder
+
+        seed_corpus(conn, FakeEmbedder())
+        (explain,) = [
+            t
+            for t in build_tools(_result(), _deps(conn, embedder=FakeEmbedder()))
+            if t.name == "explain_the_report"
+        ]
+
+        assert json.loads(explain.invoke({"question": "how do I bake sourdough"})) == []
+
+
+def test_a_concept_question_no_longer_routes_to_the_model_s_own_memory() -> None:
+    """The prompt rule was the blocker this ticket names, and it was misrouting
+    rather than being strict: it sent "what does a credible interval mean" to the
+    weights, which is the one place the answer is not.
+
+    The loophole it guarded still has to hold — a question about THIS run's panel
+    goes to a tool, never to the corpus.
+    """
+    from app.analyst import _SYSTEM_PROMPT
+
+    assert "do not reach for a tool at all" not in _SYSTEM_PROMPT
+    assert "explain_the_report" in _SYSTEM_PROMPT

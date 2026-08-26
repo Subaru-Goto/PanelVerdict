@@ -155,8 +155,10 @@ class Settings(BaseSettings):
     # 25 is ~8 previews per purchasable panel. 0 disables.
     evaluate_previews_per_day: int = 25
     # Bounded by structure, not price — honestly flagged: no per-turn dollar
-    # measurement exists yet (unlike USD_PER_VOTE). A turn is at most 4 model
-    # calls (analyst.py's recursion budget), a thread is one report's
+    # measurement exists yet (unlike USD_PER_VOTE). A turn's model calls are
+    # bounded by `analyst.py`'s recursion budget, which is derived from the tool
+    # count and therefore moves when the tool surface does — 018 added a fourth
+    # tool and it moved. A thread is one report's
     # conversation, and 30 turns/day is far above an honest conversation while
     # still bounding a loop. Replace with a derived ceiling once a turn's cost
     # is measured from the usage logs.
