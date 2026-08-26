@@ -335,7 +335,7 @@ describe("units", () => {
 
     await fillAndSubmit();
 
-    const sentence = await screen.findByText(/Shipping A anyway would give up/);
+    const sentence = await screen.findByText(/Shipping A would give up/);
     expect(sentence.textContent).toContain("0.4 points");
     expect(sentence.textContent).toContain("21.2 points");
   });

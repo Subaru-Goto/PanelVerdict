@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Report from "../app/components/report";
 import { makeResponse, manualStream } from "./fixtures";
 import { OPENING_REQUEST } from "../app/lib/use-analyst";
+import { posteriorDensity } from "../app/lib/beta";
 
 /** The report opens a conversation on mount, so every render here would reach
  *  the network. Each test gets a stream it can drive, and StrictMode because
@@ -30,40 +31,147 @@ afterEach(() => {
 const renderReport = (result = makeResponse()) =>
   render(<Report result={result} />, { wrapper: StrictMode });
 
-describe("verdict line", () => {
-  it("names the leading headline with its share of the panel", () => {
+describe("the lead", () => {
+  it("names both headlines, the winner first", () => {
     renderReport();
 
-    expect(screen.getByText("Save 50% today")).toBeTruthy();
-    expect(screen.getByText(/71% of the panel prefer it/)).toBeTruthy();
+    // The chart's axis names both headlines too, so the loser is matched by
+    // the lead's own phrasing rather than by its text alone.
+    expect(screen.getByText(/^“Save 50% today”$/)).toBeTruthy();
+    expect(screen.getByText(/over “Members save half”/)).toBeTruthy();
+  });
+
+  it("says the probability in words, and it is the meaningfully-preferred one", () => {
+    // 98% is probability_meaningfully_preferred.a — the mass past the tie zone,
+    // which is what the chart shades. Reading share_preferring_b's complement
+    // here instead would print 71%: a different question, and the swap this
+    // test exists to catch.
+    renderReport();
+
+    expect(
+      screen.getByText("98% likely people genuinely prefer this one."),
+    ).toBeTruthy();
+  });
+
+  it("says what the percentage already excludes, after the claim", () => {
+    // 020 keeps the band load-bearing. It explains what the number counts
+    // rather than adding a claim, so it follows the sentence it qualifies.
+    renderReport();
+
+    expect(
+      screen.getByText(/Wins too small to matter don’t count towards that number/),
+    ).toBeTruthy();
+  });
+
+  it("counts the panelists who preferred it, which nothing else states", () => {
+    renderReport();
+
+    expect(screen.getByText(/36 of 50 panelists preferred it/)).toBeTruthy();
+  });
+
+  it("crowns no winner with a label", () => {
+    // 020 deleted this label from the payload; re-deriving it in the UI puts
+    // it back. Not at any size, so a redesign cannot reintroduce it as a
+    // heading.
+    renderReport();
+
+    expect(screen.queryByText(/Panel leans clearly/)).toBeNull();
+    expect(screen.queryByText(/No call at this credibility/)).toBeNull();
   });
 });
 
 describe("stat tiles", () => {
-  it("states both preference probabilities and the tie", () => {
-    // The 98% is probability_meaningfully_preferred.a, read straight onto A's
-    // tile — a swap here is the bug this test exists to catch.
+  it("are gone, because each number they held is stated somewhere else", () => {
     renderReport();
 
-    const tileA = screen.getByText("Chance A is preferred");
-    expect(tileA.parentElement?.textContent).toContain("98%");
-    const tileB = screen.getByText("Chance B is preferred");
-    expect(tileB.parentElement?.textContent).toContain("0%");
-    expect(screen.getByText("Practical tie")).toBeTruthy();
-    expect(
-      screen.getByText(/chance the true split lands in the tie zone/),
-    ).toBeTruthy();
+    for (const label of [
+      "Share preferring B",
+      "Chance A is preferred",
+      "Chance B is preferred",
+      "Practical tie",
+    ]) {
+      expect(screen.queryByText(label)).toBeNull();
+    }
+  });
+
+  it("does not print the lead's percentage a second time", () => {
+    // "Every number appears exactly once on the page" — the tiles printed the
+    // same posterior partitioned three ways.
+    renderReport();
+
+    expect(screen.queryAllByText(/\b98%/)).toHaveLength(1);
+  });
+
+});
+
+describe("what the panel could and could not resolve", () => {
+  it("keeps the gap this panel could detect, which no other line carries", () => {
+    renderReport();
+
     expect(
       screen.getByText(/can only detect leans of 16.7 points or more/),
     ).toBeTruthy();
   });
+});
 
-  it("keeps the credible interval beside the share, in plain words", () => {
-    renderReport();
+describe("the lead and the curve agree", () => {
+  it("prints a percentage the chart's own curve arrives at independently", () => {
+    // The prototype recorded getting this wrong once: a ROPE fixture "made
+    // that mass ~98%, silently contradicting the headline". The lead prints
+    // the payload's probability; the curve is rebuilt from the raw votes. Two
+    // routes to one quantity, so they have to land in the same place — and a
+    // fixture edit that breaks the arithmetic fails here rather than shipping
+    // a report that disagrees with its own chart.
+    const { verdict, tally } = makeResponse();
+
+    const curve = posteriorDensity(
+      tally.counts.a ?? 0,
+      tally.counts.b ?? 0,
+      2001,
+    );
+    const mass = (keep: (p: number) => boolean): number =>
+      curve.filter((point) => keep(point.p)).reduce((sum, x) => sum + x.density, 0);
+    // The curve runs over B's share, so A is meaningfully preferred where that
+    // share sits below the band.
+    const pastBand = mass((p) => p < verdict.rope[0]) / mass(() => true);
+
+    expect(pastBand).toBeCloseTo(
+      verdict.probability_meaningfully_preferred.a,
+      2,
+    );
+  });
+});
+
+describe("a practical tie", () => {
+  // 020 keeps `practical_tie` as a flag, not a bucket: a positive finding
+  // added to the probability rather than replacing it.
+  const tied = () => {
+    const result = makeResponse();
+    return {
+      ...result,
+      verdict: {
+        ...result.verdict,
+        probability_meaningfully_preferred: { a: 0.02, b: 0.02 },
+        probability_practical_tie: 0.96,
+      },
+    };
+  };
+
+  it("says the two are equally good, without dropping the probability", () => {
+    renderReport(tied());
 
     expect(
-      screen.getByText(/true share is between 17% and 42% \(95% sure\)/),
+      screen.getByText(/these two are equally good/i),
     ).toBeTruthy();
+    expect(
+      screen.getByText("2% likely people genuinely prefer this one."),
+    ).toBeTruthy();
+  });
+
+  it("stays quiet when the tie is not credible", () => {
+    renderReport();
+
+    expect(screen.queryByText(/these two are equally good/i)).toBeNull();
   });
 });
 
