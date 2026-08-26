@@ -13,8 +13,12 @@ from pydantic import ValidationError
 
 from app.config import LANGCHAIN_INTEGRATION
 from app.roleplay import (
-    RolePlayDraft,
+    RolePlayOutcome,
+    render_enacted,
+    RolePlayVerdict,
+    build_check_messages,
     build_roleplay_messages,
+    checked_instruction,
     without_task_talk,
 )
 from app.schemas import (
@@ -408,7 +412,12 @@ class OpenRouterPanelLLM:
         ).with_structured_output(PanelVoteOutput, include_raw=True)
 
     def _messages(
-        self, system_prompt: str, option_1: str, option_2: str
+        self,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        *,
+        enacted: str = "",
     ) -> list[BaseMessage]:
         """The messages one vote is cast with.
 
@@ -418,15 +427,22 @@ class OpenRouterPanelLLM:
         exporting `render_demographics_prompt`.
         """
         return build_vote_messages(
-            system_prompt,
+            render_enacted(system_prompt, enacted, nonce=self._nonce),
             option_1,
             option_2,
             question=self._question,
             nonce=self._nonce,
         )
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
-        messages = self._messages(system_prompt, option_1, option_2)
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
+        messages = self._messages(system_prompt, option_1, option_2, enacted=enacted)
         started = perf_counter()
         try:
             result = self._model.invoke(messages)
@@ -546,7 +562,7 @@ class OpenRouterRolePlayGenerator:
 
     def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
         self._nonce = f"<<{secrets.token_hex(8)}>>"
-        self._model = init_chat_model(
+        client = init_chat_model(
             model=model,
             model_provider=LANGCHAIN_INTEGRATION,
             base_url=base_url,
@@ -555,10 +571,15 @@ class OpenRouterRolePlayGenerator:
             timeout=VOTE_READ_TIMEOUT_SECONDS,
             max_tokens=TARGET_MAX_COMPLETION_TOKENS,
             reasoning_effort=TARGET_REASONING_EFFORT,
-        ).with_structured_output(RolePlayDraft)
+        )
+        self._model = client.with_structured_output(RolePlayOutcome)
+        # A second binding of the same client, not a second client: the two calls
+        # differ only in what they are allowed to answer with. `RolePlayVerdict`
+        # has no text field, which is what stops a check from becoming a rewrite.
+        self._checker = client.with_structured_output(RolePlayVerdict)
 
-    def draft(self, *, words: str) -> RolePlayDraft:
-        # `RolePlayDraft` carries a cross-field invariant — instruction XOR
+    def draft(self, *, words: str) -> RolePlayOutcome:
+        # `RolePlayOutcome` carries a cross-field invariant — instruction XOR
         # refusal — which the model can break, and the break happens inside
         # `invoke` as a pydantic error rather than arriving as a value to check.
         # `{"instruction": "", "refusal": null}` is the shape an unsure model
@@ -571,7 +592,7 @@ class OpenRouterRolePlayGenerator:
             )
         except ValidationError as error:
             raise RuntimeError("generator returned a malformed draft") from error
-        if not isinstance(result, RolePlayDraft):
+        if not isinstance(result, RolePlayOutcome):
             # The type, never the value. What came back is written from what a
             # customer typed, and this module's own rule is that such text does
             # not travel onward — an exception string reaches logs and error
@@ -582,6 +603,28 @@ class OpenRouterRolePlayGenerator:
                 f"generator returned {type(result).__name__}, not a structured draft"
             )
         return without_task_talk(result)
+
+    def check(self, *, instruction: str) -> RolePlayOutcome:
+        """Classify a sentence a human edited, without letting it be rewritten.
+
+        The gate's field is editable by design — that edit *is* the
+        human-in-the-loop — so the text that reaches a panel prompt is the one the
+        reader left there, not the one this model wrote. That path goes round the
+        generator, so it gets the classification here instead.
+
+        The returned instruction is the caller's own string. The model's only
+        output is a class.
+        """
+        result = self._checker.invoke(
+            build_check_messages(instruction, nonce=self._nonce)
+        )
+        if not isinstance(result, RolePlayVerdict):
+            # The type, never the value, for `draft`'s reason: what came back was
+            # produced from text a customer typed.
+            raise RuntimeError(
+                f"checker returned {type(result).__name__}, not a structured verdict"
+            )
+        return checked_instruction(instruction, refusal=result.refusal)
 
 
 class OpenRouterEmbedder:

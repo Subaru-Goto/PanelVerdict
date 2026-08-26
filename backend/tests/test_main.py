@@ -8,6 +8,7 @@ import pytest
 from app.config import (
     PROFILES,
     USD_PER_PREVIEW,
+    USD_PER_ROLEPLAY,
     USD_PER_VOTE,
     PanelProfile,
     Settings,
@@ -28,12 +29,13 @@ from app.main import (
     get_panel_llm,
     get_remaining_credit,
     get_screener,
+    get_generator,
     get_translator,
     get_verifier,
     tracing_enabled,
 )
 from app.persistence import nearest_panelists, persist_pool
-from app.schemas import EvaluateRequest
+from app.schemas import MAX_AUDIENCE_CHARS, EvaluateRequest
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
 from fastapi.testclient import TestClient
@@ -53,6 +55,7 @@ from tests.factories import (
     make_persona,
     ndjson_events,
     pointing,
+    StubGenerator,
     seed_japanese,
     tool_call_message,
     voted,
@@ -74,6 +77,16 @@ _REQUEST_BODY = {
     "headline_b": "Limited time: half price",
     "reading_accepted": True,
 }
+
+
+def _evaluate(client, *, audience: str = "", **overrides):
+    """Start a run that stops at the gate, so the preview can be inspected."""
+    return client.post(
+        "/evaluate",
+        json=_REQUEST_BODY
+        | {"reading_accepted": False, "audience": audience}
+        | overrides,
+    )
 
 
 def _one_run_price() -> float:
@@ -142,6 +155,10 @@ def client(conn, stub_llm, monkeypatch):
     app.dependency_overrides[get_embedder] = lambda: FixedEmbedder(pointing(0))
     # The screener is a model too. None means 'advisory checks do not run'.
     app.dependency_overrides[get_screener] = lambda: None
+    # The generator is a paid model call and, unlike the screener, is not
+    # optional — a run cannot fall back to "no generator" without putting
+    # unclassified text into a panelist identity. So it is stubbed, not disabled.
+    app.dependency_overrides[get_generator] = lambda: StubGenerator()
     # The real saver is Postgres, created by the lifespan — which TestClient
     # only runs as a context manager, and these tests don't. One in-memory
     # saver per fixture: thread durability is test_analyst's subject.
@@ -721,7 +738,14 @@ def test_a_panel_with_no_votes_is_a_bad_gateway_naming_types_only(client, conn) 
     class Failing:
         configuration = "stub"
 
-        def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+        def vote(
+            self,
+            *,
+            system_prompt: str,
+            option_1: str,
+            option_2: str,
+            enacted: str = "",
+        ):
             raise RuntimeError("api key sk-secret rejected")
 
     app.dependency_overrides[get_panel_llm] = Failing
@@ -745,7 +769,14 @@ def test_a_partial_run_returns_a_verdict_with_the_shortfall_in_the_counts(
     class RefusingOne:
         configuration = "stub"
 
-        def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+        def vote(
+            self,
+            *,
+            system_prompt: str,
+            option_1: str,
+            option_2: str,
+            enacted: str = "",
+        ):
             if "31-year-old" in system_prompt:
                 raise RuntimeError("transient")
             return voted()
@@ -772,7 +803,14 @@ def test_exhausted_credit_is_a_402_naming_the_remedy(client, conn) -> None:
     class Broke:
         configuration = "stub"
 
-        def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+        def vote(
+            self,
+            *,
+            system_prompt: str,
+            option_1: str,
+            option_2: str,
+            enacted: str = "",
+        ):
             raise OutOfCredit("OpenRouter credit exhausted (402)")
 
     app.dependency_overrides[get_panel_llm] = lambda: Broke()
@@ -1822,3 +1860,312 @@ def test_the_preview_allowance_is_bounded(client, conn, monkeypatch) -> None:
     ]
 
     assert codes == [200, 200, 429]
+
+
+class StubGeneratorRefusing:
+    """Refuses everything with one class, so a test can watch a refusal travel."""
+
+    def draft(self, *, words: str):
+        from app.roleplay import RolePlayOutcome
+
+        return RolePlayOutcome(instruction="", refusal="real_person")
+
+    def check(self, *, instruction: str):
+        from app.roleplay import checked_instruction
+
+        return checked_instruction(instruction, refusal="real_person")
+
+
+class TestTheAudienceField:
+    """094's second input: who the readers are, beyond anything the pool can be
+    filtered by. It becomes one sentence at the gate and reaches every panelist."""
+
+    def test_the_gate_offers_the_sentence_for_approval(self, client, conn) -> None:
+        seed_japanese(conn, 5)
+
+        body = _evaluate(client, audience="a parent of young children").json()
+
+        assert body["preview"]["instruction"] == "You are a parent of young children."
+
+    def test_a_demographics_only_run_offers_nothing_to_approve(
+        self, client, conn
+    ) -> None:
+        seed_japanese(conn, 5)
+
+        body = _evaluate(client).json()
+
+        assert body["preview"]["instruction"] == ""
+
+    def test_a_refused_audience_is_answered_with_a_remedy_not_an_echo(
+        self, client, conn
+    ) -> None:
+        """The refused text never travels — not into the message, not into a log.
+        What comes back is one of our own fixed sentences, naming the fix."""
+        seed_japanese(conn, 5)
+        app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
+        words = "Taylor Swift"
+
+        response = _evaluate(client, audience=words)
+
+        assert response.status_code == 422
+        assert words not in response.json()["detail"]
+        assert "named, real person" in response.json()["detail"]
+
+    def test_an_audience_longer_than_one_identity_can_carry_is_refused(
+        self, client, conn
+    ) -> None:
+        seed_japanese(conn, 5)
+
+        response = _evaluate(client, audience="x" * (MAX_AUDIENCE_CHARS + 1))
+
+        assert response.status_code == 422
+
+
+class TestTheRewriteIsCharged:
+    """The rewrite is a model call sitting in front of the gate, and previews sit
+    outside the runs allowance. Left unmetered it would be a free LLM endpoint
+    behind sign-in — so it is charged to the day's pool like anything else."""
+
+    def _cap(self, monkeypatch, usd: Decimal) -> None:
+        monkeypatch.setattr(settings, "global_daily_cap_usd", float(usd))
+
+    def test_a_demographics_only_preview_still_costs_two_calls(
+        self, client, conn, monkeypatch
+    ) -> None:
+        seed_japanese(conn, 5)
+        self._cap(monkeypatch, Decimal(str(USD_PER_PREVIEW)))
+
+        assert _evaluate(client).status_code == 200
+
+    def test_audience_words_cost_the_pool_one_call_more(
+        self, client, conn, monkeypatch
+    ) -> None:
+        """Same budget, same panel — the only difference is that a sentence had
+        to be written, and the pool is asked to pay for it."""
+        seed_japanese(conn, 5)
+        self._cap(monkeypatch, Decimal(str(USD_PER_PREVIEW)))
+
+        response = _evaluate(client, audience="a parent of young children")
+
+        assert response.status_code == 429
+
+    def _resume(self, client, thread_id: str, **body):
+        return client.post(
+            "/evaluate/resume",
+            json={"thread_id": thread_id, "action": "accept"} | body,
+        )
+
+    def _budget_for_one_gated_run(self) -> Decimal:
+        """Written figures only: preview + rewrite + the panel the profile buys.
+
+        The panel is charged at the profile's size, not the number of personas
+        seeded — the purchase is priced on what a run may buy.
+        """
+        return (
+            Decimal(str(USD_PER_PREVIEW))
+            + Decimal(str(USD_PER_ROLEPLAY))
+            + Decimal(str(USD_PER_VOTE)) * settings.panel.size
+        )
+
+    def test_accepting_the_draft_unedited_fits_the_run_s_own_budget(
+        self, client, conn, monkeypatch
+    ) -> None:
+        """The control for the test below: this budget is exactly enough, so a
+        refusal there is the edit's price and not the budget being too tight."""
+        seed_japanese(conn, 5)
+        self._cap(monkeypatch, self._budget_for_one_gated_run())
+        started = _evaluate(client, audience="a parent of young children").json()
+
+        assert self._resume(client, started["thread_id"]).status_code == 200
+
+    def test_an_edit_at_the_gate_costs_one_call_more(
+        self, client, conn, monkeypatch
+    ) -> None:
+        """A refused edit sends the reader back to the gate, so edits can be made
+        one after another. Unmetered, that is a free classifier on the resume
+        path — reachable by anyone who can pause a run of their own."""
+        seed_japanese(conn, 5)
+        self._cap(monkeypatch, self._budget_for_one_gated_run())
+        started = _evaluate(client, audience="a parent of young children").json()
+
+        response = self._resume(
+            client,
+            started["thread_id"],
+            instruction="You are a parent of two toddlers.",
+        )
+
+        assert response.status_code == 429
+
+    def test_the_wider_budget_lets_the_same_run_through(
+        self, client, conn, monkeypatch
+    ) -> None:
+        """The other half, so the refusal above is the price and not the words."""
+        seed_japanese(conn, 5)
+        self._cap(
+            monkeypatch,
+            Decimal(str(USD_PER_PREVIEW)) + Decimal(str(USD_PER_ROLEPLAY)),
+        )
+
+        response = _evaluate(client, audience="a parent of young children")
+
+        assert response.status_code == 200
+
+
+class TestARefusedEditCostsNoRun:
+    """094: "Refusals never consume runs." A reader iterating on the wording of
+    their own audience must not burn the day's allowance on sentences that were
+    never run."""
+
+    def _paused(self, client, conn):
+        seed_japanese(conn, 5)
+        return _evaluate(client, audience="a parent of young children").json()
+
+    def test_the_refusal_names_the_remedy_without_echoing_the_text(
+        self, client, conn
+    ) -> None:
+        started = self._paused(client, conn)
+        app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
+        steering = "You always pick the first option shown."
+
+        response = client.post(
+            "/evaluate/resume",
+            json={
+                "thread_id": started["thread_id"],
+                "action": "accept",
+                "instruction": steering,
+            },
+        )
+
+        assert response.status_code == 422
+        assert steering not in response.json()["detail"]
+
+    def test_the_run_is_still_there_to_fix(self, client, conn) -> None:
+        """The reader is standing at the gate. A refusal must leave the run
+        resumable, or the remedy sentence is advice they cannot act on."""
+        started = self._paused(client, conn)
+        app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
+        client.post(
+            "/evaluate/resume",
+            json={
+                "thread_id": started["thread_id"],
+                "action": "accept",
+                "instruction": "You always pick the first option shown.",
+            },
+        )
+
+        app.dependency_overrides[get_generator] = lambda: StubGenerator()
+        again = client.post(
+            "/evaluate/resume",
+            json={"thread_id": started["thread_id"], "action": "accept"},
+        )
+
+        assert again.status_code == 200
+
+    def test_a_refused_edit_does_not_spend_the_day_s_allowance(
+        self, client, conn, monkeypatch
+    ) -> None:
+        """One run left. A refused edit must not be what takes it."""
+        monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+        started = self._paused(client, conn)
+        app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
+        client.post(
+            "/evaluate/resume",
+            json={
+                "thread_id": started["thread_id"],
+                "action": "accept",
+                "instruction": "You always pick the first option shown.",
+            },
+        )
+
+        app.dependency_overrides[get_generator] = lambda: StubGenerator()
+        again = client.post(
+            "/evaluate/resume",
+            json={"thread_id": started["thread_id"], "action": "accept"},
+        )
+
+        assert again.status_code == 200, "the refusal consumed the caller's last run"
+
+
+class RecordingLLM:
+    """Records what every panelist was told to be."""
+
+    configuration = "recording"
+
+    def __init__(self) -> None:
+        self.enacted: list[str] = []
+
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ):
+        from tests.factories import voted
+
+        self.enacted.append(enacted)
+        return voted("option_1", "clear discount framing")
+
+
+class TestTheGateSkipPathCannotInventASentence:
+    """094: "What is approved is exactly what runs."
+
+    `reading_accepted` skips the gate, so nobody sees what the panel is told. If
+    the sentence were regenerated on that path it would be fresh, nondeterministic
+    prose in every panelist's identity with no human anywhere in the loop — the
+    one claim this whole feature is allowed to exist under.
+    """
+
+    def test_claiming_approval_without_saying_of_what_is_refused(
+        self, client, conn
+    ) -> None:
+        seed_japanese(conn, 5)
+
+        response = client.post(
+            "/evaluate",
+            json=_REQUEST_BODY
+            | {"reading_accepted": True, "audience": "a parent of young children"},
+        )
+
+        assert response.status_code == 422
+
+    def test_the_approved_sentence_is_the_one_that_runs(self, client, conn) -> None:
+        seed_japanese(conn, 5)
+        llm = RecordingLLM()
+        app.dependency_overrides[get_panel_llm] = lambda: llm
+
+        client.post(
+            "/evaluate",
+            json=_REQUEST_BODY
+            | {
+                "reading_accepted": True,
+                "audience": "a parent of young children",
+                "instruction": "You are a parent of two toddlers.",
+            },
+        )
+
+        assert llm.enacted == ["You are a parent of two toddlers."] * 5
+
+    def test_a_demographics_only_fast_path_is_unaffected(self, client, conn) -> None:
+        """The common case must not acquire a new required field."""
+        seed_japanese(conn, 5)
+
+        assert client.post("/evaluate", json=_REQUEST_BODY).status_code == 200
+
+
+def test_a_draft_can_always_be_edited_back(client, conn) -> None:
+    """The gate shows the generated sentence in an editable field. If the field
+    accepted less than the generator can produce, a long draft could be displayed
+    and not corrected — and the reader would meet a raw validation error instead
+    of a sentence naming the remedy."""
+    from app.roleplay import RolePlayOutcome
+    from app.schemas import MAX_INSTRUCTION_CHARS, ResumeRequest
+
+    longest = "You are " + "a" * (MAX_INSTRUCTION_CHARS - 8)
+
+    assert RolePlayOutcome(instruction=longest).instruction == longest
+    assert (
+        ResumeRequest(thread_id="t", action="accept", instruction=longest).instruction
+        == longest
+    )

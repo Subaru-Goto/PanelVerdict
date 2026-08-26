@@ -173,6 +173,11 @@ def _chunk_votes(
     test_id: str,
     variants: dict[str, str],
     llm: PanelLLM,
+    # No default on the private hops. A forgotten argument on a chain this long
+    # degrades silently to a demographics-only run — the panel is told nothing and
+    # nothing raises — so the ones nobody outside this module calls fail loudly
+    # instead. The public seams keep their default, because most runs have none.
+    enacted: str,
 ) -> PanelVotes:
     """One chunk's votes: the ledger first, the model only for what is missing.
 
@@ -189,7 +194,7 @@ def _chunk_votes(
     orders = presentation_orders((first_id, second_id), len(panel), seed=ORDER_SEED)
     fingerprints = {
         persona.id: vote_fingerprint(
-            build_vote_request(persona, order, variants=variants),
+            build_vote_request(persona, order, variants=variants, enacted=enacted),
             configuration=llm.configuration,
         )
         for persona, order in zip(panel, orders)
@@ -205,6 +210,7 @@ def _chunk_votes(
         variants=variants,
         panel=[persona for persona, _ in misses],
         llm=llm,
+        enacted=enacted,
         orders=[order for _, order in misses],
     )
     store_votes(
@@ -248,6 +254,7 @@ def run_vote_loop(
     *,
     variants: dict[str, str],
     llm: PanelLLM,
+    enacted: str = "",
 ) -> CollectedVotes:
     """Vote in chunks, stop when the report would already make a call.
 
@@ -277,7 +284,12 @@ def run_vote_loop(
     for start in range(0, len(panel), VOTE_CONCURRENCY):
         chunk_panel = panel[start : start + VOTE_CONCURRENCY]
         chunk = _chunk_votes(
-            conn, chunk_panel, test_id=test_id, variants=variants, llm=llm
+            conn,
+            chunk_panel,
+            test_id=test_id,
+            variants=variants,
+            llm=llm,
+            enacted=enacted,
         )
         asked += len(chunk_panel)
         votes = PanelVotes(
@@ -326,12 +338,43 @@ def run_vote_loop(
     )
 
 
+def _enacted_notice(enacted: str) -> tuple[Notice, ...]:
+    """What the report owes a reader when part of the panel was told who to be.
+
+    The demographics behind a verdict are surveyed — real people answered a real
+    survey, and the pool is drawn from their answers. This part of the portrayal
+    is not: it is a model acting a sentence a customer wrote. Both are in the same
+    verdict, and a report that does not separate them is claiming evidence it does
+    not have (094/#200).
+
+    The sentence itself is quoted, because a caveat that says "some instruction
+    was given" leaves the reader guessing which part of the panel to discount.
+    """
+    if not enacted:
+        return ()
+    return (
+        Notice(
+            # `reading`, not `warning`: the panel *is* the one asked for. What
+            # this says is the interpretation the verdict rests on, which is the
+            # distinction that severity exists to draw.
+            severity="reading",
+            message=(
+                "Every panelist was instructed: "
+                f"\u201c{enacted}\u201d — instructed, not sampled. Their age, "
+                "gender, education and income come from survey data; this part of "
+                "the portrayal is the model's."
+            ),
+        ),
+    )
+
+
 def assemble_result(
     selection: PanelSelection,
     collected: CollectedVotes,
     *,
     variants: dict[str, str],
     size: int,
+    enacted: str = "",
 ) -> PanelTestResult:
     """Read what was bought as a verdict, or refuse to.
 
@@ -362,6 +405,7 @@ def assemble_result(
             voted=len(votes.records),
         ),
         notices=selection.notices
+        + _enacted_notice(enacted)
         + _stopped_early_notice(
             collected.stop_reason, collected.asked, len(selection.panel)
         )

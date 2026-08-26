@@ -32,12 +32,19 @@ from app.auth import (
     deleter_from_settings,
     verifier_from_settings,
 )
-from app.config import USD_PER_PREVIEW, USD_PER_TURN, USD_PER_VOTE, settings
+from app.config import (
+    USD_PER_PREVIEW,
+    USD_PER_ROLEPLAY,
+    USD_PER_TURN,
+    USD_PER_VOTE,
+    settings,
+)
 from app.db import check_connection
 from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.llm import (
     OpenRouterEmbedder,
     OpenRouterPanelLLM,
+    OpenRouterRolePlayGenerator,
     OpenRouterTargetTranslator,
     analyst_chat_model,
     remaining_credit,
@@ -45,6 +52,7 @@ from app.llm import (
 from app.panel import votes_with_voters
 from app.persistence import deny_data_api
 from app.pipeline import EmptyPanel, NoVotes
+from app.roleplay import RolePlayGenerator, RolePlayRefused
 from app.schemas import (
     ChatRequest,
     EvaluateRequest,
@@ -223,6 +231,20 @@ def get_screener() -> Screener | None:
         api_key=key.get_secret_value(),
         base_url=settings.openrouter_base_url,
         model=settings.screening_model,
+    )
+
+
+def get_generator() -> RolePlayGenerator:
+    """The translator's new job: audience words into one panelist instruction.
+
+    Required, not advisory like the screener. It is this channel's only gate —
+    the copy screener is the wrong instrument for it — so a run without one would
+    put unclassified text into a panelist's identity.
+    """
+    return OpenRouterRolePlayGenerator(
+        api_key=_require_api_key(),
+        base_url=settings.openrouter_base_url,
+        model=settings.targeting_model,
     )
 
 
@@ -466,19 +488,26 @@ def enforce_evaluate_limits(
     the write sweeps the caller's expired rows so the ledger cannot accumulate
     rows nobody will read again (040's lesson).
     """
-    # A preview buys two model calls, not a panel: the graph stops at the gate
-    # before any vote is cast.
+    # A preview buys model calls, not a panel: the graph stops at the gate before
+    # any vote is cast. Two calls for a demographics-only run — one translation
+    # and one screening — and a third when the reader wrote audience words, which
+    # have to be rewritten into the sentence the gate offers for approval.
     charges = [
         _Charge(_PREVIEW, caller, settings.evaluate_previews_per_day, "previews")
     ]
-    spend = _Spend(_PREVIEW, _usd(USD_PER_PREVIEW))
+    # Two written figures summed in Decimal, never one computed float: `_usd`
+    # takes written figures only, for the reason its docstring gives.
+    preview_usd = _usd(USD_PER_PREVIEW)
+    if request.audience.strip():
+        preview_usd += _usd(USD_PER_ROLEPLAY)
+    spend = _Spend(_PREVIEW, preview_usd)
     if request.reading_accepted:
         # No gate on this run, so there is no accept to charge later. One call
         # for both halves, so a caller already at their run cap is not charged
         # for a preview the refusal means never happens.
         charge, price = _panel_purchase(caller)
         charges.append(charge)
-        spend = _Spend(_EVALUATE, _usd(USD_PER_PREVIEW) + price)
+        spend = _Spend(_EVALUATE, preview_usd + price)
     _charge_ledger(conn, *charges, spend=spend)
 
 
@@ -812,6 +841,19 @@ def _run_graph(graph, payload, thread_id: str):
     except EmptyPanel as error:
         # The target names an audience this pool cannot serve: fix the request.
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except RolePlayRefused as error:
+        # One of our own fixed sentences, naming the remedy. The refused text is
+        # never echoed, and no panel is drawn.
+        #
+        # What it costs depends on the path, and only one of them is free: a
+        # normal run has been charged a *preview*, which is a separate and looser
+        # allowance, so the refusal costs no run. A run that skipped the gate has
+        # already been charged the panel purchase by `enforce_evaluate_limits`,
+        # which runs before this handler — so on that path the refusal does
+        # consume one. Narrowing that is owed on 094; it needs the purchase moved
+        # out of the dependency, which is a change to the money path and not to
+        # this feature.
+        raise HTTPException(status_code=422, detail=error.sentence) from error
     except NoVotes as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except OutOfCredit as error:
@@ -828,6 +870,7 @@ def evaluate(
     conn: psycopg.Connection = Depends(get_conn),
     credit: float | None = Depends(get_remaining_credit),
     screener: Screener | None = Depends(get_screener),
+    generator: RolePlayGenerator = Depends(get_generator),
     checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
 ) -> PausedRun | CompletedRun:
     """Start a run. Stops at the panel gate unless the reading was approved.
@@ -844,12 +887,15 @@ def evaluate(
         translator=translator,
         llm=llm,
         screener=screener,
+        generator=generator,
         checkpointer=checkpointer,
     )
     state = _run_graph(
         graph,
         {
             "description": request.target_description,
+            "audience": request.audience,
+            "instruction": _approved_on_entry(conn, request, generator),
             "variants": variants,
             "size": settings.panel.size,
             "reading_accepted": request.reading_accepted,
@@ -884,6 +930,80 @@ def _only_one_answer(conn: psycopg.Connection, thread_id: str) -> Iterator[None]
             cur.execute(
                 "SELECT pg_advisory_unlock(hashtext(%s))", (f"resume:{thread_id}",)
             )
+
+
+def _edit_to_settle(request: ResumeRequest, values: dict) -> str | None:
+    """The reader's edited sentence, or None when there is nothing to classify.
+
+    One predicate, because two places depend on the same answer and they must
+    agree forever: what gets *checked* and what gets *charged*. If they ever
+    drifted, one direction is a free classifier call and the other is a charge for
+    a check that never happened.
+
+    None covers three cases that all mean "no new sentence to judge": the field
+    was not touched, it holds what the draft already said — its verdict was
+    reached when it was written — or it was cleared, which is a decision rather
+    than a sentence.
+    """
+    edited = request.instruction
+    if edited is None or not edited.strip():
+        return None
+    if edited == values.get("instruction", ""):
+        return None
+    return edited
+
+
+def _approved_on_entry(
+    conn: psycopg.Connection, request: EvaluateRequest, generator: RolePlayGenerator
+) -> str:
+    """Classify an instruction the client says was already approved.
+
+    Client-supplied, so untrusted, so judged — a claim of prior approval is not
+    evidence of it. Charged like any other check.
+
+    Honest limit: this path's panel purchase is charged by `enforce_evaluate_limits`
+    before the handler body runs, so a refusal here *does* consume the run — unlike
+    the gate's own edit path, where the check sits above the charge. Reaching it
+    means the client changed the sentence after it was approved.
+    """
+    if not request.instruction or not request.audience.strip():
+        return ""
+    _charge_ledger(conn, spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY)))
+    checked = generator.check(instruction=request.instruction)
+    if checked.refusal is not None:
+        raise HTTPException(status_code=422, detail=checked.refusal_sentence)
+    return checked.instruction
+
+
+def _classify_edit(
+    conn: psycopg.Connection,
+    request: ResumeRequest,
+    values: dict,
+    generator: RolePlayGenerator,
+) -> str:
+    """Judge the reader's edited sentence, above the charge for the panel.
+
+    Above it deliberately, and for the reason the empty-panel refusal above is:
+    a sentence that will never be run must cost no run. 094 says so twice — "no
+    vote bought, and the refusal is not charged to the caller's allowance" — and
+    a reader iterating on their own wording would otherwise spend the day's
+    allowance on panels nobody polled.
+
+    The *check* is charged either way, refused or not. It is a real model call,
+    and an unmetered refusal path is a free probe.
+
+    Returns the approved sentence, which is the caller's own string. Raises 422
+    with a fixed remedy sentence otherwise; the refused text is never echoed.
+    """
+    edited = _edit_to_settle(request, values)
+    if edited is None:
+        return ""
+    _charge_ledger(conn, spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY)))
+    checked = generator.check(instruction=edited)
+    if checked.refusal is not None:
+        # The run stays paused, so the remedy is advice the reader can act on.
+        raise HTTPException(status_code=422, detail=checked.refusal_sentence)
+    return checked.instruction
 
 
 def _edited(request: ResumeRequest, values: dict) -> TargetQuery | None:
@@ -930,6 +1050,7 @@ def resume_evaluate(
     conn: psycopg.Connection = Depends(get_conn),
     credit: float | None = Depends(get_remaining_credit),
     screener: Screener | None = Depends(get_screener),
+    generator: RolePlayGenerator = Depends(get_generator),
     checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
 ) -> PausedRun | CompletedRun:
     """Answer the panel gate: accept and buy the votes, or adjust the reading.
@@ -953,6 +1074,7 @@ def resume_evaluate(
         translator=translator,
         llm=llm,
         screener=screener,
+        generator=generator,
         checkpointer=checkpointer,
     )
     config = {"configurable": {"thread_id": request.thread_id}}
@@ -982,18 +1104,28 @@ def resume_evaluate(
                     "nobody in the pool matches that reading — widen it and look again"
                 ),
             )
+        approved = ""
+        if request.action == "accept":
+            # Above the purchase: a sentence that will never be run costs no run.
+            approved = _classify_edit(conn, request, values, generator)
         if request.action == "accept":
             # The moment a panel is actually bought. After the free refusals
             # above, so a run that was never resumable costs nothing, and
             # inside the lock, so simultaneous accepts cannot each pass a cap
             # neither has yet recorded.
             charge, price = _panel_purchase(caller)
-            _charge_ledger(conn, charge, spend=_Spend(_EVALUATE, price))
+            _charge_ledger(
+                conn,
+                charge,
+                spend=_Spend(_EVALUATE, price),
+            )
         state = _run_graph(
             graph,
             Command(
                 resume=GateDecision(
-                    action=request.action, query=_edited(request, values)
+                    action=request.action,
+                    query=_edited(request, values),
+                    instruction=approved or request.instruction,
                 ).model_dump()
             ),
             request.thread_id,

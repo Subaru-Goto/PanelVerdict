@@ -250,7 +250,14 @@ class StubLLM:
         self.prompts: list[str] = []
         self._lock = Lock()
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ):
         with self._lock:
             self.prompts.append(system_prompt)
         return voted()
@@ -260,7 +267,14 @@ class ContentVoter:
     """Deterministic and content-dependent, so a concurrent run is comparable to a
     sequential one — a position-fixed stub would hide any reordering."""
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ):
         chosen = "option_1" if option_1 < option_2 else "option_2"
         return voted(chosen, f"{len(system_prompt)}")
 
@@ -272,7 +286,14 @@ class FlakyVoter:
         self.remaining = failures
         self._lock = Lock()
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ):
         with self._lock:
             if self.remaining > 0:
                 self.remaining -= 1

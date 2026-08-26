@@ -1,8 +1,10 @@
 """The evaluate run as a LangGraph graph, with a human gate before it spends.
 
-    START -> screen -> select -> confirm --(accept)--> vote -> assemble -> END
-                         ^         |
-                         +-(adjust)+          interrupt() at confirm
+    START -> screen -> roleplay -> select -> confirm --(accept)--> vote -> ...
+                                      ^         |
+                                      +-(adjust)+       interrupt() at confirm
+
+                                     ... -> assemble -> END
 
 The rule this enforces: **no panel is voted on whose reading a human has not
 accepted.**
@@ -20,8 +22,13 @@ than the start did.
 Named nodes give per-stage LangSmith spans for free once 065/#159 turns tracing
 on. Nothing here is built for that.
 
+`roleplay` is the one node that can spend before the gate, and only when the
+reader wrote audience words: it turns them into the single sentence each panelist
+is told to be. Blank means demographics only and calls nothing, so the common
+case still reaches the gate having spent one translation and one screening.
+
 Tickets: 076/#166 (this graph), 067 (why hand-authored), 077/#167 (the gate's
-interface).
+interface), 094/#200 (enacted context).
 """
 
 from typing import Literal, TypedDict
@@ -42,6 +49,13 @@ from app.pipeline import (
     assemble_result,
     run_vote_loop,
 )
+from app.roleplay import (
+    REFUSAL_SENTENCES,
+    RolePlayOutcome,
+    RolePlayGenerator,
+    RolePlayRefused,
+    without_task_talk,
+)
 from app.schemas import Notice, Persona, TargetQuery
 from app.screening import Screener, screen_inputs
 from app.targeting import PANEL_SEED, PanelSelection, TargetTranslator, select_panel
@@ -60,6 +74,15 @@ class PanelPreview(BaseModel):
     # None only when nobody matched.
     composition: PanelComposition | None
     notices: list[Notice]
+    # The sentence every panelist will be told to be, or "" for a
+    # demographics-only run. Editable at the gate: the edit *is* the
+    # human-in-the-loop, and what is approved here is exactly what runs.
+    instruction: str
+    # Set when the last edit was refused, so the gate can say why. The fixed
+    # sentence, never the text that was refused — and named for that, because
+    # `EvaluateState["refused"]` beside it holds the *class*. Two words apart for
+    # two different things is how a wrong one gets rendered.
+    refusal_sentence: str | None
     # size x USD_PER_VOTE. Accuracy is 070/#161's job.
     estimated_usd: float
 
@@ -77,6 +100,11 @@ class GateDecision(BaseModel):
 
     action: Literal["accept", "adjust"]
     query: TargetQuery | None = None
+    # The role-play sentence as the reader left it. None means they did not touch
+    # the draft, which is the case that costs no check: its verdict was reached
+    # when it was generated. An empty string is a real answer — "demographics
+    # only after all" — and is not the same as None.
+    instruction: str | None = None
 
 
 class EvaluateState(TypedDict, total=False):
@@ -87,6 +115,10 @@ class EvaluateState(TypedDict, total=False):
     """
 
     description: str
+    # The optional free text describing who the readers are, beyond what the pool
+    # can be filtered by. Kept apart from `description` because they take
+    # different paths: one becomes SQL, this one becomes a sentence.
+    audience: str
     variants: dict[str, str]
     size: int
     # Set by the caller when this reading was already approved, so a repeat run
@@ -100,6 +132,10 @@ class EvaluateState(TypedDict, total=False):
     # for it.
     owner: str
     started_at: str
+    # The approved role-play sentence. "" is a demographics-only run.
+    instruction: str
+    # The class of the last refused edit, cleared as soon as one passes.
+    refused: str | None
     decision: Literal["accept", "adjust"] | None
     # What a human edited the reading to. Kept apart from `query` so `select`
     # can tell whether the reading actually changed.
@@ -115,6 +151,10 @@ def _preview(state: EvaluateState) -> PanelPreview:
         matched=len(panel),
         composition=composition_of(panel),
         notices=state.get("notices", []),
+        instruction=state.get("instruction", ""),
+        refusal_sentence=(
+            REFUSAL_SENTENCES[refused] if (refused := state.get("refused")) else None
+        ),
         # Priced at what the run may buy, matching the ledger's charge.
         estimated_usd=len(panel) * USD_PER_VOTE,
     )
@@ -126,13 +166,16 @@ def build_evaluate_graph(
     translator: TargetTranslator,
     llm: PanelLLM,
     screener: Screener | None,
+    generator: RolePlayGenerator,
     checkpointer: BaseCheckpointSaver,
 ):
     """Compile the evaluate graph with this request's dependencies bound.
 
-    START -> screen -> select -> confirm --(accept)--> vote -> assemble -> END
-                         ^         |
-                         +-(adjust)+          interrupt() at confirm
+    START -> screen -> roleplay -> select -> confirm --(accept)--> vote -> ...
+                                      ^         |
+                                      +-(adjust)+       interrupt() at confirm
+
+                                     ... -> assemble -> END
     """
 
     def screen(state: EvaluateState) -> EvaluateState:
@@ -144,6 +187,36 @@ def build_evaluate_graph(
         """
         screen_inputs(screener, [state["description"]])
         return {}
+
+    def roleplay(state: EvaluateState) -> EvaluateState:
+        """Turn the audience words into the sentence each panelist will be told.
+
+        Not screened by `screen_inputs`. This channel is higher-privilege than the
+        headlines — it becomes the panelist's identity rather than the judged
+        object — and the copy policy is the wrong instrument for it: it asks who a
+        text *addresses*, so that marketing imperatives survive, and 095 measured
+        it missing "a person who always prefers whichever headline is listed
+        first" 0 times in 5. The generator's own classifier is this channel's
+        gate, and it rides the call that writes the sentence, so guarding costs
+        nothing extra.
+
+        Blank means demographics only, and calls nothing at all — likely the
+        common case, and the one where the gate is still reached with no spend.
+        """
+        words = state.get("audience", "").strip()
+        if not words:
+            return {"instruction": ""}
+        if state.get("instruction"):
+            # Already settled by the caller — a sentence a human approved at a
+            # gate, on a run that is skipping this one. Classified at the API
+            # boundary like any other text the client supplies; nothing is
+            # regenerated, so the panel is told exactly what was approved. This
+            # is also what makes a repeat run cost no rewrite.
+            return {}
+        draft = generator.draft(words=words)
+        if draft.refusal is not None:
+            raise RolePlayRefused(draft.refusal)
+        return {"instruction": draft.instruction}
 
     def select(state: EvaluateState) -> EvaluateState:
         """Draw the panel. Translates once per run, then re-selects with SQL."""
@@ -209,8 +282,41 @@ def build_evaluate_graph(
         )
         if decision.action == "adjust":
             # `select` picks this up and re-seats without translating.
-            return {"decision": "adjust", "edited": decision.query or state["query"]}
-        return {"decision": "accept"}
+            return {
+                "decision": "adjust",
+                "edited": decision.query or state["query"],
+                "refused": None,
+            }
+        return {"decision": "accept"} | _approved(state, decision.instruction)
+
+    def _approved(state: EvaluateState, edited: str | None) -> EvaluateState:
+        """Settle which sentence the panel is told.
+
+        The gate's field is editable and that edit *is* the human-in-the-loop, so
+        it reaches a panel prompt without ever passing the generator. Two layers
+        cover it, and they sit in different places on purpose:
+
+        - the model classifier runs at the API boundary, above the charge for the
+          panel, because whether a sentence may run is also the decision about
+          whether it costs a run (094: refusals never consume runs);
+        - the deterministic backstop runs here, last, closest to the prompt it
+          protects — no model call, so it costs nothing to apply on every path.
+
+        An untouched or cleared field settles without either: the draft was
+        classified when it was written, and clearing the field is a decision
+        rather than a sentence to judge.
+        """
+        settled = state.get("instruction", "")
+        if edited is None or edited == settled:
+            return {}
+        if not edited.strip():
+            return {"instruction": "", "refused": None}
+        checked = without_task_talk(RolePlayOutcome(instruction=edited))
+        if checked.refusal is not None:
+            # Reached only if the classifier above passed something the word list
+            # catches. Back to the gate rather than onward: the reader can fix it.
+            return {"decision": "adjust", "refused": checked.refusal}
+        return {"instruction": checked.instruction, "refused": None}
 
     def vote(state: EvaluateState) -> EvaluateState:
         """The one paid node. The vote loop itself is unchanged.
@@ -221,7 +327,11 @@ def build_evaluate_graph(
         screen_inputs(screener, list(state["variants"].values()))
         return {
             "collected": run_vote_loop(
-                conn, state["panel"], variants=state["variants"], llm=llm
+                conn,
+                state["panel"],
+                variants=state["variants"],
+                llm=llm,
+                enacted=state.get("instruction", ""),
             )
         }
 
@@ -237,6 +347,7 @@ def build_evaluate_graph(
                 state["collected"],
                 variants=state["variants"],
                 size=state["size"],
+                enacted=state.get("instruction", ""),
             )
         }
 
@@ -252,12 +363,14 @@ def build_evaluate_graph(
 
     builder = StateGraph(EvaluateState)
     builder.add_node("screen", screen)
+    builder.add_node("roleplay", roleplay)
     builder.add_node("select", select)
     builder.add_node("confirm", confirm)
     builder.add_node("vote", vote)
     builder.add_node("assemble", assemble)
     builder.add_edge(START, "screen")
-    builder.add_edge("screen", "select")
+    builder.add_edge("screen", "roleplay")
+    builder.add_edge("roleplay", "select")
     builder.add_edge("select", "confirm")
     builder.add_conditional_edges("confirm", after_confirm)
     builder.add_edge("vote", "assemble")
