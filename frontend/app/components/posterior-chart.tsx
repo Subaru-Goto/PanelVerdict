@@ -70,7 +70,7 @@ export default function PosteriorChart({
   const mean = verdict.share_preferring_b;
   // The chart lives in B-space, so the leading side's share appears nowhere on
   // the plot without this — a reader at the dashed line had to compute 100 − 29
-  // themselves. Fixed A-then-B order, matching the tiles.
+  // themselves. Fixed A-then-B order, matching the lead.
   const meanLabel =
     `estimated split: ${formatPercent(1 - mean)} prefer A · ` +
     `${formatPercent(mean)} prefer B`;
