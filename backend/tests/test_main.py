@@ -5,6 +5,9 @@ from decimal import Decimal
 import httpx
 import psycopg
 import pytest
+from app import graph as graph_module
+from app import main
+from app.auth import InvalidSession, SessionUnverifiable
 from app.config import (
     PROFILES,
     USD_PER_ROLEPLAY,
@@ -13,9 +16,6 @@ from app.config import (
     Settings,
     settings,
 )
-from app import graph as graph_module
-from app import main
-from app.auth import InvalidSession, SessionUnverifiable
 from app.main import (
     LEDGER_HOURS,
     app,
@@ -25,10 +25,10 @@ from app.main import (
     get_checkpointer,
     get_conn,
     get_embedder,
+    get_generator,
     get_panel_llm,
     get_remaining_credit,
     get_screener,
-    get_generator,
     get_verifier,
     tracing_enabled,
 )
@@ -47,12 +47,12 @@ from pydantic import SecretStr
 from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
+    StubGenerator,
     make_assembled,
     make_panel_vote,
     make_persona,
     ndjson_events,
     pointing,
-    StubGenerator,
     seed_japanese,
     tool_call_message,
     voted,
@@ -485,7 +485,9 @@ def test_a_pool_refusal_does_not_spend_the_callers_own_budget(
 ) -> None:
     """The rule pins in both directions: a request the pool refuses bought
     nothing, so it must not have consumed one of the caller's runs either —
-    tomorrow's reopened pool owes them their full allowance."""
+    tomorrow's reopened pool owes them their full run allowance. The preview
+    *visit* is counted regardless: it happened, and on the skip path it is the
+    one per-caller number bounding how often the check can be probed."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
     run_price = _one_run_price()
     monkeypatch.setattr(settings, "global_daily_cap_usd", run_price)
@@ -503,7 +505,10 @@ def test_a_pool_refusal_does_not_spend_the_callers_own_budget(
 
     assert refused.status_code == 429
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM request_ledger WHERE caller = '203.0.113.2'")
+        cur.execute(
+            "SELECT count(*) FROM request_ledger"
+            " WHERE caller = '203.0.113.2' AND endpoint = '/evaluate'"
+        )
         row = cur.fetchone()
     assert row is not None and row[0] == 0
 
@@ -2286,3 +2291,82 @@ def test_a_skipped_gate_charges_the_one_check_once(client, conn, monkeypatch) ->
     )
 
     assert response.status_code == 200, response.text
+
+
+def test_a_refusal_on_the_skip_path_consumes_no_run(client, conn, monkeypatch) -> None:
+    """094: a sentence that will never run must cost no run — on both doors.
+    The gate's edit path already judges above the purchase; if the skip path
+    buys the panel before the handler can check, a refused instruction burns
+    the run for a panel nobody polled. The check itself stays charged — it is
+    a real model call, and an unmetered refusal is a free probe — but the
+    day's one run must still be buyable afterwards."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+    seed_japanese(conn, 5)
+    app.dependency_overrides[get_generator] = lambda: StubGenerator(
+        refusals={"You are Taylor Swift.": "real_person"}
+    )
+
+    refused = client.post(
+        "/evaluate",
+        json=_REQUEST_BODY
+        | {"audience": "famous fans", "instruction": "You are Taylor Swift."},
+    )
+    assert refused.status_code == 422
+
+    bought = client.post(
+        "/evaluate",
+        json=_REQUEST_BODY
+        | {"audience": "keen runners", "instruction": "You are a keen runner."},
+    )
+    assert bought.status_code == 200, bought.text
+
+
+def test_the_check_has_its_own_per_caller_daily_bound(
+    client, conn, monkeypatch
+) -> None:
+    """094: every check is a real model call billed to the shared pool, and the
+    gate lets a reader edit as often as they like — so without its own bound
+    the edit loop is a per-caller-free pump on everyone's budget. The bound is
+    enforced above the model call: a caller at the cap cannot make the
+    generator read one more sentence, not even to refuse it."""
+    monkeypatch.setattr(settings, "evaluate_checks_per_caller_per_day", 1)
+    seed_japanese(conn, 5)
+    generator = StubGenerator(refusals={"You are Taylor Swift.": "real_person"})
+    app.dependency_overrides[get_generator] = lambda: generator
+    thread_id = _evaluate(client, audience="keen runners").json()["thread_id"]
+
+    def accept_with(sentence: str):
+        return client.post(
+            "/evaluate/resume",
+            json={"thread_id": thread_id, "action": "accept", "instruction": sentence},
+        )
+
+    refused = accept_with("You are Taylor Swift.")
+    capped = accept_with("You are Taylor Swift on tour.")
+
+    assert refused.status_code == 422
+    assert capped.status_code == 429
+    assert generator.checked == ["You are Taylor Swift."]
+
+
+def test_the_skip_paths_check_counts_against_the_same_allowance(
+    client, conn, monkeypatch
+) -> None:
+    """One allowance for both doors, because it bounds one thing: how often a
+    caller can make the classifier read a sentence of their choosing."""
+    monkeypatch.setattr(settings, "evaluate_checks_per_caller_per_day", 1)
+    seed_japanese(conn, 5)
+
+    first = client.post(
+        "/evaluate",
+        json=_REQUEST_BODY
+        | {"audience": "keen runners", "instruction": "You are a keen runner."},
+    )
+    second = client.post(
+        "/evaluate",
+        json=_REQUEST_BODY
+        | {"audience": "keen runners", "instruction": "You are a keen jogger."},
+    )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 429

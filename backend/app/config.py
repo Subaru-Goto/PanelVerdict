@@ -147,6 +147,15 @@ class Settings(BaseSettings):
     # spend; the worst case is 25 rewrites, 25 x USD_PER_ROLEPLAY = $0.03,
     # still under the $0.04 of one panel (200 x USD_PER_VOTE). 0 disables.
     evaluate_previews_per_day: int = 25
+    # How often one caller may make the classifier read a sentence of their
+    # choosing — the gate's edit loop and the skip path's entry check share it.
+    # Twice the preview allowance, because iterating on the sentence is the
+    # product's core loop and a gate visit affords a couple of edit rounds.
+    # Sized from a measurement, not the ceiling: a check's provider-reported
+    # bill peaked at $0.000156 over 24 calls (docs/research/roleplay-cost.md,
+    # 2026-08-26), so the worst case is 50 x $0.000156 ≈ $0.008 — a fifth of
+    # one panel. 0 disables.
+    evaluate_checks_per_caller_per_day: int = 50
     # Bounded by structure, not price — honestly flagged: no per-turn dollar
     # measurement exists yet (unlike USD_PER_VOTE). A turn's model calls are
     # bounded by `analyst.py`'s recursion budget, which is derived from the tool
