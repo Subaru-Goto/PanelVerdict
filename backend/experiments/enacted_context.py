@@ -339,7 +339,6 @@ def main() -> None:
         screener = OpenRouterScreener(
             api_key=key,
             base_url=settings.openrouter_base_url,
-            provider=settings.model_provider,
             model=settings.screening_model,
         )
         # Appended as each verdict lands, for the same salvage reason: the
@@ -359,7 +358,6 @@ def main() -> None:
     transport = {
         "api_key": key,
         "base_url": settings.openrouter_base_url,
-        "provider": settings.model_provider,
         "model": args.model,
         "question": DEFAULT_FRAMING.question,
     }
