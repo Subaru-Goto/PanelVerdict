@@ -19,6 +19,10 @@ const { evaluateMock, resumeMock } = vi.hoisted(() => ({
 vi.mock("../app/lib/api", () => ({
   evaluate: evaluateMock,
   resumeEvaluate: resumeMock,
+  // The real constants: the mock replaces the paid calls, not the vocabulary.
+  LOCALES: ["US", "JP", "DE"],
+  MIN_PANEL_AGE: 18,
+  MAX_PANEL_AGE: 100,
 }));
 
 const RESPONSE = makeResponse();
@@ -109,6 +113,31 @@ describe("EvaluateForm", () => {
         headlineB: "Members save half",
       }),
     );
+  });
+
+  it("keeps submit unclickable while the age range is empty", () => {
+    // Both ends pass their own bounds, so only the pair says the range is
+    // empty; the backend refuses it too, but a submit that cannot succeed
+    // should not be clickable.
+    render(<EvaluateForm />);
+
+    fireEvent.change(screen.getByLabelText(/age from/i), {
+      target: { value: "50" },
+    });
+    fireEvent.change(screen.getByLabelText(/age to/i), {
+      target: { value: "30" },
+    });
+    fireEvent.change(screen.getByLabelText(/headline a/i), {
+      target: { value: "a" },
+    });
+    fireEvent.change(screen.getByLabelText(/headline b/i), {
+      target: { value: "b" },
+    });
+
+    expect(
+      (screen.getByRole("button", { name: /evaluate/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
   });
 
   it("offers the four controls and no free-text target", () => {

@@ -487,9 +487,15 @@ def enforce_evaluate_limits(
         _Charge(_PREVIEW, caller, settings.evaluate_previews_per_day, "previews")
     ]
     preview_usd = Decimal("0")
-    if request.audience.strip():
+    if request.audience.strip() and not request.reading_accepted:
+        # The rewrite that writes the gate's draft. Not on the skip path: there
+        # the validator forces the approved sentence through, nothing is
+        # rewritten, and the one call that does happen — the check — is charged
+        # where it fires, in `_approved_on_entry`.
         preview_usd = _usd(USD_PER_ROLEPLAY)
-    spend = _Spend(_PREVIEW, preview_usd)
+    # None, not a zero row: a $0 spend would still take the pool's advisory
+    # lock and leave a ledger row nobody reads.
+    spend = _Spend(_PREVIEW, preview_usd) if preview_usd else None
     if request.reading_accepted:
         # No gate on this run, so there is no accept to charge later. One call
         # for both halves, so a caller already at their run cap is not charged
@@ -889,7 +895,7 @@ def evaluate(
                 Notice(
                     severity="reading",
                     message=(
-                        "No audience was described, so the panel is a "
+                        "No control narrowed the panel, so it is a "
                         "cross-section of the whole pool rather than a match "
                         "to anyone in particular."
                     ),

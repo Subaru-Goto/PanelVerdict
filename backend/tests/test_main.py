@@ -2241,3 +2241,48 @@ def test_an_audience_preview_spends_exactly_one_rewrite(client, conn) -> None:
         cur.execute("SELECT coalesce(sum(usd), 0) FROM spend_ledger")
         row = cur.fetchone()
     assert row is not None and float(row[0]) == float(USD_PER_ROLEPLAY)
+
+
+def test_an_inverted_age_range_is_refused_in_the_contract(client, conn) -> None:
+    """Both ends pass their own bounds, so only the pair can say it is empty by
+    construction. Refused before any dependency runs — the old TargetRequest
+    had this guard and the controls must not lose it — instead of surfacing as
+    a paid-preview "no persona matches"."""
+    seed_japanese(conn, 5)
+
+    refused = _evaluate(client, target={"min_age": 50, "max_age": 30})
+
+    assert refused.status_code == 422
+    # A schema refusal, not a paid preview that found an empty room: the
+    # attempt must not have been recorded against the caller's allowance.
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM request_ledger")
+        row = cur.fetchone()
+    assert row is not None and row[0] == 0
+
+
+def test_a_skipped_gate_charges_the_one_check_once(client, conn, monkeypatch) -> None:
+    """With reading_accepted the rewrite never runs — the validator forces the
+    approved instruction through — so the only roleplay-priced call is the
+    check in _approved_on_entry. A budget of exactly check + panel must admit
+    the run; charging the phantom rewrite too would refuse it."""
+    seed_japanese(conn, 5)
+    monkeypatch.setattr(
+        settings,
+        "global_daily_cap_usd",
+        float(
+            Decimal(str(USD_PER_ROLEPLAY))
+            + Decimal(str(USD_PER_VOTE)) * settings.panel.size
+        ),
+    )
+
+    response = client.post(
+        "/evaluate",
+        json=_REQUEST_BODY
+        | {
+            "audience": "keen runners",
+            "instruction": "You are a keen runner.",
+        },
+    )
+
+    assert response.status_code == 200, response.text

@@ -3,9 +3,6 @@ from pydantic import ValidationError
 
 from app.config import (
     PROFILES,
-    USD_PER_PREVIEW,
-    USD_PER_TRANSLATION,
-    USD_PER_VOTE,
     Settings,
 )
 
@@ -51,7 +48,5 @@ def test_the_profiles_are_a_ladder() -> None:
 
 
 def test_the_preview_price_is_its_two_calls() -> None:
-    """`_usd` takes written figures, never computed products, so the preview's
-    price is written down — and this keeps the written figure honest about the
-    parts it stands for."""
-    assert USD_PER_PREVIEW == USD_PER_TRANSLATION + USD_PER_VOTE
+    """Retired with USD_PER_PREVIEW (094): a preview's only possible call is
+    the rewrite, priced by USD_PER_ROLEPLAY, pinned below."""

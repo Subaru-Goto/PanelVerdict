@@ -94,6 +94,13 @@ export type CoverageRung = "requested" | "approximated" | "unmatched";
 
 export type Locale = "US" | "JP" | "DE";
 
+/** Every locale the pool holds, and its age span — mirrors the backend's
+ *  Locale enum and MIN/MAX_PERSONA_AGE. One place, so the form's controls and
+ *  the gate's fact rows cannot drift apart. */
+export const LOCALES: Locale[] = ["US", "JP", "DE"];
+export const MIN_PANEL_AGE = 18;
+export const MAX_PANEL_AGE = 100;
+
 export type EducationLevel = "below_secondary" | "secondary" | "tertiary";
 
 export type TargetQuery = {

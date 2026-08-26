@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 
-import type { PanelPreview } from "../lib/api";
+import {
+  LOCALES,
+  MAX_PANEL_AGE,
+  MIN_PANEL_AGE,
+  type PanelPreview,
+} from "../lib/api";
 
 /** The panel gate: who would be seated, and the choice to pay for them.
  *
@@ -56,12 +61,10 @@ export default function PanelGate({
   // The reading as fact rows: the caller's own controls, no interpretation to
   // explain (094). A control that narrowed nothing is not a row — every
   // country and the full age span is just the pool.
-  const everyCountry = ["US", "JP", "DE"].every((c) =>
-    (query.countries as string[]).includes(c),
-  );
+  const everyCountry = LOCALES.every((c) => query.countries.includes(c));
   const selected: [string, string][] = [];
   if (!everyCountry) selected.push(["Country", query.countries.join(", ")]);
-  if (query.min_age !== 18 || query.max_age !== 100)
+  if (query.min_age !== MIN_PANEL_AGE || query.max_age !== MAX_PANEL_AGE)
     selected.push(["Age", `${query.min_age}–${query.max_age}`]);
   if (query.gender) selected.push(["Gender", query.gender]);
   if (query.education.length)

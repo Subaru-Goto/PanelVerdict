@@ -244,7 +244,7 @@ def build_evaluate_graph(
                     )
                 ],
             }
-        # Readings explain the *unchanged* reading, so they are kept when it is
+        # Notices explain the *unchanged* reading, so they are kept when it is
         # and dropped when an edit replaced it; a shortfall is about who was
         # actually seated, so it is recomputed either way.
         kept = list(state.get("notices", [])) if target == settled else []

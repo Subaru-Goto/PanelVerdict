@@ -487,6 +487,18 @@ class PanelEdit(BaseModel):
     # No traits: temperament left targeting when the controls arrived (094).
     # It remains the panel's internal diversity, not a thing customers aim.
 
+    @model_validator(mode="after")
+    def _ages_in_order(self) -> "PanelEdit":
+        """Both ends pass their own bounds, so only the pair can say the range
+        is empty by construction. Refused in the contract, before anything is
+        charged — the guard TargetRequest carried, kept through the controls."""
+        if self.min_age > self.max_age:
+            raise ValueError(
+                f"the age range is empty: from {self.min_age} to {self.max_age} "
+                "— swap the two ends"
+            )
+        return self
+
 
 class EvaluateRequest(BaseModel):
     # Forbid, not ignore: the frontend deploys separately, so a stale client can

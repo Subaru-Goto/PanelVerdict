@@ -2,7 +2,14 @@
 
 import { useEffect, useState, type SubmitEvent } from "react";
 
-import type { EducationLevel, Gender, Locale } from "../lib/api";
+import {
+  LOCALES,
+  MAX_PANEL_AGE,
+  MIN_PANEL_AGE,
+  type EducationLevel,
+  type Gender,
+  type Locale,
+} from "../lib/api";
 import { useEvaluate } from "../lib/use-evaluate";
 import PanelGate from "./panel-gate";
 import Report from "./report";
@@ -123,8 +130,8 @@ export default function EvaluateForm({
   // The demographic controls (094): read straight into SQL, no model involved.
   // Nothing chosen means the whole pool — a real choice, not an omission.
   const [countries, setCountries] = useState<Locale[]>([]);
-  const [minAge, setMinAge] = useState(18);
-  const [maxAge, setMaxAge] = useState(100);
+  const [minAge, setMinAge] = useState(MIN_PANEL_AGE);
+  const [maxAge, setMaxAge] = useState(MAX_PANEL_AGE);
   const [gender, setGender] = useState<"" | Gender>("");
   const [education, setEducation] = useState<EducationLevel[]>([]);
   const [incomeQuintiles, setIncomeQuintiles] = useState<number[]>([]);
@@ -150,11 +157,20 @@ export default function EvaluateForm({
     });
   }
 
+  // A cleared number input coerces to 0 and an inverted pair matches nobody;
+  // the backend refuses both, but a submit that cannot succeed should not be
+  // clickable.
+  const agesValid =
+    minAge >= MIN_PANEL_AGE && maxAge <= MAX_PANEL_AGE && minAge <= maxAge;
+
   // Both audience fields stay optional: two headlines against a cross-section
   // of the whole pool is a real test, and blank is a choice rather than an
   // omission. The backend calls no model at all for an empty audience.
   const disabled =
-    !headlineA.trim() || !headlineB.trim() || state.phase === "loading";
+    !headlineA.trim() ||
+    !headlineB.trim() ||
+    !agesValid ||
+    state.phase === "loading";
 
   // Once a report exists the page stops being a form: the reader wants the
   // answer at the top rather than the inputs they already filled in.
@@ -201,17 +217,23 @@ export default function EvaluateForm({
           </legend>
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-zinc-500">Country</span>
-            <Choice label="United States" value="US" chosen={countries} onChange={setCountries} />
-            <Choice label="Japan" value="JP" chosen={countries} onChange={setCountries} />
-            <Choice label="Germany" value="DE" chosen={countries} onChange={setCountries} />
+            {LOCALES.map((code) => (
+              <Choice
+                key={code}
+                label={{ US: "United States", JP: "Japan", DE: "Germany" }[code]}
+                value={code}
+                chosen={countries}
+                onChange={setCountries}
+              />
+            ))}
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-1.5">
               Age from
               <input
                 type="number"
-                min={18}
-                max={100}
+                min={MIN_PANEL_AGE}
+                max={MAX_PANEL_AGE}
                 value={minAge}
                 onChange={(e) => setMinAge(Number(e.target.value))}
                 className={`${INPUT_CLASS} w-20`}
@@ -221,8 +243,8 @@ export default function EvaluateForm({
               Age to
               <input
                 type="number"
-                min={18}
-                max={100}
+                min={MIN_PANEL_AGE}
+                max={MAX_PANEL_AGE}
                 value={maxAge}
                 onChange={(e) => setMaxAge(Number(e.target.value))}
                 className={`${INPUT_CLASS} w-20`}
