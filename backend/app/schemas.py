@@ -427,9 +427,9 @@ class PanelCounts(BaseModel):
 # allowlist narrow enough to be worth having would refuse real copy.
 MAX_HEADLINE_CHARS = 500
 MAX_TARGET_DESCRIPTION_CHARS = 2000
-# PENDING USER SIGN-OFF (not yet approved): the same queue as the two caps above,
-# and 094/#200 says so in its own words — "the final figure is a decision to make,
-# not yet sourced".
+# Signed off 2026-08-26 as a launch value (094/#200); revisiting it with usage
+# evidence is 107/#228 — raising is a one-constant change, lowering after launch
+# breaks saved inputs, which is why it starts tight.
 #
 # Tighter than a target description, and for a different reason than size. This
 # text is rewritten into one sentence every panelist is told to be, and a pile of

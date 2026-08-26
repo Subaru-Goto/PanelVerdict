@@ -138,6 +138,10 @@ export type EvaluateInput = {
   targetDescription: string;
   headlineA: string;
   headlineB: string;
+  /** Who the readers are beyond anything the pool can be filtered by — life
+   *  stage, habits, interests. Blank means demographics only and costs no
+   *  model call (094/#200). */
+  audience?: string;
   /** This reading was already approved, so the panel gate should not stop the
    *  run again. The client says it; the server never infers it. */
   readingAccepted?: boolean;
@@ -150,6 +154,12 @@ export type PanelPreview = {
   matched: number;
   composition: PanelComposition | null;
   notices: Notice[];
+  /** The sentence every panelist will be told to be, or "" for a
+   *  demographics-only run. Editable at the gate: what is approved here is
+   *  exactly what runs. */
+  instruction: string;
+  /** Why the last edit was refused — our fixed sentence, never the edit. */
+  refusal_sentence: string | null;
   estimated_usd: number;
 };
 
@@ -190,6 +200,10 @@ export type GateAnswer = {
   threadId: string;
   action: "accept" | "adjust";
   query?: PanelEdit;
+  /** The role-play sentence as the reader left it. Absent means untouched —
+   *  the case that costs no check, since the draft was classified when it was
+   *  written. "" is a real answer: demographics only after all. */
+  instruction?: string;
 };
 
 /** Read a proxy response as an outcome, or throw the backend's own sentence.
@@ -236,6 +250,7 @@ export async function evaluate(
       headline_a: request.headlineA,
       headline_b: request.headlineB,
       reading_accepted: request.readingAccepted ?? false,
+      audience: request.audience ?? "",
     }),
   });
   return outcomeOf(res);
@@ -254,6 +269,10 @@ export async function resumeEvaluate(
       thread_id: answer.threadId,
       action: answer.action,
       ...(answer.query ? { query: answer.query } : {}),
+      // undefined and "" diverge on the wire on purpose — see GateAnswer.
+      ...(answer.instruction !== undefined
+        ? { instruction: answer.instruction }
+        : {}),
     }),
   });
   return outcomeOf(res);

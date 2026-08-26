@@ -28,18 +28,40 @@ function counted(groups: Record<string, number>): string {
 
 export default function PanelGate({
   preview,
+  notice = null,
   onAccept,
   onBack,
 }: {
   preview: PanelPreview;
-  onAccept: () => void;
+  /** The backend's fixed refusal sentence when the last answer was turned
+   *  away. The run is still paused, so the gate re-arms for another try. */
+  notice?: string | null;
+  onAccept: (instruction?: string) => void | Promise<void>;
   onBack: () => void;
 }) {
   // Disables itself rather than taking a prop for it. Two clicks land before
   // React swaps this view out, and each one would buy the panel.
   const [sent, setSent] = useState(false);
+  // The sentence each panelist will be told to be, as the reader leaves it.
+  // Editing it is the human-in-the-loop (094/#200): what is approved here is
+  // exactly what runs. Seeded from the prop and never re-synced — safe while a
+  // pause's draft cannot change (refusals keep the preview); if adjust ever
+  // regenerates it, key this component by the preview or the stale text will
+  // read as an edit and buy a check.
+  const [instruction, setInstruction] = useState(preview.instruction);
+  const touched = instruction !== preview.instruction;
   const { composition } = preview;
   const nobody = preview.matched === 0;
+
+  function accept(): void {
+    setSent(true);
+    // Untouched rides as absence — no check to pay for; any change, including
+    // clearing to "", is a real answer the backend classifies before spending.
+    // Re-arm if the answer is refused: the gate survives its own rejection.
+    void Promise.resolve(onAccept(touched ? instruction : undefined)).finally(
+      () => setSent(false),
+    );
+  }
 
   return (
     <section className="flex flex-col gap-4 rounded border border-zinc-300 p-4 dark:border-zinc-700">
@@ -65,26 +87,62 @@ export default function PanelGate({
         </div>
       )}
 
-      {preview.notices.map((notice) => (
+      {preview.notices.map((note) => (
         <p
-          key={notice.message}
+          key={note.message}
           className={
-            notice.severity === "warning"
+            note.severity === "warning"
               ? "text-sm text-amber-700 dark:text-amber-500"
               : "text-sm text-zinc-600 dark:text-zinc-400"
           }
         >
-          {notice.message}
+          {note.message}
         </p>
       ))}
+
+      {preview.instruction !== "" && (
+        <label className="flex flex-col gap-1 text-sm">
+          What each panelist will be told
+          <textarea
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            rows={2}
+            // Mirrors MAX_INSTRUCTION_CHARS (schemas.py): the backend refuses
+            // longer, so the field should not let it be typed.
+            maxLength={400}
+            className="rounded border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+          />
+          <span className="text-xs text-zinc-500">
+            Role-played, not sampled: each panelist acts this on top of their
+            surveyed age, gender, education and income — no data picked them by
+            it. Edit it, or clear it to run on demographics alone; what you
+            approve is exactly what the panel is told.
+          </span>
+          {touched && (
+            <button
+              type="button"
+              onClick={() => setInstruction(preview.instruction)}
+              className="self-start text-xs underline underline-offset-2"
+            >
+              Restore the draft
+            </button>
+          )}
+        </label>
+      )}
+
+      {/* One slot, two sources: a refusal caught on this client (notice) or
+          one the pause already carried (a resumed thread). Ours either way —
+          never the refused text. */}
+      {(notice ?? preview.refusal_sentence) && (
+        <p role="alert" className="text-sm text-amber-700 dark:text-amber-500">
+          {notice ?? preview.refusal_sentence}
+        </p>
+      )}
 
       <div className="flex items-center gap-3">
         <button
           type="button"
-          onClick={() => {
-            setSent(true);
-            onAccept();
-          }}
+          onClick={accept}
           disabled={sent || nobody}
           className="rounded bg-zinc-900 px-4 py-2 text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
         >

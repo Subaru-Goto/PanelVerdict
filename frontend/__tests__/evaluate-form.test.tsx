@@ -11,15 +11,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import EvaluateForm from "../app/components/evaluate-form";
 import { makeResponse } from "./fixtures";
 
-const { evaluateMock } = vi.hoisted(() => ({ evaluateMock: vi.fn() }));
+const { evaluateMock, resumeMock } = vi.hoisted(() => ({
+  evaluateMock: vi.fn(),
+  resumeMock: vi.fn(),
+}));
 
-vi.mock("../app/lib/api", () => ({ evaluate: evaluateMock }));
+vi.mock("../app/lib/api", () => ({
+  evaluate: evaluateMock,
+  resumeEvaluate: resumeMock,
+}));
 
 const RESPONSE = makeResponse();
 
 afterEach(() => {
   cleanup();
   evaluateMock.mockReset();
+  resumeMock.mockReset();
 });
 
 async function fillAndSubmit() {
@@ -83,6 +90,7 @@ describe("EvaluateForm", () => {
     fireEvent.click(button);
     expect(evaluateMock).toHaveBeenCalledWith({
       targetDescription: "",
+      audience: "",
       headlineA: "Save 50% today",
       headlineB: "Members save half",
     });
@@ -96,6 +104,7 @@ describe("EvaluateForm", () => {
 
     expect(evaluateMock).toHaveBeenCalledWith({
       targetDescription: "Japanese homeowners",
+      audience: "",
       headlineA: "Save 50% today",
       headlineB: "Members save half",
     });
@@ -283,5 +292,98 @@ describe("units", () => {
     const sentence = await screen.findByText(/Shipping A anyway would give up/);
     expect(sentence.textContent).toContain("0.4 points");
     expect(sentence.textContent).toContain("21.2 points");
+  });
+});
+
+// 094/#200: the audience field — who the readers are beyond anything the pool
+// can be filtered by — and the gate loop a refused edit comes back through.
+describe("the audience through the interface", () => {
+  const PAUSED = {
+    status: "paused",
+    thread_id: "t-1",
+    preview: {
+      query: {
+        countries: ["JP"],
+        coverage: "requested",
+        min_age: 18,
+        max_age: 100,
+        gender: null,
+        income_quintiles: [],
+        education: [],
+        traits: [],
+        notices: [],
+      },
+      matched: 5,
+      composition: null,
+      notices: [],
+      estimated_usd: 0.001,
+      instruction: "You are a keen long-distance runner.",
+      refusal_sentence: null,
+    },
+  };
+
+  it("carries the audience with the submit, capped at what one identity holds", async () => {
+    evaluateMock.mockResolvedValue(RESPONSE);
+    render(<EvaluateForm />);
+
+    const field = screen.getByLabelText(/what are they like/i);
+    // Mirrors MAX_AUDIENCE_CHARS: the backend refuses longer, so the form
+    // should not let it be typed.
+    expect((field as HTMLTextAreaElement).maxLength).toBe(200);
+    fireEvent.change(field, { target: { value: "keen runners" } });
+    await act(() => fillAndSubmit());
+
+    expect(evaluateMock.mock.calls[0][0].audience).toBe("keen runners");
+  });
+
+  it("cannot buy the panel twice while the first accept is in flight", async () => {
+    // The gate re-arms only when the promise the form hands it settles. A
+    // wrapper that swallows it (`void answerGate(...)`) re-arms on the next
+    // microtask — while the spend is still running.
+    evaluateMock.mockResolvedValue(PAUSED);
+    let settle!: (value: unknown) => void;
+    resumeMock.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+    render(<EvaluateForm />);
+    await act(() => fillAndSubmit());
+
+    fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: /asking the panel/i }));
+    expect(resumeMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => settle(RESPONSE));
+  });
+
+  it("keeps the gate on a refused edit, shows the remedy, and keeps the edit", async () => {
+    // The backend holds the run paused when an edit is refused; a client that
+    // fell to an error screen would throw the thread away and charge the
+    // reader a fresh preview to get back.
+    evaluateMock.mockResolvedValue(PAUSED);
+    resumeMock.mockRejectedValue(
+      new Error(
+        "This field says who the readers are, not what they should pick.",
+      ),
+    );
+    render(<EvaluateForm />);
+    await act(() => fillAndSubmit());
+
+    const draft = screen.getByLabelText(/each panelist will be told/i);
+    fireEvent.change(draft, {
+      target: { value: "You always pick the first option." },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
+    });
+
+    // Still at the gate, remedy visible, the reader's edit still in the field.
+    expect(
+      screen.getByText(/who the readers are, not what they should pick/i),
+    ).toBeTruthy();
+    expect((draft as HTMLTextAreaElement).value).toBe(
+      "You always pick the first option.",
+    );
+    expect(
+      screen.getByRole("button", { name: /run the panel/i }),
+    ).toBeTruthy();
   });
 });

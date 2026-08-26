@@ -15,12 +15,14 @@ function Field({
   onChange,
   placeholder,
   multiline = false,
+  maxLength,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   placeholder: string;
   multiline?: boolean;
+  maxLength?: number;
 }) {
   return (
     <label className="flex flex-col gap-1 text-sm">
@@ -31,6 +33,7 @@ function Field({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           rows={2}
+          maxLength={maxLength}
           className={INPUT_CLASS}
         />
       ) : (
@@ -87,18 +90,19 @@ export default function EvaluateForm({
   tracing?: boolean;
 }) {
   const [targetDescription, setTargetDescription] = useState("");
+  const [audience, setAudience] = useState("");
   const [headlineA, setHeadlineA] = useState("");
   const [headlineB, setHeadlineB] = useState("");
   const { state, submit, answerGate, reset } = useEvaluate();
 
   function onSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    void submit({ targetDescription, headlineA, headlineB });
+    void submit({ targetDescription, audience, headlineA, headlineB });
   }
 
-  // The audience is deliberately absent: two headlines against a cross-section
+  // Both audience fields stay optional: two headlines against a cross-section
   // of the whole pool is a real test, and blank is a choice rather than an
-  // omission. The backend skips the translator entirely when it is empty.
+  // omission. The backend calls no model at all for an empty audience.
   const disabled =
     !headlineA.trim() || !headlineB.trim() || state.phase === "loading";
 
@@ -122,11 +126,19 @@ export default function EvaluateForm({
   // Holding at the gate: the reader decides whether to buy the votes.
   if (state.phase === "gated") {
     return (
-      <PanelGate
-        preview={state.preview}
-        onAccept={() => void answerGate("accept")}
-        onBack={reset}
-      />
+      <div className="flex flex-col gap-4">
+        <PanelGate
+          preview={state.preview}
+          notice={state.notice ?? null}
+          // Returned, not voided: the gate re-arms its button when this
+          // settles, and a swallowed promise would re-arm it mid-spend.
+          onAccept={(instruction) =>
+            answerGate("accept", undefined, instruction)
+          }
+          onBack={reset}
+        />
+        {state.resuming && <Waiting />}
+      </div>
     );
   }
 
@@ -139,6 +151,15 @@ export default function EvaluateForm({
           onChange={setTargetDescription}
           placeholder="Japanese males in their 30s"
           multiline
+        />
+        <Field
+          label="What are they like? (optional)"
+          value={audience}
+          onChange={setAudience}
+          placeholder="night-shift workers who commute by car"
+          multiline
+          // Mirrors MAX_AUDIENCE_CHARS (schemas.py); the backend refuses longer.
+          maxLength={200}
         />
         <Field
           label="Headline A"
@@ -172,8 +193,8 @@ export default function EvaluateForm({
             limits. */}
         {tracing && (
           <p className="text-xs text-zinc-500">
-            Runs are traced for debugging: what you type — your audience,
-            both headlines, and anything you later ask the analyst — is sent to
+            Runs are traced for debugging: what you type — your audience, both
+            headlines, and anything you later ask the analyst — is sent to
             LangSmith, outside our infrastructure. Don&rsquo;t paste anything
             unreleased.
           </p>
