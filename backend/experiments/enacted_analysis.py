@@ -15,6 +15,8 @@ write-up weighs together, and each is uninterpretable alone:
   is what separates enactment from generic compliance,
 - `position_rate` — per arm, and the one that exposes a hijack: an attack turns a
   vote into an order effect, which a share alone cannot distinguish from taste.
+- `flip_rate` — 014's headline measure, borrowed unchanged: the share of matched
+  votes that differ between an arm and the baseline.
 """
 
 import argparse
@@ -22,7 +24,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from experiments.analysis import control_share, noise_floor
+from experiments.analysis import control_share, flip_rate, noise_floor
 from experiments.design import HIGH, VoteRow, read_rows
 from experiments.enacted_design import BASELINE, CONTEXTS, PAIRS, EnactedContext
 
@@ -126,6 +128,23 @@ def format_report(rows: list[VoteRow]) -> str:
             f"{arm:<20} {n:>3}   {control_share(rows, arm=arm):>6.2f}   "
             f"{position_rate(rows, arm=arm):>13.2f}"
         )
+
+    lines += [
+        "",
+        # Printed rather than left to be computed by hand: the write-up quotes
+        # this number, and a figure no committed command produces cannot be
+        # checked by the next reader.
+        "paired flip rate vs the no-context arm, pooling every non-comprehension",
+        "pair — so it counts a context changing the panel at all, in either",
+        "direction, not just movement toward the option we predicted.",
+        "",
+        "context              flip",
+    ]
+    for arm in _arms(rows):
+        if arm == BASELINE.id:
+            continue
+        rate = flip_rate(rows, dimension="arm", a=BASELINE.id, b=arm)
+        lines.append(f"{arm:<20} {rate:>4.3f}")
 
     predicted = [c for c in CONTEXTS if c.loads_on and c.id in _arms(rows)]
     if predicted:

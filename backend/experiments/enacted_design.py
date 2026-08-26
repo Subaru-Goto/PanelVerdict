@@ -178,6 +178,10 @@ _FRAME = (
 )
 
 
+class ForgeableFence(Exception):
+    """The customer's words contain the delimiter meant to contain them."""
+
+
 def render_enacted(persona_prompt: str, words: str, *, nonce: str, fenced: bool) -> str:
     """Put the customer's words into the persona prompt, fenced or spliced.
 
@@ -190,4 +194,8 @@ def render_enacted(persona_prompt: str, words: str, *, nonce: str, fenced: bool)
         return persona_prompt
     if not fenced:
         return f"{persona_prompt} {words}"
+    if nonce in words:
+        # A fence the text can close is not a fence, and the run would then
+        # report a fence's numbers for a defence that was not there.
+        raise ForgeableFence(f"{words!r} contains the delimiter {nonce!r}")
     return f"{persona_prompt}\n{_FRAME.format(nonce=nonce)}\n{nonce}\n{words}\n{nonce}"

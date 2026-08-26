@@ -24,7 +24,7 @@ against.
 import argparse
 import json
 import secrets
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -103,8 +103,8 @@ def plan_cells(
     pairs: tuple[HeadlinePair, ...],
     replicates: int,
     fenced: bool,
+    nonce: str,
     personas: tuple[Persona, ...] = BASE_PERSONAS,
-    nonce: str = "<<NONCE>>",
 ) -> list[Cell]:
     """Enumerate every (context × persona × pair × replicate × order) cell.
 
@@ -113,9 +113,16 @@ def plan_cells(
 
     `trait` and `level` are labels here rather than manipulations: the analysis
     matches on `trait`, so it stays constant across arms or no two arms would
-    ever line up. `level` carries the context's role, which is what makes the
-    report readable.
+    ever line up. `level` carries the context's role **and how it was rendered**,
+    because the fenced and bare runs are otherwise byte-identical in their output
+    — the whole "what the fence buys" comparison would then rest on which
+    filename the operator typed.
+
+    `nonce` is required rather than defaulted, for `build_vote_messages`' reason:
+    a guessable delimiter is a forgeable one, and a caller that forgets should
+    fail loudly instead of quietly measuring a fence that was not there.
     """
+    rendering = "fenced" if fenced else "bare"
     cells: list[Cell] = []
     for context in contexts:
         for persona in personas:
@@ -134,7 +141,7 @@ def plan_cells(
                                 arm=context.id,
                                 framing=DEFAULT_FRAMING.id,
                                 trait="enacted",
-                                level=context.role,
+                                level=f"{context.role}:{rendering}",
                                 persona_id=persona.id,
                                 pair_id=pair.id,
                                 replicate=replicate,
@@ -147,18 +154,34 @@ def plan_cells(
 
 
 def collect_rows(
-    *, llm: PanelLLM, cells: list[Cell], workers: int = 1
+    *,
+    llm: PanelLLM,
+    cells: list[Cell],
+    workers: int = 1,
+    done: list[VoteRow] | None = None,
 ) -> list[VoteRow]:
-    """Vote on every planned cell, in plan order whatever finished first."""
+    """Vote on every planned cell, in plan order whatever finished first.
+
+    `done` collects rows as they land, so a failure on the last cell of a
+    thousand does not throw away the nine hundred already paid for. The returned
+    list keeps plan order; `done` is in completion order and is for salvage.
+    """
+    landed = done if done is not None else []
+
+    def one(cell: Cell) -> VoteRow:
+        row = vote_cell(llm, cell)
+        landed.append(row)
+        return row
+
     if workers == 1:
-        return [vote_cell(llm, cell) for cell in cells]
+        return [one(cell) for cell in cells]
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(lambda cell: vote_cell(llm, cell), cells))
+        return list(pool.map(one, cells))
 
 
 def screen_contexts(
     screener: Screener, contexts: tuple[EnactedContext, ...], *, replicates: int = 1
-) -> list[Mapping[str, object]]:
+) -> Iterator[Mapping[str, object]]:
     """Ask the shipped screener about each context, before any panel sees it.
 
     An attack the screener refuses never reaches a vote prompt, so this decides
@@ -168,23 +191,19 @@ def screen_contexts(
     Replicated, because the screener is a model at default temperature: asked
     once, a coin-flip screener and a reliable one produce the same file.
     """
-    rows = []
     for context in contexts:
         if not context.words:
             continue
         for replicate in range(replicates):
             verdict = screener.screen(context.words)
-            rows.append(
-                {
-                    "id": context.id,
-                    "role": context.role,
-                    "replicate": replicate,
-                    "words": context.words,
-                    "flagged": verdict.flagged,
-                    "reason": verdict.reason,
-                }
-            )
-    return rows
+            yield {
+                "id": context.id,
+                "role": context.role,
+                "replicate": replicate,
+                "words": context.words,
+                "flagged": verdict.flagged,
+                "reason": verdict.reason,
+            }
 
 
 @dataclass(frozen=True)
@@ -236,7 +255,9 @@ def main() -> None:
 
     part = PARTS[args.part]
     if args.part == "screen":
-        calls = (len(part.contexts) - 1) * args.replicates
+        # Counted from what `screen_contexts` actually skips, not from an
+        # assumption that exactly one context has empty words.
+        calls = sum(bool(c.words) for c in part.contexts) * args.replicates
         print(f"{calls} screening calls on {settings.screening_model}.")
     else:
         cells = plan_cells(
@@ -266,10 +287,18 @@ def main() -> None:
             provider=settings.model_provider,
             model=settings.screening_model,
         )
-        rows = screen_contexts(screener, part.contexts, replicates=args.replicates)
-        args.out.write_text("".join(json.dumps(row) + "\n" for row in rows))
-        flagged = sum(bool(row["flagged"]) for row in rows)
-        print(f"Wrote {len(rows)} rows. {flagged} flagged.")
+        # Appended as each verdict lands, for the same salvage reason: the
+        # screener is built with no retries, so one 429 late in the run would
+        # otherwise discard every verdict before it.
+        flagged = 0
+        with args.out.open("w") as sink:
+            for row in screen_contexts(
+                screener, part.contexts, replicates=args.replicates
+            ):
+                sink.write(json.dumps(row) + "\n")
+                sink.flush()
+                flagged += bool(row["flagged"])
+        print(f"{flagged} flagged.")
         return
 
     llm = OpenRouterPanelLLM(
@@ -279,7 +308,15 @@ def main() -> None:
         model=args.model,
         question=DEFAULT_FRAMING.question,
     )
-    rows = collect_rows(llm=llm, cells=cells, workers=args.workers)
+    landed: list[VoteRow] = []
+    try:
+        rows = collect_rows(llm=llm, cells=cells, workers=args.workers, done=landed)
+    except Exception:
+        # Salvage before re-raising: these votes are paid for and do not
+        # reproduce, so losing them to an unrelated failure costs real money.
+        write_rows(landed, args.out)
+        print(f"Failed after {len(landed)} votes; wrote them to {args.out}.")
+        raise
     write_rows(rows, args.out)
     print(f"Wrote {len(rows)} rows.")
 
