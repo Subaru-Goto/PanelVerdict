@@ -3,7 +3,8 @@ import threading
 
 import pytest
 
-from app.pipeline import EmptyPanel, NoVotes, run_panel_test
+from app.pipeline import EmptyPanel, NoVotes, run_panel_test, run_vote_loop
+from app.targeting import select_panel
 from app.persistence import persist_pool
 from app.schemas import PanelCounts, RequestedRegion, TargetRequest
 from app.vote import OutOfCredit, VoteResponse
@@ -26,7 +27,14 @@ class SpyLLM:
         self.calls = 0
         self._lock = threading.Lock()
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         with self._lock:
             self.calls += 1
         return voted("option_1")
@@ -37,7 +45,14 @@ class FailingLLM:
 
     configuration = "stub"
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         raise RuntimeError("the model's entire output, which must stay in the log")
 
 
@@ -51,7 +66,14 @@ class FlakyLLM:
         self._remaining = failures
         self._lock = threading.Lock()
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         with self._lock:
             if self._remaining > 0:
                 self._remaining -= 1
@@ -161,7 +183,14 @@ class PrefersLLM:
     def __init__(self, favourite: str) -> None:
         self._favourite = favourite
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         return voted("option_1" if option_1 == self._favourite else "option_2")
 
 
@@ -205,7 +234,14 @@ class FlakyPrefersLLM:
         self._remaining = failures
         self._lock = threading.Lock()
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         with self._lock:
             if self._remaining > 0:
                 self._remaining -= 1
@@ -306,6 +342,58 @@ def test_the_run_records_its_own_wall_time(conn, caplog) -> None:
     assert "seconds_slowest" in line
 
 
+class TestEnactedContextAndTheVoteCache:
+    """Two panels told to be different people are asking different questions, so
+    they must not share cached answers — and a demographics-only run must still
+    reach the votes it stored before this feature existed."""
+
+    def _votes(self, conn, *, enacted: str = "", llm=None):
+        panel = select_panel(
+            conn,
+            "Japanese homeowners",
+            size=3,
+            translator=StubTranslator(JAPAN_REQUEST),
+        ).panel
+        assert len(panel) == 3
+        return run_vote_loop(
+            conn,
+            panel,
+            variants=_VARIANTS,
+            llm=llm or SpyLLM(),
+            enacted=enacted,
+        )
+
+    def test_a_different_instruction_is_a_different_question(self, conn) -> None:
+        seed_japanese(conn, 5)
+        self._votes(conn, enacted="You are a parent of young children.")
+
+        spy = SpyLLM()
+        self._votes(conn, enacted="You are a keen long-distance runner.", llm=spy)
+
+        assert spy.calls == 3
+
+    def test_the_same_instruction_replays_free(self, conn) -> None:
+        seed_japanese(conn, 5)
+        self._votes(conn, enacted="You are a parent of young children.")
+
+        spy = SpyLLM()
+        self._votes(conn, enacted="You are a parent of young children.", llm=spy)
+
+        assert spy.calls == 0
+
+    def test_an_enacted_run_never_serves_a_demographics_only_vote(self, conn) -> None:
+        """The bug this whole arrangement exists to prevent: without the context
+        in the key, a panel told to be parents would be handed the answers of a
+        panel that was told nothing."""
+        seed_japanese(conn, 5)
+        self._votes(conn)
+
+        spy = SpyLLM()
+        self._votes(conn, enacted="You are a parent of young children.", llm=spy)
+
+        assert spy.calls == 3
+
+
 class TestVoteCache:
     """Every vote is stored keyed on the fingerprint of the question asked,
     and the ledger is read before the model is — a re-run replays, a broken run
@@ -390,7 +478,14 @@ class OutOfCreditLLM:
         self._paid = paid
         self._lock = threading.Lock()
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         with self._lock:
             self.calls += 1
             if self.calls <= self._paid:

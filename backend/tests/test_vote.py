@@ -177,7 +177,14 @@ class FailingOnAge:
     def __init__(self, age: int) -> None:
         self._age = age
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         if f"{self._age}-year-old" in system_prompt:
             raise RuntimeError("no structured vote")
         return voted()
@@ -210,7 +217,12 @@ def test_the_votes_are_cast_concurrently() -> None:
         configuration = "stub"
 
         def vote(
-            self, *, system_prompt: str, option_1: str, option_2: str
+            self,
+            *,
+            system_prompt: str,
+            option_1: str,
+            option_2: str,
+            enacted: str = "",
         ) -> VoteResponse:
             barrier.wait(timeout=5)
             return voted()
@@ -232,7 +244,14 @@ class EchoingThePrompt:
 
     configuration = "stub"
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         return voted(reason=system_prompt)
 
 
@@ -283,7 +302,14 @@ class ReportingItsOwnAge:
     def __init__(self, refuse_age: int | None = None) -> None:
         self._refuse_age = refuse_age
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         age = int(system_prompt.split("-year-old")[0].split()[-1])
         if age == self._refuse_age:
             raise RuntimeError("no structured vote")
@@ -409,6 +435,7 @@ class TestVoteFingerprint:
         persona: Persona | None = None,
         order: list[str] | None = None,
         variants: dict[str, str] | None = None,
+        enacted: str = "",
         configuration: str = "model=openai/gpt-5-mini",
     ) -> str:
         return vote_fingerprint(
@@ -417,6 +444,7 @@ class TestVoteFingerprint:
                 order or ["vA", "vB"],
                 variants=variants
                 or {"vA": "Save 50% today", "vB": "Members save half"},
+                enacted=enacted,
             ),
             configuration=configuration,
         )
@@ -433,9 +461,76 @@ class TestVoteFingerprint:
             self._key(persona=_persona("p0", age=55)),
             self._key(variants={"vA": "Save 50% today!", "vB": "Members save half"}),
             self._key(order=["vB", "vA"]),
+            self._key(enacted="You are a parent of young children."),
         ]
 
         assert len(set(keys)) == len(keys)
+
+    def test_two_enacted_contexts_key_apart(self) -> None:
+        """The whole point of putting it in the key: two panels that differ only
+        in what their panelists were told to be are different questions, and the
+        second must not be served the first's answers."""
+        assert self._key(enacted="You are a parent of young children.") != self._key(
+            enacted="You are a keen long-distance runner."
+        )
+
+    def test_no_enacted_context_keys_as_it_did_before_the_field_existed(self) -> None:
+        """Every vote already in the cache was stored under a key computed
+        without this field, and most runs will never set it. The digest below was
+        taken from the code as it stood before the field was added, so an empty
+        enacted context must still reach it — otherwise adding an optional feature
+        silently makes every past report cost money to re-run."""
+        assert (
+            self._key()
+            == "a7cc3ed6dbfa8d21c0db1d9546cfaf1a8ae29333afe1dd1328e07a7582da9009"
+        )
+
+
+class TestEnactedContextReachesThePanel:
+    """The approved role-play instruction has to travel all the way to the model,
+    or the gate approves a sentence nobody is ever told."""
+
+    class _Recorder:
+        configuration = "stub"
+
+        def __init__(self) -> None:
+            self.seen: list[str] = []
+
+        def vote(
+            self,
+            *,
+            system_prompt: str,
+            option_1: str,
+            option_2: str,
+            enacted: str = "",
+        ) -> VoteResponse:
+            self.seen.append(enacted)
+            return voted("option_1", "stub")
+
+    def test_every_panelist_is_told_the_same_instruction(self) -> None:
+        llm = self._Recorder()
+
+        collect_panel_votes(
+            test_id="t",
+            variants={"vA": "A", "vB": "B"},
+            panel=[_persona("p0"), _persona("p1")],
+            llm=llm,
+            enacted="You are a parent of young children.",
+        )
+
+        assert llm.seen == ["You are a parent of young children."] * 2
+
+    def test_a_demographics_only_run_tells_them_nothing(self) -> None:
+        llm = self._Recorder()
+
+        collect_panel_votes(
+            test_id="t",
+            variants={"vA": "A", "vB": "B"},
+            panel=[_persona("p0")],
+            llm=llm,
+        )
+
+        assert llm.seen == [""]
 
 
 def test_the_request_shows_the_variants_in_presentation_order() -> None:
@@ -477,5 +572,12 @@ def test_pre_assigned_orders_are_honoured() -> None:
 class AlwaysFirstShown:
     configuration = "stub"
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         return voted("option_1")

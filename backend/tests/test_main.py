@@ -721,7 +721,14 @@ def test_a_panel_with_no_votes_is_a_bad_gateway_naming_types_only(client, conn) 
     class Failing:
         configuration = "stub"
 
-        def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+        def vote(
+            self,
+            *,
+            system_prompt: str,
+            option_1: str,
+            option_2: str,
+            enacted: str = "",
+        ):
             raise RuntimeError("api key sk-secret rejected")
 
     app.dependency_overrides[get_panel_llm] = Failing
@@ -745,7 +752,14 @@ def test_a_partial_run_returns_a_verdict_with_the_shortfall_in_the_counts(
     class RefusingOne:
         configuration = "stub"
 
-        def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+        def vote(
+            self,
+            *,
+            system_prompt: str,
+            option_1: str,
+            option_2: str,
+            enacted: str = "",
+        ):
             if "31-year-old" in system_prompt:
                 raise RuntimeError("transient")
             return voted()
@@ -772,7 +786,14 @@ def test_exhausted_credit_is_a_402_naming_the_remedy(client, conn) -> None:
     class Broke:
         configuration = "stub"
 
-        def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+        def vote(
+            self,
+            *,
+            system_prompt: str,
+            option_1: str,
+            option_2: str,
+            enacted: str = "",
+        ):
             raise OutOfCredit("OpenRouter credit exhausted (402)")
 
     app.dependency_overrides[get_panel_llm] = lambda: Broke()

@@ -173,6 +173,7 @@ def _chunk_votes(
     test_id: str,
     variants: dict[str, str],
     llm: PanelLLM,
+    enacted: str = "",
 ) -> PanelVotes:
     """One chunk's votes: the ledger first, the model only for what is missing.
 
@@ -189,7 +190,7 @@ def _chunk_votes(
     orders = presentation_orders((first_id, second_id), len(panel), seed=ORDER_SEED)
     fingerprints = {
         persona.id: vote_fingerprint(
-            build_vote_request(persona, order, variants=variants),
+            build_vote_request(persona, order, variants=variants, enacted=enacted),
             configuration=llm.configuration,
         )
         for persona, order in zip(panel, orders)
@@ -205,6 +206,7 @@ def _chunk_votes(
         variants=variants,
         panel=[persona for persona, _ in misses],
         llm=llm,
+        enacted=enacted,
         orders=[order for _, order in misses],
     )
     store_votes(
@@ -248,6 +250,7 @@ def run_vote_loop(
     *,
     variants: dict[str, str],
     llm: PanelLLM,
+    enacted: str = "",
 ) -> CollectedVotes:
     """Vote in chunks, stop when the report would already make a call.
 
@@ -277,7 +280,12 @@ def run_vote_loop(
     for start in range(0, len(panel), VOTE_CONCURRENCY):
         chunk_panel = panel[start : start + VOTE_CONCURRENCY]
         chunk = _chunk_votes(
-            conn, chunk_panel, test_id=test_id, variants=variants, llm=llm
+            conn,
+            chunk_panel,
+            test_id=test_id,
+            variants=variants,
+            llm=llm,
+            enacted=enacted,
         )
         asked += len(chunk_panel)
         votes = PanelVotes(

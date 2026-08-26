@@ -35,7 +35,14 @@ class StubLLM:
         self._chosen = chosen
         self._reason = reason
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str) -> VoteResponse:
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
         return voted(self._chosen, self._reason)
 
 

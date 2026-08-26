@@ -128,7 +128,12 @@ class PanelLLM(Protocol):
     configuration: str
 
     def vote(
-        self, *, system_prompt: str, option_1: str, option_2: str
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
     ) -> VoteResponse: ...
 
 
@@ -144,16 +149,27 @@ class VoteRequest:
     system_prompt: str
     option_1: str
     option_2: str
+    # The customer's audience words, as the approved second-person instruction —
+    # raw, not fenced. Fencing is the adapter's job, below the fingerprint, for the
+    # same reason the options are: the delimiter is a fresh random nonce, so a
+    # fenced string would key a different digest on every restart and no cached
+    # vote would ever be reachable again.
+    enacted: str = ""
 
 
 def build_vote_request(
-    persona: Persona, presentation_order: list[str], *, variants: dict[str, str]
+    persona: Persona,
+    presentation_order: list[str],
+    *,
+    variants: dict[str, str],
+    enacted: str = "",
 ) -> VoteRequest:
     first_id, second_id = presentation_order
     return VoteRequest(
         system_prompt=render_persona_prompt(persona),
         option_1=variants[first_id],
         option_2=variants[second_id],
+        enacted=enacted,
     )
 
 
@@ -167,9 +183,19 @@ def vote_fingerprint(request: VoteRequest, *, configuration: str) -> str:
     swapped order swaps option_1/option_2. JSON framing so no separator convention
     is needed for strings that may contain anything.
     """
-    framed = json.dumps(
-        [configuration, request.system_prompt, request.option_1, request.option_2]
-    )
+    ingredients = [
+        configuration,
+        request.system_prompt,
+        request.option_1,
+        request.option_2,
+    ]
+    if request.enacted:
+        # Appended only when there is one, so a run with no enacted context keys
+        # exactly as it did before the field existed and every vote already in the
+        # cache stays reachable. Not a special case: having no enacted context and
+        # having an empty one are the same question, so they are the same key.
+        ingredients.append(request.enacted)
+    framed = json.dumps(ingredients)
     return hashlib.sha256(framed.encode()).hexdigest()
 
 
@@ -259,6 +285,7 @@ def _cast_vote(
     test_id: str,
     variants: dict[str, str],
     llm: PanelLLM,
+    enacted: str = "",
 ) -> tuple[VoteRecord, VoteUsage | None]:
     """One panelist's vote and its cost, identity re-attached. Runs on a worker thread.
 
@@ -266,11 +293,14 @@ def _cast_vote(
     it already holds the persona. Accumulating usage inside the model adapter instead
     would need no lock either, but nothing would bound it to one run.
     """
-    request = build_vote_request(persona, presentation_order, variants=variants)
+    request = build_vote_request(
+        persona, presentation_order, variants=variants, enacted=enacted
+    )
     response = llm.vote(
         system_prompt=request.system_prompt,
         option_1=request.option_1,
         option_2=request.option_2,
+        enacted=request.enacted,
     )
     record = VoteRecord(
         persona_id=persona.id,
@@ -288,6 +318,7 @@ def collect_panel_votes(
     variants: dict[str, str],
     panel: list[Persona],
     llm: PanelLLM,
+    enacted: str = "",
     seed: int = ORDER_SEED,
     concurrency: int = VOTE_CONCURRENCY,
     orders: Sequence[list[str]] | None = None,
@@ -325,6 +356,7 @@ def collect_panel_votes(
                 test_id=test_id,
                 variants=variants,
                 llm=llm,
+                enacted=enacted,
             )
             for persona, order in zip(panel, orders)
         ]

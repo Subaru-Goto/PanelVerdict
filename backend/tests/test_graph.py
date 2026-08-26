@@ -27,7 +27,14 @@ class CountingLLM:
     def __init__(self) -> None:
         self.asked = 0
 
-    def vote(self, *, system_prompt: str, option_1: str, option_2: str):
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ):
         from tests.factories import voted
 
         self.asked += 1
