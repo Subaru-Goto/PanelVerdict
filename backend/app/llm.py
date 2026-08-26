@@ -11,7 +11,11 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from openai import APIStatusError
 
 from app.config import LANGCHAIN_INTEGRATION
-from app.roleplay import RolePlayDraft, build_roleplay_messages
+from app.roleplay import (
+    RolePlayDraft,
+    build_roleplay_messages,
+    without_task_talk,
+)
 from app.schemas import (
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
@@ -556,7 +560,7 @@ class OpenRouterRolePlayGenerator:
         result = self._model.invoke(build_roleplay_messages(words, nonce=self._nonce))
         if not isinstance(result, RolePlayDraft):
             raise RuntimeError(f"generator returned no structured draft: {result!r}")
-        return result
+        return without_task_talk(result)
 
 
 class OpenRouterEmbedder:

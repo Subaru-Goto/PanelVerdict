@@ -91,6 +91,54 @@ class RolePlayDraft(BaseModel):
         return REFUSAL_SENTENCES[self.refusal]
 
 
+# The nouns of the panelist's *task*. An instruction that names one is talking
+# about the choice rather than about a person, whatever it meant to say.
+#
+# Deliberately not `prefer`, `pick` or `choose`: those are the vocabulary of
+# ordinary life as much as of this task — "chooses organic food" describes a
+# reader — and a field that refuses them is a field nobody can use. The nouns
+# carry the meaning here and the verbs do not.
+_TASK_WORDS = frozenset(
+    {
+        "headline",
+        "headlines",
+        "option",
+        "options",
+        "variant",
+        "variants",
+        "vote",
+        "votes",
+        "voting",
+    }
+)
+
+
+def without_task_talk(draft: RolePlayDraft) -> RolePlayDraft:
+    """Refuse an instruction that names the task, whoever wrote it.
+
+    The system prompt already forbids this and the model mostly obeys — mostly
+    being the problem. Measured 2026-08-26: "people who are strongly persuaded by
+    headlines that mention a number", an ordinary thing to type, produced *"You
+    are strongly persuaded by headlines that mention a number"* on four calls of
+    five, and that sentence moved a panel from 0.56 to 1.00 on a minimal pair.
+    Not an attack — the front door — which is why the backstop is deterministic
+    and does not depend on the model noticing.
+
+    Defence in depth, not a second complete guard: it reads nouns, so an
+    instruction that steers without naming the task still gets through, and the
+    classifier above it is what refuses those.
+    """
+    if draft.refusal is not None:
+        return draft
+    words = {
+        "".join(c for c in token if c.isalpha()).lower()
+        for token in draft.instruction.split()
+    }
+    if words & _TASK_WORDS:
+        return RolePlayDraft(instruction="", refusal="vote_steering")
+    return draft
+
+
 class RolePlayGenerator(Protocol):
     """The seam the graph depends on, so a test never needs a model."""
 

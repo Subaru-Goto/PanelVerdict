@@ -40,3 +40,42 @@ def test_the_words_are_judged_text_here_so_they_ride_the_human_turn() -> None:
     assert words not in str(system.content)
     assert words in str(human.content)
     assert str(human.content).count("<<N>>") == 3
+
+
+def test_an_instruction_naming_the_task_is_turned_into_a_refusal() -> None:
+    """Measured 2026-08-26, and not from an attack: "people who are strongly
+    persuaded by headlines that mention a number" made the generator write *"You
+    are strongly persuaded by headlines that mention a number"* on 4 of 5 calls —
+    breaking its own instruction never to mention headlines. In a panel that
+    sentence took a 0.56 split to 1.00, so the customer's hypothesis came back as
+    a unanimous verdict with statistics attached.
+
+    A prompt rule the model follows most of the time is not a guard. This is the
+    deterministic half.
+    """
+    from app.roleplay import without_task_talk
+
+    caught = without_task_talk(
+        RolePlayDraft(
+            instruction="You are strongly persuaded by headlines that mention a number."
+        )
+    )
+
+    assert caught.refusal == "vote_steering"
+    assert caught.instruction == ""
+
+
+def test_the_backstop_leaves_an_ordinary_audience_alone() -> None:
+    """The list is the vocabulary of *this task*, not of preference — a reader
+    who "chooses organic food" is describing a life, and the field would be
+    useless if that were refused."""
+    from app.roleplay import without_task_talk
+
+    for instruction in (
+        "You are a parent of young children.",
+        "You skim and rarely get past the first few words.",
+        "You choose organic food whenever you can.",
+        "You do the weekly grocery shop online.",
+    ):
+        draft = RolePlayDraft(instruction=instruction)
+        assert without_task_talk(draft) is draft
