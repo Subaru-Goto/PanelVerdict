@@ -427,6 +427,10 @@ class PanelCounts(BaseModel):
 # allowlist narrow enough to be worth having would refuse real copy.
 MAX_HEADLINE_CHARS = 500
 MAX_TARGET_DESCRIPTION_CHARS = 2000
+# PENDING USER SIGN-OFF (not yet approved): the same queue as the two caps above,
+# and 094/#200 says so in its own words — "the final figure is a decision to make,
+# not yet sourced".
+#
 # Tighter than a target description, and for a different reason than size. This
 # text is rewritten into one sentence every panelist is told to be, and a pile of
 # clauses — "sporty vegan parents who shop online and work night shifts" — makes
@@ -437,6 +441,18 @@ MAX_TARGET_DESCRIPTION_CHARS = 2000
 # rather than derived: what a portrayal can hold before it thins is measurable
 # and has not been measured. Flagged as owed on 094 rather than dressed up.
 MAX_AUDIENCE_CHARS = 200
+
+# What the rewrite may expand those words into. Derived from the cap above rather
+# than chosen: the generator is asked for one or two sentences of second-person
+# prose about a person the customer described in at most 200 characters, and twice
+# the input is the room that needs.
+#
+# The two caps must not diverge in the other direction either. The gate shows the
+# generated sentence in an *editable* field, so a field that accepted less than the
+# generator can produce would let a long draft be displayed and never corrected —
+# and the reader would meet a raw validation error instead of a sentence naming the
+# remedy. Both ends carry this figure for that reason.
+MAX_INSTRUCTION_CHARS = 2 * MAX_AUDIENCE_CHARS
 # The analyst's composer. A question is longer than a headline and shorter than
 # an essay; the cap exists because this text reaches a model's context and the
 # checkpointed transcript, and nothing else bounded it.
@@ -454,6 +470,28 @@ class EvaluateRequest(BaseModel):
     # Who the readers are, beyond anything the pool can be filtered by. Blank
     # means demographics only, and costs no model call at all.
     audience: str = Field(default="", max_length=MAX_AUDIENCE_CHARS)
+    # The role-play sentence a human already approved. Only meaningful with
+    # `reading_accepted`, and required there: see the validator below.
+    instruction: str | None = Field(default=None, max_length=MAX_INSTRUCTION_CHARS)
+
+    @model_validator(mode="after")
+    def _approval_says_what_was_approved(self) -> "EvaluateRequest":
+        """A claim of approval has to name the thing approved.
+
+        `reading_accepted` skips the gate, so nobody sees what the panel is told.
+        Without this, an audience on that path would be rewritten afresh — new,
+        nondeterministic prose in every panelist's identity, approved by nobody,
+        on the one path whose entire claim is that it was already approved.
+
+        Refused in the contract rather than in the handler, so it costs nothing:
+        the run's purchase is charged before the handler body runs.
+        """
+        if self.reading_accepted and self.audience.strip() and not self.instruction:
+            raise ValueError(
+                "a run that skips the gate must carry the instruction that was "
+                "approved there"
+            )
+        return self
 
 
 class PanelEdit(BaseModel):
@@ -494,7 +532,7 @@ class ResumeRequest(BaseModel):
     # did not touch the draft — the case that costs no check, since the draft was
     # already classified when it was written. "" is a real answer meaning
     # "demographics only after all", and is not the same as None.
-    instruction: str | None = Field(default=None, max_length=MAX_AUDIENCE_CHARS)
+    instruction: str | None = Field(default=None, max_length=MAX_INSTRUCTION_CHARS)
 
 
 class ToolEvent(BaseModel):

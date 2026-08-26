@@ -51,8 +51,10 @@ from app.pipeline import (
 )
 from app.roleplay import (
     REFUSAL_SENTENCES,
+    RolePlayOutcome,
     RolePlayGenerator,
     RolePlayRefused,
+    without_task_talk,
 )
 from app.schemas import Notice, Persona, TargetQuery
 from app.screening import Screener, screen_inputs
@@ -77,8 +79,10 @@ class PanelPreview(BaseModel):
     # human-in-the-loop, and what is approved here is exactly what runs.
     instruction: str
     # Set when the last edit was refused, so the gate can say why. The fixed
-    # sentence, never the text that was refused.
-    refusal: str | None
+    # sentence, never the text that was refused — and named for that, because
+    # `EvaluateState["refused"]` beside it holds the *class*. Two words apart for
+    # two different things is how a wrong one gets rendered.
+    refusal_sentence: str | None
     # size x USD_PER_VOTE. Accuracy is 070/#161's job.
     estimated_usd: float
 
@@ -148,9 +152,9 @@ def _preview(state: EvaluateState) -> PanelPreview:
         composition=composition_of(panel),
         notices=state.get("notices", []),
         instruction=state.get("instruction", ""),
-        refusal=REFUSAL_SENTENCES[refused]
-        if (refused := state.get("refused"))
-        else None,
+        refusal_sentence=(
+            REFUSAL_SENTENCES[refused] if (refused := state.get("refused")) else None
+        ),
         # Priced at what the run may buy, matching the ledger's charge.
         estimated_usd=len(panel) * USD_PER_VOTE,
     )
@@ -202,6 +206,13 @@ def build_evaluate_graph(
         words = state.get("audience", "").strip()
         if not words:
             return {"instruction": ""}
+        if state.get("instruction"):
+            # Already settled by the caller — a sentence a human approved at a
+            # gate, on a run that is skipping this one. Classified at the API
+            # boundary like any other text the client supplies; nothing is
+            # regenerated, so the panel is told exactly what was approved. This
+            # is also what makes a repeat run cost no rewrite.
+            return {}
         draft = generator.draft(words=words)
         if draft.refusal is not None:
             raise RolePlayRefused(draft.refusal)
@@ -279,31 +290,31 @@ def build_evaluate_graph(
         return {"decision": "accept"} | _approved(state, decision.instruction)
 
     def _approved(state: EvaluateState, edited: str | None) -> EvaluateState:
-        """Settle which sentence the panel is told, checking it if it is new.
+        """Settle which sentence the panel is told.
 
         The gate's field is editable and that edit *is* the human-in-the-loop, so
-        it reaches a panel prompt without ever passing the generator. Left
-        unchecked it would be an injection hole that sidesteps the guard entirely
-        — a wider channel than anything the generator's own prompt can leak.
+        it reaches a panel prompt without ever passing the generator. Two layers
+        cover it, and they sit in different places on purpose:
 
-        Three cases, and only one of them costs a call:
+        - the model classifier runs at the API boundary, above the charge for the
+          panel, because whether a sentence may run is also the decision about
+          whether it costs a run (094: refusals never consume runs);
+        - the deterministic backstop runs here, last, closest to the prompt it
+          protects — no model call, so it costs nothing to apply on every path.
 
-        - untouched (`None`) or unchanged — the draft's verdict was reached when
-          it was written, so re-checking it would charge a reader for restoring
-          our own sentence;
-        - cleared — "demographics only after all", a decision, not a sentence to
-          judge;
-        - edited — classified before a single vote is bought. A refusal is not
-          terminal here: the reader is at the gate and can fix it, so it goes
-          back with the sentence that says how.
+        An untouched or cleared field settles without either: the draft was
+        classified when it was written, and clearing the field is a decision
+        rather than a sentence to judge.
         """
         settled = state.get("instruction", "")
         if edited is None or edited == settled:
             return {}
         if not edited.strip():
             return {"instruction": "", "refused": None}
-        checked = generator.check(instruction=edited)
+        checked = without_task_talk(RolePlayOutcome(instruction=edited))
         if checked.refusal is not None:
+            # Reached only if the classifier above passed something the word list
+            # catches. Back to the gate rather than onward: the reader can fix it.
             return {"decision": "adjust", "refused": checked.refusal}
         return {"instruction": checked.instruction, "refused": None}
 

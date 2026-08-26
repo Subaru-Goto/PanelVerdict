@@ -35,15 +35,33 @@ moment the system moves, and nothing fails to announce it.
 
 ## The only untrusted input is the customer's own text
 
-Two headlines and a target description. That is the whole attack surface a
-stranger controls.
+Five entry points. All of them the customer's own data, and that is the whole
+attack surface a stranger controls:
 
-*Note (2026-08-21):* a third input is scheduled. The `/evaluate` graph's
-confirmation gate ([076 · #166](https://github.com/Subaru-Goto/PanelVerdict/issues/166))
-resumes with `accept`, `adjust` or `redraw`, and `adjust` carries a client-edited
-`TargetQuery` ([077 · #167](https://github.com/Subaru-Goto/PanelVerdict/issues/167)).
-Still the customer's own data, but a new structured entry point — the moment it
-lands, this list is wrong until it is three items long.
+1. **Two headlines.** The thing being judged. Nonce-fenced in the vote task's
+   human turn, screened by `app/screening.py`'s copy policy.
+2. **A target description.** Read by the translator into structured filters.
+3. **The gate's edited `TargetQuery`.** Structured, validated by `PanelEdit`,
+   which is deliberately narrower than `TargetQuery` so a caller cannot supply the
+   report's own testimony about itself
+   ([077 · #167](https://github.com/Subaru-Goto/PanelVerdict/issues/167)).
+4. **The audience free text** ([094 · #200](https://github.com/Subaru-Goto/PanelVerdict/issues/200)).
+   Rewritten by a model into one second-person instruction, and guarded by that
+   same call: its structured output is an instruction *or* a refusal class, never
+   both. A deterministic word-list backstop runs after it.
+5. **The gate's edited instruction.** The one path where text reaches a panel
+   prompt without passing the rewriter — the human's edit goes in as they left it,
+   which is the point of the gate. So it is classified again on resume, by the
+   same four rules, before a single vote is bought.
+
+**Where 4 and 5 differ from 1–3, and why it is a considered exception.** The
+approved instruction is rendered into every panelist's *system* prompt, not the
+human turn — the only untrusted text in this codebase that does. It is there
+because it is part of an identity rather than an object being judged, and identity
+is what a system prompt holds. 095 measured the alternative: put beside the
+headlines, in the block framed as the thing being judged, it costs the panel its
+discrimination on exactly the pair an A/B test is made of. The fence and its frame
+are what pay for the exception, and `app/screening.py` carries the note saying so.
 
 Everything else that looks like it might be untrusted turns out not to be:
 

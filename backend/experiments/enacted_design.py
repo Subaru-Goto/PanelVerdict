@@ -23,8 +23,8 @@ carries the context, `pair_id` the stimulus. Reusing the instrument is the point
 from dataclasses import dataclass
 from typing import Literal
 
-from app.llm import ForgeableFence as ForgeableFence
-from app.llm import render_enacted as shipped_render
+from app.roleplay import ForgeableFence as ForgeableFence
+from app.roleplay import render_enacted as shipped_render
 from experiments.design import PAIRS as _PAIRS
 from experiments.design import HeadlinePair
 

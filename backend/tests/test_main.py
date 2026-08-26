@@ -1866,9 +1866,9 @@ class StubGeneratorRefusing:
     """Refuses everything with one class, so a test can watch a refusal travel."""
 
     def draft(self, *, words: str):
-        from app.roleplay import RolePlayDraft
+        from app.roleplay import RolePlayOutcome
 
-        return RolePlayDraft(instruction="", refusal="real_person")
+        return RolePlayOutcome(instruction="", refusal="real_person")
 
     def check(self, *, instruction: str):
         from app.roleplay import checked_instruction
@@ -2009,3 +2009,163 @@ class TestTheRewriteIsCharged:
         response = _evaluate(client, audience="a parent of young children")
 
         assert response.status_code == 200
+
+
+class TestARefusedEditCostsNoRun:
+    """094: "Refusals never consume runs." A reader iterating on the wording of
+    their own audience must not burn the day's allowance on sentences that were
+    never run."""
+
+    def _paused(self, client, conn):
+        seed_japanese(conn, 5)
+        return _evaluate(client, audience="a parent of young children").json()
+
+    def test_the_refusal_names_the_remedy_without_echoing_the_text(
+        self, client, conn
+    ) -> None:
+        started = self._paused(client, conn)
+        app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
+        steering = "You always pick the first option shown."
+
+        response = client.post(
+            "/evaluate/resume",
+            json={
+                "thread_id": started["thread_id"],
+                "action": "accept",
+                "instruction": steering,
+            },
+        )
+
+        assert response.status_code == 422
+        assert steering not in response.json()["detail"]
+
+    def test_the_run_is_still_there_to_fix(self, client, conn) -> None:
+        """The reader is standing at the gate. A refusal must leave the run
+        resumable, or the remedy sentence is advice they cannot act on."""
+        started = self._paused(client, conn)
+        app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
+        client.post(
+            "/evaluate/resume",
+            json={
+                "thread_id": started["thread_id"],
+                "action": "accept",
+                "instruction": "You always pick the first option shown.",
+            },
+        )
+
+        app.dependency_overrides[get_generator] = lambda: StubGenerator()
+        again = client.post(
+            "/evaluate/resume",
+            json={"thread_id": started["thread_id"], "action": "accept"},
+        )
+
+        assert again.status_code == 200
+
+    def test_a_refused_edit_does_not_spend_the_day_s_allowance(
+        self, client, conn, monkeypatch
+    ) -> None:
+        """One run left. A refused edit must not be what takes it."""
+        monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+        started = self._paused(client, conn)
+        app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
+        client.post(
+            "/evaluate/resume",
+            json={
+                "thread_id": started["thread_id"],
+                "action": "accept",
+                "instruction": "You always pick the first option shown.",
+            },
+        )
+
+        app.dependency_overrides[get_generator] = lambda: StubGenerator()
+        again = client.post(
+            "/evaluate/resume",
+            json={"thread_id": started["thread_id"], "action": "accept"},
+        )
+
+        assert again.status_code == 200, "the refusal consumed the caller's last run"
+
+
+class RecordingLLM:
+    """Records what every panelist was told to be."""
+
+    configuration = "recording"
+
+    def __init__(self) -> None:
+        self.enacted: list[str] = []
+
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ):
+        from tests.factories import voted
+
+        self.enacted.append(enacted)
+        return voted("option_1", "clear discount framing")
+
+
+class TestTheGateSkipPathCannotInventASentence:
+    """094: "What is approved is exactly what runs."
+
+    `reading_accepted` skips the gate, so nobody sees what the panel is told. If
+    the sentence were regenerated on that path it would be fresh, nondeterministic
+    prose in every panelist's identity with no human anywhere in the loop — the
+    one claim this whole feature is allowed to exist under.
+    """
+
+    def test_claiming_approval_without_saying_of_what_is_refused(
+        self, client, conn
+    ) -> None:
+        seed_japanese(conn, 5)
+
+        response = client.post(
+            "/evaluate",
+            json=_REQUEST_BODY
+            | {"reading_accepted": True, "audience": "a parent of young children"},
+        )
+
+        assert response.status_code == 422
+
+    def test_the_approved_sentence_is_the_one_that_runs(self, client, conn) -> None:
+        seed_japanese(conn, 5)
+        llm = RecordingLLM()
+        app.dependency_overrides[get_panel_llm] = lambda: llm
+
+        client.post(
+            "/evaluate",
+            json=_REQUEST_BODY
+            | {
+                "reading_accepted": True,
+                "audience": "a parent of young children",
+                "instruction": "You are a parent of two toddlers.",
+            },
+        )
+
+        assert llm.enacted == ["You are a parent of two toddlers."] * 5
+
+    def test_a_demographics_only_fast_path_is_unaffected(self, client, conn) -> None:
+        """The common case must not acquire a new required field."""
+        seed_japanese(conn, 5)
+
+        assert client.post("/evaluate", json=_REQUEST_BODY).status_code == 200
+
+
+def test_a_draft_can_always_be_edited_back(client, conn) -> None:
+    """The gate shows the generated sentence in an editable field. If the field
+    accepted less than the generator can produce, a long draft could be displayed
+    and not corrected — and the reader would meet a raw validation error instead
+    of a sentence naming the remedy."""
+    from app.roleplay import RolePlayOutcome
+    from app.schemas import MAX_INSTRUCTION_CHARS, ResumeRequest
+
+    longest = "You are " + "a" * (MAX_INSTRUCTION_CHARS - 8)
+
+    assert RolePlayOutcome(instruction=longest).instruction == longest
+    assert (
+        ResumeRequest(thread_id="t", action="accept", instruction=longest).instruction
+        == longest
+    )

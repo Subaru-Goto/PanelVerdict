@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from app.panel import render_persona_prompt
+from app.roleplay import render_enacted
 from app.schemas import PanelVoteOutput, Persona, VoteRecord
 
 # A cap on requests in flight, not a barrier between groups of 25: a group that waits
@@ -173,6 +174,12 @@ def build_vote_request(
     )
 
 
+# Stands in for the random delimiter when the key is rendered, for
+# `CACHE_KEY_NONCE`'s reason: a key carrying a per-adapter random value would
+# change on every restart and no cached vote would ever be reachable.
+CACHE_KEY_ENACTED_FENCE = "ENACTED"
+
+
 def vote_fingerprint(request: VoteRequest, *, configuration: str) -> str:
     """The cache key for one vote: a digest of the question itself.
 
@@ -194,7 +201,17 @@ def vote_fingerprint(request: VoteRequest, *, configuration: str) -> str:
         # exactly as it did before the field existed and every vote already in the
         # cache stays reachable. Not a special case: having no enacted context and
         # having an empty one are the same question, so they are the same key.
-        ingredients.append(request.enacted)
+        #
+        # The *rendered* form, not the raw string, so the frame the panelist reads
+        # is inside the key too — rewording it changes the question, and these are
+        # the only votes that ever see it. A fixed sentinel delimiter, because the
+        # real one is random per adapter and would give every restart its own key.
+        # `configuration` cannot carry the frame instead: it is per-adapter, so it
+        # would key every demographics-only vote on a sentence those votes never
+        # see, and buy that invalidation with the whole stored cache.
+        ingredients.append(
+            render_enacted("", request.enacted, nonce=CACHE_KEY_ENACTED_FENCE)
+        )
     framed = json.dumps(ingredients)
     return hashlib.sha256(framed.encode()).hexdigest()
 
@@ -285,7 +302,10 @@ def _cast_vote(
     test_id: str,
     variants: dict[str, str],
     llm: PanelLLM,
-    enacted: str = "",
+    # Required, not defaulted: see `_chunk_votes`. This one runs on a worker
+    # thread, where a silently-empty argument surfaces as a panel that simply
+    # ignored its instruction.
+    enacted: str,
 ) -> tuple[VoteRecord, VoteUsage | None]:
     """One panelist's vote and its cost, identity re-attached. Runs on a worker thread.
 

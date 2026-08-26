@@ -1,6 +1,6 @@
 import pytest
 
-from app.roleplay import REFUSAL_SENTENCES, RolePlayDraft, checked_instruction
+from app.roleplay import REFUSAL_SENTENCES, RolePlayOutcome, checked_instruction
 
 
 def test_a_draft_is_an_instruction_or_a_refusal_never_both() -> None:
@@ -8,15 +8,15 @@ def test_a_draft_is_an_instruction_or_a_refusal_never_both() -> None:
     editable field shows one, the refusal notice shows the other, and a payload
     carrying both leaves no rule for which the reader is approving."""
     with pytest.raises(ValueError):
-        RolePlayDraft(instruction="You are a parent.", refusal="vote_steering")
+        RolePlayOutcome(instruction="You are a parent.", refusal="vote_steering")
     with pytest.raises(ValueError):
-        RolePlayDraft(instruction="", refusal=None)
+        RolePlayOutcome(instruction="", refusal=None)
 
 
 def test_a_refused_text_is_answered_by_a_fixed_sentence_naming_a_remedy() -> None:
     """House practice, and here it is also the guard: the sentence is ours, so a
     refused input cannot travel onward inside the explanation of its own refusal."""
-    draft = RolePlayDraft(instruction="", refusal="not_an_audience")
+    draft = RolePlayOutcome(instruction="", refusal="not_an_audience")
 
     assert draft.refusal_sentence == REFUSAL_SENTENCES["not_an_audience"]
     assert draft.refusal_sentence.endswith(".")
@@ -56,7 +56,7 @@ def test_an_instruction_naming_the_task_is_turned_into_a_refusal() -> None:
     from app.roleplay import without_task_talk
 
     caught = without_task_talk(
-        RolePlayDraft(
+        RolePlayOutcome(
             instruction="You are strongly persuaded by headlines that mention a number."
         )
     )
@@ -85,7 +85,7 @@ def test_the_backstop_leaves_an_ordinary_audience_alone() -> None:
         # meaning and a great deal of civic meaning.
         "You vote in every local election.",
     ):
-        draft = RolePlayDraft(instruction=instruction)
+        draft = RolePlayOutcome(instruction=instruction)
         assert without_task_talk(draft) is draft
 
 
@@ -98,7 +98,7 @@ def test_the_kept_false_positive_is_pinned_so_it_stays_a_choice() -> None:
     from app.roleplay import without_task_talk
 
     refused = without_task_talk(
-        RolePlayDraft(instruction="You read the news headlines each morning.")
+        RolePlayOutcome(instruction="You read the news headlines each morning.")
     )
 
     assert refused.refusal == "task_words"
@@ -117,7 +117,7 @@ def test_the_backstop_says_which_word_it_caught_without_echoing_the_text(
     from app.roleplay import without_task_talk
 
     with caplog.at_level(logging.WARNING, logger="app.roleplay"):
-        without_task_talk(RolePlayDraft(instruction="You skim every headline."))
+        without_task_talk(RolePlayOutcome(instruction="You skim every headline."))
 
     record = caplog.records[-1]
     assert "headline" in record.getMessage()
@@ -142,7 +142,7 @@ def test_punctuation_does_not_walk_a_task_word_past_the_backstop() -> None:
         "You read (headlines) first.",
         "You are option—led in every purchase.",
     ):
-        caught = without_task_talk(RolePlayDraft(instruction=instruction))
+        caught = without_task_talk(RolePlayOutcome(instruction=instruction))
         assert caught.refusal == "task_words", instruction
 
 
@@ -204,3 +204,14 @@ def test_the_checker_is_asked_for_a_verdict_and_never_for_a_sentence() -> None:
     from app.roleplay import RolePlayVerdict
 
     assert set(RolePlayVerdict.model_fields) == {"refusal"}
+
+
+def test_a_check_of_nothing_is_a_caller_error_not_a_verdict() -> None:
+    """Clearing the gate's field is a legitimate thing to do — it means
+    "demographics only after all" — but that is the reader deciding not to enact
+    anything, not a judgement about a sentence. Both call sites answer it without
+    a classifier, so reaching here means one of them stopped."""
+    from app.roleplay import BlankInstruction
+
+    with pytest.raises(BlankInstruction):
+        checked_instruction("   ", refusal=None)

@@ -27,7 +27,7 @@ from app.schemas import (
     VoterSummary,
 )
 from app.vote import VoteResponse
-from app.roleplay import RolePlayDraft, checked_instruction
+from app.roleplay import RolePlayOutcome, checked_instruction
 
 DIM = 1536
 
@@ -285,12 +285,12 @@ class StubGenerator:
         self.drafted: list[str] = []
         self.checked: list[str] = []
 
-    def draft(self, *, words: str) -> RolePlayDraft:
+    def draft(self, *, words: str) -> RolePlayOutcome:
         self.drafted.append(words)
         if words in self.refusals:
-            return RolePlayDraft(instruction="", refusal=self.refusals[words])
-        return RolePlayDraft(instruction=f"You are {words}.")
+            return RolePlayOutcome(instruction="", refusal=self.refusals[words])
+        return RolePlayOutcome(instruction=f"You are {words}.")
 
-    def check(self, *, instruction: str) -> RolePlayDraft:
+    def check(self, *, instruction: str) -> RolePlayOutcome:
         self.checked.append(instruction)
         return checked_instruction(instruction, refusal=self.refusals.get(instruction))

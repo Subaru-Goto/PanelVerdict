@@ -26,7 +26,7 @@ from app.llm import (
     analyst_chat_model,
     build_vote_messages,
 )
-from app.llm import ForgeableFence, render_enacted
+from app.roleplay import ForgeableFence, render_enacted
 from app.schemas import PanelVoteOutput
 from app.vote import OutOfCredit
 

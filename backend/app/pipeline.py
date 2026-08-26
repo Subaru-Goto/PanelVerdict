@@ -173,7 +173,11 @@ def _chunk_votes(
     test_id: str,
     variants: dict[str, str],
     llm: PanelLLM,
-    enacted: str = "",
+    # No default on the private hops. A forgotten argument on a chain this long
+    # degrades silently to a demographics-only run — the panel is told nothing and
+    # nothing raises — so the ones nobody outside this module calls fail loudly
+    # instead. The public seams keep their default, because most runs have none.
+    enacted: str,
 ) -> PanelVotes:
     """One chunk's votes: the ledger first, the model only for what is missing.
 

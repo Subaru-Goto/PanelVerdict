@@ -16,6 +16,7 @@ from app.vote import (
     total_usage,
     vote_fingerprint,
 )
+from app import roleplay
 from tests.factories import voted
 
 
@@ -473,6 +474,31 @@ class TestVoteFingerprint:
         assert self._key(enacted="You are a parent of young children.") != self._key(
             enacted="You are a keen long-distance runner."
         )
+
+    def test_rewording_the_frame_invalidates_the_votes_that_saw_it(
+        self, monkeypatch
+    ) -> None:
+        """The scaffold's promise, applied to the one template it could not reach.
+
+        The frame is text the panelist reads, so rewording it changes the question.
+        It cannot ride `configuration` — that is per-adapter, and a frame in it
+        would key every demographics-only vote on a sentence those votes never
+        see — so it rides the enacted ingredient instead, where it belongs.
+        """
+        before = self._key(enacted="You are a parent of young children.")
+        monkeypatch.setattr(roleplay, "_ENACTED_FRAME", "A different frame. {nonce}")
+
+        assert self._key(enacted="You are a parent of young children.") != before
+
+    def test_a_demographics_only_vote_is_not_keyed_on_a_frame_it_never_sees(
+        self, monkeypatch
+    ) -> None:
+        """The other half. Without this, tuning the frame would cost the whole
+        stored cache to buy invalidation for the votes that do not need it."""
+        before = self._key()
+        monkeypatch.setattr(roleplay, "_ENACTED_FRAME", "A different frame. {nonce}")
+
+        assert self._key() == before
 
     def test_no_enacted_context_keys_as_it_did_before_the_field_existed(self) -> None:
         """Every vote already in the cache was stored under a key computed
