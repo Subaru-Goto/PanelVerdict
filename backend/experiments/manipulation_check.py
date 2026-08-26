@@ -191,7 +191,13 @@ def plan_cells(
     return cells
 
 
-def _vote(llm: PanelLLM, cell: Cell) -> VoteRow:
+def vote_cell(llm: PanelLLM, cell: Cell) -> VoteRow:
+    """Cast one planned vote, retrying a transient failure.
+
+    Public because 095's enacted-context check plans different cells against
+    the same instrument: a second copy of the retry policy would be a second
+    thing to keep true.
+    """
     for attempt in range(_ATTEMPTS):
         try:
             response = llm.vote(
@@ -251,9 +257,9 @@ def collect_rows(
     if missing:
         raise KeyError(f"no client for framing(s) {missing}; have {sorted(llms)}")
     if workers == 1:
-        return [_vote(llms[cell.framing], cell) for cell in cells]
+        return [vote_cell(llms[cell.framing], cell) for cell in cells]
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(lambda cell: _vote(llms[cell.framing], cell), cells))
+        return list(pool.map(lambda cell: vote_cell(llms[cell.framing], cell), cells))
 
 
 def _selected_arms(value: str) -> tuple[Arm, ...]:
