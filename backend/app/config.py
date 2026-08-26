@@ -156,7 +156,6 @@ class Settings(BaseSettings):
     supabase_service_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    model_provider: str = "openai"
     profile: ProfileName = "dev"
     # Plain Luna, not `-pro`: `TARGET_REASONING_EFFORT = "low"` is a measured setting
     # (targeting-call-effort.md), and `-pro` is the same model served with reasoning mode

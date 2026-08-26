@@ -29,6 +29,8 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from langchain.chat_models import init_chat_model
+
+from app.llm import LANGCHAIN_INTEGRATION
 from openai import APIStatusError
 from pydantic import BaseModel
 
@@ -108,12 +110,12 @@ class OpenRouterScreener:
     """
 
     def __init__(
-        self, *, api_key: str, base_url: str, provider: str, model: str
+        self, *, api_key: str, base_url: str, model: str
     ) -> None:
         self.model_name = model
         self._model = init_chat_model(
             model=model,
-            model_provider=provider,
+            model_provider=LANGCHAIN_INTEGRATION,
             base_url=base_url,
             api_key=api_key,
             # Advisory: one attempt. A retry doubles the latency of a check

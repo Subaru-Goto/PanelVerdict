@@ -141,13 +141,11 @@ def main() -> None:
         embedder = OpenRouterEmbedder(
             api_key=api_key,
             base_url=settings.openrouter_base_url,
-            provider=settings.model_provider,
             model=settings.embedding_model,
         )
         judge = OpenRouterJudge(
             api_key=api_key,
             base_url=settings.openrouter_base_url,
-            provider=settings.model_provider,
             model=settings.judge_model,
         )
 
