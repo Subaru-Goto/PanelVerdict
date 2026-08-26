@@ -18,8 +18,8 @@ def test_a_refused_text_is_answered_by_a_fixed_sentence_naming_a_remedy() -> Non
     refused input cannot travel onward inside the explanation of its own refusal."""
     draft = RolePlayDraft(instruction="", refusal="not_an_audience")
 
-    assert draft.sentence == REFUSAL_SENTENCES["not_an_audience"]
-    assert draft.sentence.endswith(".")
+    assert draft.refusal_sentence == REFUSAL_SENTENCES["not_an_audience"]
+    assert draft.refusal_sentence.endswith(".")
     for reason, sentence in REFUSAL_SENTENCES.items():
         assert sentence, reason
 
@@ -102,7 +102,7 @@ def test_the_kept_false_positive_is_pinned_so_it_stays_a_choice() -> None:
     )
 
     assert refused.refusal == "task_words"
-    assert "say it another way" in refused.sentence
+    assert "say it another way" in refused.refusal_sentence
 
 
 def test_the_backstop_says_which_word_it_caught_without_echoing_the_text(
@@ -122,3 +122,25 @@ def test_the_backstop_says_which_word_it_caught_without_echoing_the_text(
     record = caplog.records[-1]
     assert "headline" in record.getMessage()
     assert "You skim" not in record.getMessage()
+
+
+def test_punctuation_does_not_walk_a_task_word_past_the_backstop() -> None:
+    """A hyphen was enough. The first version stripped non-letters *inside* each
+    whitespace token instead of splitting on them, so "headline-driven" became
+    the single word "headlinedriven" and matched nothing — and "headline-driven"
+    is ordinary model prose, not an attack.
+
+    Invisible to the probe set, too: every instruction the generator happened to
+    write used plain spaces, so 160 calls could not have found this.
+    """
+    from app.roleplay import without_task_talk
+
+    for instruction in (
+        "You are headline-driven.",
+        "You skim headlines,options and move on.",
+        "You judge every headline/option pair quickly.",
+        "You read (headlines) first.",
+        "You are option—led in every purchase.",
+    ):
+        caught = without_task_talk(RolePlayDraft(instruction=instruction))
+        assert caught.refusal == "task_words", instruction

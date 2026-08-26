@@ -572,7 +572,15 @@ class OpenRouterRolePlayGenerator:
         except ValidationError as error:
             raise RuntimeError("generator returned a malformed draft") from error
         if not isinstance(result, RolePlayDraft):
-            raise RuntimeError(f"generator returned no structured draft: {result!r}")
+            # The type, never the value. What came back is written from what a
+            # customer typed, and this module's own rule is that such text does
+            # not travel onward — an exception string reaches logs and error
+            # reporting like anything else. The translator next door interpolates
+            # its result because a TargetRequest is a structure of enum values;
+            # this one is prose.
+            raise RuntimeError(
+                f"generator returned {type(result).__name__}, not a structured draft"
+            )
         return without_task_talk(result)
 
 

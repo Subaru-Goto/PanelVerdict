@@ -323,8 +323,10 @@ def main() -> None:
                 sink.flush()
                 rows.append(row)
     finally:
-        # These are 150 paid calls that do not reproduce. A 429 on the last one
-        # must not also cost the report for the other 149.
+        # These are paid calls that do not reproduce — 160 at the default
+        # replicates. A 429 on the last one must not also cost the report for
+        # every call before it. (Written as a derivation rather than a figure
+        # because the last two probes added made the figure wrong.)
         if rows:
             print(format_report(rows))
 

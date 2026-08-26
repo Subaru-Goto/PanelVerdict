@@ -21,6 +21,7 @@ text for the same reasons:
 """
 
 import logging
+import re
 from typing import Literal, Protocol, Self
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
@@ -98,8 +99,13 @@ class RolePlayDraft(BaseModel):
         return self
 
     @property
-    def sentence(self) -> str:
-        """What the reader is shown when there is no instruction."""
+    def refusal_sentence(self) -> str:
+        """What the reader is shown when there is no instruction.
+
+        Named for the refusal rather than for the draft: an approved draft has
+        no such sentence and asking for one is a bug, so the name has to make
+        the caller notice which branch they are on.
+        """
         if self.refusal is None:
             raise ValueError("an approved draft has no refusal sentence")
         return REFUSAL_SENTENCES[self.refusal]
@@ -140,17 +146,31 @@ def without_task_talk(draft: RolePlayDraft) -> RolePlayDraft:
     Not an attack — the front door — which is why the backstop is deterministic
     and does not depend on the model noticing.
 
-    Defence in depth, not a second complete guard: it reads nouns, so an
-    instruction that steers without naming the task still gets through, and the
-    classifier above it is what refuses those. It answers with its own refusal
-    class so that a run can always say which layer fired.
+    Defence in depth, not a second complete guard, and the bound is worth stating
+    exactly because a word list invites more confidence than it earns:
+
+    - it reads nouns, so an instruction that steers without naming the task —
+      "you never choose the second thing you are shown" — passes it;
+    - it compares letters, so a homoglyph ("h\u0435adlines", Cyrillic \u0435) passes it,
+      and no normalisation closes that: NFKC does not fold Cyrillic onto Latin,
+      and a confusables table is a blocklist arms race for a *secondary* net.
+
+    Both holes need the classifier above, which reads meaning rather than
+    spelling — and a homoglyph does not help an attacker there. What this layer
+    exists for is the failure that needs no attacker at all: the generator's own
+    ordinary prose breaking the generator's own prompt rule, measured at four
+    times in five (`docs/research/roleplay-guard-check.md`).
+
+    It answers with its own refusal class so a run can always say which layer
+    fired.
     """
     if draft.refusal is not None:
         return draft
-    words = {
-        "".join(c for c in token if c.isalpha()).lower()
-        for token in draft.instruction.split()
-    }
+    # Words, not whitespace tokens with their punctuation deleted. The first
+    # version stripped non-letters *inside* a token and welded the halves
+    # together, so "headline-driven" became "headlinedriven" and matched
+    # nothing — and a hyphen is ordinary model prose, not an evasion.
+    words = {word.casefold() for word in re.findall(r"[^\W\d_]+", draft.instruction)}
     matched = words & _TASK_WORDS
     if matched:
         # The sentence itself is dropped, not logged: it is derived from what a

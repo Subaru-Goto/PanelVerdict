@@ -235,3 +235,27 @@ def test_the_generated_arm_swaps_the_sentence_and_nothing_else() -> None:
         assert a.prompt.replace(ENACTED[0].words, "") == b.prompt.replace(
             GENERATED[ENACTED[0].id], ""
         )
+
+
+def test_a_generated_arm_refuses_to_run_without_a_recorded_instruction() -> None:
+    """Up front, before anything is paid for. The fallback this replaced quietly
+    used the raw words instead, producing an arm byte-identical to `fenced` while
+    every row was stamped `generated` — a null that would have read as a finding.
+    """
+    import pytest
+
+    from experiments.enacted_context import plan_cells
+    from experiments.enacted_design import EnactedContext
+
+    unrecorded = EnactedContext(
+        id="not_recorded", role="enacted", words="people who cycle to work"
+    )
+
+    with pytest.raises(KeyError, match="not_recorded"):
+        plan_cells(
+            contexts=(unrecorded,),
+            pairs=PAIRS[:1],
+            replicates=1,
+            rendering="generated",
+            nonce=_NONCE,
+        )
