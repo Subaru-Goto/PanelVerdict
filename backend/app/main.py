@@ -500,10 +500,10 @@ def enforce_evaluate_limits(
     # None, not a zero row: a $0 spend would still take the pool's advisory
     # lock and leave a ledger row nobody reads.
     spend = _Spend(_PREVIEW, preview_usd) if preview_usd else None
-    # The panel purchase is NOT here, on either path. Both doors follow one
-    # rule — judge the sentence above the purchase — so the skip path buys its
-    # panel in the handler, after `_approved_on_entry` clears. Charging it here
-    # made a refused instruction consume a run for a panel nobody polled.
+    # No panel is bought here, on either path. A panel is bought only below the
+    # check that judges what it would be told, so a refused sentence never
+    # costs a run: `/evaluate/resume` on accept, `/evaluate` for a run that
+    # skips the gate.
     _charge_ledger(conn, *charges, spend=spend)
 
 
@@ -545,6 +545,52 @@ def _panel_purchase(caller: str) -> tuple[_Charge, Decimal]:
         _Charge(_EVALUATE, caller, settings.evaluate_runs_per_day, "runs"),
         _run_price(),
     )
+
+
+def _capped(charge: _Charge) -> HTTPException:
+    """The refusal a full cap gets. The sentence is this codebase's own and
+    names the remedy; the counted identity never travels back."""
+    return HTTPException(
+        status_code=429,
+        detail=(
+            f"limit reached ({charge.limit} {charge.unit} per day) — try again tomorrow"
+        ),
+    )
+
+
+def _refuse_if_run_capped(conn: psycopg.Connection, caller: str) -> None:
+    """Refuse a caller with no runs left before anything is spent on them.
+
+    Advisory, and deliberately so: `_charge_ledger` is still the only place a
+    cap is enforced, and losing the race here just means a check was read for a
+    run that is then refused. What this buys is the ordinary case. The panel is
+    bought *after* its sentence is judged, so without this a caller at their cap
+    would pay for a model call on a run that could never start — and 013's rule
+    that a refused request costs nothing would hold only for the schema.
+    """
+    charge, _ = _panel_purchase(caller)
+    if charge.limit <= 0:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM request_ledger"
+            f" WHERE endpoint = %s AND caller = %s AND {_LEDGER_WINDOW}",
+            (charge.endpoint, charge.key),
+        )
+        row = cur.fetchone()
+    # Nothing was written, so this ends the read's transaction rather than
+    # leaving it open across the model call that follows.
+    conn.rollback()
+    if (int(row[0]) if row else 0) >= charge.limit:
+        raise _capped(charge)
+
+
+def _buy_panel(conn: psycopg.Connection, caller: str) -> None:
+    """The moment a panel is bought: one slot from the day's runs, priced at
+    the votes it may buy. Both doors call this, and both call it *after* the
+    sentence the panel would be told has been judged."""
+    charge, price = _panel_purchase(caller)
+    _charge_ledger(conn, charge, spend=_Spend(_EVALUATE, price))
 
 
 def _charge_ledger(
@@ -601,15 +647,7 @@ def _charge_ledger(
                 # Release the locks now rather than at request teardown; the
                 # discarded sweep is opportunistic and costs nothing.
                 conn.rollback()
-                # The sentence is this codebase's own and names the remedy; the
-                # counted identity never travels back.
-                raise HTTPException(
-                    status_code=429,
-                    detail=(
-                        f"limit reached ({charge.limit} {charge.unit} per day)"
-                        " — try again tomorrow"
-                    ),
-                )
+                raise _capped(charge)
         if pooled is not None:
             cur.execute(
                 "DELETE FROM spend_ledger WHERE spent_at < now()"
@@ -870,12 +908,15 @@ def evaluate(
     arrives approved and there is no gate to stop at — and always after its
     sentence is judged, so a refusal never costs a run on either door.
     """
-    # Judged before the purchase, same as the gate's edit path: a sentence
-    # that will never run must cost no run. The check itself is charged inside.
+    # The skip path's two money moves straddle the check, and each side of it
+    # keeps one rule: the cap is probed above, so a caller with no runs left
+    # pays nothing to be told so; the panel is bought below, so a sentence that
+    # will never run costs no run. The check itself is charged either way.
+    if request.reading_accepted:
+        _refuse_if_run_capped(conn, caller)
     instruction = _approved_on_entry(conn, request, generator, caller)
     if request.reading_accepted:
-        charge, price = _panel_purchase(caller)
-        _charge_ledger(conn, charge, spend=_Spend(_EVALUATE, price))
+        _buy_panel(conn, caller)
     variants = {"a": request.headline_a, "b": request.headline_b}
     thread_id = str(uuid4())
     graph = build_evaluate_graph(
@@ -974,6 +1015,32 @@ def _check_purchase(caller: str) -> _Charge:
     )
 
 
+def _checked_or_refused(
+    conn: psycopg.Connection,
+    generator: RolePlayGenerator,
+    caller: str,
+    sentence: str,
+) -> str:
+    """Pay for one classifier reading, make it, and refuse what it refuses.
+
+    One function, because both doors owe the same two things and they must not
+    drift apart: the check is always paid for — an unmetered refusal path is a
+    free probe — and it always sits above the panel purchase, so a sentence
+    that will never run costs no run.
+
+    Returns the caller's own string when the verdict is clean. A refusal is one
+    of our own fixed sentences naming the remedy; the refused text is never
+    echoed.
+    """
+    _charge_ledger(
+        conn, _check_purchase(caller), spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY))
+    )
+    checked = generator.check(instruction=sentence)
+    if checked.refusal is not None:
+        raise HTTPException(status_code=422, detail=checked.refusal_sentence)
+    return checked.instruction
+
+
 def _approved_on_entry(
     conn: psycopg.Connection,
     request: EvaluateRequest,
@@ -988,15 +1055,9 @@ def _approved_on_entry(
     deal the gate's edit path offers. Reaching a refusal means the client
     changed the sentence after it was approved.
     """
-    if not request.instruction or not request.audience.strip():
+    if not (request.instruction or "").strip() or not request.audience.strip():
         return ""
-    _charge_ledger(
-        conn, _check_purchase(caller), spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY))
-    )
-    checked = generator.check(instruction=request.instruction)
-    if checked.refusal is not None:
-        raise HTTPException(status_code=422, detail=checked.refusal_sentence)
-    return checked.instruction
+    return _checked_or_refused(conn, generator, caller, request.instruction or "")
 
 
 def _classify_edit(
@@ -1014,23 +1075,13 @@ def _classify_edit(
     a reader iterating on their own wording would otherwise spend the day's
     allowance on panels nobody polled.
 
-    The *check* is charged either way, refused or not. It is a real model call,
-    and an unmetered refusal path is a free probe.
-
-    Returns the approved sentence, which is the caller's own string. Raises 422
-    with a fixed remedy sentence otherwise; the refused text is never echoed.
+    On refusal the run stays paused, so the remedy is advice the reader can
+    act on.
     """
     edited = _edit_to_settle(request, values)
     if edited is None:
         return ""
-    _charge_ledger(
-        conn, _check_purchase(caller), spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY))
-    )
-    checked = generator.check(instruction=edited)
-    if checked.refusal is not None:
-        # The run stays paused, so the remedy is advice the reader can act on.
-        raise HTTPException(status_code=422, detail=checked.refusal_sentence)
-    return checked.instruction
+    return _checked_or_refused(conn, generator, caller, edited)
 
 
 def _settled_query(edit: PanelEdit) -> TargetQuery:
@@ -1152,16 +1203,10 @@ def resume_evaluate(
             # Above the purchase: a sentence that will never be run costs no run.
             approved = _classify_edit(conn, request, values, generator, caller)
         if request.action == "accept":
-            # The moment a panel is actually bought. After the free refusals
-            # above, so a run that was never resumable costs nothing, and
-            # inside the lock, so simultaneous accepts cannot each pass a cap
-            # neither has yet recorded.
-            charge, price = _panel_purchase(caller)
-            _charge_ledger(
-                conn,
-                charge,
-                spend=_Spend(_EVALUATE, price),
-            )
+            # After the free refusals above, so a run that was never resumable
+            # costs nothing, and inside the lock, so simultaneous accepts
+            # cannot each pass a cap neither has yet recorded.
+            _buy_panel(conn, caller)
         state = _run_graph(
             graph,
             Command(

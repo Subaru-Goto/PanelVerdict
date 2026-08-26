@@ -2370,3 +2370,47 @@ def test_the_skip_paths_check_counts_against_the_same_allowance(
 
     assert first.status_code == 200, first.text
     assert second.status_code == 429
+
+
+def test_a_caller_with_no_runs_left_pays_nothing_to_be_told_so(
+    client, conn, monkeypatch
+) -> None:
+    """013's rule, on the door that now charges a check before it buys the run:
+    a refused request costs nothing. Without a cap probe above the classifier,
+    a caller at their run cap would pay for a model call reading a sentence for
+    a run that could never start."""
+    monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
+    seed_japanese(conn, 5)
+    generator = StubGenerator()
+    app.dependency_overrides[get_generator] = lambda: generator
+    body = _REQUEST_BODY | {
+        "audience": "keen runners",
+        "instruction": "You are a keen runner.",
+    }
+
+    assert client.post("/evaluate", json=body).status_code == 200
+    capped = client.post("/evaluate", json=body)
+
+    assert capped.status_code == 429
+    # One check, for the run that happened — the refused one read nothing.
+    assert generator.checked == ["You are a keen runner."]
+
+
+def test_an_instruction_of_only_spaces_names_nothing_and_is_refused_free(
+    client, conn
+) -> None:
+    """A claim of approval has to name the thing approved, and whitespace names
+    nothing. Refused in the contract, so it costs nothing — and the panel is
+    never told to act a blank."""
+    seed_japanese(conn, 5)
+    generator = StubGenerator()
+    app.dependency_overrides[get_generator] = lambda: generator
+
+    response = client.post(
+        "/evaluate",
+        json=_REQUEST_BODY | {"audience": "keen runners", "instruction": "   "},
+    )
+
+    assert response.status_code == 422
+    assert generator.checked == []
+    assert generator.drafted == []

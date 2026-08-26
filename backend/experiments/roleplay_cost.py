@@ -1,9 +1,9 @@
 """Rewrite-and-check cost calibration: what does one role-play call actually cost?
 
 094 decided the checks get a per-caller daily bound whose figure comes from a
-measurement, per the no-unsourced-constants rule. Until now every roleplay-priced
-charge used `USD_PER_ROLEPLAY` — the translator's upper bound, honest but measured
-on a different job. This reads the two calls that actually ship: the **rewrite**
+measurement, per the no-unsourced-constants rule. `USD_PER_ROLEPLAY` is the
+translator's upper bound — honest, but measured on a different job, so it sizes a
+ceiling rather than a bound. This reads the two calls that actually ship: the **rewrite**
 (audience words → one panelist instruction) and the **check** (an edited or
 client-supplied instruction → a verdict), each against the same eight ordinary
 audiences the guard run scored as the feature's legitimate traffic.
