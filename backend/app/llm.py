@@ -9,8 +9,14 @@ from langchain.embeddings import init_embeddings
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from openai import APIStatusError
+from pydantic import ValidationError
 
 from app.config import LANGCHAIN_INTEGRATION
+from app.roleplay import (
+    RolePlayDraft,
+    build_roleplay_messages,
+    without_task_talk,
+)
 from app.schemas import (
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
@@ -524,6 +530,58 @@ class OpenRouterTargetTranslator:
         if not isinstance(result, TargetRequest):
             raise RuntimeError(f"translator returned no structured target: {result!r}")
         return result
+
+
+class OpenRouterRolePlayGenerator:
+    """RolePlayGenerator backed by an OpenRouter chat model via LangChain.
+
+    Built like the translator it replaces, because it is the same call in the same
+    place with an easier job — so the bounds the translator's own measurements
+    produced still apply, and a cheaper model is now in scope for it (016/#123's
+    subject changed rather than vanished).
+
+    The delimiter is per-generator and random, so the marker a customer's words
+    would have to close does not exist when they are typed.
+    """
+
+    def __init__(self, *, api_key: str, base_url: str, model: str) -> None:
+        self._nonce = f"<<{secrets.token_hex(8)}>>"
+        self._model = init_chat_model(
+            model=model,
+            model_provider=LANGCHAIN_INTEGRATION,
+            base_url=base_url,
+            api_key=api_key,
+            max_retries=2,
+            timeout=VOTE_READ_TIMEOUT_SECONDS,
+            max_tokens=TARGET_MAX_COMPLETION_TOKENS,
+            reasoning_effort=TARGET_REASONING_EFFORT,
+        ).with_structured_output(RolePlayDraft)
+
+    def draft(self, *, words: str) -> RolePlayDraft:
+        # `RolePlayDraft` carries a cross-field invariant — instruction XOR
+        # refusal — which the model can break, and the break happens inside
+        # `invoke` as a pydantic error rather than arriving as a value to check.
+        # `{"instruction": "", "refusal": null}` is the shape an unsure model
+        # produces, so this is the likely failure here, not the exotic one.
+        # Reported as a generator fault either way: it is our schema the model
+        # missed, never something the reader did.
+        try:
+            result = self._model.invoke(
+                build_roleplay_messages(words, nonce=self._nonce)
+            )
+        except ValidationError as error:
+            raise RuntimeError("generator returned a malformed draft") from error
+        if not isinstance(result, RolePlayDraft):
+            # The type, never the value. What came back is written from what a
+            # customer typed, and this module's own rule is that such text does
+            # not travel onward — an exception string reaches logs and error
+            # reporting like anything else. The translator next door interpolates
+            # its result because a TargetRequest is a structure of enum values;
+            # this one is prose.
+            raise RuntimeError(
+                f"generator returned {type(result).__name__}, not a structured draft"
+            )
+        return without_task_talk(result)
 
 
 class OpenRouterEmbedder:
