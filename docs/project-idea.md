@@ -153,6 +153,31 @@ Research questions worth reporting even with negative results: does persona dive
 
 **Future / out of scope for now:** multi-variant (n>2) tests, video, full campaign simulation, social-network effects between personas (what Societies.io does), enterprise features. Also out of scope: synthetic control analysis (Abadie-style counterfactuals from a creator's historical time-series, e.g. "what if you hadn't changed the thumbnail on day X") — a real future feature, but it requires channel data and is a different method from the panel experiment.
 
+**Not a scope knob — B2B pitch review is a different product (recorded 2026-08-26).**
+Concept feedback asked for a *specific* panel: two pitch materials for a business
+opportunity, which one wins it. Worth writing down why this engine does not stretch
+there, so it is not re-argued. The *role* is expressible — the pool has no occupation
+column, but an enacted instruction can carry one ([094](https://github.com/Subaru-Goto/PanelVerdict/issues/200)),
+and [095](https://github.com/Subaru-Goto/PanelVerdict/issues/199) measured enactment
+moving votes +0.67 on-target against a 0.142 floor, discriminating across contexts.
+Everything around the role is what fails. (1) **No sampling frame** — no published joint
+distribution of partners by investment thesis or procurement leads by risk posture
+exists, so such a panel is enacted stereotype the whole way down, over a demographic
+draw the decision does not turn on; that inverts "no persona field is model-written" in
+substance. (2) **n is three, not two hundred** — a pitch is judged by a named committee,
+while the Beta-Binomial posterior, the control group and the ROPE are population-inference
+machinery; "P(B beats A) = 87%" over 200 synthetic investors answers a question nobody
+asked, at a precision it has not earned. (3) **No ground truth** — Upworthy is consumer
+headlines and real clicks, no public archive of pitch outcomes exists, and recruiting
+real evaluators is Tier 2 by design, so the feature would ship with no evidence in the
+one project whose differentiator is evidence. (4) **Wrong stimulus shape** — two decks is
+not one {A, B, neither} choice over a shared cached prefix, and "which is better" there
+is clarity plus credibility plus fit plus objections: a critique product, not a vote
+product. What this engine *can* serve honestly is the pitch's opening line — hook,
+subject line, one-claim summary — with the role enacted and labelled as enacted. The
+other half of that feedback, naming what the decision is *about*, is
+[101 (#216)](https://github.com/Subaru-Goto/PanelVerdict/issues/216).
+
 ## Course Requirements Mapping (chatbot requirement, app-first execution)
 
 The course requires a domain-specialised *chatbot* with advanced RAG + tool calling. The requirement demands the conversational capability — not that chat be the whole UX. Execution: **an app with an analyst embedded in it**, not a chatbot with an app hidden behind it.
