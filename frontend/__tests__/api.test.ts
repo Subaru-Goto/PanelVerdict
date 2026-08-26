@@ -37,8 +37,27 @@ describe("evaluate", () => {
       headline_b: "Members save half",
       // Nothing approved yet, so the panel gate stops this run.
       reading_accepted: false,
+      // Blank audience is a real choice (demographics only) and costs no
+      // model call — but it is still said, not implied.
+      audience: "",
     });
     expect(result).toEqual(RESPONSE);
+  });
+
+  it("carries the audience words when the customer typed some", async () => {
+    const fetchMock = mockFetch(200, RESPONSE);
+
+    await evaluate({
+      targetDescription: "",
+      headlineA: "a",
+      headlineB: "b",
+      audience: "night-shift workers who commute by car",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string).audience).toBe(
+      "night-shift workers who commute by car",
+    );
   });
 
   it("surfaces the backend's own refusal sentence as the error", async () => {

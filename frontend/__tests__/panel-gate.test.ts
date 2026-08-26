@@ -98,6 +98,34 @@ describe("answering the gate", () => {
     expect(JSON.parse(String(init.body)).query).toEqual(QUERY);
   });
 
+  it("sends an untouched draft as absence and an edit as itself", async () => {
+    // None and "" are different answers (094/#200): absence means the reader
+    // left the generated sentence alone, so no check is charged; "" means
+    // "demographics only after all", and is a real, checkable answer.
+    const body = { status: "paused", thread_id: "t-1", preview: PREVIEW };
+    const fetcher = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(new Response(JSON.stringify(body), { status: 200 })),
+      );
+    vi.stubGlobal("fetch", fetcher);
+
+    await resumeEvaluate({ threadId: "t-1", action: "accept" });
+    await resumeEvaluate({
+      threadId: "t-1",
+      action: "accept",
+      instruction: "You are a keen runner.",
+    });
+    await resumeEvaluate({ threadId: "t-1", action: "accept", instruction: "" });
+
+    const bodies = fetcher.mock.calls.map((call) =>
+      JSON.parse(String((call[1] as RequestInit).body)),
+    );
+    expect("instruction" in bodies[0]).toBe(false);
+    expect(bodies[1].instruction).toBe("You are a keen runner.");
+    expect(bodies[2].instruction).toBe("");
+  });
+
   it("carries the session, because the resume spends the money", async () => {
     stub({ status: "complete", counts: { voted: 5 } });
 

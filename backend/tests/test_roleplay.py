@@ -215,3 +215,30 @@ def test_a_check_of_nothing_is_a_caller_error_not_a_verdict() -> None:
 
     with pytest.raises(BlankInstruction):
         checked_instruction("   ", refusal=None)
+
+
+def test_protected_attributes_are_refused_with_a_sentence_that_teaches() -> None:
+    """Decided on 100/#209's heels (094/#200, 2026-08-26): the pool carries age,
+    gender, education, income and country — nothing else. An instruction like
+    "you are a devout Muslim" is backed by no data, so the model would play it
+    from its weights, and the report would present a stereotype as a measurement.
+
+    Refused as its own class, not folded into `harmful`: this customer did
+    nothing wrong, so the remedy has to teach the rephrase — describe what the
+    readers do or need — rather than scold.
+    """
+    refused = RolePlayOutcome(instruction="", refusal="protected_attributes")
+
+    assert refused.refusal_sentence == REFUSAL_SENTENCES["protected_attributes"]
+    # The sentence carries the rephrase, not just the rule.
+    assert "instead" in refused.refusal_sentence
+
+
+def test_the_protected_attributes_rule_guards_both_paths() -> None:
+    """The gate's edited sentence bypasses the generator, so a class only the
+    generator's prompt knows would vanish on exactly the path a human typed.
+    `least-privilege.md`: one rule, judged at the destination, both paths."""
+    from app.roleplay import _CHECK_PROMPT, _SYSTEM_PROMPT
+
+    for prompt in (_SYSTEM_PROMPT, _CHECK_PROMPT):
+        assert "protected_attributes" in prompt
