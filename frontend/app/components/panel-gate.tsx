@@ -44,8 +44,12 @@ export default function PanelGate({
   const [sent, setSent] = useState(false);
   // The sentence each panelist will be told to be, as the reader leaves it.
   // Editing it is the human-in-the-loop (094/#200): what is approved here is
-  // exactly what runs.
+  // exactly what runs. Seeded from the prop and never re-synced — safe while a
+  // pause's draft cannot change (refusals keep the preview); if adjust ever
+  // regenerates it, key this component by the preview or the stale text will
+  // read as an edit and buy a check.
   const [instruction, setInstruction] = useState(preview.instruction);
+  const touched = instruction !== preview.instruction;
   const { composition } = preview;
   const nobody = preview.matched === 0;
 
@@ -53,7 +57,6 @@ export default function PanelGate({
     setSent(true);
     // Untouched rides as absence — no check to pay for; any change, including
     // clearing to "", is a real answer the backend classifies before spending.
-    const touched = instruction !== preview.instruction;
     // Re-arm if the answer is refused: the gate survives its own rejection.
     void Promise.resolve(onAccept(touched ? instruction : undefined)).finally(
       () => setSent(false),
@@ -110,13 +113,26 @@ export default function PanelGate({
             className="rounded border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
           />
           <span className="text-xs text-zinc-500">
-            Acted on top of each panelist&rsquo;s surveyed age, gender,
-            education and income. Edit it, or clear it to run on demographics
-            alone — what you approve is exactly what the panel is told.
+            Role-played, not sampled: each panelist acts this on top of their
+            surveyed age, gender, education and income — no data picked them by
+            it. Edit it, or clear it to run on demographics alone; what you
+            approve is exactly what the panel is told.
           </span>
+          {touched && (
+            <button
+              type="button"
+              onClick={() => setInstruction(preview.instruction)}
+              className="self-start text-xs underline underline-offset-2"
+            >
+              Restore the draft
+            </button>
+          )}
         </label>
       )}
 
+      {/* One slot, two sources: a refusal caught on this client (notice) or
+          one the pause already carried (a resumed thread). Ours either way —
+          never the refused text. */}
       {(notice ?? preview.refusal_sentence) && (
         <p role="alert" className="text-sm text-amber-700 dark:text-amber-500">
           {notice ?? preview.refusal_sentence}

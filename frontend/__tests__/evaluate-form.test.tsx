@@ -336,6 +336,24 @@ describe("the audience through the interface", () => {
     expect(evaluateMock.mock.calls[0][0].audience).toBe("keen runners");
   });
 
+  it("cannot buy the panel twice while the first accept is in flight", async () => {
+    // The gate re-arms only when the promise the form hands it settles. A
+    // wrapper that swallows it (`void answerGate(...)`) re-arms on the next
+    // microtask — while the spend is still running.
+    evaluateMock.mockResolvedValue(PAUSED);
+    let settle!: (value: unknown) => void;
+    resumeMock.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+    render(<EvaluateForm />);
+    await act(() => fillAndSubmit());
+
+    fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
+    await act(async () => {});
+    fireEvent.click(screen.getByRole("button", { name: /asking the panel/i }));
+    expect(resumeMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => settle(RESPONSE));
+  });
+
   it("keeps the gate on a refused edit, shows the remedy, and keeps the edit", async () => {
     // The backend holds the run paused when an edit is refused; a client that
     // fell to an error screen would throw the thread away and charge the

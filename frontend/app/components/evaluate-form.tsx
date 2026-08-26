@@ -130,8 +130,10 @@ export default function EvaluateForm({
         <PanelGate
           preview={state.preview}
           notice={state.notice ?? null}
+          // Returned, not voided: the gate re-arms its button when this
+          // settles, and a swallowed promise would re-arm it mid-spend.
           onAccept={(instruction) =>
-            void answerGate("accept", undefined, instruction)
+            answerGate("accept", undefined, instruction)
           }
           onBack={reset}
         />
@@ -191,8 +193,8 @@ export default function EvaluateForm({
             limits. */}
         {tracing && (
           <p className="text-xs text-zinc-500">
-            Runs are traced for debugging: what you type — your audience,
-            both headlines, and anything you later ask the analyst — is sent to
+            Runs are traced for debugging: what you type — your audience, both
+            headlines, and anything you later ask the analyst — is sent to
             LangSmith, outside our infrastructure. Don&rsquo;t paste anything
             unreleased.
           </p>
