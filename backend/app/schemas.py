@@ -1,7 +1,7 @@
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from enum import Enum
 from typing import Literal
 
-from enum import Enum
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TraitLevel(str, Enum):
@@ -535,7 +535,14 @@ class EvaluateRequest(BaseModel):
         Refused in the contract rather than in the handler, so it costs nothing:
         the run's purchase is charged before the handler body runs.
         """
-        if self.reading_accepted and self.audience.strip() and not self.instruction:
+        # Stripped, because whitespace names nothing either — and a blank that
+        # got past here would reach the graph as "no instruction yet" and be
+        # drafted afresh, which is the one thing this validator exists to stop.
+        if (
+            self.reading_accepted
+            and self.audience.strip()
+            and not (self.instruction or "").strip()
+        ):
             raise ValueError(
                 "a run that skips the gate must carry the instruction that was "
                 "approved there"
