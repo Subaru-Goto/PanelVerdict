@@ -1,104 +1,113 @@
 # Does the explanation corpus actually serve a reader?
 
-**Run 2026-08-26.** 15 chunks, 14 question–section pairs, 56 paid calls, well under
-a cent. Harness: `backend/experiments/corpus_check.py`. Ticket: 018/#124.
+**Run 2026-08-26**, three stages, ~120 paid calls, well under a cent. Harness:
+`backend/experiments/corpus_check.py`. Ticket: 018/#124.
 
-## What was measured, and why in two stages
+Headline: **the first version of this corpus taught a verdict rule the product had
+abandoned, and the first version of this harness graded it faithful.** Both are
+fixed; what follows is what the corrected run measures, and what it still cannot
+see.
 
-018 is explicit that retrieval metrics are not the bar: *"they prove the right
-document was found, not that the reader was served."* So the harness has two stages
-and only the second decides.
+## The bug that mattered most
 
-**Retrieval** — does the section that should answer a question come back?
-**Judged** — a model answers from the retrieved passages and nothing else, and a
-second model grades faithfulness and plainness separately.
+The corpus defined the report's answers as **Decisive / Undecided / Practical tie**,
+decided by the credible interval clearing the tie zone — which is `rope_verdict`,
+whose own docstring opens *"Not what a report carries."*
 
-The judged stage answers from passages directly rather than through the analyst
-agent, so a failure says which half broke: this ticket owns whether a passage can
-serve a reader, and 012 owns tool-routing.
+The reader never sees any of that. `frontend/app/components/report.tsx` derives the
+label from probability mass against a bar: **Panel leans clearly**, **Practical
+tie**, **No call at this credibility**. The words "decisive" and "undecided" appear
+nowhere in the UI.
 
-Pairs were written before the run and phrased as a reader would type them — some
-with the jargon off the report, some entirely without.
+So a reader would have asked why their result was undecided — using a word the
+product does not use — and been handed a confidently-cited explanation of a rule it
+does not apply. That is precisely the failure this corpus was built to prevent, with
+a citation attached to make it worse.
 
-## The bug the first run found
+**It was found by code review, not by this harness**, and the reason is the second
+bug: the judged stage passed `chat` as both the answerer and the judge. One model
+instance grading its own output shares every blind spot with the thing under test,
+and it duly scored the wrong-rule answer faithful. The judge now runs on
+`settings.judge_model`, a separate client.
 
-**5 of 14 questions retrieved nothing at all**, including this corpus's own headline
-question, *"B is ahead — why does it say undecided?"*
+## Stage 1 — retrieval: 12/16, top-1 on 10
 
-The cause was one function call. `websearch_to_tsquery` **ANDs** its terms, which is
-right for a search box and wrong for a sentence:
+Sixteen question–section pairs, written before the run and phrased as a reader would
+type them. Two ask the same thing in the two vocabularies that exist — *"why does it
+say no call"* (what the screen shows) and *"why is this undecided"* (what people
+say) — because both have to work.
 
-```
-websearch_to_tsquery('english', 'B is ahead — why does it say undecided?')
-  -> 'b' & 'ahead' & 'say' & 'undecid'
-```
+The four misses, classified rather than averaged:
 
-No passage contains all four, so the keyword half matched nothing — and because a
-passage must be lexically matched to be returned at all, nothing was returned.
-`plainto_tsquery` would have behaved identically.
+| question | wanted | returned | verdict |
+|---|---|---|---|
+| B is ahead — why does it say no call? | Why being ahead is not… | What the report can answer… | **defensible** — the returned section defines "no call" directly |
+| what is the click-through rate…? | What the panel is measuring | Every panelist is invented | **defensible** — both say why there is no CTR |
+| is a tie a failed test | What the report can answer… | What this panel cannot tell you | **a real miss** — "failed"/"test" pulled it to the limits section |
+| how do I write a better headline | What this panel cannot tell you | *nothing* | **the expectation was wrong** — the corpus cannot tell you how to write copy, so declining is right |
 
-With the query's lexemes ORed instead, the same 14 pairs scored **12/14, top-1 on
-10**.
+Single-section pairs are a blunt instrument when a corpus can legitimately answer
+from two places. That is why the ticket calls them necessary and not sufficient, and
+why the number is reported with its misses classified rather than as a score.
 
-The lesson is not "AND was the wrong default". It is that **a gate and its query
-have to be designed together**: the lexical gate is what stops a vector search
-returning its nearest neighbour to a question the corpus cannot answer, and it was
-sound. Pairing it with an AND query inverted its meaning from *"must share a word"*
-to *"must share every word"*, and nothing in the unit tests could see the difference
-— they used a crude fake embedder and short queries where every term did match.
+## Stage 2 — judged: 16/16 faithful, 16/16 plain
 
-## What the two remaining failures were
+A model answers from the retrieved passages and nothing else; a **separate** model
+on `judge_model` grades faithfulness and plainness independently. Declining is scored
+as success in both: an answer saying the material does not cover the question is
+faithful and plain, and it is what the empty-retrieval path exists to produce.
 
-Both were **mis-declared expectations, not retrieval failures**, and they are
-recorded here rather than quietly re-labelled.
+## Stage 3 — routing: 7/7
 
-| question | declared | actually returned |
-|---|---|---|
-| what is the click-through rate for this headline | *(nothing)* | What the panel is actually measuring; Every panelist is invented |
-| how do I write a better headline | *(nothing)* | What this panel cannot tell you |
+Retrieval and answer quality are worth nothing if the analyst never reaches for the
+corpus. Measured on live turns, recording which tools actually fired.
 
-The assumption was that a question outside the product's scope should retrieve
-nothing. It was wrong: the corpus deliberately answers both, by explaining what the
-panel measures and what it cannot show. The pairs now name those sections, and the
-**12/14 figure above is against the original declarations** — these two were among
-its failures.
+**The first run was 6/7.** *"Are the panelists real people?"* called **no tool at
+all** — the model answered from its own knowledge, which is the exact behaviour this
+ticket exists to end. The prompt now says to call the tool *even when you think you
+know the answer*, because believing you already know is the case it exists for. 7/7
+after.
 
-The genuinely out-of-scope case is still covered by a unit test: *"how do I bake
-sourdough"* shares no word with any passage and returns nothing.
+The loophole holds in the other direction: questions about this run's numbers still
+go to `analyze_results`, never to the corpus, which carries no figures to contradict
+a verdict with.
 
-## The judged stage: 14/14 faithful, 14/14 plain
+## The lexical gate, and what it cost to get right
 
-Every answer said only what its passages supported, and every answer was one a
-non-expert could use. Two read directly rather than taken on the judge's word:
+A passage must be lexically matched to be returned; the embedding orders, it does not
+admit. Without that, a vector search returns its nearest neighbour to any question at
+all, and the analyst cites it.
 
-> **B is ahead — why does it say undecided?**
-> "B is ahead" means B had the larger raw share of panelists' votes. It is still
-> **undecided** because the interval around that lead overlaps the tie zone. With
-> this panel, a world where A and B are effectively equivalent has not been ruled
-> out. Only when the entire interval lies outside the tie zone is the result called
-> **decisive**.
+The gate was implemented twice wrong before it was right, and both failures were
+measured rather than reasoned about:
 
-> **what is the click-through rate for this headline**
-> This panel does not provide a click-through rate. It reports the share of
-> synthetic panelists who preferred one headline over the other, which is useful for
-> comparing the headlines but does not predict real-world clicks.
+- **AND** (`websearch_to_tsquery`'s default) demanded every word of the question.
+  *"B is ahead — why does it say undecided?"* became `'b' & 'ahead' & 'say' &
+  'undecid'`. **5 of 14 questions retrieved nothing.**
+- **OR** demanded any single word. **12 of 15 plainly out-of-scope questions came
+  back confidently cited** — "who won the world cup" returned two passages about the
+  tie zone.
+- **Strict majority** — more of the question matched than did not — declines 9 of 10
+  out-of-scope questions while answering 8 of 8 in-scope ones. Better on both sides
+  at once, which is what distinguishes a rule from a tuned threshold.
 
-The second is the one worth noticing. It is a question the model could have answered
-with a plausible invented number, and instead it declined *using the retrieved
-passage*. That is the corpus doing the job it exists for.
+Its honest ceiling: *"how much does this cost"* passes, because both content words
+genuinely appear ("a **cost** decision", "how **much** someone plans"). A lexical
+gate cannot tell a question about price from a passage that uses the word.
 
 ## Honest limits
 
-- **14 pairs is a handful, and they are mine.** They were written by the same author
-  as the corpus, which is the failure mode 094's guard run was caught by: a probe set
-  built from the same imagination as the thing under test cannot find what that
-  imagination missed. A reader's real questions will not look exactly like these.
-- **One judge, one pass.** No agreement measured between judges, and no second
-  sample. 14/14 on a set this size is consistent with a real pass rate well under 1.
-- **The dense half is never tested alone.** Because membership is gated lexically,
-  these numbers say nothing about how good the embeddings are — only that the
-  ordering they produce is not harmful. A question sharing no word with any passage
-  still returns nothing by construction.
-- **Nothing here tests the analyst's routing.** Whether a live conversation actually
-  reaches `explain_the_report` instead of answering from memory is 012's surface and
-  is untested.
+- **Sixteen pairs, written by the corpus's own author.** The failure mode this
+  project has been bitten by twice: a probe set built from the same imagination as
+  the thing under test cannot find what that imagination missed. It did not find the
+  verdict-rule bug; a reviewer reading `report.tsx` did.
+- **One judge, one pass.** No inter-judge agreement, no second sample. 16/16 on a set
+  this size is consistent with a real pass rate well under 1.
+- **The dense half is never tested alone.** Membership is decided lexically, so these
+  numbers say nothing about embedding quality — only that the ordering is not
+  harmful.
+- **Only text has been evaluated.** Image evaluation is planned as v2; nothing here
+  measures it, and the corpus keeps its validity caveat explicitly scoped to written
+  headlines rather than implying coverage it does not have.
+- **Routing was measured on seven questions and one report.** A different verdict
+  shape, or a longer conversation, is untested.

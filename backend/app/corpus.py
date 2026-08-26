@@ -21,7 +21,10 @@ class Chunk:
     """One retrievable passage, carrying the citation shown to the reader.
 
     `source` is the document's title and `section` its heading, both as written
-    — a citation a reader can check has to be words, not a file path.
+    — a citation a reader can check has to be words, not a file path. Nothing
+    from inside the codebase reaches here: the grounding each document carries is
+    written as a comment and dropped by the splitter, so a maintainer can verify a
+    claim against the code without a reader ever being shown one.
     """
 
     source: str
@@ -57,6 +60,14 @@ def split_document(markdown: str) -> list[Chunk]:
         lines.clear()
 
     for line in markdown.splitlines():
+        if line.startswith("<!--"):
+            # Comments are provenance for whoever maintains the document — which
+            # module or research note a claim rests on — and they are dropped
+            # here rather than kept, because everything that survives this
+            # function is embedded, retrieved, and quotable to a customer. A
+            # module path is not a citation a reader can check; it is internal
+            # detail addressed to us.
+            continue
         if line.startswith("# "):
             close()
             title = section = line[2:].strip()
@@ -82,7 +93,13 @@ def load_corpus() -> dict[str, str]:
     backend: the seed needs them wherever it runs, and they are product content
     rather than notes about the project.
     """
-    return {path.name: path.read_text() for path in sorted(_CORPUS_DIR.glob("*.md"))}
+    # `encoding` stated, not inherited: these documents are full of em-dashes, and
+    # under a non-UTF-8 locale the default would mojibake them into text that is
+    # then embedded and quoted back to a reader.
+    return {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted(_CORPUS_DIR.glob("*.md"))
+    }
 
 
 def _all_chunks() -> list[Chunk]:
@@ -126,24 +143,37 @@ def seed_corpus(conn: psycopg.Connection, embedder: Embedder) -> int:
     table.
     """
     chunks = DOCUMENTS
+    if not chunks:
+        # The delete would otherwise run alone and commit, wiping a live corpus and
+        # reporting success — `glob` on a renamed directory yields nothing without
+        # raising, and embedding an empty list makes no call and raises nothing
+        # either. The transaction only protects against an embed that *fails*, not
+        # one with nothing to do.
+        raise RuntimeError(f"no corpus documents found under {_CORPUS_DIR}")
     vectors = embedder.embed([chunk.passage for chunk in chunks])
     with conn.transaction():
         conn.execute("DELETE FROM corpus_chunks")
-        conn.cursor().executemany(
-            "INSERT INTO corpus_chunks (id, source, section, passage, embedding)"
-            " VALUES (%s, %s, %s, %s, %s)",
-            [
-                (
-                    f"{chunk.source}#{i}",
-                    chunk.source,
-                    chunk.section,
-                    chunk.passage,
-                    str(vector),
-                )
-                for i, (chunk, vector) in enumerate(zip(chunks, vectors))
-            ],
-        )
-    return len(chunks)
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO corpus_chunks (id, source, section, passage, embedding)"
+                " VALUES (%s, %s, %s, %s, %s)",
+                [
+                    (
+                        f"{chunk.source}#{chunk.section}",
+                        chunk.source,
+                        chunk.section,
+                        chunk.passage,
+                        str(vector),
+                    )
+                    # `strict`: a short vector list would otherwise seed a prefix of
+                    # the corpus and report the full count, and the missing tail is
+                    # invisible — the analyst simply denies covering those topics.
+                    for chunk, vector in zip(chunks, vectors, strict=True)
+                ],
+            )
+            written = cur.rowcount
+    # What was written, not what was intended.
+    return written
 
 
 # Reciprocal-rank fusion. The constant damps the top of each list so one search
@@ -156,13 +186,10 @@ _RRF_K = 60
 
 _SEARCH = """
 WITH asked AS (
-    -- Any of the question's words, not all of them. `websearch_to_tsquery` and
-    -- `plainto_tsquery` both AND their terms, which is right for a search box and
-    -- wrong for a sentence: "B is ahead — why does it say undecided?" becomes
-    -- 'b' & 'ahead' & 'say' & 'undecid', and no passage on earth contains all
-    -- four. Measured before this was fixed: 5 of 14 questions matched nothing at
-    -- all, including this corpus's own headline question.
-    SELECT string_agg(lexeme, ' | ')::tsquery AS query
+    -- The question's distinct content words, stopwords already dropped by the
+    -- stemmer. Kept as an array rather than a tsquery because the gate below
+    -- counts them, and a tsquery cannot be counted.
+    SELECT array_agg(DISTINCT lexeme) AS lexemes
     FROM unnest(tsvector_to_array(to_tsvector('english', %(query)s))) AS lexeme
 ),
 dense AS (
@@ -172,9 +199,32 @@ dense AS (
     LIMIT %(pool)s
 ),
 sparse AS (
-    SELECT id, row_number() OVER (ORDER BY ts_rank(search, asked.query) DESC) AS rank
-    FROM corpus_chunks, asked
-    WHERE search @@ asked.query
+    -- How much of the question this passage is about, not whether any single word
+    -- of it appears. Requiring *every* word is the AND default and left 5 of 14
+    -- real questions matching nothing; requiring *any* is so loose that 12 of 15
+    -- plainly out-of-scope questions came back with confident citations. Both were
+    -- measured. The line is a strict majority — more of what you asked matched
+    -- than did not — which is the plain reading of the rule rather than a threshold
+    -- tuned against a sample.
+    --
+    -- `quote_literal`, because the cast re-parses text as tsquery grammar and a
+    -- pasted URL keeps characters that are operators there.
+    SELECT
+        c.id,
+        row_number() OVER (ORDER BY ts_rank(c.search, a.query) DESC) AS rank
+    FROM corpus_chunks c
+    CROSS JOIN (
+        SELECT
+            lexemes,
+            string_agg(quote_literal(l), ' | ')::tsquery AS query
+        FROM asked, unnest(lexemes) AS l
+        GROUP BY lexemes
+    ) a
+    WHERE (
+        SELECT count(*)
+        FROM unnest(a.lexemes) AS l
+        WHERE c.search @@ quote_literal(l)::tsquery
+    ) * 2 > cardinality(a.lexemes)
     LIMIT %(pool)s
 )
 SELECT c.source, c.section, c.passage

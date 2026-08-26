@@ -15,7 +15,7 @@ import psycopg
 from app.assembly import Embedder, assemble_pool
 from app.config import settings
 from app.llm import OpenRouterEmbedder, OpenRouterJudge
-from app.corpus import seed_corpus
+from app.corpus import DOCUMENTS, seed_corpus
 from app.persistence import persist_persona, prepare_connection
 from app.plausibility import format_report, run_plausibility_qc
 from app.schemas import Locale
@@ -141,6 +141,15 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
     if args.corpus_only:
+        # The dry-run check has to happen here, not at its usual place further
+        # down: the corpus path returns before ever reaching that one, so
+        # `--corpus-only --dry-run` applied schema DDL, paid for embeddings and
+        # replaced the live table — against a flag whose help says it writes
+        # nothing and calls nothing paid.
+        print(f"Corpus: {len(DOCUMENTS)} passages to embed and replace.")
+        if args.dry_run:
+            print("Dry run: nothing written, nothing embedded.")
+            return
         _reseed_corpus()
         return
 

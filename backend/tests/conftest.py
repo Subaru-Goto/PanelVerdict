@@ -65,7 +65,7 @@ def conn(pg_url):
         # votes has no FK to personas (the ledger must survive a pool reseed), so
         # CASCADE alone would leave cache rows leaking between tests.
         connection.execute(
-            "TRUNCATE personas, votes, request_ledger, spend_ledger CASCADE"
+            "TRUNCATE personas, votes, request_ledger, spend_ledger, corpus_chunks CASCADE"
         )
         connection.commit()
         yield connection

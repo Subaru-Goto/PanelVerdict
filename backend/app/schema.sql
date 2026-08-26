@@ -92,7 +92,7 @@ CREATE TABLE IF NOT EXISTS spend_ledger (
 -- jargon ("HDI", "credible interval", "practical tie") where keyword match beats
 -- embeddings, and the two are fused at query time.
 CREATE TABLE IF NOT EXISTS corpus_chunks (
-    id        text PRIMARY KEY,             -- "{document}#{ordinal}", stable across reseeds
+    id        text PRIMARY KEY,             -- "{document}#{heading}": stable when a section is added
     source    text NOT NULL,                -- the document title, as a reader would cite it
     section   text NOT NULL,                -- the heading this passage sits under
     passage   text NOT NULL,                -- heading + body: what was embedded and indexed
