@@ -50,8 +50,27 @@ export default function PanelGate({
   // read as an edit and buy a check.
   const [instruction, setInstruction] = useState(preview.instruction);
   const touched = instruction !== preview.instruction;
-  const { composition } = preview;
+  const { composition, query } = preview;
   const nobody = preview.matched === 0;
+
+  // The reading as fact rows: the caller's own controls, no interpretation to
+  // explain (094). A control that narrowed nothing is not a row — every
+  // country and the full age span is just the pool.
+  const everyCountry = ["US", "JP", "DE"].every((c) =>
+    (query.countries as string[]).includes(c),
+  );
+  const selected: [string, string][] = [];
+  if (!everyCountry) selected.push(["Country", query.countries.join(", ")]);
+  if (query.min_age !== 18 || query.max_age !== 100)
+    selected.push(["Age", `${query.min_age}–${query.max_age}`]);
+  if (query.gender) selected.push(["Gender", query.gender]);
+  if (query.education.length)
+    selected.push(["Education", query.education.join(", ").replace(/_/g, " ")]);
+  if (query.income_quintiles.length)
+    selected.push([
+      "Income",
+      query.income_quintiles.map((q) => `Q${q}`).join(", "),
+    ]);
 
   function accept(): void {
     setSent(true);
@@ -74,8 +93,23 @@ export default function PanelGate({
         </p>
       </div>
 
+      <div className="flex flex-col gap-1">
+        <h3 className="text-sm font-medium">Selected</h3>
+        {selected.length === 0 ? (
+          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+            Everyone in the pool — no control narrowed anything.
+          </p>
+        ) : (
+          selected.map(([label, value]) => (
+            <Row key={label} label={label} value={value} />
+          ))
+        )}
+      </div>
+
       {composition && (
         <div className="flex flex-col gap-1">
+          {/* Who the selection actually seated — the draw, not the ask. */}
+          <h3 className="text-sm font-medium">Seated</h3>
           <Row
             label="Age"
             value={`${composition.age_min}–${composition.age_max} (median ${composition.age_median})`}

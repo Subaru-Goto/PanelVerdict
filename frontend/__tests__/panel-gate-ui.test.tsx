@@ -101,6 +101,52 @@ describe("the panel gate", () => {
 
 // 094/#200: the sentence each panelist will be told to be, shown at the gate
 // where a human can change it. What is approved is exactly what runs.
+describe("the selected reading at the gate", () => {
+  it("shows the controls as fact rows, exactly as set", () => {
+    // The reading is the caller's own controls (094) — no model read them, so
+    // the gate can state them as facts rather than as an interpretation.
+    const narrowed = {
+      ...PREVIEW,
+      query: {
+        ...PREVIEW.query,
+        countries: ["JP", "DE"],
+        min_age: 30,
+        max_age: 50,
+        gender: "female",
+        income_quintiles: [4, 5],
+        education: ["tertiary"],
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    render(<PanelGate preview={narrowed} onAccept={vi.fn()} onBack={vi.fn()} />);
+
+    expect(screen.getByText(/JP, DE/)).toBeTruthy();
+    expect(screen.getByText(/30–50/)).toBeTruthy();
+    // getAllBy: the composition rows also say female — the fact row is one more
+    expect(screen.getAllByText(/female/).length).toBeGreaterThan(1);
+    expect(screen.getByText(/Q4, Q5/)).toBeTruthy();
+    expect(screen.getAllByText(/tertiary/).length).toBeGreaterThan(1);
+  });
+
+  it("says everyone when no control narrowed anything", () => {
+    // Untouched controls arrive expanded — every country, the full age span —
+    // so "nothing narrowed" is a shape, not an absence.
+    const everyone = {
+      ...PREVIEW,
+      query: {
+        ...PREVIEW.query,
+        countries: ["US", "JP", "DE"],
+        min_age: 18,
+        max_age: 100,
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    render(<PanelGate preview={everyone} onAccept={vi.fn()} onBack={vi.fn()} />);
+
+    expect(screen.getByText(/everyone in the pool/i)).toBeTruthy();
+  });
+});
+
 describe("the instruction at the gate", () => {
   const withInstruction = {
     ...PREVIEW,

@@ -30,9 +30,7 @@ afterEach(() => {
 });
 
 async function fillAndSubmit() {
-  fireEvent.change(screen.getByLabelText(/who should judge/i), {
-    target: { value: "Japanese homeowners" },
-  });
+  fireEvent.click(screen.getByRole("checkbox", { name: /japan/i }));
   fireEvent.change(screen.getByLabelText(/headline a/i), {
     target: { value: "Save 50% today" },
   });
@@ -88,26 +86,44 @@ describe("EvaluateForm", () => {
 
     expect(button.hasAttribute("disabled")).toBe(false);
     fireEvent.click(button);
-    expect(evaluateMock).toHaveBeenCalledWith({
-      targetDescription: "",
-      audience: "",
-      headlineA: "Save 50% today",
-      headlineB: "Members save half",
-    });
+    expect(evaluateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ countries: [] }),
+        audience: "",
+        headlineA: "Save 50% today",
+        headlineB: "Members save half",
+      }),
+    );
   });
 
-  it("sends all three fields to evaluate", async () => {
+  it("sends the controls and both headlines to evaluate", async () => {
     evaluateMock.mockResolvedValue(RESPONSE);
     render(<EvaluateForm />);
 
     await fillAndSubmit();
 
-    expect(evaluateMock).toHaveBeenCalledWith({
-      targetDescription: "Japanese homeowners",
-      audience: "",
-      headlineA: "Save 50% today",
-      headlineB: "Members save half",
-    });
+    expect(evaluateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        target: expect.objectContaining({ countries: ["JP"] }),
+        headlineA: "Save 50% today",
+        headlineB: "Members save half",
+      }),
+    );
+  });
+
+  it("offers the four controls and no free-text target", () => {
+    // Demographics come from controls because controls cannot be misread
+    // (094): country, age, gender, education, income — and the retired
+    // description field must not quietly survive.
+    render(<EvaluateForm />);
+
+    expect(screen.queryByLabelText(/who should judge/i)).toBeNull();
+    expect(screen.getByRole("checkbox", { name: /japan/i })).toBeTruthy();
+    expect(screen.getByLabelText(/age from/i)).toBeTruthy();
+    expect(screen.getByLabelText(/age to/i)).toBeTruthy();
+    expect(screen.getByLabelText(/gender/i)).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /tertiary/i })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /q1/i })).toBeTruthy();
   });
 
   it("renders notices with warnings distinguishable from readings", async () => {

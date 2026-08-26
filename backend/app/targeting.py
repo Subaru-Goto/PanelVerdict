@@ -386,7 +386,7 @@ class PanelSelection:
 PANEL_SEED = 0
 
 
-def _shortfall_notices(panel: list[Persona], size: int) -> tuple[Notice, ...]:
+def shortfall_notices(panel: list[Persona], size: int) -> tuple[Notice, ...]:
     if len(panel) >= size:
         return ()
     if not panel:
@@ -441,5 +441,5 @@ def select_panel(
     return PanelSelection(
         panel=panel,
         query=query,
-        notices=untargeted + query.notices + _shortfall_notices(panel, size),
+        notices=untargeted + query.notices + shortfall_notices(panel, size),
     )

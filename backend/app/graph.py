@@ -58,7 +58,7 @@ from app.roleplay import (
 )
 from app.schemas import Notice, Persona, TargetQuery
 from app.screening import Screener, screen_inputs
-from app.targeting import PANEL_SEED, PanelSelection, TargetTranslator, select_panel
+from app.targeting import PANEL_SEED, PanelSelection, shortfall_notices
 from app.vote import PanelLLM
 
 
@@ -114,10 +114,9 @@ class EvaluateState(TypedDict, total=False):
     resume could return different people than the human approved.
     """
 
-    description: str
-    # The optional free text describing who the readers are, beyond what the pool
-    # can be filtered by. Kept apart from `description` because they take
-    # different paths: one becomes SQL, this one becomes a sentence.
+    # The optional free text describing who the readers are, beyond what the
+    # controls can filter by. The one free-text input left on this path: the
+    # demographics became controls (094), read by SQL and never by a model.
     audience: str
     variants: dict[str, str]
     size: int
@@ -163,7 +162,6 @@ def _preview(state: EvaluateState) -> PanelPreview:
 def build_evaluate_graph(
     *,
     conn: psycopg.Connection,
-    translator: TargetTranslator,
     llm: PanelLLM,
     screener: Screener | None,
     generator: RolePlayGenerator,
@@ -171,22 +169,17 @@ def build_evaluate_graph(
 ):
     """Compile the evaluate graph with this request's dependencies bound.
 
-    START -> screen -> roleplay -> select -> confirm --(accept)--> vote -> ...
-                                      ^         |
-                                      +-(adjust)+       interrupt() at confirm
+    START -> roleplay -> select -> confirm --(accept)--> vote -> ...
+                             ^        |
+                             +(adjust)+       interrupt() at confirm
 
-                                     ... -> assemble -> END
+                            ... -> assemble -> END
+
+    No screen node before the gate any more: the controls are read by SQL and
+    no model sees them (094), so the only pre-gate text a model reads is the
+    audience — guarded by the generator's own classifier below. The screener
+    still checks the headlines, in `vote`, where they first reach a model.
     """
-
-    def screen(state: EvaluateState) -> EvaluateState:
-        """Check the audience text, the only text used before the gate.
-
-        Screening is a paid call per text, and the headlines are not read until
-        `vote` — so they are checked there instead, where they first reach a
-        model.
-        """
-        screen_inputs(screener, [state["description"]])
-        return {}
 
     def roleplay(state: EvaluateState) -> EvaluateState:
         """Turn the audience words into the sentence each panelist will be told.
@@ -219,39 +212,27 @@ def build_evaluate_graph(
         return {"instruction": draft.instruction}
 
     def select(state: EvaluateState) -> EvaluateState:
-        """Draw the panel. Translates once per run, then re-selects with SQL."""
-        # Translate only on the first pass. A second translation would be paid
-        # and could disagree with the edit it was asked to apply.
-        settled = state.get("query")
-        if settled is None:
-            selection = select_panel(
-                conn,
-                state["description"],
-                size=state["size"],
-                translator=translator,
-            )
-            notices = list(selection.notices)
-        else:
-            target = state.get("edited") or settled
-            selection = PanelSelection(
-                panel=retrieve_panel(conn, target, size=state["size"], seed=PANEL_SEED),
-                query=target,
-                notices=(),
-            )
-            # Notices explain how the customer's words were read, so they are
-            # kept when the reading is unchanged and dropped when it is edited.
-            notices = list(state.get("notices", [])) if target == settled else []
-        if not selection.panel and settled is None:
+        """Draw the panel from the settled reading. Pure SQL, nothing paid.
+
+        The query arrives settled — built from the controls at the endpoint, or
+        rebuilt there from the gate's edit — so this node never interprets
+        anything. It only retrieves, and reports a shortfall when the pool has
+        fewer matching people than the panel asked for.
+        """
+        settled = state["query"]
+        target = state.get("edited") or settled
+        panel = retrieve_panel(conn, target, size=state["size"], seed=PANEL_SEED)
+        if not panel and state.get("panel") is None:
             # Nothing to show and nothing to approve: the run never starts.
             raise EmptyPanel(
                 f"no persona matches this target (size {state['size']} requested)"
             )
-        if not selection.panel:
+        if not panel:
             # An *edit* that matches nobody must not raise. The edit is already
             # in state, so every resume would fail here and the run would be
             # unrecoverable. Go back to the gate reading zero instead.
             return {
-                "query": selection.query,
+                "query": target,
                 "panel": [],
                 "notices": [
                     Notice(
@@ -263,10 +244,14 @@ def build_evaluate_graph(
                     )
                 ],
             }
+        # Readings explain the *unchanged* reading, so they are kept when it is
+        # and dropped when an edit replaced it; a shortfall is about who was
+        # actually seated, so it is recomputed either way.
+        kept = list(state.get("notices", [])) if target == settled else []
         return {
-            "query": selection.query,
-            "panel": selection.panel,
-            "notices": notices,
+            "query": target,
+            "panel": panel,
+            "notices": kept + list(shortfall_notices(panel, state["size"])),
         }
 
     def confirm(state: EvaluateState) -> EvaluateState:
@@ -362,14 +347,12 @@ def build_evaluate_graph(
         return "vote"
 
     builder = StateGraph(EvaluateState)
-    builder.add_node("screen", screen)
     builder.add_node("roleplay", roleplay)
     builder.add_node("select", select)
     builder.add_node("confirm", confirm)
     builder.add_node("vote", vote)
     builder.add_node("assemble", assemble)
-    builder.add_edge(START, "screen")
-    builder.add_edge("screen", "roleplay")
+    builder.add_edge(START, "roleplay")
     builder.add_edge("roleplay", "select")
     builder.add_edge("select", "confirm")
     builder.add_conditional_edges("confirm", after_confirm)

@@ -11,11 +11,12 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.types import Command
 
 from app.graph import GateDecision, build_evaluate_graph
+from app.schemas import TargetQuery
 from app.roleplay import RolePlayRefused
 from app.pipeline import EmptyPanel
 from app.screening import ScreeningVerdict, UnsafeInput
 from app.targeting import PANEL_SEED
-from tests.factories import StubGenerator, StubTranslator, seed_japanese
+from tests.factories import StubGenerator, seed_japanese
 
 _VARIANTS = {"a": "Save 50% today", "b": "Limited time: half price"}
 
@@ -44,26 +45,9 @@ class CountingLLM:
         return voted("option_1", "clear discount framing")
 
 
-class CountingTranslator(StubTranslator):
-    """A translator that records how many paid translations were made."""
-
-    def __init__(self, request) -> None:
-        super().__init__(request)
-        self.calls = 0
-
-    def translate(self, *, description: str):
-        self.calls += 1
-        return super().translate(description=description)
-
-
-def _graph(
-    conn, *, llm=None, translator=None, screener=None, saver=None, generator=None
-):
-    from tests.factories import JAPAN_REQUEST
-
+def _graph(conn, *, llm=None, screener=None, saver=None, generator=None):
     return build_evaluate_graph(
         conn=conn,
-        translator=translator or StubTranslator(JAPAN_REQUEST),
         llm=llm or CountingLLM(),
         screener=screener,
         generator=generator or StubGenerator(),
@@ -71,9 +55,25 @@ def _graph(
     )
 
 
-def _start(description: str = "Japanese homeowners", **overrides) -> dict:
+def _japan_query() -> TargetQuery:
+    """The settled reading the endpoint would seed for a JP-only run — the
+    graph reads a done deal now, never a description (094)."""
+    return TargetQuery(
+        countries=["JP"],
+        coverage="requested",
+        min_age=18,
+        max_age=100,
+        gender=None,
+        income_quintiles=[],
+        education=[],
+        traits=[],
+        notices=[],
+    )
+
+
+def _start(**overrides) -> dict:
     return {
-        "description": description,
+        "query": _japan_query(),
         "variants": _VARIANTS,
         "size": 5,
     } | overrides
@@ -128,19 +128,19 @@ def test_adjusting_reseats_the_panel_without_paying_to_translate_again(conn) -> 
     translation would be paid, non-reproducible, and could quietly disagree
     with the edit it was meant to apply."""
     seed_japanese(conn, 5)
-    from tests.factories import JAPAN_REQUEST
-
-    translator = CountingTranslator(JAPAN_REQUEST)
-    graph = _graph(conn, translator=translator)
+    llm = CountingLLM()
+    graph = _graph(conn, llm=llm)
     first = graph.invoke(_start(), _config())
     edited = first["__interrupt__"][0].value["query"]
 
-    graph.invoke(
+    state = graph.invoke(
         Command(resume=GateDecision(action="adjust", query=edited).model_dump()),
         _config(),
     )
 
-    assert translator.calls == 1
+    # Re-seated and paused again, and no model of any kind was asked.
+    assert state["__interrupt__"]
+    assert llm.asked == 0
 
 
 def test_an_adjustment_stops_again_rather_than_running_on(conn) -> None:
@@ -181,9 +181,7 @@ def test_a_target_the_pool_cannot_serve_is_refused_before_the_gate(conn) -> None
     """Nothing to approve and nothing to spend: the refusal belongs where the
     panel is drawn, not after a human has been asked about an empty room."""
     seed_japanese(conn, 5)
-    from tests.factories import JAPAN_REQUEST
-
-    graph = _graph(conn, translator=StubTranslator(JAPAN_REQUEST))
+    graph = _graph(conn)
     conn.execute("DELETE FROM personas")
     conn.commit()
 
@@ -191,17 +189,26 @@ def test_a_target_the_pool_cannot_serve_is_refused_before_the_gate(conn) -> None
         graph.invoke(_start(), _config())
 
 
-def test_refused_text_never_reaches_selection(conn) -> None:
-    """Screening comes first, as it does today — the last moment the customer's
-    text has been copied only once."""
+def test_refused_text_never_reaches_the_panel(conn) -> None:
+    """The screener's one remaining post: the vote. Nothing before the gate is
+    text a model reads (094) — the controls are SQL and the audience has its
+    own classifier — so a flagged headline is refused where headlines are first
+    shown to a model, before any vote is bought."""
     seed_japanese(conn, 5)
+    llm = CountingLLM()
 
     class Refusing:
         def screen(self, text: str) -> ScreeningVerdict:
             return ScreeningVerdict(flagged=True, reason="prompt injection")
 
+    graph = _graph(conn, llm=llm, screener=Refusing())
+    graph.invoke(_start(), _config())
+
     with pytest.raises(UnsafeInput):
-        _graph(conn, screener=Refusing()).invoke(_start(), _config())
+        graph.invoke(
+            Command(resume=GateDecision(action="accept").model_dump()), _config()
+        )
+    assert llm.asked == 0
 
 
 class CountingScreener:
@@ -215,16 +222,18 @@ class CountingScreener:
         return ScreeningVerdict(flagged=False, reason="")
 
 
-def test_a_preview_screens_the_audience_and_not_the_headlines(conn) -> None:
-    """Each text is checked just before the step that uses it. Nothing before
-    the gate reads a headline, so screening one there is a paid call bought for
-    a run that may never be accepted."""
+def test_a_preview_screens_nothing(conn) -> None:
+    """No text a model reads exists before the gate any more: the controls are
+    SQL, and the audience is guarded by the generator's classifier rather than
+    the copy screener. A preview that paid for screening would be buying a
+    check for a run that may never be accepted — and checking the wrong
+    instrument's text at that."""
     seed_japanese(conn, 5)
     screener = CountingScreener()
 
     _graph(conn, screener=screener).invoke(_start(), _config())
 
-    assert screener.seen == ["Japanese homeowners"]
+    assert screener.seen == []
 
 
 def test_the_headlines_are_screened_before_they_reach_the_panel(conn) -> None:
@@ -237,7 +246,7 @@ def test_the_headlines_are_screened_before_they_reach_the_panel(conn) -> None:
 
     graph.invoke(Command(resume=GateDecision(action="accept").model_dump()), _config())
 
-    assert sorted(screener.seen) == sorted(["Japanese homeowners", *_VARIANTS.values()])
+    assert sorted(screener.seen) == sorted(_VARIANTS.values())
 
 
 def test_the_same_filter_seats_the_same_people(conn) -> None:

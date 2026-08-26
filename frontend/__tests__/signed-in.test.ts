@@ -15,7 +15,7 @@ afterEach(() => {
   vi.mocked(authHeaders).mockReset();
 });
 
-const INPUT = { targetDescription: "t", headlineA: "a", headlineB: "b" };
+const INPUT = { headlineA: "a", headlineB: "b" };
 
 function stubbedFetch() {
   const fetcher = vi

@@ -33,7 +33,6 @@ from app.auth import (
     verifier_from_settings,
 )
 from app.config import (
-    USD_PER_PREVIEW,
     USD_PER_ROLEPLAY,
     USD_PER_TURN,
     USD_PER_VOTE,
@@ -45,7 +44,6 @@ from app.llm import (
     OpenRouterEmbedder,
     OpenRouterPanelLLM,
     OpenRouterRolePlayGenerator,
-    OpenRouterTargetTranslator,
     analyst_chat_model,
     remaining_credit,
 )
@@ -54,6 +52,8 @@ from app.persistence import deny_data_api
 from app.pipeline import EmptyPanel, NoVotes
 from app.roleplay import RolePlayGenerator, RolePlayRefused
 from app.schemas import (
+    Locale,
+    PanelEdit,
     ChatRequest,
     EvaluateRequest,
     EvaluateResponse,
@@ -62,7 +62,6 @@ from app.schemas import (
     TargetQuery,
 )
 from app.screening import OpenRouterScreener, Screener, UnsafeInput
-from app.targeting import TargetTranslator
 from app.tracing import configure_tracing
 from app.vote import OutOfCredit, PanelLLM
 
@@ -242,15 +241,6 @@ def get_generator() -> RolePlayGenerator:
     put unclassified text into a panelist's identity.
     """
     return OpenRouterRolePlayGenerator(
-        api_key=_require_api_key(),
-        base_url=settings.openrouter_base_url,
-        model=settings.targeting_model,
-    )
-
-
-def get_translator() -> TargetTranslator:
-    """Translate target description into structured output for the panel"""
-    return OpenRouterTargetTranslator(
         api_key=_require_api_key(),
         base_url=settings.openrouter_base_url,
         model=settings.targeting_model,
@@ -468,8 +458,9 @@ def enforce_evaluate_limits(
 ) -> None:
     """Charge for the preview, and the panel too when there is no gate.
 
-    Two purchases, counted separately: a preview buys the two model calls a run
-    makes before the gate, a panel buys every vote it is sized to.
+    Two purchases, counted separately: a preview buys the gate visit (and the
+    one rewrite call, when audience words were written), a panel buys every
+    vote it is sized to.
     `/evaluate/resume` charges the panel when a reader accepts; this charges it
     up front only for a run told the reading is already approved, which never
     stops to ask.
@@ -488,18 +479,16 @@ def enforce_evaluate_limits(
     the write sweeps the caller's expired rows so the ledger cannot accumulate
     rows nobody will read again (040's lesson).
     """
-    # A preview buys model calls, not a panel: the graph stops at the gate before
-    # any vote is cast. Two calls for a demographics-only run — one translation
-    # and one screening — and a third when the reader wrote audience words, which
-    # have to be rewritten into the sentence the gate offers for approval.
+    # A preview buys at most one model call: the rewrite, when the reader wrote
+    # audience words. Controls are read by SQL and no model sees them (094), so
+    # a demographics-only run reaches the gate for free — the allowance below
+    # still counts the visit, because gate visits bound probing, not spend.
     charges = [
         _Charge(_PREVIEW, caller, settings.evaluate_previews_per_day, "previews")
     ]
-    # Two written figures summed in Decimal, never one computed float: `_usd`
-    # takes written figures only, for the reason its docstring gives.
-    preview_usd = _usd(USD_PER_PREVIEW)
+    preview_usd = Decimal("0")
     if request.audience.strip():
-        preview_usd += _usd(USD_PER_ROLEPLAY)
+        preview_usd = _usd(USD_PER_ROLEPLAY)
     spend = _Spend(_PREVIEW, preview_usd)
     if request.reading_accepted:
         # No gate on this run, so there is no accept to charge later. One call
@@ -866,7 +855,6 @@ def evaluate(
     _limit: None = Depends(enforce_evaluate_limits),
     caller: str = Depends(caller_id),
     llm: PanelLLM = Depends(get_panel_llm),
-    translator: TargetTranslator = Depends(get_translator),
     conn: psycopg.Connection = Depends(get_conn),
     credit: float | None = Depends(get_remaining_credit),
     screener: Screener | None = Depends(get_screener),
@@ -875,25 +863,40 @@ def evaluate(
 ) -> PausedRun | CompletedRun:
     """Start a run. Stops at the panel gate unless the reading was approved.
 
-    The preview is charged here, because reaching the gate costs two model
-    calls whether or not the reader goes on to buy. The panel is charged where
-    it is bought — on accept, or here too when the reading arrives approved and
-    there is no gate to stop at.
+    The reading is settled here, not translated: the controls are the query
+    (094), so no model reads them and the graph starts from a done deal. The
+    panel is charged where it is bought — on accept, or up front when the
+    reading arrives approved and there is no gate to stop at.
     """
     variants = {"a": request.headline_a, "b": request.headline_b}
     thread_id = str(uuid4())
     graph = build_evaluate_graph(
         conn=conn,
-        translator=translator,
         llm=llm,
         screener=screener,
         generator=generator,
         checkpointer=checkpointer,
     )
+    # Only this layer knows every control was left alone — the query it builds
+    # is identical to one that asked for JP-to-DE everyone — so the
+    # cross-section reading is said here or nowhere.
+    untargeted = request.target == PanelEdit()
     state = _run_graph(
         graph,
         {
-            "description": request.target_description,
+            "query": _settled_query(request.target),
+            "notices": [
+                Notice(
+                    severity="reading",
+                    message=(
+                        "No audience was described, so the panel is a "
+                        "cross-section of the whole pool rather than a match "
+                        "to anyone in particular."
+                    ),
+                )
+            ]
+            if untargeted
+            else [],
             "audience": request.audience,
             "instruction": _approved_on_entry(conn, request, generator),
             "variants": variants,
@@ -1006,17 +1009,35 @@ def _classify_edit(
     return checked.instruction
 
 
-def _edited(request: ResumeRequest, values: dict) -> TargetQuery | None:
-    """Build the edited reading from the filter fields a caller may set.
+def _settled_query(edit: PanelEdit) -> TargetQuery:
+    """Controls → the reading, verbatim. Both doors pass through here — the
+    form's controls and the gate's edit — so what runs is always exactly what a
+    human set.
 
-    `coverage` and `notices` are rebuilt here rather than taken from the caller.
-    Coverage is `requested` because an explicit edit is, by definition, exactly
-    what was asked for; the notices explained the *original words* and no longer
-    describe this filter.
+    `coverage` is `requested` by definition: a control cannot be misread, so
+    there is no ladder to report. `notices` start empty for the same reason —
+    they existed to explain how free text was interpreted, and nothing is
+    interpreted any more. `traits` are always empty: temperament left targeting
+    when the controls arrived (094).
+
+    `countries` is the one control whose blank needs translating: TargetQuery
+    keeps countries explicit — empty means *no* country and matches nobody —
+    while an untouched control means the caller didn't care. Every place, said
+    outright.
     """
+    return TargetQuery(
+        **edit.model_dump() | {"countries": edit.countries or list(Locale)},
+        traits=[],
+        coverage="requested",
+        notices=[],
+    )
+
+
+def _edited(request: ResumeRequest, values: dict) -> TargetQuery | None:
+    """The edited reading, when the gate's answer carries one."""
     if request.query is None:
         return None
-    return TargetQuery(**request.query.model_dump(), coverage="requested", notices=[])
+    return _settled_query(request.query)
 
 
 def _expired(started_at: str | None) -> bool:
@@ -1046,7 +1067,6 @@ def resume_evaluate(
     request: ResumeRequest,
     caller: str = Depends(caller_id),
     llm: PanelLLM = Depends(get_panel_llm),
-    translator: TargetTranslator = Depends(get_translator),
     conn: psycopg.Connection = Depends(get_conn),
     credit: float | None = Depends(get_remaining_credit),
     screener: Screener | None = Depends(get_screener),
@@ -1071,7 +1091,6 @@ def resume_evaluate(
     """
     graph = build_evaluate_graph(
         conn=conn,
-        translator=translator,
         llm=llm,
         screener=screener,
         generator=generator,
