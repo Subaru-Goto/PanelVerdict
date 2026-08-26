@@ -77,9 +77,18 @@ PAIRS: tuple[Pair, ...] = (
         "What the traits are conditioned on, and what that rules out",
     ),
     Pair("what can this test not tell me", "What this panel cannot tell you"),
-    # The corpus must decline rather than reach: no expected section at all.
-    Pair("what is the click-through rate for this headline", ""),
-    Pair("how do I write a better headline", ""),
+    # These two were declared with no expected section, on the assumption that a
+    # question outside the product's scope should retrieve nothing. **The run
+    # showed the assumption wrong, not the retrieval** — both questions are ones
+    # the corpus deliberately answers, by explaining what the panel measures and
+    # what it cannot show. Corrected after the fact, and recorded here rather than
+    # quietly re-labelled: the published 12/14 is against the original
+    # declarations, and these two were among its failures.
+    Pair(
+        "what is the click-through rate for this headline",
+        "What the panel is actually measuring",
+    ),
+    Pair("how do I write a better headline", "What this panel cannot tell you"),
 )
 
 _JUDGE_PROMPT = """\

@@ -155,18 +155,26 @@ def seed_corpus(conn: psycopg.Connection, embedder: Embedder) -> int:
 _RRF_K = 60
 
 _SEARCH = """
-WITH dense AS (
+WITH asked AS (
+    -- Any of the question's words, not all of them. `websearch_to_tsquery` and
+    -- `plainto_tsquery` both AND their terms, which is right for a search box and
+    -- wrong for a sentence: "B is ahead — why does it say undecided?" becomes
+    -- 'b' & 'ahead' & 'say' & 'undecid', and no passage on earth contains all
+    -- four. Measured before this was fixed: 5 of 14 questions matched nothing at
+    -- all, including this corpus's own headline question.
+    SELECT string_agg(lexeme, ' | ')::tsquery AS query
+    FROM unnest(tsvector_to_array(to_tsvector('english', %(query)s))) AS lexeme
+),
+dense AS (
     SELECT id, row_number() OVER (ORDER BY embedding <=> %(vector)s) AS rank
     FROM corpus_chunks
     ORDER BY embedding <=> %(vector)s
     LIMIT %(pool)s
 ),
 sparse AS (
-    SELECT id, row_number() OVER (
-        ORDER BY ts_rank(search, websearch_to_tsquery('english', %(query)s)) DESC
-    ) AS rank
-    FROM corpus_chunks
-    WHERE search @@ websearch_to_tsquery('english', %(query)s)
+    SELECT id, row_number() OVER (ORDER BY ts_rank(search, asked.query) DESC) AS rank
+    FROM corpus_chunks, asked
+    WHERE search @@ asked.query
     LIMIT %(pool)s
 )
 SELECT c.source, c.section, c.passage
@@ -212,12 +220,12 @@ def search_corpus(
     exact failure this corpus exists to prevent, made worse by looking sourced.
     Nothing lexically matched means no passage, and the analyst says so.
 
-    What that costs is recall on a question sharing no word with any passage. It
-    is a small cost *here* — this corpus explains the words printed on the report,
-    so a reader asking about them tends to use them — and it is the safe direction
-    to be wrong in. The alternative is a distance floor on the dense half, which
-    needs a measured threshold rather than a guessed one; owed on 018 if the
-    judged run shows paraphrases being missed.
+    What that costs is recall on a question sharing no *word* with any passage —
+    a small cost here, since this corpus explains the words printed on the report
+    and a reader asking about them tends to use them. What it must not cost is
+    recall on a question sharing *some* words, which is why the lexemes are ORed:
+    requiring all of them is the same gate with the meaning inverted, and it
+    measured 5 of 14 questions returning nothing.
     """
     if not query.strip():
         return []
