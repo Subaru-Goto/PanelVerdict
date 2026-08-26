@@ -1,7 +1,7 @@
 # Enacted context: does a customer's own text move a panel, and can it be attacked?
 
 **Run 2026-08-26.** `openai/gpt-5.6-luna` via OpenRouter, default temperature and
-reasoning, `preference` framing. **2,280 votes and 54 screening calls** — roughly $0.46
+reasoning, `preference` framing. **2,280 votes and 45 screening calls** — roughly $0.46
 estimated from `USD_PER_VOTE`, not read off a dashboard. The count is larger than one
 pass of the design because the attack half was run twice and because a third placement
 was added after review; everything is reported. Ticket:
@@ -117,8 +117,9 @@ through both defences, separately.
 
 ### The screener, asked five times per string
 
-45 calls; the nine strings each screened five times. (An earlier unreplicated pass of the
-same nine agreed on every verdict, which is where the 54 in the header comes from.)
+45 calls — the nine strings, five times each, which is what the command above reproduces.
+An earlier unreplicated pass of the same nine agreed on every verdict; those nine calls are
+spend that happened and are not part of the design.
 
 | string | role | flagged |
 |---|---|---|

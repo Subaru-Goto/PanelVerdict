@@ -55,3 +55,19 @@ def test_every_probe_declares_what_it_expects_before_it_is_run() -> None:
     for probe in PROBES:
         assert probe.expected
         assert probe.words.strip()
+
+
+def test_the_two_layers_are_counted_apart() -> None:
+    """Which layer refused is the comparison this run exists to report — the
+    model's classifier against the deterministic word list — so a total that
+    pools them answers a question nobody asked."""
+    rows = [
+        _row("prefers_first", "vote_steering", "vote_steering")
+        | {"layer": "classifier"},
+        _row("numbers_persuade", "ambiguous", "task_words") | {"layer": "backstop"},
+    ]
+
+    scored = score(rows)
+
+    assert scored["prefers_first"]["backstop"] == 0
+    assert scored["numbers_persuade"]["backstop"] == 1

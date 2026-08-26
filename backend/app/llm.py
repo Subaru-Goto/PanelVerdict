@@ -9,6 +9,7 @@ from langchain.embeddings import init_embeddings
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from openai import APIStatusError
+from pydantic import ValidationError
 
 from app.config import LANGCHAIN_INTEGRATION
 from app.roleplay import (
@@ -557,7 +558,19 @@ class OpenRouterRolePlayGenerator:
         ).with_structured_output(RolePlayDraft)
 
     def draft(self, *, words: str) -> RolePlayDraft:
-        result = self._model.invoke(build_roleplay_messages(words, nonce=self._nonce))
+        # `RolePlayDraft` carries a cross-field invariant — instruction XOR
+        # refusal — which the model can break, and the break happens inside
+        # `invoke` as a pydantic error rather than arriving as a value to check.
+        # `{"instruction": "", "refusal": null}` is the shape an unsure model
+        # produces, so this is the likely failure here, not the exotic one.
+        # Reported as a generator fault either way: it is our schema the model
+        # missed, never something the reader did.
+        try:
+            result = self._model.invoke(
+                build_roleplay_messages(words, nonce=self._nonce)
+            )
+        except ValidationError as error:
+            raise RuntimeError("generator returned a malformed draft") from error
         if not isinstance(result, RolePlayDraft):
             raise RuntimeError(f"generator returned no structured draft: {result!r}")
         return without_task_talk(result)

@@ -61,7 +61,11 @@ def test_an_instruction_naming_the_task_is_turned_into_a_refusal() -> None:
         )
     )
 
-    assert caught.refusal == "vote_steering"
+    # Its own class, not `vote_steering`: this layer also refuses audiences that
+    # merely mention the word, and telling a news-reader they tried to steer a
+    # vote is both wrong and unactionable. It is also what lets a run say which
+    # of the two layers fired.
+    assert caught.refusal == "task_words"
     assert caught.instruction == ""
 
 
@@ -76,6 +80,45 @@ def test_the_backstop_leaves_an_ordinary_audience_alone() -> None:
         "You skim and rarely get past the first few words.",
         "You choose organic food whenever you can.",
         "You do the weekly grocery shop online.",
+        # `vote` was in the list and is not any more: a panelist is never asked
+        # to "vote" in any text they see, so the word carried almost no task
+        # meaning and a great deal of civic meaning.
+        "You vote in every local election.",
     ):
         draft = RolePlayDraft(instruction=instruction)
         assert without_task_talk(draft) is draft
+
+
+def test_the_kept_false_positive_is_pinned_so_it_stays_a_choice() -> None:
+    """ "You read the news headlines each morning" is a person, not a rule, and
+    this refuses it. Kept knowingly: a wrong refusal shows a sentence naming a
+    remedy and the reader rewrites, while a miss returns their own hypothesis as
+    a unanimous verdict. Pinned so the trade stays visible — if someone later
+    decides the cost is too high, this test is where the decision is recorded."""
+    from app.roleplay import without_task_talk
+
+    refused = without_task_talk(
+        RolePlayDraft(instruction="You read the news headlines each morning.")
+    )
+
+    assert refused.refusal == "task_words"
+    assert "say it another way" in refused.sentence
+
+
+def test_the_backstop_says_which_word_it_caught_without_echoing_the_text(
+    caplog,
+) -> None:
+    """A deterministic refusal that discards model output is invisible otherwise —
+    in production as much as in an experiment. The matched word is the diagnosis;
+    the sentence is derived from what a customer typed and does not travel, which
+    is the trade `app/screening.py` already makes."""
+    import logging
+
+    from app.roleplay import without_task_talk
+
+    with caplog.at_level(logging.WARNING, logger="app.roleplay"):
+        without_task_talk(RolePlayDraft(instruction="You skim every headline."))
+
+    record = caplog.records[-1]
+    assert "headline" in record.getMessage()
+    assert "You skim" not in record.getMessage()

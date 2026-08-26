@@ -20,10 +20,13 @@ text for the same reasons:
   addresses and that text addresses nobody.
 """
 
+import logging
 from typing import Literal, Protocol, Self
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, model_validator
+
+logger = logging.getLogger(__name__)
 
 # Why a text cannot become an identity. Ordered by how often it will fire, not by
 # severity — the first is a reader who misunderstood the field, the rest are not.
@@ -32,6 +35,13 @@ RefusalClass = Literal[
     "vote_steering",
     "real_person",
     "harmful",
+    # Not the classifier's — `without_task_talk`'s, below. Its own class rather
+    # than a reuse of `vote_steering` for two reasons: a reader whose audience
+    # merely *mentions* headlines has not tried to steer anything and should not
+    # be told they have, and a shared class would make the deterministic layer
+    # and the model's layer indistinguishable in a run's output, which is the one
+    # thing the guard experiment needs to tell apart.
+    "task_words",
 ]
 
 # Ours, not the model's, and never interpolated with the input: a refused text
@@ -53,6 +63,10 @@ REFUSAL_SENTENCES: dict[RefusalClass, str] = {
     "harmful": (
         "This is not an audience a panel here will play. Describe the readers you "
         "want to reach."
+    ),
+    "task_words": (
+        "Panelists are about to be shown headlines, so their description cannot "
+        "mention headlines, options or variants — say it another way."
     ),
 }
 
@@ -91,25 +105,27 @@ class RolePlayDraft(BaseModel):
         return REFUSAL_SENTENCES[self.refusal]
 
 
-# The nouns of the panelist's *task*. An instruction that names one is talking
-# about the choice rather than about a person, whatever it meant to say.
+# The nouns of the panelist's *task*, and the list is a **trade**, not a
+# classification — that is the honest way to read it.
 #
-# Deliberately not `prefer`, `pick` or `choose`: those are the vocabulary of
-# ordinary life as much as of this task — "chooses organic food" describes a
-# reader — and a field that refuses them is a field nobody can use. The nouns
-# carry the meaning here and the verbs do not.
+# Not `prefer`, `pick` or `choose`: those are the vocabulary of ordinary life as
+# much as of this task — "chooses organic food" describes a reader — and a field
+# that refuses them is a field nobody can use.
+#
+# Not `vote` either, though an earlier version had it: "you vote in every local
+# election" is a clean audience, and the panelist is never asked to "vote" in any
+# text they see (the task says *Which do you prefer?*), so the word carried almost
+# no task meaning and a lot of civic meaning.
+#
+# `headline` stays, and it **does** refuse a real audience — "you read the news
+# headlines each morning" is a person, not a rule. That false positive is kept
+# knowingly, because the two errors do not cost the same: a wrong refusal shows a
+# sentence naming a remedy and the reader rewrites, while a miss returns the
+# customer's own hypothesis as a unanimous verdict with a credible interval
+# attached. `experiments/roleplay_guard.py` carries that case as a probe so the
+# cost stays visible instead of becoming folklore.
 _TASK_WORDS = frozenset(
-    {
-        "headline",
-        "headlines",
-        "option",
-        "options",
-        "variant",
-        "variants",
-        "vote",
-        "votes",
-        "voting",
-    }
+    {"headline", "headlines", "option", "options", "variant", "variants"}
 )
 
 
@@ -126,7 +142,8 @@ def without_task_talk(draft: RolePlayDraft) -> RolePlayDraft:
 
     Defence in depth, not a second complete guard: it reads nouns, so an
     instruction that steers without naming the task still gets through, and the
-    classifier above it is what refuses those.
+    classifier above it is what refuses those. It answers with its own refusal
+    class so that a run can always say which layer fired.
     """
     if draft.refusal is not None:
         return draft
@@ -134,8 +151,17 @@ def without_task_talk(draft: RolePlayDraft) -> RolePlayDraft:
         "".join(c for c in token if c.isalpha()).lower()
         for token in draft.instruction.split()
     }
-    if words & _TASK_WORDS:
-        return RolePlayDraft(instruction="", refusal="vote_steering")
+    matched = words & _TASK_WORDS
+    if matched:
+        # The sentence itself is dropped, not logged: it is derived from what a
+        # customer typed, and a refused text must not travel onward — including
+        # into our logs. The matched words say why without carrying the input,
+        # which is the same trade `app/screening.py` makes.
+        logger.warning(
+            "role-play backstop refused an instruction naming %s",
+            ", ".join(sorted(matched)),
+        )
+        return RolePlayDraft(instruction="", refusal="task_words")
     return draft
 
 

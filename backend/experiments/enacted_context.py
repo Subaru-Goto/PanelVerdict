@@ -170,15 +170,19 @@ def plan_cells(
     fail loudly instead of quietly measuring a fence that was not there.
     """
 
+    if rendering == "generated":
+        # Loudly, and before anything is paid for: a context with no recorded
+        # instruction used to fall back to its raw words, which produced an arm
+        # byte-identical to `fenced` while every row was stamped `generated` —
+        # the exact confusion the rendering label exists to prevent.
+        missing = sorted({c.id for c in contexts if c.words} - set(GENERATED))
+        if missing:
+            raise KeyError(f"no recorded instruction for context(s) {missing}")
     cells: list[Cell] = []
     for context in contexts:
         for persona in personas:
             persona_prompt = render_persona_prompt(persona)
-            words = (
-                GENERATED.get(context.id, context.words)
-                if rendering == "generated"
-                else context.words
-            )
+            words = GENERATED[context.id] if rendering == "generated" else context.words
             # In the `human` arm the words are not in the system prompt at all —
             # `HumanTurnPanelLLM` puts them in the task, inside the fence the
             # headlines already have.
