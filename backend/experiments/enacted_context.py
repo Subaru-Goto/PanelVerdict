@@ -27,13 +27,15 @@ import secrets
 from collections.abc import Iterator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Literal
 from pathlib import Path
 
 from app.bigfive import bigfive_from_levels
 from app.config import settings
-from app.llm import OpenRouterPanelLLM
+from app.llm import OpenRouterPanelLLM, build_vote_messages
 from app.panel import render_persona_prompt
 from app.schemas import Persona, TraitLevel
+from langchain_core.messages import BaseMessage
 from app.screening import OpenRouterScreener, Screener
 from app.vote import PanelLLM
 from experiments.design import (
@@ -57,6 +59,14 @@ from experiments.enacted_design import (
     render_enacted,
 )
 from experiments.manipulation_check import Cell, vote_cell
+
+# Where the customer's words are put, which is the thing 095's second half is
+# actually comparing:
+#
+#   fenced — in the system prompt, inside a nonce block framed as a description
+#   bare   — in the system prompt, spliced in as if we had written it (ablation)
+#   human  — in the task message, inside the fence the headlines already have
+Rendering = Literal["fenced", "bare", "human"]
 
 _DEFAULT_WORKERS = 8
 
@@ -97,12 +107,45 @@ BASE_PERSONAS: tuple[Persona, ...] = (
 )
 
 
+class HumanTurnPanelLLM(OpenRouterPanelLLM):
+    """The shipped adapter with the enacted words in the human turn instead.
+
+    The third placement, and the one this codebase argues for elsewhere:
+    `app/screening.py` says untrusted text is the human turn and never the system
+    one, and the headlines — the other untrusted channel — are already fenced
+    there. The words ride inside that same fence rather than getting a second.
+
+    A subclass over the real adapter, not a re-implementation: the timeouts, the
+    structured output, the 402 handling and the scaffold are the things under
+    test, so an arm that rebuilt them would be measuring a different client.
+
+    The persona prompt reaching `vote` carries no context at all in this arm —
+    `plan_cells` renders it with `placement="human"`, which leaves it alone.
+    """
+
+    def __init__(self, *, enacted: str, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self._enacted = enacted
+
+    def _messages(
+        self, system_prompt: str, option_1: str, option_2: str
+    ) -> list[BaseMessage]:
+        return build_vote_messages(
+            system_prompt,
+            option_1,
+            option_2,
+            question=self._question,
+            enacted=self._enacted,
+            nonce=self._nonce,
+        )
+
+
 def plan_cells(
     *,
     contexts: tuple[EnactedContext, ...],
     pairs: tuple[HeadlinePair, ...],
     replicates: int,
-    fenced: bool,
+    rendering: Rendering,
     nonce: str,
     personas: tuple[Persona, ...] = BASE_PERSONAS,
 ) -> list[Cell]:
@@ -122,15 +165,23 @@ def plan_cells(
     a guessable delimiter is a forgeable one, and a caller that forgets should
     fail loudly instead of quietly measuring a fence that was not there.
     """
-    rendering = "fenced" if fenced else "bare"
+
     cells: list[Cell] = []
     for context in contexts:
         for persona in personas:
-            prompt = render_enacted(
-                render_persona_prompt(persona),
-                context.words,
-                nonce=nonce,
-                fenced=fenced,
+            persona_prompt = render_persona_prompt(persona)
+            # In the `human` arm the words are not in the system prompt at all —
+            # `HumanTurnPanelLLM` puts them in the task, inside the fence the
+            # headlines already have.
+            prompt = (
+                persona_prompt
+                if rendering == "human"
+                else render_enacted(
+                    persona_prompt,
+                    context.words,
+                    nonce=nonce,
+                    fenced=rendering == "fenced",
+                )
             )
             for pair in pairs:
                 text = {HIGH: pair.predicted_high, LOW: pair.predicted_low}
@@ -155,7 +206,7 @@ def plan_cells(
 
 def collect_rows(
     *,
-    llm: PanelLLM,
+    llms: Mapping[str, PanelLLM],
     cells: list[Cell],
     workers: int = 1,
     done: list[VoteRow] | None = None,
@@ -167,9 +218,12 @@ def collect_rows(
     list keeps plan order; `done` is in completion order and is for salvage.
     """
     landed = done if done is not None else []
+    missing = sorted({cell.arm for cell in cells} - set(llms))
+    if missing:
+        raise KeyError(f"no client for arm(s) {missing}; have {sorted(llms)}")
 
     def one(cell: Cell) -> VoteRow:
-        row = vote_cell(llm, cell)
+        row = vote_cell(llms[cell.arm], cell)
         landed.append(row)
         return row
 
@@ -239,9 +293,10 @@ def main() -> None:
     parser.add_argument("--part", choices=sorted(PARTS), required=True)
     parser.add_argument("--replicates", type=int, default=6)
     parser.add_argument(
-        "--bare",
-        action="store_true",
-        help="splice the words in unfenced — the ablation, never the product",
+        "--rendering",
+        choices=("fenced", "bare", "human"),
+        default="fenced",
+        help="where the customer's words go; `bare` is the ablation, never the product",
     )
     parser.add_argument("--model", default=settings.panel.model)
     parser.add_argument("--workers", type=int, default=_DEFAULT_WORKERS)
@@ -264,14 +319,14 @@ def main() -> None:
             contexts=part.contexts,
             pairs=part.pairs,
             replicates=args.replicates,
-            fenced=not args.bare,
+            rendering=args.rendering,
             personas=BASE_PERSONAS[: part.personas],
             nonce=f"<<{secrets.token_hex(8)}>>",
         )
         print(
             f"{len(cells)} votes on {args.model}: {len(part.contexts)} context(s), "
             f"{part.personas} persona(s), {len(part.pairs)} pair(s), "
-            f"{'bare' if args.bare else 'fenced'}, {args.workers} worker(s)."
+            f"{args.rendering}, {args.workers} worker(s)."
         )
     if args.dry_run:
         return
@@ -301,16 +356,30 @@ def main() -> None:
         print(f"{flagged} flagged.")
         return
 
-    llm = OpenRouterPanelLLM(
-        api_key=key,
-        base_url=settings.openrouter_base_url,
-        provider=settings.model_provider,
-        model=args.model,
-        question=DEFAULT_FRAMING.question,
-    )
+    transport = {
+        "api_key": key,
+        "base_url": settings.openrouter_base_url,
+        "provider": settings.model_provider,
+        "model": args.model,
+        "question": DEFAULT_FRAMING.question,
+    }
+    if args.rendering == "human":
+        # One adapter per context: the words are bound at construction, the way
+        # the question is, because one panel asks one thing of everybody.
+        llms: dict[str, PanelLLM] = {
+            context.id: (
+                HumanTurnPanelLLM(enacted=context.words, **transport)
+                if context.words
+                else OpenRouterPanelLLM(**transport)
+            )
+            for context in part.contexts
+        }
+    else:
+        shared = OpenRouterPanelLLM(**transport)
+        llms = {context.id: shared for context in part.contexts}
     landed: list[VoteRow] = []
     try:
-        rows = collect_rows(llm=llm, cells=cells, workers=args.workers, done=landed)
+        rows = collect_rows(llms=llms, cells=cells, workers=args.workers, done=landed)
     except Exception:
         # Salvage before re-raising: these votes are paid for and do not
         # reproduce, so losing them to an unrelated failure costs real money.

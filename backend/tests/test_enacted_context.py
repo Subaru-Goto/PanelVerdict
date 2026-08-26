@@ -50,7 +50,7 @@ def test_the_plan_is_rectangular_so_arms_can_be_compared_in_pairs() -> None:
     from experiments.enacted_context import BASE_PERSONAS, plan_cells
 
     cells = plan_cells(
-        contexts=CONTEXTS, pairs=PAIRS, replicates=2, fenced=True, nonce=_NONCE
+        contexts=CONTEXTS, pairs=PAIRS, replicates=2, rendering="fenced", nonce=_NONCE
     )
 
     assert len(cells) == len(CONTEXTS) * len(BASE_PERSONAS) * len(PAIRS) * 2 * 2
@@ -139,8 +139,77 @@ def test_the_rendering_is_recorded_on_every_row() -> None:
     rows are not committed, so a mix-up is undetectable afterwards."""
     from experiments.enacted_context import plan_cells
 
-    for fenced, expected in ((True, "fenced"), (False, "bare")):
+    for rendering in ("fenced", "bare", "human"):
         cells = plan_cells(
-            contexts=CONTEXTS, pairs=PAIRS, replicates=1, fenced=fenced, nonce=_NONCE
+            contexts=CONTEXTS,
+            pairs=PAIRS,
+            replicates=1,
+            rendering=rendering,
+            nonce=_NONCE,
         )
-        assert {cell.level.split(":")[1] for cell in cells} == {expected}
+        assert {cell.level.split(":")[1] for cell in cells} == {rendering}
+
+
+def test_the_human_turn_arm_fences_both_untrusted_channels_together() -> None:
+    """The alternative placement 095 owes the review: the customer's description
+    beside the headlines, inside the fence the vote task already carries, rather
+    than in the system prompt where the persona lives."""
+    from app.llm import build_vote_messages
+
+    task = str(
+        build_vote_messages(
+            "You are a 42-year-old female.",
+            "one",
+            "two",
+            enacted=_WORDS,
+            nonce=_NONCE,
+        )[1].content
+    )
+
+    # [0] before the frame names the delimiter, [1] between that and the opening
+    # marker, [2] the fenced body itself.
+    body = task.split(_NONCE)[2]
+    assert _WORDS in body
+    assert "Option 1: one" in body
+    # One frame covering both, so the description is not mislabelled as a thing
+    # being judged and the headlines are not mislabelled as who the reader is.
+    assert "the description is who you are" in task
+
+
+def test_an_enacted_vote_is_not_served_a_no_context_answer() -> None:
+    """The scaffold rendered for the vote cache key must be unchanged by this
+    parameter existing — but a vote actually cast with a description is a
+    different question, and `vote_fingerprint` keys on the request's own strings.
+    Recorded here because the human-turn placement takes the words *out* of
+    `system_prompt`, which is what carries them into the key today."""
+    from app.llm import CACHE_KEY_NONCE, build_vote_messages
+
+    scaffold = build_vote_messages("", "", "", nonce=CACHE_KEY_NONCE)
+    assert scaffold == build_vote_messages(
+        "", "", "", enacted="", nonce=CACHE_KEY_NONCE
+    )
+    assert scaffold != build_vote_messages(
+        "", "", "", enacted=_WORDS, nonce=CACHE_KEY_NONCE
+    )
+
+
+def test_the_human_arm_leaves_the_persona_prompt_alone() -> None:
+    """Otherwise the words would be in both places at once and the comparison
+    would measure neither placement."""
+    from app.panel import render_persona_prompt
+    from experiments.enacted_context import BASE_PERSONAS, plan_cells
+    from experiments.enacted_design import ATTACKS
+
+    cells = plan_cells(
+        contexts=ATTACKS[:1],
+        pairs=PAIRS[:1],
+        replicates=1,
+        rendering="human",
+        nonce=_NONCE,
+    )
+
+    assert {cell.prompt for cell in cells} == {
+        render_persona_prompt(BASE_PERSONAS[0]),
+        render_persona_prompt(BASE_PERSONAS[1]),
+        render_persona_prompt(BASE_PERSONAS[2]),
+    }
