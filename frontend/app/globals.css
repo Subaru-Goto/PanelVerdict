@@ -1,26 +1,59 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* The house style, adopted whole from `docs/design/prototype.html` (058) — a
+   given palette, not one invented here. Nine colours: three inks, a rule, two
+   surfaces, and three reserved for state. Anything outside this list is a
+   colour no design decided. */
+@theme {
+  --color-ink: #171a20;
+  --color-ink-2: #5c5e62;
+  --color-ink-3: #8e8e8e;
+  --color-line: #e2e3e5;
+  --color-surface: #ffffff;
+  --color-surface-2: #f4f4f4;
+  --color-red: #da291c;
+  --color-amber: #b5850b;
+  --color-green: #1f7a33;
+
+  --font-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --radius-pill: 100px;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  /* 15px, not the browser's 16 — the rest of the style is set against this
+     body size. */
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background: var(--color-surface);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
   }
-}
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  /* The type scale lives on the elements, so a heading is sized by being a
+     heading. In `base`, so a component that genuinely needs a different size
+     can still say so with a utility. */
+  h1 {
+    font-size: 40px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  h2 {
+    font-size: 24px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  /* One rule for the whole app. Before this, three components carried a
+     `focus-visible:` style each and everything else had none — a keyboard
+     reader could not see where they were. */
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
 }

@@ -18,7 +18,7 @@ import {
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex justify-between gap-4 text-sm">
-      <span className="text-zinc-500">{label}</span>
+      <span className="text-ink-2">{label}</span>
       <span>{value}</span>
     </div>
   );
@@ -86,10 +86,10 @@ export default function PanelGate({
   }
 
   return (
-    <section className="flex flex-col gap-4 rounded border border-zinc-300 p-4 dark:border-zinc-700">
+    <section className="flex flex-col gap-4 rounded border border-line p-4">
       <div className="flex flex-col gap-1">
         <h2 className="text-lg font-semibold">Who would judge this</h2>
-        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+        <p className="text-sm text-ink-2">
           {nobody
             ? "Nobody in the pool matches this audience. Widen it and look again — nothing has been spent."
             : `${preview.matched} people match. Nothing has been spent yet.`}
@@ -99,7 +99,7 @@ export default function PanelGate({
       <div className="flex flex-col gap-1">
         <h3 className="text-sm font-medium">Selected</h3>
         {selected.length === 0 ? (
-          <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="text-sm text-ink-2">
             Everyone in the pool — no control narrowed anything.
           </p>
         ) : (
@@ -129,8 +129,8 @@ export default function PanelGate({
           key={note.message}
           className={
             note.severity === "warning"
-              ? "text-sm text-amber-700 dark:text-amber-500"
-              : "text-sm text-zinc-600 dark:text-zinc-400"
+              ? "text-sm text-amber"
+              : "text-sm text-ink-2"
           }
         >
           {note.message}
@@ -147,9 +147,9 @@ export default function PanelGate({
             // Mirrors MAX_INSTRUCTION_CHARS (schemas.py): the backend refuses
             // longer, so the field should not let it be typed.
             maxLength={400}
-            className="rounded border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900"
+            className="rounded border border-line px-3 py-2"
           />
-          <span className="text-xs text-zinc-500">
+          <span className="text-xs text-ink-2">
             Role-played, not sampled: each panelist acts this on top of their
             surveyed age, gender, education and income — no data picked them by
             it. Edit it, or clear it to run on demographics alone; what you
@@ -171,7 +171,7 @@ export default function PanelGate({
           one the pause already carried (a resumed thread). Ours either way —
           never the refused text. */}
       {(notice ?? preview.refusal_sentence) && (
-        <p role="alert" className="text-sm text-amber-700 dark:text-amber-500">
+        <p role="alert" className="text-sm text-amber">
           {notice ?? preview.refusal_sentence}
         </p>
       )}
@@ -181,7 +181,7 @@ export default function PanelGate({
           type="button"
           onClick={accept}
           disabled={sent || nobody}
-          className="rounded bg-zinc-900 px-4 py-2 text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          className="rounded bg-ink px-4 py-2 text-surface disabled:bg-surface-2 disabled:text-ink-3"
         >
           {sent ? "Asking the panel…" : "Run the panel"}
         </button>
@@ -193,7 +193,7 @@ export default function PanelGate({
         >
           Change the audience
         </button>
-        <span className="ml-auto text-sm text-zinc-500">
+        <span className="ml-auto text-sm text-ink-2">
           about ${preview.estimated_usd.toFixed(2)}
         </span>
       </div>

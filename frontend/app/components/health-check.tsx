@@ -31,11 +31,11 @@ export default function HealthCheck() {
     return () => controller.abort();
   }, []);
 
-  if (error) return <p className="text-red-600">API unreachable: {error}</p>;
-  if (!health) return <p className="text-zinc-500">Checking API…</p>;
+  if (error) return <p className="text-red">API unreachable: {error}</p>;
+  if (!health) return <p className="text-ink-2">Checking API…</p>;
 
   return (
-    <p className="text-zinc-700 dark:text-zinc-300">
+    <p className="text-ink">
       API: <strong>{health.status}</strong> · DB: <strong>{health.db}</strong>
     </p>
   );
