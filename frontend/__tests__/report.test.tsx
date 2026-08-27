@@ -540,7 +540,7 @@ describe("the opening summary", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /ask the analyst/i }));
 
-    const dock = screen.getByRole("region", { name: /analyst chat/i });
+    const dock = screen.getByRole("dialog", { name: /ask the analyst/i });
     expect(dock.textContent).not.toContain("They liked belonging.");
     expect(dock.textContent).not.toContain(OPENING_REQUEST);
     // Hidden from the transcript, not re-fetched: still one call.
@@ -591,7 +591,7 @@ describe("the opening summary", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /^send$/i }));
 
-    const dock = screen.getByRole("region", { name: /analyst chat/i });
+    const dock = screen.getByRole("dialog", { name: /ask the analyst/i });
     await waitFor(() =>
       expect(dock.textContent).toContain("Which of them said that?"),
     );
