@@ -183,6 +183,12 @@ def build_evaluate_graph(
     still checks the headlines, in `vote`, where they first reach a model.
     """
 
+    # Sync on purpose, and the reason is worth stating because its sibling
+    # `vote` does the opposite: LangGraph dispatches a sync node through
+    # `run_in_executor`, so `generator.draft` below is already off the loop and
+    # wrapping it here would only nest one thread inside another. `vote` is
+    # `async def` because it awaits the ledger, and once a node is a coroutine
+    # every blocking call inside it becomes ours to thread.
     def roleplay(state: EvaluateState) -> EvaluateState:
         """Turn the audience words into the sentence each panelist will be told.
 

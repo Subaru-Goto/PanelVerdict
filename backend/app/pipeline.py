@@ -288,13 +288,23 @@ async def run_vote_loop(
     last_reading: tuple[StopReason, str] | None = None
     for start in range(0, len(panel), VOTE_CONCURRENCY):
         chunk_panel = panel[start : start + VOTE_CONCURRENCY]
-        chunk = await _chunk_votes(
-            conn,
-            chunk_panel,
-            test_id=test_id,
-            variants=variants,
-            llm=llm,
-            enacted=enacted,
+        # Shielded: `asyncio.to_thread` cannot be cancelled, so a cancel
+        # delivered mid-chunk (a SIGTERM redeploy, an enclosing cancel scope)
+        # used to raise here while the worker thread finished all 25 paid model
+        # calls — and `store_votes` and the commit below never ran, so the
+        # resumed run re-bought every vote it had just paid for. That is the
+        # exact outcome the per-chunk ledger exists to prevent. The sync
+        # handler this replaced could not lose them: anyio ran it with
+        # `cancellable=False`.
+        chunk = await asyncio.shield(
+            _chunk_votes(
+                conn,
+                chunk_panel,
+                test_id=test_id,
+                variants=variants,
+                llm=llm,
+                enacted=enacted,
+            )
         )
         asked += len(chunk_panel)
         votes = PanelVotes(

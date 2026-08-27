@@ -30,6 +30,7 @@ from pathlib import Path
 from statistics import mean
 
 import psycopg
+from pgvector.psycopg import register_vector_async
 
 from app.config import PROFILES, ProfileName, settings
 from app.llm import OpenRouterPanelLLM, OpenRouterTargetTranslator
@@ -215,6 +216,10 @@ def main() -> None:
     # keeping a sync twin for one caller.
     async def run() -> PanelTestResult:
         async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            # The adapter, for the reason `corpus_check._with_live` records: a
+            # bare connection aborts a paid run the moment anything binds a
+            # numpy vector, and nothing here would catch it until it happened.
+            await register_vector_async(conn)
             return await run_panel_test(
                 conn,
                 description=args.description,

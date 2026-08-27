@@ -510,28 +510,39 @@ async def stream_analyst(
         return event.model_dump_json() + "\n"
 
     try:
-        stream = await agent.astream_events(
+        # `async with`, not a bare local: langgraph's own contract is that the
+        # run stream is closed to "guarantee clean shutdown on early exit", and
+        # this generator exits early on four paths — three `except … return`
+        # branches, plus the `GeneratorExit` Starlette raises when a reader
+        # navigates away mid-turn. `GeneratorExit` is a `BaseException`, so the
+        # broad `except Exception` below never sees it; without this the run
+        # kept making paid model calls with no consumer, and a run suspended
+        # inside `AsyncPostgresSaver._cursor` held that process-wide lock until
+        # arbitrary garbage collection — hanging every later `/chat` and
+        # `/evaluate` on their next checkpoint read. The sync generator this
+        # replaced was closed deterministically by refcount.
+        async with await agent.astream_events(
             {"messages": [HumanMessage(content=message)]},
             {"configurable": {"thread_id": thread_id}, "recursion_limit": limit},
             version="v3",
-        )
-        async for event in stream:
-            data = event["params"]["data"]
-            if event["method"] == "tools" and data.get("event") == "tool-started":
-                yield line(ToolEvent(name=data["tool_name"]))
-            elif event["method"] == "messages":
-                payload = data[0] if isinstance(data, tuple) else data
+        ) as stream:
+            async for event in stream:
+                data = event["params"]["data"]
+                if event["method"] == "tools" and data.get("event") == "tool-started":
+                    yield line(ToolEvent(name=data["tool_name"]))
+                elif event["method"] == "messages":
+                    payload = data[0] if isinstance(data, tuple) else data
 
-                if isinstance(payload, AIMessage):
-                    if payload.text:
-                        yield line(TokenEvent(text=payload.text))
-                elif (
-                    isinstance(payload, dict)
-                    and payload.get("event") == "content-block-delta"
-                ):
-                    delta = payload.get("delta", {})
-                    if delta.get("type") == "text-delta" and delta.get("text"):
-                        yield line(TokenEvent(text=delta["text"]))
+                    if isinstance(payload, AIMessage):
+                        if payload.text:
+                            yield line(TokenEvent(text=payload.text))
+                    elif (
+                        isinstance(payload, dict)
+                        and payload.get("event") == "content-block-delta"
+                    ):
+                        delta = payload.get("delta", {})
+                        if delta.get("type") == "text-delta" and delta.get("text"):
+                            yield line(TokenEvent(text=delta["text"]))
     except GraphRecursionError:
         yield line(
             ErrorEvent(message=f"analyst was still calling tools after {limit} steps")

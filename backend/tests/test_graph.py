@@ -553,12 +553,12 @@ class TestEnactedContext:
         assert generator.checked == []
 
     @pytest.mark.anyio
-    async def test_a_refused_audience_never_reaches_the_gate(self, conn) -> None:
+    async def test_a_refused_audience_never_reaches_the_gate(self, conn, aconn) -> None:
         """No panel is drawn and no reader is asked to approve something we have
         already decided not to run."""
         seed_japanese(conn, 5)
         graph = _graph(
-            conn, generator=StubGenerator({"a named celebrity": "real_person"})
+            aconn, generator=StubGenerator({"a named celebrity": "real_person"})
         )
 
         with pytest.raises(RolePlayRefused) as refused:

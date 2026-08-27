@@ -938,18 +938,20 @@ async def test_the_chat_connection_can_bind_a_query_vector(
     adapter cannot even send that query. (`conn` is here as a precondition:
     it guarantees the container already has the extension and schema.)
 
-    Since 111/#240 the adapter is registered by the pool's `configure` rather
-    than per checkout, so this drives the real lifespan to get a real pool —
-    which is also the only way to prove `configure` was actually wired."""
+    The connection stays per-request (see `get_conn`), so this exercises the
+    dependency directly."""
     # database_url is a derived property, so the patch lands on the class.
     monkeypatch.setattr(type(settings), "database_url", pg_url)
 
-    with TestClient(app):
-        async with app.state.requests.connection() as live:
-            found = await nearest_panelists(
-                live, embedding=pointing(0), panel_ids=[], limit=1
-            )
-            assert found == []
+    dependency = get_conn()
+    try:
+        live = await anext(dependency)
+        found = await nearest_panelists(
+            live, embedding=pointing(0), panel_ids=[], limit=1
+        )
+        assert found == []
+    finally:
+        await dependency.aclose()
 
 
 def test_the_lifespan_builds_the_postgres_checkpointer(pg_url, monkeypatch) -> None:

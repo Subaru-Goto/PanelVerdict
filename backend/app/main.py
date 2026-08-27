@@ -159,28 +159,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # rule stays absolute — nothing blocking ever runs on the loop.
         await asyncio.to_thread(_sweep_data_api)
         app.state.checkpointer = checkpointer
-        # Request connections, pooled and bounded — see `get_conn`.
-        async with AsyncConnectionPool(
-            settings.database_url,
-            min_size=1,
-            max_size=_REQUEST_CONNECTIONS,
-            check=AsyncConnectionPool.check_connection,
-            configure=register_vector_async,
-            open=False,
-        ) as requests:
-            await requests.open(wait=True)
-            app.state.requests = requests
-            if settings.api_shared_secret is not None and _VERIFIER is None:
-                # A shared secret set is this deployment saying it is not a
-                # laptop. Sign-in unconfigured alongside it is almost always a
-                # missing variable rather than a decision, and the symptom —
-                # every quota quietly counting an address again — is invisible
-                # from outside.
-                logger.warning(
-                    "sign-in is not configured (SUPABASE_PROJECT_URL unset): run"
-                    " limits count a forwarded address, not an account"
-                )
-            yield
+        if settings.api_shared_secret is not None and _VERIFIER is None:
+            # A shared secret set is this deployment saying it is not a laptop.
+            # Sign-in unconfigured alongside it is almost always a missing
+            # variable rather than a decision, and the symptom — every quota
+            # quietly counting an address again — is invisible from outside.
+            logger.warning(
+                "sign-in is not configured (SUPABASE_PROJECT_URL unset): run"
+                " limits count a forwarded address, not an account"
+            )
+        yield
 
 
 app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
@@ -328,34 +316,35 @@ def budget_notice(remaining: float | None, *, size: int) -> tuple[Notice, ...]:
     )
 
 
-async def get_conn(request: Request) -> AsyncIterator[psycopg.AsyncConnection]:
-    """One pooled connection per request, pgvector adapter already registered.
+async def get_conn() -> AsyncIterator[psycopg.AsyncConnection]:
+    """One plain connection per request, pgvector adapter registered.
 
     The adapter is per-connection state and the chat path binds query vectors
-    (search_personas), so every checkout needs it — `configure` runs it once
-    when the pool opens a connection rather than four catalog round trips on
-    every request. Deliberately NOT `prepare_connection`: that also runs schema
-    DDL, which is the seed's job, not a request's.
+    (search_personas), so every checkout gets it. Deliberately NOT
+    `prepare_connection`: that also runs schema DDL, which is the seed's job,
+    not a request's.
 
-    **A pool, because the async conversion removed the ceiling that used to
-    bound this.** A sync `def` dependency was opened through FastAPI's
-    threadpool, so anyio's default `CapacityLimiter(40)` capped how many could
-    exist at once; an `async def` one connects on the loop with nothing
-    bounding it, and uvicorn's `limit_concurrency` is unset — so N in-flight
-    panel runs meant N live pooler connections, on a database whose connection
-    count is the scarce resource. `max_size` restores the number that arrangement
-    enforced (111/#240 review).
+    **Not pooled, and that is a decision rather than an omission.** A pool was
+    tried here (111/#240) to restore a ceiling the async conversion was thought
+    to have removed, and taken back out: the premise was wrong — FastAPI's
+    `contextmanager_in_threadpool` borrows a threadpool slot only for
+    `__enter__`/`__exit__`, so anyio's `CapacityLimiter(40)` never bounded how
+    many connections were live — and reuse broke two things a per-request
+    connection makes structurally impossible. `_only_one_answer` takes a
+    *session*-scoped advisory lock whose release is a `finally` that a cancelled
+    task or an aborted transaction can skip; closing the connection released it
+    unconditionally, a returned pooled connection does not (psycopg_pool only
+    rolls back, never `DISCARD ALL`). And a pooled connection keeps psycopg's
+    default `prepare_threshold`, so statements are PREPAREd server-side and
+    survive the `ALTER TABLE` that invalidates them.
+
+    A pool may still be right, but it needs the number nothing here has: what
+    the session pooler will actually grant. Measuring that is 112/#242.
     """
-    async with request.app.state.requests.connection() as conn:
+    async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+        await register_vector_async(conn)
         yield conn
 
-
-# The ceiling the sync arrangement enforced, restored explicitly: FastAPI ran a
-# `def` dependency through anyio's threadpool, whose default `CapacityLimiter`
-# is 40, so at most 40 handlers — and therefore 40 connections — could exist at
-# once. The async conversion removed that bound; this is the same number, said
-# out loud (111/#240 review).
-_REQUEST_CONNECTIONS = 40
 
 # The ledger's day, written once, because four things read it: the cap, the
 # sweep, the remaining-runs figure `/me` reports, and how long a paused run may
