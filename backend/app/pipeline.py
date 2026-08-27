@@ -288,23 +288,28 @@ async def run_vote_loop(
     last_reading: tuple[StopReason, str] | None = None
     for start in range(0, len(panel), VOTE_CONCURRENCY):
         chunk_panel = panel[start : start + VOTE_CONCURRENCY]
-        # Shielded: `asyncio.to_thread` cannot be cancelled, so a cancel
-        # delivered mid-chunk (a SIGTERM redeploy, an enclosing cancel scope)
-        # used to raise here while the worker thread finished all 25 paid model
-        # calls — and `store_votes` and the commit below never ran, so the
-        # resumed run re-bought every vote it had just paid for. That is the
-        # exact outcome the per-chunk ledger exists to prevent. The sync
-        # handler this replaced could not lose them: anyio ran it with
-        # `cancellable=False`.
-        chunk = await asyncio.shield(
-            _chunk_votes(
-                conn,
-                chunk_panel,
-                test_id=test_id,
-                variants=variants,
-                llm=llm,
-                enacted=enacted,
-            )
+        # Plainly awaited, and a shield here was tried and measured. The worry
+        # was real — `asyncio.to_thread` cannot be cancelled, so a cancel landing
+        # mid-chunk leaves the worker finishing all 25 paid model calls while
+        # `store_votes` and the commit below never run, and the resumed run
+        # re-buys what it just paid for. `asyncio.shield` does not address it:
+        # cancelling the awaiter is exactly what a shield permits, so the handler
+        # unwinds, `get_conn` closes this connection, and the detached chunk then
+        # reaches a closed one. Measured against uvicorn's own forced-shutdown
+        # call, shielded and plain preserved the same votes — the shield's only
+        # effect was an extra `OperationalError` and a chunk outliving its
+        # request. Measured in
+        # `docs/research/async-cancellation-and-connections.md`, which also
+        # records that nothing cancels this handler in the deployment today.
+        # Preserving the in-flight chunk needs a connection the chunk owns, which
+        # spends the connection budget 112/#242 has yet to measure.
+        chunk = await _chunk_votes(
+            conn,
+            chunk_panel,
+            test_id=test_id,
+            variants=variants,
+            llm=llm,
+            enacted=enacted,
         )
         asked += len(chunk_panel)
         votes = PanelVotes(

@@ -6,7 +6,10 @@ they can go and check — never in the model's own guess about a product it has
 never seen.
 """
 
+import psycopg
 import pytest
+from pgvector.psycopg import register_vector_async
+from psycopg.rows import dict_row
 
 from app.corpus import DOCUMENTS, load_corpus, search_corpus, seed_corpus
 
@@ -119,6 +122,32 @@ class TestHybridRetrieval:
 
         assert found
         assert all(p.source and p.section for p in found)
+
+    @pytest.mark.anyio
+    async def test_a_citation_survives_a_dict_row_connection(
+        self, conn, pg_url
+    ) -> None:
+        """Read the row by name, not by position.
+
+        `get_conn` yields tuple rows today, so this is the only thing standing
+        between a `row_factory` change and silently fabricated citations:
+        unpacking a dict yields its *keys*, so every passage came back as
+        `Passage(source='source', section='section', passage='passage')` — no
+        exception, no empty result, just three column names quoted to a reader
+        as a source they could go and check.
+        """
+        seed_corpus(conn, FakeEmbedder())
+
+        async with await psycopg.AsyncConnection.connect(
+            pg_url, row_factory=dict_row
+        ) as dict_conn:
+            await register_vector_async(dict_conn)
+            found = await search_corpus(
+                dict_conn, "practical tie", FakeEmbedder(), limit=3
+            )
+
+        assert found
+        assert all(p.passage.startswith(f"{p.citation}\n\n") for p in found), found
 
     @pytest.mark.anyio
     async def test_exact_jargon_finds_its_passage(self, conn, aconn) -> None:

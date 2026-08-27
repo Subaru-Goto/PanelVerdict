@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import threading
 
@@ -624,3 +625,74 @@ class TestOutOfCredit:
         (credit,) = [n for n in result.notices if "credit" in n.message.lower()]
         assert "30" in credit.message
         assert not any("did not vote" in n.message for n in result.notices)
+
+
+class BlockingLLM:
+    """Blocks inside the vote call until released, so a cancel lands mid-chunk
+    rather than whenever the scheduler happens to look."""
+
+    configuration = "blocking"
+
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def vote(
+        self,
+        *,
+        system_prompt: str,
+        option_1: str,
+        option_2: str,
+        enacted: str = "",
+    ) -> VoteResponse:
+        self.entered.set()
+        self.release.wait(10)
+        return voted("option_1", "blocked")
+
+
+@pytest.mark.anyio
+async def test_a_cancel_mid_chunk_detaches_nothing(conn, aconn) -> None:
+    """A cancelled run must stop, not carry on behind the request's back.
+
+    `asyncio.shield` used to wrap each chunk, to keep a cancel from throwing away
+    votes already paid for. Measured against uvicorn's own forced-shutdown call
+    (`task.cancel(msg="timeout graceful shutdown exceeded")`), it preserved no
+    votes at all: the awaiter is cancelled either way, the request's connection
+    closes as the handler unwinds, and the shielded chunk then reaches a closed
+    connection — the same votes lost, plus an `OperationalError` and a chunk
+    still running past the request that owned it.
+
+    The chunk in flight is lost when a cancel lands, and this asserts only that
+    it is lost *promptly*. Preserving it needs a connection the chunk owns rather
+    than the request's, which is the connection budget's question — 112/#242,
+    where the number that decides it lives.
+    """
+    seed_japanese(conn, 75)
+    llm = BlockingLLM()
+    panel = (
+        await select_panel(
+            aconn,
+            "Japanese homeowners",
+            size=75,
+            translator=StubTranslator(JAPAN_REQUEST),
+        )
+    ).panel
+    task = asyncio.create_task(run_vote_loop(aconn, panel, variants=_VARIANTS, llm=llm))
+    try:
+        while not llm.entered.is_set():
+            await asyncio.sleep(0.01)
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # Asserted while the chunk is still blocked: a shielded chunk is pending
+        # right here, and would have drained by the time the model returned.
+        leftover = [
+            t
+            for t in asyncio.all_tasks()
+            if t is not asyncio.current_task() and "_chunk_votes" in repr(t.get_coro())
+        ]
+        assert leftover == [], leftover
+    finally:
+        llm.release.set()

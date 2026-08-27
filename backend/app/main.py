@@ -39,7 +39,7 @@ from app.config import (
     USD_PER_VOTE,
     settings,
 )
-from app.db import check_connection
+from app.db import CONNECT_TIMEOUT_SECONDS, check_connection
 from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.llm import (
     OpenRouterEmbedder,
@@ -102,8 +102,23 @@ def _sweep_data_api() -> None:
     Sync on purpose: `deny_data_api` is shared with the seed, which is a script
     with no event loop. The lifespan hands this to a thread rather than giving
     a one-off startup sweep an async twin to maintain.
+
+    Timed out, like the health check it borrows the figure from. This runs inside
+    an `asyncio.to_thread` the lifespan awaits, so a connect with no timeout does
+    not fail the boot — it hangs it, with nothing served and no error to read.
+
+    Its own connection costs one pooler slot at startup that the sync version did
+    not: that one borrowed the checkpointer pool's single connection, which is now
+    an `AsyncConnection` and cannot be handed to a sync function. The slot is held
+    for one DDL sweep at boot and then closed, which is the cheaper side of the
+    trade — the alternative is an async twin of `deny_data_api`, maintained for
+    one startup caller, and the seed still needing the sync one.
     """
-    with psycopg.connect(settings.database_url, autocommit=True) as conn:
+    with psycopg.connect(
+        settings.database_url,
+        autocommit=True,
+        connect_timeout=CONNECT_TIMEOUT_SECONDS,
+    ) as conn:
         deny_data_api(conn)
 
 
@@ -326,15 +341,24 @@ async def get_conn() -> AsyncIterator[psycopg.AsyncConnection]:
 
     **Not pooled, and that is a decision rather than an omission.** A pool was
     tried here (111/#240) to restore a ceiling the async conversion was thought
-    to have removed, and taken back out: the premise was wrong — FastAPI's
+    to have removed, and taken back out: the premise was wrong. FastAPI's
     `contextmanager_in_threadpool` borrows a threadpool slot only for
-    `__enter__`/`__exit__`, so anyio's `CapacityLimiter(40)` never bounded how
-    many connections were live — and reuse broke two things a per-request
-    connection makes structurally impossible. `_only_one_answer` takes a
-    *session*-scoped advisory lock whose release is a `finally` that a cancelled
-    task or an aborted transaction can skip; closing the connection released it
-    unconditionally, a returned pooled connection does not (psycopg_pool only
-    rolls back, never `DISCARD ALL`). And a pooled connection keeps psycopg's
+    `__enter__`/`__exit__`, and a dependency is solved before its handler queues
+    for a slot of its own — so anyio's `CapacityLimiter(40)` never bounded how
+    many connections were live.
+
+    Disputed once and now measured — 60 concurrent requests opened 60 backends in
+    *both* shapes, while the same 60 holds took two waves sync and one async. The
+    limiter shows up in wall time and nowhere in the connection count, so what
+    the conversion removed is a throughput bound, not a connection bound, and the
+    budget question stands on its own terms rather than as a ceiling to restore.
+    Figures and method: `docs/research/async-cancellation-and-connections.md`.
+
+    Reuse also broke two things a per-request connection makes structurally
+    impossible. `_only_one_answer` takes a *session*-scoped advisory lock whose
+    release is a `finally` that an aborted transaction can skip; closing the
+    connection releases it regardless, a returned pooled connection does not
+    (psycopg_pool only rolls back, never `DISCARD ALL`). And a pooled connection keeps psycopg's
     default `prepare_threshold`, so statements are PREPAREd server-side and
     survive the `ALTER TABLE` that invalidates them.
 
@@ -1010,7 +1034,15 @@ async def _only_one_answer(
     """Hold a run while it is being answered, or refuse.
 
     A session lock, not a transaction lock: the vote loop commits per chunk, and
-    a transaction lock would be released by the first of them.
+    a transaction lock would be released by the first of them. Verified rather
+    than assumed — `pg_advisory_xact_lock` is gone by the time the second chunk
+    starts.
+
+    The release below is belt to the connection's braces. Postgres drops a
+    session lock when the backend exits, so `get_conn` closing this connection
+    at the end of the request releases it whatever happens here — including from
+    an aborted transaction. That is what lets the `finally` give up quietly. All
+    of it measured: `docs/research/async-cancellation-and-connections.md`.
     """
     async with conn.cursor() as cur:
         await cur.execute(
@@ -1024,9 +1056,23 @@ async def _only_one_answer(
     try:
         yield
     finally:
-        async with conn.cursor() as cur:
-            await cur.execute(
-                "SELECT pg_advisory_unlock(hashtext(%s))", (f"resume:{thread_id}",)
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT pg_advisory_unlock(hashtext(%s))", (f"resume:{thread_id}",)
+                )
+        except psycopg.Error as failed:
+            # Never at the cost of the error being unwound. A run that left the
+            # transaction aborted made this unlock raise `InFailedSqlTransaction`
+            # *during handling of* the original — so `_run_graph`'s curated 402,
+            # 422 or 502 became an opaque 500, readable only as `__context__`.
+            # Giving up costs nothing the connection close does not already
+            # cover, and the release is only ever early.
+            logger.warning(
+                "could not release the resume lock for %s (%s); the connection"
+                " close will release it",
+                thread_id,
+                failed.__class__.__name__,
             )
 
 

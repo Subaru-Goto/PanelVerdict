@@ -9,6 +9,7 @@ import pytest
 from app import graph as graph_module
 from app import main
 from app.auth import InvalidSession, SessionUnverifiable
+from app.db import CONNECT_TIMEOUT_SECONDS
 from app.config import (
     PROFILES,
     USD_PER_ROLEPLAY,
@@ -19,6 +20,7 @@ from app.config import (
 )
 from app.main import (
     LEDGER_HOURS,
+    _only_one_answer,
     app,
     budget_notice,
     get_account_deleter,
@@ -37,6 +39,7 @@ from app.persistence import nearest_panelists, persist_pool
 from app.schemas import MAX_AUDIENCE_CHARS, EvaluateRequest
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult
@@ -111,6 +114,23 @@ _EDITABLE = (
 
 def _edit(query: dict) -> dict:
     return {field: query[field] for field in _EDITABLE}
+
+
+@pytest.fixture(autouse=True)
+def no_saver_left_behind():
+    """No test may leave a saver on `app.state`.
+
+    `app` is a module-level singleton and the saver a lifespan builds has a
+    closed pool the moment its `TestClient` context exits. Left in place it is
+    handed to any later test that reaches `get_checkpointer` without an
+    override, and the failure surfaces there rather than here. Autouse, so the
+    next test to run a real lifespan inherits the guard rather than the bug.
+    """
+    yield
+
+    assert "checkpointer" not in app.state._state, (
+        "a saver was left on app.state — see the `real_lifespan` fixture"
+    )
 
 
 @pytest.fixture
@@ -954,20 +974,39 @@ async def test_the_chat_connection_can_bind_a_query_vector(
         await dependency.aclose()
 
 
-def test_the_lifespan_builds_the_postgres_checkpointer(pg_url, monkeypatch) -> None:
+@pytest.fixture
+def real_lifespan(pg_url, monkeypatch):
+    """Point the app at the testcontainer, and leave `app.state` as found.
+
+    `app` is a module-level singleton, so the saver its lifespan builds outlives
+    the test that built it — with its pool closed by then. A later test reaching
+    `get_checkpointer` without an override would be handed that closed saver,
+    and would fail somewhere with no trail back to here.
+    """
+    # database_url is a derived property, so the patch lands on the class.
+    monkeypatch.setattr(type(settings), "database_url", pg_url)
+    found = getattr(app.state, "checkpointer", None)
+
+    yield
+
+    if found is None:
+        app.state._state.pop("checkpointer", None)
+    else:
+        app.state.checkpointer = found
+
+
+def test_the_lifespan_builds_the_postgres_checkpointer(real_lifespan) -> None:
     """Every other test overrides get_checkpointer — only this one runs the
     real lifespan (TestClient does that as a context manager). It pins the
     wiring the deploy relies on: startup opens the pool, `setup()` migrates
     the library's checkpoint tables without error, and the saver the /chat
     dependency will hand out is the Postgres one."""
-    # database_url is a derived property, so the patch lands on the class.
-    monkeypatch.setattr(type(settings), "database_url", pg_url)
     with TestClient(app):
         assert isinstance(app.state.checkpointer, AsyncPostgresSaver)
 
 
 def test_a_resume_works_against_the_checkpointer_the_deploy_actually_uses(
-    client, conn, pg_url, monkeypatch
+    client, conn, real_lifespan
 ) -> None:
     """The gate, driven over the wire against the real `AsyncPostgresSaver`.
 
@@ -982,9 +1021,10 @@ def test_a_resume_works_against_the_checkpointer_the_deploy_actually_uses(
     constructs: it captures the running loop in `__init__`, so a saver made on
     any other loop would not take the branch the deploy takes.
     """
-    monkeypatch.setattr(type(settings), "database_url", pg_url)
     seed_japanese(conn, 5)
-    del app.dependency_overrides[get_checkpointer]
+    # Popped, not deleted: this test is about the real saver, and it should not
+    # also depend on the `client` fixture having installed an override to remove.
+    app.dependency_overrides.pop(get_checkpointer, None)
 
     with TestClient(app) as live:
         assert isinstance(app.state.checkpointer, AsyncPostgresSaver)
@@ -2467,3 +2507,78 @@ def test_an_instruction_of_only_spaces_names_nothing_and_is_refused_free(
     assert response.status_code == 422
     assert generator.checked == []
     assert generator.drafted == []
+
+
+class TestOnlyOneAnswer:
+    """The lock that stops two accepts from buying one panel twice.
+
+    Tested here rather than through `/evaluate/resume`, because the release is
+    not observable through the API: every request gets its own connection, and
+    Postgres drops a session lock when the connection closes — so the explicit
+    unlock could be deleted outright and the endpoint would behave identically.
+    Mutation-checked, and that is exactly how the coverage was lost.
+    """
+
+    LOCKED = "SELECT pg_try_advisory_lock(hashtext(%s))"
+
+    async def _free(self, url: str, thread_id: str) -> bool:
+        """Whether another session can take the lock — the only vantage point
+        from which a release is visible at all."""
+        async with await psycopg.AsyncConnection.connect(url) as probe:
+            cur = await probe.execute(self.LOCKED, (f"resume:{thread_id}",))
+            return bool((await cur.fetchone())[0])
+
+    @pytest.mark.anyio
+    async def test_the_lock_is_released_once_the_answer_is_given(
+        self, aconn, pg_url
+    ) -> None:
+        async with _only_one_answer(aconn, "released"):
+            assert not await self._free(pg_url, "released")
+
+        assert await self._free(pg_url, "released")
+
+    @pytest.mark.anyio
+    async def test_the_unlock_never_replaces_the_error_it_is_unwinding(
+        self, aconn, pg_url
+    ) -> None:
+        """A 402 must still read as a 402.
+
+        `_run_graph` curates its failures — 402 out of credit, 422 unusable
+        input, 502 upstream — and the reader is told which. If the run left the
+        transaction aborted, the unlock in the `finally` raised
+        `InFailedSqlTransaction` *during handling of* that error and became the
+        exception the client saw: an opaque 500, with the curated status only
+        reachable as `__context__`.
+        """
+        with pytest.raises(HTTPException) as raised:
+            async with _only_one_answer(aconn, "aborted"):
+                with pytest.raises(psycopg.errors.DivisionByZero):
+                    await aconn.execute("SELECT 1 / 0")
+                raise HTTPException(status_code=402, detail="out of credit")
+
+        assert raised.value.status_code == 402
+
+
+def test_the_startup_sweep_cannot_hang_the_boot(monkeypatch) -> None:
+    """The lifespan awaits this sweep in a thread, so a connect that never
+    returns is a boot that never finishes — nothing served, and no error to
+    read. It carries the health check's timeout for that reason."""
+    seen: dict[str, object] = {}
+
+    class Connected:
+        def __enter__(self) -> "Connected":
+            return self
+
+        def __exit__(self, *exc: object) -> bool:
+            return False
+
+    def connect(url: str, **kwargs: object) -> Connected:
+        seen.update(kwargs)
+        return Connected()
+
+    monkeypatch.setattr(main.psycopg, "connect", connect)
+    monkeypatch.setattr(main, "deny_data_api", lambda conn: None)
+
+    main._sweep_data_api()
+
+    assert seen["connect_timeout"] == CONNECT_TIMEOUT_SECONDS
