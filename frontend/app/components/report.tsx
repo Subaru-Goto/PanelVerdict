@@ -18,13 +18,7 @@ import { formatPercent, formatPoints } from "../lib/format";
 import AnalystDock from "./analyst-dock";
 import { useAnalyst, OPENING_REQUEST, type Analyst } from "../lib/use-analyst";
 import PosteriorChart from "./posterior-chart";
-import { leadingSide } from "../lib/verdict";
-
-/** A tie is credible when its own probability clears the credibility everything
- *  else on the page is stated at. 020 keeps it a flag, not a bucket: it adds a
- *  line, it never replaces the probability. */
-const isPracticalTie = (verdict: PanelVerdict): boolean =>
-  verdict.probability_practical_tie >= verdict.credible_mass;
+import { isPracticalTie, leadingSide } from "../lib/verdict";
 
 function Chip({
   tone = "neutral",

@@ -17,3 +17,20 @@ export const formatPercent = (value: number): string => {
 /** Preference-share points, always with the unit — never a bare number. */
 export const formatPoints = (value: number): string =>
   `${(value * 100).toFixed(1)} points`;
+
+/** A complementary pair — "N% prefer A · M% prefer B" — rounded once, so the
+ *  two always add up. Rounding each end on its own printed *50% prefer A · 51%
+ *  prefer B* on an even panel: 49.5 and 50.5 each round outward, and the pair
+ *  contradicted itself directly above a lead whose whole claim was that the
+ *  two sides are equal.
+ *
+ *  Where either end trips the overclaim guard above, both ends keep their own
+ *  reading: a pair that adds up is not worth printing a 0% the panel cannot
+ *  support. Returns [A's share, B's share] for a `value` measured in B. */
+export const formatSplit = (value: number): [string, string] => {
+  const a = formatPercent(1 - value);
+  const b = formatPercent(value);
+  const rounded = /^\d+%$/;
+  if (!rounded.test(a) || !rounded.test(b)) return [a, b];
+  return [`${100 - Number(b.slice(0, -1))}%`, b];
+};
