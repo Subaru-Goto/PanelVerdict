@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -42,6 +48,85 @@ const mockFetch = (response: Response) => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+describe("the dock is a real dialog", () => {
+  // 093 §4, and the class 057 called "the kind of thing that looks done and is
+  // not": the dock was a `fixed` div with no role, no focus trap, no Escape
+  // and no focus restoration. A reader on a keyboard could not reach it, and a
+  // screen reader was never told a dialog had opened.
+
+  it("announces itself as a dialog the reader can name", () => {
+    renderDock();
+
+    expect(
+      screen.getByRole("dialog", { name: /ask the analyst/i }),
+    ).toBeTruthy();
+  });
+
+  it("says what it is, as the dialog's own description", () => {
+    // Art. 50(1) again: a screen reader must hear the disclosure when the
+    // dialog opens, not only if the reader happens to browse to that line.
+    renderDock();
+
+    const dialog = screen.getByRole("dialog", { name: /ask the analyst/i });
+    const describedBy = dialog.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)?.textContent).toBe(
+      ANALYST_DISCLOSURE,
+    );
+  });
+
+  it("takes focus when it opens", () => {
+    renderDock();
+
+    const dialog = screen.getByRole("dialog", { name: /ask the analyst/i });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  // Non-modal, decided 2026-08-27. 057 kept the dock floating because "a
+  // panel that floats keeps the chart on screen while the reader asks about
+  // it" — and a modal dialog takes the report away, measurably: it sets
+  // `pointer-events: none` on the page and `aria-hidden` on everything behind.
+  // For a screen-reader user that means the report ceases to exist while the
+  // dock explains it, which is the opposite of what this work is for.
+  it("leaves the report alive behind it", () => {
+    render(
+      <StrictMode>
+        <p>the report itself</p>
+        <DockHost />
+      </StrictMode>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /ask the analyst/i }));
+
+    expect(
+      screen.getByRole("dialog", { name: /ask the analyst/i }),
+    ).toBeTruthy();
+    // Both of these are what a modal dialog would change, and both are what a
+    // reader needs in order to look at the thing they are asking about.
+    expect(document.body.style.pointerEvents).not.toBe("none");
+    const report = screen.getByText("the report itself");
+    expect(report.closest("[aria-hidden='true']")).toBeNull();
+  });
+
+  // Not tested here: that reaching into the report does NOT dismiss the dock.
+  // jsdom cannot dispatch the trusted pointer press Radix listens for, so a
+  // test for it passes whether the guard is wired or not — the un-failable
+  // kind. It is verified in a browser instead, and the component says which
+  // three handlers refuse it.
+
+  it("closes on Escape and hands focus back to what opened it", async () => {
+    renderDock();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const trigger = screen.getByRole("button", { name: /ask the analyst/i });
+    // Restoration lands after the unmount, not with it, so this waits rather
+    // than asserting straight away — without it a keyboard reader is left on
+    // `body` and has to tab from the top of the page again.
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
 });
 
 describe("AnalystDock", () => {

@@ -1,5 +1,6 @@
 "use client";
 
+import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 
 import { ANALYST_DISCLOSURE } from "../lib/disclosure";
@@ -64,6 +65,7 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
   // this, so they cannot disagree about whether one has started.
   const visible = readerTurns(turns);
 
+  const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   // Follow the conversation only while the reader is near the bottom, so
   // scrolling up to reread is not fought by the typewriter. jsdom does no
@@ -75,101 +77,121 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
     if (list && pinnedRef.current) list.scrollTop = list.scrollHeight;
   }, [turns]);
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white shadow-lg dark:bg-zinc-100 dark:text-zinc-900"
-      >
-        Ask the analyst
-      </button>
-    );
-  }
-
   return (
-    <section
-      aria-label="Analyst chat"
-      className="fixed bottom-6 right-6 flex max-h-[70vh] w-96 max-w-[calc(100vw-3rem)] flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
-    >
-      <header className="flex items-start justify-between gap-2">
-        <div className="flex flex-col">
-          <h2 className="text-sm font-semibold">Ask the analyst</h2>
-          {/* The first sentence is a legal duty, not flavour: anyone chatting
-              with an AI system must be told so, in context, before the first
-              exchange — a footer mention or an "assistant" label does not
-              count. It renders in the header so it is on screen before a
-              first message can be typed. */}
-          <p className="text-xs text-zinc-500">{ANALYST_DISCLOSURE}</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-800"
-        >
-          Close
-        </button>
-      </header>
-
-      {visible.length > 0 && (
-        <div
-          ref={listRef}
-          onScroll={() => {
-            const list = listRef.current;
-            if (list) {
-              pinnedRef.current =
-                list.scrollHeight - list.scrollTop - list.clientHeight <
-                PINNED_SLACK_PX;
-            }
+    <Dialog.Root open={open} onOpenChange={setOpen} modal={false}>
+      <Dialog.Trigger className="fixed bottom-6 right-6 rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 dark:focus-visible:outline-zinc-100">
+        Ask the analyst
+      </Dialog.Trigger>
+      <Dialog.Portal>
+        {/* Non-modal, and no overlay. 057 kept the dock floating because "a
+            panel that floats keeps the chart on screen while the reader asks
+            about it", and a modal dialog measurably takes the report away: it
+            sets `pointer-events: none` on the page and `aria-hidden` on every
+            sibling, so for a screen-reader user the report ceases to exist
+            while the dock explains it. What a dialog is really for here —
+            Escape, focus restoration, an announced role and name — is kept;
+            the Tab-trap is what a non-modal dialog gives up, and it is the one
+            part that would have cost the reader the thing they came for.
+            Decided 2026-08-27, amending 093's "traps focus" wording. */}
+        <Dialog.Content
+          // A helper that closes the moment you touch what you are asking
+          // about is no helper, so every outside-dismissal path is refused:
+          // Escape and Close are the ways out. All three are needed — reaching
+          // into the report is a pointer press AND a focus move, and a browser
+          // check showed the dock closing with only the general handler on.
+          onPointerDownOutside={(event) => event.preventDefault()}
+          onFocusOutside={(event) => event.preventDefault()}
+          onInteractOutside={(event) => event.preventDefault()}
+          onOpenAutoFocus={(event) => {
+            // Radix would focus the panel itself. The reader opened this to
+            // type, and the chips are one Tab away either way.
+            event.preventDefault();
+            inputRef.current?.focus();
           }}
-          className="flex flex-col gap-2 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="fixed bottom-6 right-6 flex max-h-[70vh] w-96 max-w-[calc(100vw-3rem)] flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
         >
-          {visible.map((turn, index) => (
-            <Turn key={index} turn={turn} />
-          ))}
-        </div>
-      )}
+          <header className="flex items-start justify-between gap-2">
+            <div className="flex flex-col">
+              <Dialog.Title className="text-sm font-semibold">
+                Ask the analyst
+              </Dialog.Title>
+              {/* The first sentence is a legal duty, not flavour: anyone
+                  chatting with an AI system must be told so, in context,
+                  before the first exchange — a footer mention or an
+                  "assistant" label does not count. As the dialog's
+                  `Description` it is also read out when the dialog opens,
+                  rather than only if the reader browses to it. */}
+              <Dialog.Description className="text-xs text-zinc-500">
+                {ANALYST_DISCLOSURE}
+              </Dialog.Description>
+            </div>
+            <Dialog.Close className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 dark:hover:bg-zinc-800">
+              Close
+            </Dialog.Close>
+          </header>
 
-      {visible.length === 0 && (
-        <div className="flex flex-wrap gap-2">
-          {CHIPS.map((chip) => (
-            <button
-              key={chip}
-              type="button"
-              disabled={busy}
-              onClick={() => void send(chip)}
-              className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs hover:bg-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-800"
+          {visible.length > 0 && (
+            <div
+              ref={listRef}
+              onScroll={() => {
+                const list = listRef.current;
+                if (list) {
+                  pinnedRef.current =
+                    list.scrollHeight - list.scrollTop - list.clientHeight <
+                    PINNED_SLACK_PX;
+                }
+              }}
+              className="flex flex-col gap-2 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
-              {chip}
-            </button>
-          ))}
-        </div>
-      )}
+              {visible.map((turn, index) => (
+                <Turn key={index} turn={turn} />
+              ))}
+            </div>
+          )}
 
-      <form
-        className="flex gap-2"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void send(draft);
-          setDraft("");
-        }}
-      >
-        <input
-          aria-label="Ask about this test"
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          disabled={busy}
-          placeholder="Ask about this test…"
-          className="min-w-0 flex-1 rounded border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
-        />
-        <button
-          type="submit"
-          disabled={busy || draft.trim() === ""}
-          className="rounded bg-zinc-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-        >
-          Send
-        </button>
-      </form>
-    </section>
+          {visible.length === 0 && (
+            <div className="flex flex-wrap gap-2">
+              {CHIPS.map((chip) => (
+                <button
+                  key={chip}
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void send(chip)}
+                  className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs hover:bg-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-800"
+                >
+                  {chip}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <form
+            className="flex gap-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void send(draft);
+              setDraft("");
+            }}
+          >
+            <input
+              ref={inputRef}
+              aria-label="Ask about this test"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              disabled={busy}
+              placeholder="Ask about this test…"
+              className="min-w-0 flex-1 rounded border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+            />
+            <button
+              type="submit"
+              disabled={busy || draft.trim() === ""}
+              className="rounded bg-zinc-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+            >
+              Send
+            </button>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
