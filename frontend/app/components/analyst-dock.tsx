@@ -66,6 +66,11 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
   const visible = readerTurns(turns);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  // Whether the reader was still inside the dock when it closed. Read at close
+  // time rather than in `onCloseAutoFocus`, which runs during the unmount when
+  // `contentRef` has already been cleared.
+  const closedFromInsideRef = useRef(true);
   const listRef = useRef<HTMLDivElement | null>(null);
   // Follow the conversation only while the reader is near the bottom, so
   // scrolling up to reread is not fought by the typewriter. jsdom does no
@@ -78,8 +83,26 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
   }, [turns]);
 
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen} modal={false}>
-      <Dialog.Trigger className="fixed bottom-6 right-6 rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 dark:focus-visible:outline-zinc-100">
+    <Dialog.Root
+      open={open}
+      modal={false}
+      onOpenChange={(next) => {
+        if (!next) {
+          closedFromInsideRef.current =
+            contentRef.current?.contains(document.activeElement) ?? false;
+        }
+        setOpen(next);
+      }}
+    >
+      <Dialog.Trigger
+        // The panel is opaque, 384px wide, and anchored to this same corner,
+        // so an open dock covers this button completely. Left in the tab order
+        // it is a control a keyboard reader can reach but not see, where Enter
+        // shuts the dock with no visible cause. Still focusable
+        // programmatically, which is what the close restoration below needs.
+        tabIndex={open ? -1 : undefined}
+        className="fixed bottom-6 right-6 rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 dark:focus-visible:outline-zinc-100"
+      >
         Ask the analyst
       </Dialog.Trigger>
       <Dialog.Portal>
@@ -94,6 +117,7 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
             part that would have cost the reader the thing they came for.
             Decided 2026-08-27, amending 093's "traps focus" wording. */}
         <Dialog.Content
+          ref={contentRef}
           // A helper that closes the moment you touch what you are asking
           // about is no helper, so every outside-dismissal path is refused:
           // Escape and Close are the ways out. All three are needed — reaching
@@ -103,10 +127,28 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
           onFocusOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
           onOpenAutoFocus={(event) => {
-            // Radix would focus the panel itself. The reader opened this to
-            // type, and the chips are one Tab away either way.
-            event.preventDefault();
-            inputRef.current?.focus();
+            // Prefer the input — the reader opened this to type, and the chips
+            // are one Tab away either way. But only when it can actually take
+            // focus: the report opens a conversation on mount, so `busy` is
+            // true (and the input `disabled`) from the first frame until the
+            // opening summary has finished revealing. Focusing a disabled
+            // input is a no-op, and having prevented Radix's own open-focus
+            // there would be nothing behind it — the reader would land on
+            // `body`, with the dialog never announced.
+            const input = inputRef.current;
+            if (input && !input.disabled) {
+              event.preventDefault();
+              input.focus();
+            }
+          }}
+          onCloseAutoFocus={(event) => {
+            // Radix's own version of this guard is disabled by the blanket
+            // refusal above: it only records an outside interaction when the
+            // event was not default-prevented. So it is done here instead.
+            // Escape is heard at the document, so it fires wherever the reader
+            // is — and one who had gone back to the chart should stay there
+            // rather than be thrown to a button in the corner.
+            if (!closedFromInsideRef.current) event.preventDefault();
           }}
           className="fixed bottom-6 right-6 flex max-h-[70vh] w-96 max-w-[calc(100vw-3rem)] flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
         >

@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -10,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AnalystDock from "../app/components/analyst-dock";
 import { ANALYST_DISCLOSURE } from "../app/lib/disclosure";
-import { useAnalyst } from "../app/lib/use-analyst";
+import { OPENING_REQUEST, useAnalyst } from "../app/lib/use-analyst";
 import { makeResponse, manualStream } from "./fixtures";
 
 const RESULT = makeResponse();
@@ -114,6 +115,68 @@ describe("the dock is a real dialog", () => {
   // test for it passes whether the guard is wired or not — the un-failable
   // kind. It is verified in a browser instead, and the component says which
   // three handlers refuse it.
+
+  it("puts focus in the dialog even while the analyst is still busy", async () => {
+    // The real report opens a conversation on mount, so `busy` is true from
+    // the first frame until the opening summary has finished typing out — and
+    // the input is `disabled` for exactly that window. Focusing a disabled
+    // input is a no-op, and having already prevented Radix's own open-focus
+    // there is nothing behind it: the reader lands on `body`, hears no dialog
+    // announced, and has to tab from the top of the page.
+    function BusyHost() {
+      return <AnalystDock analyst={useAnalyst(RESULT, OPENING_REQUEST)} />;
+    }
+    mockFetch(manualStream().response);
+    render(<BusyHost />, { wrapper: StrictMode });
+    // The opening request is sent from an effect and `busy` follows an await,
+    // so let it land before reaching for the dock.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    fireEvent.click(screen.getByRole("button", { name: /ask the analyst/i }));
+
+    const dialog = screen.getByRole("dialog", { name: /ask the analyst/i });
+    expect(screen.getByLabelText(/ask about this test/i)).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(dialog.contains(document.activeElement)).toBe(true);
+  });
+
+  it("takes the opening button out of the tab order while it is open", () => {
+    // The trigger stays mounted under an opaque 384px panel anchored to the
+    // same corner. Left tabbable, a keyboard reader reaches a button they
+    // cannot see, and Enter shuts the dock with no visible cause.
+    renderDock();
+
+    const trigger = screen.getByRole("button", { name: /ask the analyst/i });
+    expect(trigger.tabIndex).toBe(-1);
+  });
+
+  it("leaves focus alone when Escape comes from inside the report", async () => {
+    // Escape is heard at the document, so it fires wherever the reader is. A
+    // reader who went back to the chart and dismissed the dock from there
+    // should stay where they were reading, not be thrown to the corner button.
+    render(
+      <StrictMode>
+        <a id="in-report" href="#chart">
+          back to the chart
+        </a>
+        <DockHost />
+      </StrictMode>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /ask the analyst/i }));
+
+    const inReport = document.getElementById("in-report") as HTMLElement;
+    inReport.focus();
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(document.activeElement).toBe(inReport);
+  });
 
   it("closes on Escape and hands focus back to what opened it", async () => {
     renderDock();
