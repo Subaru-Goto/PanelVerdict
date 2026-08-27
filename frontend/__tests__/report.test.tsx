@@ -107,8 +107,15 @@ describe("stat tiles", () => {
     const { container } = renderReport();
     container.querySelector("figure")?.remove();
 
-    const prose = container.textContent?.match(/\b98%/g) ?? [];
-    expect(prose).toHaveLength(1);
+    // Per element, not over one flattened string: a tile renders its label and
+    // its value as siblings, and flattening glues them into "...preferred98%",
+    // where \b has no boundary left to match. The guard would then pass on
+    // exactly the regression it exists to catch.
+    const printed = Array.from(container.querySelectorAll("*")).filter(
+      (node) =>
+        node.children.length === 0 && /\b98%/.test(node.textContent ?? ""),
+    );
+    expect(printed).toHaveLength(1);
   });
 });
 
@@ -224,7 +231,10 @@ describe("posterior chart", () => {
 
     const svg = screen.getByRole("img", { name: /posterior distribution/i });
     const label = svg.getAttribute("aria-label") ?? "";
-    expect(label).toContain("centred on 29%");
+    // Everything the eye gets from a mark has to be in this string, because
+    // `role="img"` means nothing inside the plot is announced at all.
+    expect(label).toContain("71% preferring A and 29% preferring B");
+    expect(label).toContain("between 17% and 42% at 95% credibility");
     expect(label).toContain("98% of the curve lies past the tie zone");
     expect(label).toContain("on A's side.");
   });
@@ -260,20 +270,57 @@ describe("posterior chart", () => {
     const tipY = Number(leader?.getAttribute("y2"));
 
     // SVG y grows downward: the axis is the largest y, the area's tallest
-    // point the smallest. Being *technically* inside the shape is not the bar —
-    // a sliver a tenth of a unit tall passes that and still reads as blank
-    // paper — so the tip has to sit in the part of the area that has height.
+    // point the smallest.
     const baseline = Math.max(...shape.map((point) => point.y));
     const tallest = Math.min(...shape.map((point) => point.y));
-    expect(baseline - tipY).toBeGreaterThan((baseline - tallest) * 0.25);
-    // Inclusive: on a near-tie the tallest point of the tail *is* the band
-    // edge, so the tip legitimately sits on the region's boundary.
-    expect(tipX).toBeGreaterThanOrEqual(
-      Math.min(...shape.map((point) => point.x)),
+
+    // The rule, stated as something the shape can disagree with: the tip must
+    // sit at the region's *tallest* column. Comparing the tip's height to the
+    // region's would only restate how the tip is computed — half of a height
+    // is always half of that height, whichever column it was taken from.
+    // The polygon's two closing anchors sit on the axis at the same x as the
+    // band edge, so the curve's own points are the ones to compare against.
+    const curve = shape.filter((point) => point.y < baseline);
+    const atTip = curve.reduce((best, point) =>
+      Math.abs(point.x - tipX) < Math.abs(best.x - tipX) ? point : best,
     );
-    expect(tipX).toBeLessThanOrEqual(
-      Math.max(...shape.map((point) => point.x)),
-    );
+    expect(atTip.y).toBeCloseTo(tallest, 1);
+
+    // And that column has to be worth pointing at. A fixture whose shaded
+    // region is a hairline would satisfy the rule above and still leave the
+    // line ending on blank paper, so the fixture's own geometry is pinned.
+    expect(baseline - tallest).toBeGreaterThan(20);
+    expect(baseline - tipY).toBeGreaterThan(10);
+  });
+
+  it("keeps a decisive panel's interval bounds inside the plot", () => {
+    // A decisive verdict pushes the interval against the plot's edge, and a
+    // label anchored outside a bar that has no outside left was drawn past the
+    // viewBox: the lower bound rendered as a bare "%" with its digits cut off.
+    const decisive = makeResponse();
+    const { container } = renderReport({
+      ...decisive,
+      verdict: {
+        ...decisive.verdict,
+        share_preferring_b: 0.06,
+        credible_interval: [0.02, 0.14],
+        probability_meaningfully_preferred: { a: 0.999, b: 0.0 },
+      },
+      tally: { counts: { a: 47, b: 3 }, total: 50 },
+    });
+
+    const svg = screen.getByRole("img", { name: /posterior distribution/i });
+    const width = Number(svg.getAttribute("viewBox")?.split(" ")[2]);
+    for (const mark of ["cri-low", "cri-high"]) {
+      const label = container.querySelector(`[data-mark="${mark}"]`);
+      const at = Number(label?.getAttribute("x"));
+      // Anchored text runs away from its x, so the room it needs is on the
+      // side it grows towards.
+      const room =
+        label?.getAttribute("text-anchor") === "end" ? at : width - at;
+      expect(label?.textContent).toMatch(/^\d+%$/);
+      expect(room).toBeGreaterThan(20);
+    }
   });
 
   it("writes the probability onto the area that is the probability", () => {
@@ -309,6 +356,11 @@ describe("posterior chart", () => {
     const aLeads = renderReport().container;
     expect(shadedRange(aLeads).high).toBeCloseTo(bandEdges(aLeads).left, 1);
     cleanup();
+    // A second mount opens a second conversation, and `beforeEach` handed out
+    // one Response whose body a stream can only be read from once. Without a
+    // fresh one the re-render races a drained reader.
+    stream = manualStream();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(stream.response));
 
     const flipped = makeResponse();
     const bLeads = renderReport({
@@ -341,7 +393,7 @@ describe("posterior chart", () => {
     renderReport();
 
     expect(
-      screen.getByText(/^estimated split: 71% prefer A . 29% prefer B/),
+      screen.getByText(/^estimated split: 71% prefer A \u00b7 29% prefer B$/),
     ).toBeTruthy();
   });
 
