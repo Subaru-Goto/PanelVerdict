@@ -31,8 +31,8 @@ function Chip({
     <span
       className={
         tone === "alert"
-          ? "rounded-full border border-red-400 px-2 py-0.5 text-xs text-red-600 dark:border-red-700 dark:text-red-400"
-          : "rounded-full border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-700"
+          ? "rounded-full border border-red px-2 py-0.5 text-xs text-red"
+          : "rounded-full border border-line px-2 py-0.5 text-xs"
       }
     >
       {children}
@@ -49,8 +49,8 @@ function NoticeList({ notices }: { notices: Notice[] }) {
           key={index}
           className={
             notice.severity === "warning"
-              ? "rounded border-l-4 border-dotted border-red-400 bg-red-50 p-2 text-sm dark:border-red-700 dark:bg-red-950"
-              : "rounded border-l-4 border-zinc-300 bg-zinc-50 p-2 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400"
+              ? "rounded border-l-4 border-dotted border-red bg-red/5 p-2 text-sm"
+              : "rounded border-l-4 border-line bg-surface-2 p-2 text-sm text-ink-2"
           }
         >
           {notice.message}
@@ -73,7 +73,7 @@ function TraitChip({ trait }: { trait: TraitRequest }) {
 function PanelCard({ result }: { result: EvaluateResponse }) {
   const { query, counts, notices } = result;
   return (
-    <div className="flex flex-col gap-3 rounded border border-zinc-200 p-4 dark:border-zinc-800">
+    <div className="flex flex-col gap-3 rounded border border-line p-4">
       <div className="flex items-center gap-2">
         <h2 className="text-sm font-medium">Panel</h2>
         {query.coverage !== "requested" && (
@@ -91,12 +91,12 @@ function PanelCard({ result }: { result: EvaluateResponse }) {
         ))}
       </div>
       {query.coverage === "approximated" && (
-        <p className="text-sm text-zinc-500">
+        <p className="text-sm text-ink-2">
           A stand-in region was used — the notice below names it.
         </p>
       )}
       <NoticeList notices={notices} />
-      <p className="text-sm text-zinc-500">
+      <p className="text-sm text-ink-2">
         {counts.voted} of {counts.matched} matched panelists voted (
         {counts.requested} requested).
       </p>
@@ -142,15 +142,15 @@ function VoteList({ votes }: { votes: Vote[] }) {
         {votes.map((vote) => (
           <li
             key={vote.persona_id}
-            className="flex flex-col gap-1 rounded border border-zinc-200 p-3 text-sm dark:border-zinc-800"
+            className="flex flex-col gap-1 rounded border border-line p-3 text-sm"
           >
             <span className="font-medium">
               Chose {vote.chosen_variant_id.toUpperCase()}
             </span>
-            <p className="text-zinc-600 dark:text-zinc-400">{vote.reason}</p>
-            <p className="text-xs text-zinc-500">{voterLine(vote.voter)}</p>
+            <p className="text-ink-2">{vote.reason}</p>
+            <p className="text-xs text-ink-2">{voterLine(vote.voter)}</p>
             <details className="text-xs">
-              <summary className="cursor-pointer text-zinc-500">
+              <summary className="cursor-pointer text-ink-2">
                 personality
               </summary>
               <div className="mt-1 flex flex-wrap gap-1">
@@ -174,7 +174,7 @@ function VoteList({ votes }: { votes: Vote[] }) {
 function SummaryCard({ analyst }: { analyst: Analyst }) {
   const reply = analyst.turns.find((turn) => turn.role === "analyst");
   return (
-    <div className="flex flex-col gap-2 rounded border border-zinc-200 p-4 dark:border-zinc-800">
+    <div className="flex flex-col gap-2 rounded border border-line p-4">
       <h2 className="text-sm font-medium">What the panel said</h2>
       {reply?.role === "analyst" && (
         <>
@@ -182,16 +182,16 @@ function SummaryCard({ analyst }: { analyst: Analyst }) {
             <p className="whitespace-pre-wrap text-sm">{reply.text}</p>
           )}
           {reply.status !== null && (
-            <p className="text-sm italic text-zinc-500">{reply.status}</p>
+            <p className="text-sm italic text-ink-2">{reply.status}</p>
           )}
           {reply.error !== null && (
-            <p className="text-sm text-red-600 dark:text-red-400">
+            <p className="text-sm text-red">
               {reply.error}
             </p>
           )}
         </>
       )}
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-ink-2">
         A reading of reasons written by synthetic panelists — sampled personas,
         not real people.
       </p>
@@ -219,15 +219,15 @@ function Lead({
   return (
     <div className="flex flex-col gap-2">
       <p className="text-2xl font-semibold">“{variants[leading]}”</p>
-      <p className="text-sm text-zinc-500">over “{variants[trailing]}”</p>
+      <p className="text-sm text-ink-2">over “{variants[trailing]}”</p>
       <p className="text-lg">
         {formatPercent(verdict.probability_meaningfully_preferred[leading])}{" "}
         likely people genuinely prefer this one.
       </p>
-      <p className="text-sm text-zinc-500">
+      <p className="text-sm text-ink-2">
         Wins too small to matter don’t count towards that number.
       </p>
-      <p className="text-sm text-zinc-500">
+      <p className="text-sm text-ink-2">
         {tally.counts[leading] ?? 0} of {tally.total} panelists preferred it.
       </p>
       {isPracticalTie(verdict) && (
@@ -247,12 +247,12 @@ export default function Report({ result }: { result: EvaluateResponse }) {
     <section className="flex flex-col gap-4">
       <Lead verdict={verdict} tally={tally} variants={variants} />
       {result.query.coverage === "unmatched" && (
-        <p className="text-sm text-red-600 dark:text-red-400">
+        <p className="text-sm text-red">
           The region you named could not be matched — this panel carries no
           geographic targeting.
         </p>
       )}
-      <p className="text-sm text-zinc-500">
+      <p className="text-sm text-ink-2">
         {verdict.detectable_gap !== null && (
           <>
             This panel can only detect leans of{" "}
@@ -266,7 +266,7 @@ export default function Report({ result }: { result: EvaluateResponse }) {
         {formatPoints(verdict.expected_preference_shortfall.shipping_b)}.
       </p>
       <PosteriorChart verdict={verdict} tally={tally} variants={variants} />
-      <p className="text-xs text-zinc-500">
+      <p className="text-xs text-ink-2">
         The panel chose <em>between</em> both headlines. Real readers usually
         see only one, so this is a preference share, not a predicted
         click-through rate — and it is unvalidated where two variants say the

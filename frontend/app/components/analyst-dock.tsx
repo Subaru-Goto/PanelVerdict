@@ -29,7 +29,7 @@ const CHIPS = [
 function Turn({ turn }: { turn: AnalystTurn }) {
   if (turn.role === "user") {
     return (
-      <p className="ml-8 self-end rounded-lg bg-zinc-100 px-3 py-2 text-sm dark:bg-zinc-800">
+      <p className="ml-8 self-end rounded-lg bg-surface-2 px-3 py-2 text-sm">
         {turn.text}
       </p>
     );
@@ -37,15 +37,15 @@ function Turn({ turn }: { turn: AnalystTurn }) {
   return (
     <div className="mr-8 flex flex-col gap-1 self-start">
       {turn.text !== "" && (
-        <p className="whitespace-pre-wrap rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700">
+        <p className="whitespace-pre-wrap rounded-lg border border-line px-3 py-2 text-sm">
           {turn.text}
         </p>
       )}
       {turn.status !== null && (
-        <p className="px-1 text-xs italic text-zinc-500">{turn.status}</p>
+        <p className="px-1 text-xs italic text-ink-2">{turn.status}</p>
       )}
       {turn.error !== null && (
-        <p className="rounded-lg border border-red-300 px-3 py-2 text-sm text-red-700 dark:border-red-700 dark:text-red-400">
+        <p className="rounded-lg border border-red px-3 py-2 text-sm text-red">
           {turn.error}
         </p>
       )}
@@ -101,7 +101,7 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
         // shuts the dock with no visible cause. Still focusable
         // programmatically, which is what the close restoration below needs.
         tabIndex={open ? -1 : undefined}
-        className="fixed bottom-6 right-6 rounded-full bg-zinc-900 px-5 py-3 text-sm font-medium text-white shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 dark:focus-visible:outline-zinc-100"
+        className="fixed bottom-6 right-6 rounded-full bg-ink px-5 py-3 text-sm font-medium text-surface shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink100"
       >
         Ask the analyst
       </Dialog.Trigger>
@@ -150,7 +150,7 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
             // rather than be thrown to a button in the corner.
             if (!closedFromInsideRef.current) event.preventDefault();
           }}
-          className="fixed bottom-6 right-6 flex max-h-[70vh] w-96 max-w-[calc(100vw-3rem)] flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+          className="fixed bottom-6 right-6 flex max-h-[70vh] w-96 max-w-[calc(100vw-3rem)] flex-col gap-3 rounded-xl border border-line bg-surface p-4 shadow-xl"
         >
           <header className="flex items-start justify-between gap-2">
             <div className="flex flex-col">
@@ -163,11 +163,11 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
                   "assistant" label does not count. As the dialog's
                   `Description` it is also read out when the dialog opens,
                   rather than only if the reader browses to it. */}
-              <Dialog.Description className="text-xs text-zinc-500">
+              <Dialog.Description className="text-xs text-ink-2">
                 {ANALYST_DISCLOSURE}
               </Dialog.Description>
             </div>
-            <Dialog.Close className="rounded px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-500 dark:hover:bg-zinc-800">
+            <Dialog.Close className="rounded px-2 py-1 text-xs text-ink-2 hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink-2">
               Close
             </Dialog.Close>
           </header>
@@ -199,7 +199,7 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
                   type="button"
                   disabled={busy}
                   onClick={() => void send(chip)}
-                  className="rounded-full border border-zinc-300 px-3 py-1.5 text-xs hover:bg-zinc-100 dark:border-zinc-600 dark:hover:bg-zinc-800"
+                  className="rounded-full border border-line px-3 py-1.5 text-xs hover:bg-surface-2"
                 >
                   {chip}
                 </button>
@@ -222,12 +222,12 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
               onChange={(event) => setDraft(event.target.value)}
               disabled={busy}
               placeholder="Ask about this test…"
-              className="min-w-0 flex-1 rounded border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-900"
+              className="min-w-0 flex-1 rounded border border-line px-3 py-2 text-sm"
             />
             <button
               type="submit"
               disabled={busy || draft.trim() === ""}
-              className="rounded bg-zinc-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+              className="rounded bg-ink px-3 py-2 text-sm font-medium text-surface disabled:bg-surface-2 disabled:text-ink-3"
             >
               Send
             </button>

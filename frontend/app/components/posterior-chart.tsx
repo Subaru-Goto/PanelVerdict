@@ -97,7 +97,7 @@ function LegendEntry({
       </svg>
       <span className="flex flex-col leading-snug">
         <span>{plain}</span>
-        <span className="text-[0.6875rem] text-zinc-500 dark:text-zinc-400">
+        <span className="text-[0.6875rem] text-ink-2">
           ({technical})
         </span>
       </span>
@@ -250,8 +250,8 @@ export default function PosteriorChart({
     annotation.spoken;
 
   return (
-    <figure className="flex flex-col gap-2 rounded border border-zinc-200 p-4 dark:border-zinc-800">
-      <figcaption className="text-sm text-zinc-600 dark:text-zinc-400">
+    <figure className="flex flex-col gap-2 rounded border border-line p-4">
+      <figcaption className="text-sm text-ink-2">
         How likely each possible split of the whole audience is, given these{" "}
         {tally.total} votes (
         {Object.entries(tally.counts)
@@ -271,21 +271,21 @@ export default function PosteriorChart({
           width={x(ropeHigh) - x(ropeLow)}
           height={BASELINE - PLOT_TOP}
           data-mark="rope"
-          className="fill-zinc-200/60 dark:fill-zinc-800/60"
+          className="fill-surface-2"
         />
-        <path d={area} className="fill-blue-600/10 dark:fill-blue-500/15" />
+        <path d={area} className="fill-ink/[.06]" />
         {/* `data-mark` on the band and the mass: an SVG shape carries no role,
             so this is the only handle a test has on which side got shaded. */}
         <path
           d={massArea}
           data-mark="mass"
-          className="fill-blue-600/25 dark:fill-blue-500/30"
+          className="fill-ink/12"
         />
         <path
           d={curve}
           strokeWidth={2}
           strokeLinejoin="round"
-          className="fill-none stroke-blue-600 dark:stroke-blue-500"
+          className="fill-none stroke-ink"
         />
         <line
           data-mark="mean"
@@ -295,14 +295,14 @@ export default function PosteriorChart({
           y2={BASELINE}
           strokeWidth={2}
           strokeDasharray="5 4"
-          className="stroke-blue-600 dark:stroke-blue-500"
+          className="stroke-ink"
         />
         <text
           x={labelOnRight ? x(mean) + 8 : x(mean) - 8}
           y={LABEL_Y}
           textAnchor={labelOnRight ? "start" : "end"}
           fontSize={12}
-          className="fill-zinc-600 dark:fill-zinc-400"
+          className="fill-ink-2"
         >
           {meanLabel}
         </text>
@@ -312,7 +312,7 @@ export default function PosteriorChart({
           x2={x(1)}
           y2={BASELINE}
           strokeWidth={1}
-          className="stroke-zinc-300 dark:stroke-zinc-700"
+          className="stroke-line"
         />
         <line
           x1={x(criLow)}
@@ -321,7 +321,7 @@ export default function PosteriorChart({
           y2={CRI_Y}
           strokeWidth={6}
           strokeLinecap="round"
-          className="stroke-blue-600 dark:stroke-blue-500"
+          className="stroke-ink"
         />
         <text
           data-mark="cri-low"
@@ -329,7 +329,7 @@ export default function PosteriorChart({
           y={lowLabel.y}
           textAnchor={lowLabel.anchor}
           fontSize={11}
-          className="fill-zinc-500 dark:fill-zinc-400"
+          className="fill-ink-2"
         >
           {formatPercent(criLow)}
         </text>
@@ -339,7 +339,7 @@ export default function PosteriorChart({
           y={highLabel.y}
           textAnchor={highLabel.anchor}
           fontSize={11}
-          className="fill-zinc-500 dark:fill-zinc-400"
+          className="fill-ink-2"
         >
           {formatPercent(criHigh)}
         </text>
@@ -350,7 +350,7 @@ export default function PosteriorChart({
           x2={x(annotation.target.p)}
           y2={(y(annotation.target.density) + BASELINE) / 2}
           strokeWidth={1}
-          className="stroke-zinc-500 dark:stroke-zinc-400"
+          className="stroke-ink-3"
         />
         <text
           x={annotationX}
@@ -358,7 +358,7 @@ export default function PosteriorChart({
           textAnchor={annotationAnchor}
           fontSize={16}
           fontWeight={600}
-          className="fill-zinc-800 dark:fill-zinc-100"
+          className="fill-ink"
         >
           {annotationShare}
         </text>
@@ -368,19 +368,19 @@ export default function PosteriorChart({
           textAnchor={annotationAnchor}
           fontSize={9}
           letterSpacing={0.8}
-          className="fill-zinc-500 uppercase dark:fill-zinc-400"
+          className="fill-ink-2 uppercase"
         >
           {annotation.caption}
         </text>
       </svg>
-      <div className="flex justify-between gap-4 text-xs text-zinc-500">
+      <div className="flex justify-between gap-4 text-xs text-ink-2">
         <span>← prefer A — “{variants.a}”</span>
         <span className="text-right">prefer B — “{variants.b}” →</span>
       </div>
       <ul
         role="list"
         aria-label="What each mark on the chart means"
-        className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-zinc-600 dark:text-zinc-400"
+        className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-ink-2"
       >
         <LegendEntry
           swatch={
@@ -393,14 +393,14 @@ export default function PosteriorChart({
                 y={0}
                 width={20}
                 height={8}
-                className="fill-blue-600/10 dark:fill-blue-500/15"
+                className="fill-ink/[.06]"
               />
               <rect
                 x={0}
                 y={0}
                 width={20}
                 height={8}
-                className="fill-blue-600/25 dark:fill-blue-500/30"
+                className="fill-ink/12"
               />
             </>
           }
@@ -416,7 +416,7 @@ export default function PosteriorChart({
               y2={4}
               strokeWidth={2}
               strokeDasharray="5 4"
-              className="stroke-blue-600 dark:stroke-blue-500"
+              className="stroke-ink"
             />
           }
           plain="Most likely"
@@ -431,7 +431,7 @@ export default function PosteriorChart({
               y2={4}
               strokeWidth={6}
               strokeLinecap="round"
-              className="stroke-blue-600 dark:stroke-blue-500"
+              className="stroke-ink"
             />
           }
           plain="Plausible range"
@@ -440,11 +440,11 @@ export default function PosteriorChart({
         <LegendEntry
           swatch={
             <rect
-              x={0}
-              y={0}
-              width={20}
-              height={8}
-              className="fill-zinc-200/60 dark:fill-zinc-800/60"
+              x={0.5}
+              y={0.5}
+              width={19}
+              height={7}
+              className="fill-surface-2 stroke-line"
             />
           }
           plain="Practically a tie"

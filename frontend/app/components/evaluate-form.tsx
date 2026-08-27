@@ -16,7 +16,7 @@ import PanelGate from "./panel-gate";
 import Report from "./report";
 
 const INPUT_CLASS =
-  "rounded border border-zinc-300 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-900";
+  "rounded border border-line px-3 py-2";
 
 function Field({
   label,
@@ -107,12 +107,12 @@ function Waiting() {
   return (
     <p
       role="status"
-      className="flex items-center gap-2 text-sm text-zinc-500"
+      className="flex items-center gap-2 text-sm text-ink-2"
       aria-live="polite"
     >
       <span
         aria-hidden
-        className="h-2 w-2 animate-pulse rounded-full bg-zinc-500"
+        className="h-2 w-2 animate-pulse rounded-full bg-ink-3"
       />
       Each panelist is reading both headlines and picking one — {seconds}s so
       far.
@@ -181,7 +181,7 @@ export default function EvaluateForm({
         <button
           type="button"
           onClick={reset}
-          className="self-start rounded border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-700"
+          className="self-start rounded border border-line px-3 py-1.5 text-sm"
         >
           Test again
         </button>
@@ -212,12 +212,12 @@ export default function EvaluateForm({
   return (
     <div className="flex flex-col gap-6">
       <form onSubmit={onSubmit} className="flex flex-col gap-3">
-        <fieldset className="flex flex-col gap-2 rounded border border-zinc-300 p-3 text-sm dark:border-zinc-700">
+        <fieldset className="flex flex-col gap-2 rounded border border-line p-3 text-sm">
           <legend className="px-1">
             Who should judge these? Leave a control alone to mean anyone.
           </legend>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-zinc-500">Country</span>
+            <span className="text-ink-2">Country</span>
             {LOCALES.map((code) => (
               <Choice
                 key={code}
@@ -265,14 +265,14 @@ export default function EvaluateForm({
             </label>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-zinc-500">Education</span>
+            <span className="text-ink-2">Education</span>
             <Choice label="below secondary" value="below_secondary" chosen={education} onChange={setEducation} />
             <Choice label="secondary" value="secondary" chosen={education} onChange={setEducation} />
             <Choice label="tertiary" value="tertiary" chosen={education} onChange={setEducation} />
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {/* Quintiles, lowest to highest — the pool's own income shape. */}
-            <span className="text-zinc-500">Income</span>
+            <span className="text-ink-2">Income</span>
             <Choice label="Q1 (lowest)" value={1} chosen={incomeQuintiles} onChange={setIncomeQuintiles} />
             <Choice label="Q2" value={2} chosen={incomeQuintiles} onChange={setIncomeQuintiles} />
             <Choice label="Q3" value={3} chosen={incomeQuintiles} onChange={setIncomeQuintiles} />
@@ -304,20 +304,20 @@ export default function EvaluateForm({
         <button
           type="submit"
           disabled={disabled}
-          className="rounded bg-zinc-900 px-4 py-2 text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
+          className="rounded bg-ink px-4 py-2 text-surface disabled:bg-surface-2 disabled:text-ink-3"
         >
           {state.phase === "loading" ? "Asking the panel…" : "Evaluate"}
         </button>
         {/* Submitting counts as interacting with an AI system, so the
             disclosure sits with the submit control rather than in a footer —
             told before the exchange, where the telling can still change it. */}
-        <p className="text-xs text-zinc-500">{AI_SYSTEM_DISCLOSURE}</p>
+        <p className="text-xs text-ink-2">{AI_SYSTEM_DISCLOSURE}</p>
         {/* Only when this deployment is really tracing — the backend's own
             answer, not a second flag here that could disagree with it. A
             deterrent, not a control: the controls are the screener and the
             limits. */}
         {tracing && (
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-ink-2">
             Runs are traced for debugging: what you type — your audience, both
             headlines, and anything you later ask the analyst — is sent to
             LangSmith, outside our infrastructure. Don&rsquo;t paste anything
@@ -329,7 +329,7 @@ export default function EvaluateForm({
       {state.phase === "loading" && <Waiting />}
 
       {state.phase === "error" && (
-        <p className="text-red-600">Error: {state.message}</p>
+        <p className="text-red">Error: {state.message}</p>
       )}
     </div>
   );

@@ -66,7 +66,7 @@ export default function SignIn() {
   if (!available || signedIn === null) return null;
 
   return (
-    <p className="flex items-center gap-3 text-sm text-zinc-600 dark:text-zinc-400">
+    <p className="flex items-center gap-3 text-sm text-ink-2">
       {signedIn ? (
         <>
           {runsLeft !== null && (
