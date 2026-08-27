@@ -1012,6 +1012,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "anyio" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "testcontainers" },
@@ -1037,6 +1038,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "anyio", specifier = ">=4.14.2" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.15.22" },
     { name = "testcontainers", extras = ["postgres"], specifier = ">=4.14.2" },
