@@ -177,8 +177,13 @@ describe("EvaluateForm", () => {
     expect(
       await screen.findByText(/50 of 200 matched panelists voted/),
     ).toBeTruthy();
+    // The promise lives in the backend's notice, which is guarded on
+    // panelists actually going unasked and names the reason the run stopped.
+    // The report used to repeat it in its own words for any stop reason and
+    // whether or not anyone went unasked, so a tie rendered "the call was
+    // already clear" directly above "these two are equally good".
     expect(
-      screen.getByText(/stopped early: the call was already clear/),
+      screen.getByText(/this is an answer, not a shortfall/),
     ).toBeTruthy();
   });
 

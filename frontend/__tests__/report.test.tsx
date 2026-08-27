@@ -9,7 +9,12 @@ import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import Report from "../app/components/report";
-import { makeResponse, manualStream } from "./fixtures";
+import {
+  makeMirroredTie,
+  makeResponse,
+  makeTiedResponse,
+  manualStream,
+} from "./fixtures";
 import { OPENING_REQUEST } from "../app/lib/use-analyst";
 import { posteriorDensity } from "../app/lib/beta";
 
@@ -162,24 +167,37 @@ describe("the lead and the curve agree", () => {
 describe("a practical tie", () => {
   // 020 keeps `practical_tie` as a flag, not a bucket: a positive finding
   // added to the probability rather than replacing it.
-  const tied = () => {
-    const result = makeResponse();
+
+  /** The plot's geometry, read back off what was actually rendered. */
+  const plot = (container: HTMLElement) => {
+    const mark = (name: string) =>
+      container.querySelector(`[data-mark="${name}"]`);
+    const band = mark("rope");
+    const leader = mark("leader");
+    const bandLeft = Number(band?.getAttribute("x"));
     return {
-      ...result,
-      verdict: {
-        ...result.verdict,
-        probability_meaningfully_preferred: { a: 0.02, b: 0.02 },
-        probability_practical_tie: 0.96,
-      },
+      width: Number(
+        screen
+          .getByRole("img", { name: /posterior distribution/i })
+          .getAttribute("viewBox")
+          ?.split(" ")[2],
+      ),
+      bandLeft,
+      bandRight: bandLeft + Number(band?.getAttribute("width")),
+      meanX: Number(mark("mean")?.getAttribute("x1")),
+      labelX: Number(leader?.getAttribute("x1")),
+      tipX: Number(leader?.getAttribute("x2")),
+      tipY: Number(leader?.getAttribute("y2")),
+      baseline: Number(mark("mean")?.getAttribute("y2")),
     };
   };
 
   it("says the two are equally good, without dropping the probability", () => {
-    renderReport(tied());
+    renderReport(makeTiedResponse());
 
     expect(screen.getByText(/these two are equally good/i)).toBeTruthy();
     expect(
-      screen.getByText("2% likely people genuinely prefer this one."),
+      screen.getByText("3% likely people genuinely prefer this one."),
     ).toBeTruthy();
   });
 
@@ -187,6 +205,127 @@ describe("a practical tie", () => {
     renderReport();
 
     expect(screen.queryByText(/these two are equally good/i)).toBeNull();
+  });
+
+  it("writes the tie's own figure on the chart, not the leader's", () => {
+    // The gap this closes: the chart annotated the mass past the band in every
+    // state, so a tied panel put its largest, boldest number on its smallest,
+    // least meaningful region — 3% over a sliver, while the 95% the report is
+    // actually about sat in an unlabelled grey rectangle.
+    renderReport(makeTiedResponse());
+
+    const svg = screen.getByRole("img", { name: /posterior distribution/i });
+    expect(svg.textContent).toContain("95%");
+    expect(svg.textContent?.toLowerCase()).toContain("practically a tie");
+    expect(svg.textContent?.toLowerCase()).not.toContain(
+      "posterior probability",
+    );
+  });
+
+  it("draws the tie's probability, not the credibility it is stated at", () => {
+    // A tie is declared when its probability clears `credible_mass`, so on a
+    // real panel the two round to the same "95%" — and a test reading that
+    // string cannot say which field it came from. This payload separates them:
+    // the panel is a tie whose probability is nowhere near the credible mass.
+    const tied = makeTiedResponse();
+    renderReport({
+      ...tied,
+      verdict: { ...tied.verdict, probability_practical_tie: 0.98 },
+    });
+
+    const svg = screen.getByRole("img", { name: /posterior distribution/i });
+    expect(svg.textContent).toContain("98%");
+  });
+
+  it("points its leader into the band, clear of the mean", () => {
+    // The tallest column of a tied curve *is* the mean, so the obvious rule —
+    // the decisive side's "aim at the mode" — lands the tie's headline figure
+    // on the dashed mean line, three units away from it on this fixture. The
+    // whole reason the annotation exists is that the mean and the probability
+    // are different numbers.
+    const { container } = renderReport(makeTiedResponse());
+    const at = plot(container);
+
+    expect(at.tipX).toBeGreaterThan(at.bandLeft);
+    expect(at.tipX).toBeLessThan(at.bandRight);
+    expect(Math.abs(at.tipX - at.meanX)).toBeGreaterThan(8);
+    // And on the label's own side of it, so the leader never crosses the line
+    // it must not be mistaken for.
+    expect(at.labelX < at.meanX).toBe(at.tipX < at.meanX);
+    // Worth pointing at: a tip that has run down to the axis is a line ending
+    // on blank paper, whichever column it picked.
+    expect(at.baseline - at.tipY).toBeGreaterThan(10);
+  });
+
+  it("flips with the leading side", () => {
+    // 100 of 198 and 98 of 198 are the same margin in opposite directions.
+    // Every mark that switches on the leading side has a second half that no
+    // B-leading fixture can reach — including the label's own corner.
+    const { container } = renderReport(makeMirroredTie());
+    const at = plot(container);
+
+    expect(at.labelX).toBeGreaterThan(at.width / 2);
+    expect(at.tipX).toBeGreaterThan(at.meanX);
+    expect(at.tipX).toBeLessThan(at.bandRight);
+    expect(
+      screen.getByText("3% likely people genuinely prefer this one."),
+    ).toBeTruthy();
+  });
+
+  it("keeps the label off the leading side on an exactly even panel", () => {
+    // 100 of 200 puts the mean at exactly 0.5, which is both a real tie and
+    // the most likely one. `leadingSide` reads that as B, so the shaded tail
+    // is on the right and the label has to go left — a `<=` here would have
+    // written the figure straight over the tail it is not describing.
+    const tied = makeTiedResponse();
+    const { container } = renderReport({
+      ...tied,
+      verdict: { ...tied.verdict, share_preferring_b: 0.5 },
+    });
+    const at = plot(container);
+
+    expect(at.labelX).toBeLessThan(at.width / 2);
+    expect(at.tipX).toBeLessThan(at.meanX);
+  });
+
+  it("survives a band that falls between the curve's own columns", () => {
+    // The tail can never be empty — it always reaches the plot's edge — so the
+    // decisive path needs no guard. The band can: it is a payload field, and
+    // one that fits between two columns of the 1% sampling grid catches none
+    // of them, which would leave the annotation with no point to aim at and
+    // take the whole report down with it. The tip still has to land inside the
+    // rect its caption names.
+    const tied = makeTiedResponse();
+    const { container } = renderReport({
+      ...tied,
+      verdict: { ...tied.verdict, rope: [0.502, 0.5045] },
+    });
+    const at = plot(container);
+
+    expect(at.tipX).toBeGreaterThanOrEqual(at.bandLeft);
+    expect(at.tipX).toBeLessThanOrEqual(at.bandRight);
+  });
+
+  it("prints a split that adds up", () => {
+    // An even panel rounded each end outward and captioned the chart "50%
+    // prefer A · 51% prefer B" — a pair that cannot both be true, sitting
+    // directly under a lead saying the two are equal.
+    renderReport(makeTiedResponse());
+
+    const svg = screen.getByRole("img", { name: /posterior distribution/i });
+    expect(svg.textContent).toContain("50% prefer A · 50% prefer B");
+  });
+
+  it("tells a screen reader the tie is where the mass is", () => {
+    // The plot's marks are invisible inside an `img`, so the label is the only
+    // place a screen reader hears which region carries the answer.
+    renderReport(makeTiedResponse());
+
+    const label =
+      screen
+        .getByRole("img", { name: /posterior distribution/i })
+        .getAttribute("aria-label") ?? "";
+    expect(label).toMatch(/95% of the curve lies inside the tie zone/i);
   });
 });
 

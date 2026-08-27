@@ -18,13 +18,7 @@ import { formatPercent, formatPoints } from "../lib/format";
 import AnalystDock from "./analyst-dock";
 import { useAnalyst, OPENING_REQUEST, type Analyst } from "../lib/use-analyst";
 import PosteriorChart from "./posterior-chart";
-import { leadingSide } from "../lib/verdict";
-
-/** A tie is credible when its own probability clears the credibility everything
- *  else on the page is stated at. 020 keeps it a flag, not a bucket: it adds a
- *  line, it never replaces the probability. */
-const isPracticalTie = (verdict: PanelVerdict): boolean =>
-  verdict.probability_practical_tie >= verdict.credible_mass;
+import { isPracticalTie, leadingSide } from "../lib/verdict";
 
 function Chip({
   tone = "neutral",
@@ -77,7 +71,7 @@ function TraitChip({ trait }: { trait: TraitRequest }) {
 }
 
 function PanelCard({ result }: { result: EvaluateResponse }) {
-  const { query, counts, notices, stop_reason } = result;
+  const { query, counts, notices } = result;
   return (
     <div className="flex flex-col gap-3 rounded border border-zinc-200 p-4 dark:border-zinc-800">
       <div className="flex items-center gap-2">
@@ -104,10 +98,7 @@ function PanelCard({ result }: { result: EvaluateResponse }) {
       <NoticeList notices={notices} />
       <p className="text-sm text-zinc-500">
         {counts.voted} of {counts.matched} matched panelists voted (
-        {counts.requested} requested)
-        {stop_reason !== null &&
-          " — stopped early: the call was already clear, and more votes would only have narrowed the range, not changed it"}
-        .
+        {counts.requested} requested).
       </p>
     </div>
   );

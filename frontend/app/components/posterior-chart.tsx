@@ -2,8 +2,8 @@ import type { ReactNode } from "react";
 
 import type { PanelVerdict, VoteTally } from "../lib/api";
 import { posteriorDensity } from "../lib/beta";
-import { formatPercent } from "../lib/format";
-import { leadingSide } from "../lib/verdict";
+import { formatPercent, formatSplit } from "../lib/format";
+import { isPracticalTie, leadingSide } from "../lib/verdict";
 
 /** 1% grid — finer than the curve's own width at any panel size we run. */
 const SAMPLES = 101;
@@ -30,6 +30,53 @@ const PAD = 4;
 const x = (p: number): number => PAD + p * (WIDTH - 2 * PAD);
 const y = (density: number): number =>
   BASELINE - density * (BASELINE - PLOT_TOP);
+
+type Sample = { p: number; density: number };
+
+const nearestTo = (wanted: number, samples: readonly Sample[]): Sample =>
+  samples.reduce((best, point) =>
+    Math.abs(point.p - wanted) < Math.abs(best.p - wanted) ? point : best,
+  );
+
+/** Where a tie's leader lands: inside the band, on the label's own side of the
+ *  mean. The tallest column of a tied curve *is* the mean, so aiming at the
+ *  mode — which is what the decisive side does — would put the tie's figure on
+ *  the dashed mean line, the one confusion this annotation exists to end.
+ *  Stopping short of the mean also keeps the leader from crossing it. */
+const aimInBand = (
+  samples: readonly Sample[],
+  [low, high]: readonly [number, number],
+  mean: number,
+  fromRight: boolean,
+): Sample => {
+  const wanted = Math.min(
+    Math.max(fromRight ? (mean + high) / 2 : (low + mean) / 2, low),
+    high,
+  );
+  const inside = samples.filter((point) => point.p >= low && point.p <= high);
+  // A band narrow enough to fall between two columns of the grid catches none
+  // of them. The tip still has to sit inside the rect its caption names, so it
+  // keeps the wanted position and borrows the nearest column's height.
+  return inside.length > 0
+    ? nearestTo(wanted, inside)
+    : { p: wanted, density: nearestTo(wanted, samples).density };
+};
+
+/** The tallest point of the shaded tail — the one place guaranteed to have
+ *  area under it whatever the curve does. The middle of the tail's *width* is
+ *  not: on a near-tie the shaded sliver sits against the band and the width's
+ *  middle is far out where the curve has gone flat, so the line pointed at
+ *  blank paper. A band inside [0, 1] always leaves a tail, so the fallback is
+ *  only for a band that is not one — an empty region would leave nothing to
+ *  aim at and take the whole report down. */
+const aimInTail = (
+  tail: readonly Sample[],
+  bandEdge: number,
+  samples: readonly Sample[],
+): Sample =>
+  tail.length > 0
+    ? tail.reduce((best, point) => (point.density > best.density ? point : best))
+    : nearestTo(bandEdge, samples);
 
 /** Plain words on top, the technical name under them in small type. The name
  *  is there so a reader who knows the term can check our arithmetic, and under
@@ -93,12 +140,15 @@ export default function PosteriorChart({
   const mean = verdict.share_preferring_b;
   // The chart lives in B-space, so the leading side's share appears nowhere on
   // the plot without this — a reader at the dashed line had to compute 100 − 29
-  // themselves. Fixed A-then-B order, matching the lead.
-  const meanLabel =
-    `estimated split: ${formatPercent(1 - mean)} prefer A · ` +
-    `${formatPercent(mean)} prefer B`;
-  // Flipping the anchor keeps the label inside the viewBox wherever the mean sits.
-  const labelOnRight = mean <= 0.5;
+  // themselves. Fixed A-then-B order, matching the lead. Rounded as a pair
+  // rather than twice: an even panel printed "50% prefer A · 51% prefer B",
+  // which is the tie state contradicting itself in its own caption.
+  const [shareA, shareB] = formatSplit(mean);
+  const meanLabel = `estimated split: ${shareA} prefer A · ${shareB} prefer B`;
+  // Flipping the anchor keeps the label inside the viewBox wherever the mean
+  // sits. Strictly below, matching `leadingSide`'s `>= 0.5`: an exactly even
+  // panel leads B, and `<=` would have put the label over B's own tail.
+  const labelOnRight = mean < 0.5;
 
   // The lead says "N% likely people genuinely prefer this one". N is the mass of
   // this curve past the tie band, so it is drawable — and drawing it is the
@@ -122,8 +172,8 @@ export default function PosteriorChart({
           inTail: (p: number) => p <= ropeLow,
         };
 
-  // The grid spans a closed [0, 1] and the band lies inside it, so the tail
-  // always holds at least the plot edge — there is no empty case to guard.
+  // The grid spans a closed [0, 1], so any band inside it leaves the tail at
+  // least the plot edge; `aimInTail` carries the guard for a band that is not.
   const tail = points.filter((point) => side.inTail(point.p));
   // Walked from the band outward either way, so the polygon closes on the
   // baseline at the plot's edge rather than crossing itself.
@@ -132,24 +182,49 @@ export default function PosteriorChart({
     `M${x(side.bandEdge)},${BASELINE} ` +
     walk.map((point) => `L${x(point.p)},${y(point.density)}`).join(" ") +
     ` L${x(side.plotEdge)},${BASELINE} Z`;
-  // The tallest point of the shaded region, at half its height — the one place
-  // guaranteed to have area under it whatever the curve does. The middle of the
-  // tail's *width* is not: on a near-tie the shaded sliver sits against the band
-  // and the width's middle is far out where the curve has gone flat, so the
-  // line pointed at blank paper.
-  const target = walk.reduce(
-    (best, point) => (point.density > best.density ? point : best),
-    walk[0],
+  // One object, for the reason `side` is one: the region the leader points at,
+  // the caption under the figure and the sentence a screen reader hears all
+  // have to switch together, and separate ternaries are how one of them ends
+  // up saying the opposite of the other two.
+  //
+  // The annotation used to mark the tail in every state, so a tied panel wrote
+  // its largest, boldest number over its smallest region — 3% on a sliver at
+  // the plot's edge — while the 95% the lead is actually about sat in an
+  // unlabelled rectangle. The gesture is unchanged: one figure, on the region
+  // the lead is about.
+  const tie = isPracticalTie(verdict);
+  const annotationShare = formatPercent(
+    tie
+      ? verdict.probability_practical_tie
+      : verdict.probability_meaningfully_preferred[leading],
   );
+  const annotation = tie
+    ? {
+        target: aimInBand(points, verdict.rope, mean, labelOnRight),
+        // The legend's own plain words for the band. On a tie that has to be
+        // said rather than implied: the reader's default reading of a big
+        // number on this chart is "how far ahead the winner is", which is the
+        // opposite of what a tie means.
+        caption: "practically a tie",
+        spoken:
+          `${annotationShare} of the curve lies inside the tie zone: the ` +
+          `difference is credibly too small to matter.`,
+      }
+    : {
+        target: aimInTail(walk, side.bandEdge, points),
+        caption: "posterior probability",
+        spoken:
+          `${annotationShare} of the curve lies past the tie zone, on ` +
+          `${leading.toUpperCase()}'s side.`,
+      };
+
   // Opposite the mean, never on the leading side: the mass and the peak sit on
   // the same side of the band, so a label in the leader's own corner is written
   // straight across the tallest part of the curve. `labelOnRight` already picks
-  // the empty half for the mean's own label, for the same reason.
-  const massX = labelOnRight ? WIDTH - PAD - 6 : PAD + 6;
-  const massAnchor = labelOnRight ? ("end" as const) : ("start" as const);
-  const massShare = formatPercent(
-    verdict.probability_meaningfully_preferred[leading],
-  );
+  // the empty half for the mean's own label, for the same reason. A tie needs
+  // this more, not less — its annotated region sits directly under the peak.
+  const annotationX = labelOnRight ? WIDTH - PAD - 6 : PAD + 6;
+  const annotationAnchor = labelOnRight ? ("end" as const) : ("start" as const);
 
   // An interval end sits beside its bar, outside it — until the bar reaches the
   // plot's edge and there is no "outside" left. A decisive panel printed "%"
@@ -168,12 +243,11 @@ export default function PosteriorChart({
   // annotation draws on it. Without this the chart announces its title alone.
   const chartLabel =
     `Posterior distribution of the share preferring B. ` +
-    `The estimated split is ${formatPercent(1 - mean)} preferring A and ` +
-    `${formatPercent(mean)} preferring B, and B's true share sits between ` +
+    `The estimated split is ${shareA} preferring A and ` +
+    `${shareB} preferring B, and B's true share sits between ` +
     `${formatPercent(criLow)} and ${formatPercent(criHigh)} at ` +
     `${formatPercent(verdict.credible_mass)} credibility. ` +
-    `${massShare} of the curve lies past the tie zone, on ` +
-    `${leading.toUpperCase()}'s side.`;
+    annotation.spoken;
 
   return (
     <figure className="flex flex-col gap-2 rounded border border-zinc-200 p-4 dark:border-zinc-800">
@@ -214,6 +288,7 @@ export default function PosteriorChart({
           className="fill-none stroke-blue-600 dark:stroke-blue-500"
         />
         <line
+          data-mark="mean"
           x1={x(mean)}
           y1={PLOT_TOP}
           x2={x(mean)}
@@ -270,32 +345,32 @@ export default function PosteriorChart({
         </text>
         <line
           data-mark="leader"
-          x1={massX}
+          x1={annotationX}
           y1={68}
-          x2={x(target.p)}
-          y2={(y(target.density) + BASELINE) / 2}
+          x2={x(annotation.target.p)}
+          y2={(y(annotation.target.density) + BASELINE) / 2}
           strokeWidth={1}
           className="stroke-zinc-500 dark:stroke-zinc-400"
         />
         <text
-          x={massX}
+          x={annotationX}
           y={48}
-          textAnchor={massAnchor}
+          textAnchor={annotationAnchor}
           fontSize={16}
           fontWeight={600}
           className="fill-zinc-800 dark:fill-zinc-100"
         >
-          {massShare}
+          {annotationShare}
         </text>
         <text
-          x={massX}
+          x={annotationX}
           y={62}
-          textAnchor={massAnchor}
+          textAnchor={annotationAnchor}
           fontSize={9}
           letterSpacing={0.8}
           className="fill-zinc-500 uppercase dark:fill-zinc-400"
         >
-          posterior probability
+          {annotation.caption}
         </text>
       </svg>
       <div className="flex justify-between gap-4 text-xs text-zinc-500">

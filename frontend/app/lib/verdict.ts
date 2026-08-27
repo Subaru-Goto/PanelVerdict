@@ -12,3 +12,15 @@ import type { PanelVerdict } from "./api";
  *  asymmetric band would need this to split at its nearer edge instead. */
 export const leadingSide = (verdict: PanelVerdict): "a" | "b" =>
   verdict.share_preferring_b >= 0.5 ? "b" : "a";
+
+/** Whether "these two are equally good" is itself a credible finding: the tie's
+ *  own probability clearing the credibility everything else on the page is
+ *  stated at. 020 keeps it a flag, not a bucket — it adds a line to the lead
+ *  and moves the chart's annotation, it never replaces the probability.
+ *
+ *  Shared for the same reason as `leadingSide`: the lead's sentence and the
+ *  chart's annotation have to switch together, and a chart still writing the
+ *  leader's figure under a lead saying the two are equal is the report
+ *  disagreeing with itself. */
+export const isPracticalTie = (verdict: PanelVerdict): boolean =>
+  verdict.probability_practical_tie >= verdict.credible_mass;
