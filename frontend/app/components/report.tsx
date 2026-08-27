@@ -18,10 +18,7 @@ import { formatPercent, formatPoints } from "../lib/format";
 import AnalystDock from "./analyst-dock";
 import { useAnalyst, OPENING_REQUEST, type Analyst } from "../lib/use-analyst";
 import PosteriorChart from "./posterior-chart";
-
-/** Which variant the panel leans toward. B is only the reference, not the default. */
-const leadingSide = (verdict: PanelVerdict): "a" | "b" =>
-  verdict.share_preferring_b >= 0.5 ? "b" : "a";
+import { leadingSide } from "../lib/verdict";
 
 /** A tie is credible when its own probability clears the credibility everything
  *  else on the page is stated at. 020 keeps it a flag, not a bucket: it adds a
@@ -268,8 +265,8 @@ export default function Report({ result }: { result: EvaluateResponse }) {
         {verdict.detectable_gap !== null && (
           <>
             This panel can only detect leans of{" "}
-            {formatPoints(verdict.detectable_gap)} or more — a smaller true
-            lean cannot be told apart from an even split.{" "}
+            {formatPoints(verdict.detectable_gap)} or more — a smaller true lean
+            cannot be told apart from an even split.{" "}
           </>
         )}
         Shipping A would give up{" "}

@@ -59,7 +59,9 @@ describe("the lead", () => {
     renderReport();
 
     expect(
-      screen.getByText(/Wins too small to matter don’t count towards that number/),
+      screen.getByText(
+        /Wins too small to matter don’t count towards that number/,
+      ),
     ).toBeTruthy();
   });
 
@@ -94,14 +96,20 @@ describe("stat tiles", () => {
     }
   });
 
-  it("does not print the lead's percentage a second time", () => {
+  it("does not print the lead's percentage a second time in prose", () => {
     // "Every number appears exactly once on the page" — the tiles printed the
     // same posterior partitioned three ways.
-    renderReport();
+    //
+    // The chart is the one deliberate exception, and it is not a restatement:
+    // it draws the figure as the area it measures, which is what makes the mean
+    // and the probability distinguishable at all. So the count is taken over
+    // the prose, and a tile coming back still fails here.
+    const { container } = renderReport();
+    container.querySelector("figure")?.remove();
 
-    expect(screen.queryAllByText(/\b98%/)).toHaveLength(1);
+    const prose = container.textContent?.match(/\b98%/g) ?? [];
+    expect(prose).toHaveLength(1);
   });
-
 });
 
 describe("what the panel could and could not resolve", () => {
@@ -130,7 +138,9 @@ describe("the lead and the curve agree", () => {
       2001,
     );
     const mass = (keep: (p: number) => boolean): number =>
-      curve.filter((point) => keep(point.p)).reduce((sum, x) => sum + x.density, 0);
+      curve
+        .filter((point) => keep(point.p))
+        .reduce((sum, x) => sum + x.density, 0);
     // The curve runs over B's share, so A is meaningfully preferred where that
     // share sits below the band.
     const pastBand = mass((p) => p < verdict.rope[0]) / mass(() => true);
@@ -160,9 +170,7 @@ describe("a practical tie", () => {
   it("says the two are equally good, without dropping the probability", () => {
     renderReport(tied());
 
-    expect(
-      screen.getByText(/these two are equally good/i),
-    ).toBeTruthy();
+    expect(screen.getByText(/these two are equally good/i)).toBeTruthy();
     expect(
       screen.getByText("2% likely people genuinely prefer this one."),
     ).toBeTruthy();
@@ -176,31 +184,144 @@ describe("a practical tie", () => {
 });
 
 describe("posterior chart", () => {
+  const LEGEND = { name: /what each mark on the chart means/i };
+
   // The prototype principle, learned over three consecutive "what is this
-  // line?" questions: every visible mark carries an on-screen name and number,
-  // or it is deleted.
-  it("names every mark in the legend with its number", () => {
+  // line?" questions: every visible mark carries an on-screen name, or it is
+  // deleted. The number belongs on the plot, at the mark it measures; the
+  // legend says what the mark *means*, in plain words before the jargon.
+  it("reads as a glossary: plain words first, the technical name after", () => {
     renderReport();
 
-    expect(
-      screen.getByText(/^Mean — the estimated split: 29% prefer B\.$/),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/B’s true share sits between 17% and 42% \(95% sure\)/),
-    ).toBeTruthy();
-    expect(
-      screen.getByText(/tie zone: splits from 43% to 57% read as even/),
-    ).toBeTruthy();
+    const legend = screen.getByRole("list", LEGEND);
+    for (const [plain, technical] of [
+      ["Genuinely preferred", "(posterior probability)"],
+      ["Most likely", "(mean)"],
+      ["Plausible range", "(95% HDI)"],
+      ["Practically a tie", "(ROPE)"],
+    ]) {
+      expect(legend.textContent).toContain(plain);
+      expect(legend.textContent).toContain(technical);
+    }
   });
 
-  it("annotates the mean line on the chart in both directions", () => {
-    // The chart lives in B-space, so the leading side's share appeared nowhere
-    // on the plot — the reader had to compute 100 − 29 at the dashed line.
+  it("states no figure the plot already draws", () => {
+    // This slice's whole point. The legend used to restate the mean, both HDI
+    // ends, both ROPE ends, and the credible mass a second time inside its own
+    // sentence — every one of them drawn at its own mark a few pixels away.
     renderReport();
 
-    expect(
-      screen.getByText(/^estimated split: 71% prefer A · 29% prefer B/),
-    ).toBeTruthy();
+    const legend = screen.getByRole("list", LEGEND);
+    for (const drawn of ["29%", "17%", "42%", "43%", "57%"]) {
+      expect(legend.textContent).not.toContain(drawn);
+    }
+  });
+
+  it("tells a screen reader what the marks it cannot see say", () => {
+    // The plot is one `img`, so nothing inside it is announced. Everything the
+    // eye gets from the marks has to be in the label or it is not there at all.
+    renderReport();
+
+    const svg = screen.getByRole("img", { name: /posterior distribution/i });
+    const label = svg.getAttribute("aria-label") ?? "";
+    expect(label).toContain("centred on 29%");
+    expect(label).toContain("98% of the curve lies past the tie zone");
+    expect(label).toContain("on A's side.");
+  });
+
+  it("lands its leader line inside the area it points at", () => {
+    // A near-tie shades a thin sliver just past the band, and aiming at the
+    // middle of that sliver's *width* aims at where the curve has already gone
+    // flat — the line then points at blank paper. Checked geometrically
+    // against the shape actually rendered, not against the rule that made it.
+    const near = makeResponse();
+    const { container } = renderReport({
+      ...near,
+      verdict: {
+        ...near.verdict,
+        share_preferring_b: 0.52,
+        credible_interval: [0.41, 0.63],
+        probability_meaningfully_preferred: { a: 0.14, b: 0.22 },
+        probability_practical_tie: 0.64,
+      },
+      tally: { counts: { a: 24, b: 26 }, total: 50 },
+    });
+
+    const shape = (
+      (
+        container.querySelector('[data-mark="mass"]')?.getAttribute("d") ?? ""
+      ).match(/-?[\d.]+,-?[\d.]+/g) ?? []
+    ).map((pair) => {
+      const [px, py] = pair.split(",").map(Number);
+      return { x: px, y: py };
+    });
+    const leader = container.querySelector('[data-mark="leader"]');
+    const tipX = Number(leader?.getAttribute("x2"));
+    const tipY = Number(leader?.getAttribute("y2"));
+
+    // SVG y grows downward: the axis is the largest y, the area's tallest
+    // point the smallest. Being *technically* inside the shape is not the bar —
+    // a sliver a tenth of a unit tall passes that and still reads as blank
+    // paper — so the tip has to sit in the part of the area that has height.
+    const baseline = Math.max(...shape.map((point) => point.y));
+    const tallest = Math.min(...shape.map((point) => point.y));
+    expect(baseline - tipY).toBeGreaterThan((baseline - tallest) * 0.25);
+    // Inclusive: on a near-tie the tallest point of the tail *is* the band
+    // edge, so the tip legitimately sits on the region's boundary.
+    expect(tipX).toBeGreaterThanOrEqual(
+      Math.min(...shape.map((point) => point.x)),
+    );
+    expect(tipX).toBeLessThanOrEqual(
+      Math.max(...shape.map((point) => point.x)),
+    );
+  });
+
+  it("writes the probability onto the area that is the probability", () => {
+    // The author read the prototype and took the mean for the answer. Both are
+    // on this chart, and only one of them is the answer — so the answer is
+    // written on the region it measures, with a leader line into it.
+    renderReport();
+
+    const svg = screen.getByRole("img", { name: /posterior distribution/i });
+    expect(svg.textContent).toContain("98%");
+    expect(svg.textContent?.toLowerCase()).toContain("posterior probability");
+  });
+
+  it("shades the leader's tail, whichever side leads", () => {
+    // The mass past the band is the lead's number. In the fixture A leads, so
+    // it lies below the band; a B-leading verdict must move it above, or the
+    // chart would draw the loser's tail and label it with the winner's figure.
+    const shadedRange = (container: HTMLElement) => {
+      const shade = container.querySelector('[data-mark="mass"]');
+      const xs = (shade?.getAttribute("d") ?? "")
+        .split(/[ML]/)
+        .filter(Boolean)
+        .map((point) => Number(point.split(",")[0]));
+      return { low: Math.min(...xs), high: Math.max(...xs) };
+    };
+
+    const bandEdges = (container: HTMLElement) => {
+      const band = container.querySelector('[data-mark="rope"]');
+      const left = Number(band?.getAttribute("x"));
+      return { left, right: left + Number(band?.getAttribute("width")) };
+    };
+
+    const aLeads = renderReport().container;
+    expect(shadedRange(aLeads).high).toBeCloseTo(bandEdges(aLeads).left, 1);
+    cleanup();
+
+    const flipped = makeResponse();
+    const bLeads = renderReport({
+      ...flipped,
+      verdict: {
+        ...flipped.verdict,
+        share_preferring_b: 0.712,
+        credible_interval: [0.582, 0.827],
+        probability_meaningfully_preferred: { a: 0.0, b: 0.984 },
+      },
+      tally: { counts: { a: 14, b: 36 }, total: 50 },
+    }).container;
+    expect(shadedRange(bLeads).low).toBeCloseTo(bandEdges(bLeads).right, 1);
   });
 
   it("writes each edge's number at its mark on the chart", () => {
@@ -209,9 +330,19 @@ describe("posterior chart", () => {
     renderReport();
 
     const svg = screen.getByRole("img", { name: /posterior distribution/i });
-    for (const edge of ["17%", "42%", "43%", "57%"]) {
+    for (const edge of ["17%", "42%"]) {
       expect(svg.textContent).toContain(edge);
     }
+  });
+
+  it("annotates the mean line on the chart in both directions", () => {
+    // The chart lives in B-space, so the leading side's share appeared nowhere
+    // on the plot — the reader had to compute 100 - 29 at the dashed line.
+    renderReport();
+
+    expect(
+      screen.getByText(/^estimated split: 71% prefer A . 29% prefer B/),
+    ).toBeTruthy();
   });
 
   it("anchors the axis ends with the direction and the actual headline text", () => {
@@ -227,7 +358,9 @@ describe("posterior chart", () => {
     renderReport();
 
     expect(
-      screen.getByText(/how likely each possible split .* given these 50 votes/i),
+      screen.getByText(
+        /how likely each possible split .* given these 50 votes/i,
+      ),
     ).toBeTruthy();
   });
 });
@@ -258,7 +391,9 @@ describe("vote feed", () => {
     renderReport();
 
     expect(
-      screen.getByText(/synthetic panelists — sampled personas, not real people/),
+      screen.getByText(
+        /synthetic panelists — sampled personas, not real people/,
+      ),
     ).toBeTruthy();
   });
 });
@@ -319,7 +454,9 @@ describe("the opening summary", () => {
     expect(
       await screen.findByText("Most who picked A wanted a number."),
     ).toBeTruthy();
-    expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    expect(
+      (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls,
+    ).toHaveLength(1);
   });
 
   it("puts the summary above the panelists, who start collapsed", async () => {
