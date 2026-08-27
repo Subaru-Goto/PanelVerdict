@@ -201,6 +201,24 @@ def _fetch_personas(
     return [_persona_from_row(cast(PersonaRow, row)) for row in rows]
 
 
+async def _afetch_personas(
+    conn: psycopg.AsyncConnection, sql: str, params: Sequence[SqlParam]
+) -> list[Persona]:
+    """The request path's twin of `_fetch_personas`.
+
+    Three lines of cursor plumbing duplicated rather than one implementation
+    shared, because the alternative is worse: `_fetch_personas` also serves the
+    seed and the pool audit, which are scripts with no event loop, and making
+    them async to spare this would drag `asyncio.run` into two command-line
+    tools to save four lines. The row mapping — the part with judgment in it —
+    is `_persona_from_row`, and both call it.
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(sql, params)
+        rows = await cur.fetchall()
+    return [_persona_from_row(cast(PersonaRow, row)) for row in rows]
+
+
 def _read_personas(
     conn: psycopg.Connection,
     *,
@@ -226,8 +244,8 @@ def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona
     return _read_personas(conn, order="random", limit=limit)
 
 
-def retrieve_panel(
-    conn: psycopg.Connection,
+async def retrieve_panel(
+    conn: psycopg.AsyncConnection,
     query: TargetQuery,
     *,
     size: int,
@@ -283,7 +301,7 @@ def retrieve_panel(
     # Ties break on id, so the panel cannot vary run to run for a reason the customer
     # could not see. Only an md5 collision could reach it, but the ordering has to be
     # total for `LIMIT` to mean anything.
-    return _fetch_personas(
+    return await _afetch_personas(
         conn,
         f"SELECT {_PERSONA_COLUMNS} FROM personas "
         f"WHERE {' AND '.join(conditions)} "
@@ -292,8 +310,8 @@ def retrieve_panel(
     )
 
 
-def nearest_panelists(
-    conn: psycopg.Connection,
+async def nearest_panelists(
+    conn: psycopg.AsyncConnection,
     *,
     embedding: Sequence[float],
     panel_ids: Sequence[str],
@@ -308,7 +326,7 @@ def nearest_panelists(
     """
     # `<=>` is cosine distance; the index opclass in schema.sql must agree
     # (vector_cosine_ops), or the planner quietly ignores the index.
-    return _fetch_personas(
+    return await _afetch_personas(
         conn,
         f"SELECT {_PERSONA_COLUMNS} FROM personas "
         "WHERE id = ANY(%s) "
@@ -333,7 +351,9 @@ class VoteRow(TypedDict):
 _VOTE_COLUMNS = ", ".join(VoteRow.__annotations__)
 
 
-def store_votes(conn: psycopg.Connection, votes: Mapping[str, VoteRecord]) -> int:
+async def store_votes(
+    conn: psycopg.AsyncConnection, votes: Mapping[str, VoteRecord]
+) -> int:
     """Append newly cast votes to the ledger; return how many were new.
 
     `ON CONFLICT DO NOTHING`, never update: votes are paid model output, and the
@@ -342,12 +362,12 @@ def store_votes(conn: psycopg.Connection, votes: Mapping[str, VoteRecord]) -> in
     the same answer — regrettable, but not a reason to rewrite history.
     """
     written = 0
-    with conn.transaction():
+    async with conn.transaction():
         for fingerprint, record in votes.items():
             # Columns spelled literally, not joined from `VoteRow`: the values
             # below are hand-ordered, and every column is text, so a reordered
             # TypedDict would land them in the wrong columns without an error.
-            result = conn.execute(
+            result = await conn.execute(
                 """
                 INSERT INTO votes (request_fingerprint, persona_id, test_id,
                     chosen_variant_id, presentation_order, reason)
@@ -367,8 +387,8 @@ def store_votes(conn: psycopg.Connection, votes: Mapping[str, VoteRecord]) -> in
     return written
 
 
-def load_votes(
-    conn: psycopg.Connection, fingerprints: Sequence[str]
+async def load_votes(
+    conn: psycopg.AsyncConnection, fingerprints: Sequence[str]
 ) -> dict[str, VoteRecord]:
     """The cached votes among `fingerprints`, keyed back on the fingerprint.
 
@@ -377,11 +397,12 @@ def load_votes(
     """
     if not fingerprints:
         return {}
-    with conn.cursor(row_factory=dict_row) as cur:
-        rows = cur.execute(
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
             f"SELECT {_VOTE_COLUMNS} FROM votes WHERE request_fingerprint = ANY(%s)",
             [list(fingerprints)],
-        ).fetchall()
+        )
+        rows = await cur.fetchall()
     return {
         row["request_fingerprint"]: VoteRecord(
             persona_id=row["persona_id"],

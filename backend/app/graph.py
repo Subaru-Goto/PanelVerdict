@@ -31,6 +31,8 @@ Tickets: 076/#166 (this graph), 067 (why hand-authored), 077/#167 (the gate's
 interface), 094/#200 (enacted context).
 """
 
+import asyncio
+
 from typing import Literal, TypedDict
 
 import psycopg
@@ -161,7 +163,7 @@ def _preview(state: EvaluateState) -> PanelPreview:
 
 def build_evaluate_graph(
     *,
-    conn: psycopg.Connection,
+    conn: psycopg.AsyncConnection,
     llm: PanelLLM,
     screener: Screener | None,
     generator: RolePlayGenerator,
@@ -211,7 +213,7 @@ def build_evaluate_graph(
             raise RolePlayRefused(draft.refusal)
         return {"instruction": draft.instruction}
 
-    def select(state: EvaluateState) -> EvaluateState:
+    async def select(state: EvaluateState) -> EvaluateState:
         """Draw the panel from the settled reading. Pure SQL, nothing paid.
 
         The query arrives settled — built from the controls at the endpoint, or
@@ -221,7 +223,9 @@ def build_evaluate_graph(
         """
         settled = state["query"]
         target = state.get("edited") or settled
-        panel = retrieve_panel(conn, target, size=state["size"], seed=PANEL_SEED)
+        panel = await retrieve_panel(
+            conn, target, size=state["size"], seed=PANEL_SEED
+        )
         if not panel and state.get("panel") is None:
             # Nothing to show and nothing to approve: the run never starts.
             raise EmptyPanel(
@@ -303,15 +307,19 @@ def build_evaluate_graph(
             return {"decision": "adjust", "refused": checked.refusal}
         return {"instruction": checked.instruction, "refused": None}
 
-    def vote(state: EvaluateState) -> EvaluateState:
+    async def vote(state: EvaluateState) -> EvaluateState:
         """The one paid node. The vote loop itself is unchanged.
 
         The headlines are checked here because this is where they first reach a
         model, and before the panel is asked, so refused text costs no votes.
         """
-        screen_inputs(screener, list(state["variants"].values()))
+        # A model call, so it goes to a thread: this node is async now, and a
+        # blocking screen here would stall the loop before a single vote.
+        await asyncio.to_thread(
+            screen_inputs, screener, list(state["variants"].values())
+        )
         return {
-            "collected": run_vote_loop(
+            "collected": await run_vote_loop(
                 conn,
                 state["panel"],
                 variants=state["variants"],

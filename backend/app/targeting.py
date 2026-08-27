@@ -401,8 +401,8 @@ def shortfall_notices(panel: list[Persona], size: int) -> tuple[Notice, ...]:
     )
 
 
-def select_panel(
-    conn: psycopg.Connection,
+async def select_panel(
+    conn: psycopg.AsyncConnection,
     description: str,
     *,
     size: int,
@@ -423,7 +423,7 @@ def select_panel(
     query = resolve_target(
         translator.translate(description=description) if described else TargetRequest()
     )
-    panel = retrieve_panel(conn, query, size=size, seed=seed)
+    panel = await retrieve_panel(conn, query, size=size, seed=seed)
     # Said here rather than in `resolve_target`, which sees only the request: a
     # description of "anyone" also resolves to an empty request, and telling that
     # customer no audience was described would be false. Only this layer knows

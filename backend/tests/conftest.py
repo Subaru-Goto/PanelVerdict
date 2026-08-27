@@ -21,6 +21,8 @@ import psycopg  # noqa: E402
 import pytest  # noqa: E402
 from testcontainers.postgres import PostgresContainer  # noqa: E402
 
+from pgvector.psycopg import register_vector_async  # noqa: E402
+
 from app.persistence import prepare_connection  # noqa: E402
 from app.vote import VoteResponse  # noqa: E402
 from tests.factories import voted  # noqa: E402
@@ -56,6 +58,34 @@ def pg_url():
     # pgvector image, not stock postgres — the stock image lacks the extension.
     with PostgresContainer("pgvector/pgvector:pg16") as pg:
         yield pg.get_connection_url(driver=None)
+
+
+@pytest.fixture
+def anyio_backend():
+    """One backend, asyncio — the app runs under uvicorn, and testing a second
+    event-loop implementation would test anyio rather than this code."""
+    return "asyncio"
+
+
+@pytest.fixture
+async def aconn(pg_url):
+    """The async twin of `conn`, for the request path 111/#240 converted.
+
+    Same preparation, and deliberately the same truncation: a test that reads
+    through the async connection and writes through the sync one is testing two
+    sessions, which is a different thing from what it says it tests. Schema
+    setup stays sync — `prepare_connection` is the seed's, and a script has no
+    event loop.
+    """
+    with psycopg.connect(pg_url) as setup:
+        prepare_connection(setup)
+        setup.execute(
+            "TRUNCATE personas, votes, request_ledger, spend_ledger, corpus_chunks CASCADE"
+        )
+        setup.commit()
+    async with await psycopg.AsyncConnection.connect(pg_url) as connection:
+        await register_vector_async(connection)
+        yield connection
 
 
 @pytest.fixture
