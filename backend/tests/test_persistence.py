@@ -132,7 +132,8 @@ def test_persist_pool_counts_only_new_writes_on_rerun(conn):
 _EVERYONE = resolve_target(TargetRequest())
 
 
-def test_retrieval_filters_on_country(conn):
+@pytest.mark.anyio
+async def test_retrieval_filters_on_country(conn, aconn):
     persist_pool(
         conn,
         [
@@ -141,28 +142,30 @@ def test_retrieval_filters_on_country(conn):
         ],
     )
 
-    panel = retrieve_panel(
-        conn, _EVERYONE.model_copy(update={"countries": (Locale.JP,)}), size=10, seed=0
+    panel = await retrieve_panel(
+        aconn, _EVERYONE.model_copy(update={"countries": (Locale.JP,)}), size=10, seed=0
     )
 
     assert [p.id for p in panel] == ["JP-00000"]
 
 
-def test_no_coverage_retrieves_nobody(conn):
+@pytest.mark.anyio
+async def test_no_coverage_retrieves_nobody(conn, aconn):
     """An empty `countries` is the ladder's bottom rung, not a missing filter. The
     dangerous failure would be reading it as "no country constraint" and returning a
     random panel that looks like a matched one."""
     persist_pool(conn, [make_assembled(make_persona(id_="US-00000"))])
 
     assert (
-        retrieve_panel(
-            conn, _EVERYONE.model_copy(update={"countries": ()}), size=10, seed=0
+        await retrieve_panel(
+            aconn, _EVERYONE.model_copy(update={"countries": ()}), size=10, seed=0
         )
         == []
     )
 
 
-def test_retrieval_filters_on_the_age_span(conn):
+@pytest.mark.anyio
+async def test_retrieval_filters_on_the_age_span(conn, aconn):
     persist_pool(
         conn,
         [
@@ -173,8 +176,8 @@ def test_retrieval_filters_on_the_age_span(conn):
         ],
     )
 
-    panel = retrieve_panel(
-        conn,
+    panel = await retrieve_panel(
+        aconn,
         _EVERYONE.model_copy(update={"min_age": 30, "max_age": 39}),
         size=10,
         seed=0,
@@ -183,12 +186,13 @@ def test_retrieval_filters_on_the_age_span(conn):
     assert sorted(p.age for p in panel) == [30, 39]
 
 
-def test_an_inverted_age_span_retrieves_nobody(conn):
+@pytest.mark.anyio
+async def test_an_inverted_age_span_retrieves_nobody(conn, aconn):
     """What "under 18" clamps to. It has to match nobody rather than everybody."""
     persist_pool(conn, [make_assembled(make_persona(id_="US-00000", age=34))])
 
-    panel = retrieve_panel(
-        conn,
+    panel = await retrieve_panel(
+        aconn,
         _EVERYONE.model_copy(update={"min_age": 18, "max_age": 17}),
         size=10,
         seed=0,
@@ -197,7 +201,8 @@ def test_an_inverted_age_span_retrieves_nobody(conn):
     assert panel == []
 
 
-def test_retrieval_filters_on_gender_income_and_education(conn):
+@pytest.mark.anyio
+async def test_retrieval_filters_on_gender_income_and_education(conn, aconn):
     wanted = make_persona(
         id_="US-00000", gender="male", income_quintile=5, education="secondary"
     )
@@ -220,8 +225,8 @@ def test_retrieval_filters_on_gender_income_and_education(conn):
         ],
     )
 
-    panel = retrieve_panel(
-        conn,
+    panel = await retrieve_panel(
+        aconn,
         _EVERYONE.model_copy(
             update={
                 "gender": "male",
@@ -248,7 +253,8 @@ def _requesting(trait: TraitName, level: TraitLevel) -> TargetQuery:
     )
 
 
-def test_a_requested_trait_level_filters_rather_than_ranks(conn):
+@pytest.mark.anyio
+async def test_a_requested_trait_level_filters_rather_than_ranks(conn, aconn):
     """A target asking for anxious people gets only anxious people, not the pool sorted
     by how anxious it is. Ranking would return the extreme tail, and skew the panel on
     the four traits nobody asked about."""
@@ -261,14 +267,15 @@ def test_a_requested_trait_level_filters_rather_than_ranks(conn):
         ],
     )
 
-    panel = retrieve_panel(
-        conn, _requesting("neuroticism", TraitLevel.HIGH), size=10, seed=0
+    panel = await retrieve_panel(
+        aconn, _requesting("neuroticism", TraitLevel.HIGH), size=10, seed=0
     )
 
     assert [p.id for p in panel] == ["US-00000"]
 
 
-def test_a_requested_level_admits_the_levels_beyond_it(conn):
+@pytest.mark.anyio
+async def test_a_requested_level_admits_the_levels_beyond_it(conn, aconn):
     """Asking for cautious people must not exclude the most cautious of them, so a
     `very_high` score is inside `high`'s bound rather than past it."""
     persist_pool(
@@ -279,14 +286,15 @@ def test_a_requested_level_admits_the_levels_beyond_it(conn):
         ],
     )
 
-    panel = retrieve_panel(
-        conn, _requesting("openness", TraitLevel.HIGH), size=10, seed=0
+    panel = await retrieve_panel(
+        aconn, _requesting("openness", TraitLevel.HIGH), size=10, seed=0
     )
 
     assert [p.id for p in panel] == ["US-00000", "US-00001"]
 
 
-def test_a_requested_middle_level_excludes_both_tails(conn):
+@pytest.mark.anyio
+async def test_a_requested_middle_level_excludes_both_tails(conn, aconn):
     """`medium` is the one level that is a band rather than a direction, so it needs
     two bounds — one of them alone would admit half the pool."""
     persist_pool(
@@ -298,8 +306,8 @@ def test_a_requested_middle_level_excludes_both_tails(conn):
         ],
     )
 
-    panel = retrieve_panel(
-        conn, _requesting("extraversion", TraitLevel.MEDIUM), size=10, seed=0
+    panel = await retrieve_panel(
+        aconn, _requesting("extraversion", TraitLevel.MEDIUM), size=10, seed=0
     )
 
     assert [p.id for p in panel] == ["US-00001"]
@@ -314,8 +322,9 @@ def test_a_requested_middle_level_excludes_both_tails(conn):
         (-1.5, TraitLevel.LOW, TraitLevel.VERY_LOW),
     ],
 )
-def test_a_score_on_a_boundary_matches_the_level_it_renders_as(
-    conn, score, admits, refuses
+@pytest.mark.anyio
+async def test_a_score_on_a_boundary_matches_the_level_it_renders_as(
+    conn, aconn, score, admits, refuses
 ):
     """The one thing a Python check of the bounds cannot establish: that Postgres
     compares them the way the table means. Every boundary belongs to the inner band, so
@@ -324,11 +333,15 @@ def test_a_score_on_a_boundary_matches_the_level_it_renders_as(
     """
     persist_pool(conn, [_with_trait("openness", score, "US-00000")])
 
-    assert retrieve_panel(conn, _requesting("openness", admits), size=10, seed=0)
-    assert retrieve_panel(conn, _requesting("openness", refuses), size=10, seed=0) == []
+    assert await retrieve_panel(aconn, _requesting("openness", admits), size=10, seed=0)
+    assert (
+        await retrieve_panel(aconn, _requesting("openness", refuses), size=10, seed=0)
+        == []
+    )
 
 
-def test_two_requested_traits_both_have_to_match(conn):
+@pytest.mark.anyio
+async def test_two_requested_traits_both_have_to_match(conn, aconn):
     """Each trait multiplies the filter, which is where a thin panel comes from —
     reporting that is the caller's job, so retrieval only has to be exact."""
     persist_pool(
@@ -357,10 +370,13 @@ def test_two_requested_traits_both_have_to_match(conn):
         }
     )
 
-    assert [p.id for p in retrieve_panel(conn, query, size=10, seed=0)] == ["US-00000"]
+    assert [p.id for p in await retrieve_panel(aconn, query, size=10, seed=0)] == [
+        "US-00000"
+    ]
 
 
-def test_a_trait_filter_still_draws_a_sample_rather_than_a_ranking(conn):
+@pytest.mark.anyio
+async def test_a_trait_filter_still_draws_a_sample_rather_than_a_ranking(conn, aconn):
     """Nothing is ranked, so the seed reaches a target that names a temperament too.
     That is what makes two independent draws of one target possible, and with them the
     sample-stability check."""
@@ -371,7 +387,7 @@ def test_a_trait_filter_still_draws_a_sample_rather_than_a_ranking(conn):
     query = _requesting("openness", TraitLevel.HIGH)
 
     drawn = {
-        tuple(p.id for p in retrieve_panel(conn, query, size=4, seed=seed))
+        tuple(p.id for p in await retrieve_panel(aconn, query, size=4, seed=seed))
         for seed in range(5)
     }
 
@@ -385,23 +401,25 @@ def _numbered_pool(conn: psycopg.Connection, count: int) -> None:
     )
 
 
-def test_a_target_with_no_disposition_draws_a_reproducible_sample(conn):
+@pytest.mark.anyio
+async def test_a_target_with_no_disposition_draws_a_reproducible_sample(conn, aconn):
     _numbered_pool(conn, 10)
 
-    first = [p.id for p in retrieve_panel(conn, _EVERYONE, size=4, seed=7)]
-    again = [p.id for p in retrieve_panel(conn, _EVERYONE, size=4, seed=7)]
+    first = [p.id for p in await retrieve_panel(aconn, _EVERYONE, size=4, seed=7)]
+    again = [p.id for p in await retrieve_panel(aconn, _EVERYONE, size=4, seed=7)]
 
     assert first == again
     assert len(first) == 4
 
 
-def test_the_seed_chooses_who_is_sampled(conn):
+@pytest.mark.anyio
+async def test_the_seed_chooses_who_is_sampled(conn, aconn):
     """Reproducible must not mean fixed: two tests of the same target should be able
     to draw different panels, which is what makes sample-stability measurable."""
     _numbered_pool(conn, 10)
 
     drawn = {
-        tuple(p.id for p in retrieve_panel(conn, _EVERYONE, size=4, seed=seed))
+        tuple(p.id for p in await retrieve_panel(aconn, _EVERYONE, size=4, seed=seed))
         for seed in range(5)
     }
 
@@ -410,22 +428,25 @@ def test_the_seed_chooses_who_is_sampled(conn):
     assert drawn != {tuple(f"US-{i:05d}" for i in range(4))}
 
 
-def test_a_panel_larger_than_the_pool_returns_what_exists(conn):
+@pytest.mark.anyio
+async def test_a_panel_larger_than_the_pool_returns_what_exists(conn, aconn):
     """Which is what makes the shortfall reportable rather than an error."""
     _numbered_pool(conn, 3)
 
-    assert len(retrieve_panel(conn, _EVERYONE, size=200, seed=0)) == 3
+    assert len(await retrieve_panel(aconn, _EVERYONE, size=200, seed=0)) == 3
 
 
-def test_a_panel_size_below_one_is_rejected(conn):
+@pytest.mark.anyio
+async def test_a_panel_size_below_one_is_rejected(conn, aconn):
     with pytest.raises(ValueError):
-        retrieve_panel(conn, _EVERYONE, size=0, seed=0)
+        await retrieve_panel(aconn, _EVERYONE, size=0, seed=0)
 
 
-def test_size_caps_the_panel(conn):
+@pytest.mark.anyio
+async def test_size_caps_the_panel(conn, aconn):
     _numbered_pool(conn, 10)
 
-    assert len(retrieve_panel(conn, _EVERYONE, size=4, seed=0)) == 4
+    assert len(await retrieve_panel(aconn, _EVERYONE, size=4, seed=0)) == 4
 
 
 def test_every_trait_a_target_can_name_is_a_column(conn):
@@ -443,7 +464,8 @@ def test_every_trait_a_target_can_name_is_a_column(conn):
     assert set(get_args(TraitName)) <= columns
 
 
-def test_search_returns_panelists_nearest_first(conn):
+@pytest.mark.anyio
+async def test_search_returns_panelists_nearest_first(conn, aconn):
     # Similarity deliberately disagrees with id order, so an ORDER BY id (or
     # insertion order) accidentally passing is impossible.
     persist_pool(
@@ -455,8 +477,8 @@ def test_search_returns_panelists_nearest_first(conn):
         ],
     )
 
-    found = nearest_panelists(
-        conn,
+    found = await nearest_panelists(
+        aconn,
         embedding=pointing(0),
         panel_ids=["US-00000", "US-00001", "US-00002"],
         limit=10,
@@ -465,7 +487,8 @@ def test_search_returns_panelists_nearest_first(conn):
     assert [p.id for p in found] == ["US-00002", "US-00000", "US-00001"]
 
 
-def test_search_never_returns_personas_outside_the_panel(conn):
+@pytest.mark.anyio
+async def test_search_never_returns_personas_outside_the_panel(conn, aconn):
     """The decided scope: the analyst talks about this report's voters.
     The outsider's embedding is IDENTICAL to the query — the strongest possible
     match still loses to the panel filter, so ranking can never widen scope."""
@@ -477,22 +500,27 @@ def test_search_never_returns_personas_outside_the_panel(conn):
         ],
     )
 
-    found = nearest_panelists(
-        conn, embedding=pointing(0), panel_ids=["US-00001"], limit=10
+    found = await nearest_panelists(
+        aconn, embedding=pointing(0), panel_ids=["US-00001"], limit=10
     )
 
     assert [p.id for p in found] == ["US-00001"]
 
 
-def test_an_empty_panel_finds_nobody(conn):
+@pytest.mark.anyio
+async def test_an_empty_panel_finds_nobody(conn, aconn):
     """The same dangerous inversion test_no_coverage_retrieves_nobody pins for
     targeting: no ids must mean nobody, never "no filter, search everyone"."""
     persist_pool(conn, [make_assembled(make_persona(id_="US-00000"))])
 
-    assert nearest_panelists(conn, embedding=pointing(0), panel_ids=[], limit=10) == []
+    assert (
+        await nearest_panelists(aconn, embedding=pointing(0), panel_ids=[], limit=10)
+        == []
+    )
 
 
-def test_limit_caps_the_search_and_keeps_the_nearest(conn):
+@pytest.mark.anyio
+async def test_limit_caps_the_search_and_keeps_the_nearest(conn, aconn):
     """A cap has to drop the far end, not an arbitrary subset — otherwise the
     analyst's "most similar panelists" is a lie at exactly panel size."""
     persist_pool(
@@ -505,7 +533,9 @@ def test_limit_caps_the_search_and_keeps_the_nearest(conn):
     )
     panel = ["US-00000", "US-00001", "US-00002"]
 
-    found = nearest_panelists(conn, embedding=pointing(0), panel_ids=panel, limit=2)
+    found = await nearest_panelists(
+        aconn, embedding=pointing(0), panel_ids=panel, limit=2
+    )
 
     assert [p.id for p in found] == ["US-00001", "US-00002"]
 
@@ -520,29 +550,32 @@ def _vote_record(reason: str = "liked it") -> VoteRecord:
     )
 
 
-def test_a_stored_vote_loads_back_whole(conn):
+@pytest.mark.anyio
+async def test_a_stored_vote_loads_back_whole(conn, aconn):
     record = _vote_record()
-    assert store_votes(conn, {"fp1": record}) == 1
+    assert await store_votes(aconn, {"fp1": record}) == 1
 
-    assert load_votes(conn, ["fp1"]) == {"fp1": record}
-
-
-def test_load_returns_only_the_fingerprints_that_exist(conn):
-    store_votes(conn, {"fp1": _vote_record()})
-
-    assert load_votes(conn, ["fp1", "fp-unknown"]).keys() == {"fp1"}
-    assert load_votes(conn, []) == {}
+    assert await load_votes(aconn, ["fp1"]) == {"fp1": record}
 
 
-def test_the_ledger_is_append_only(conn):
+@pytest.mark.anyio
+async def test_load_returns_only_the_fingerprints_that_exist(conn, aconn):
+    await store_votes(aconn, {"fp1": _vote_record()})
+
+    assert (await load_votes(aconn, ["fp1", "fp-unknown"])).keys() == {"fp1"}
+    assert await load_votes(aconn, []) == {}
+
+
+@pytest.mark.anyio
+async def test_the_ledger_is_append_only(conn, aconn):
     """Votes are paid model output — the one table not regenerable from a seed
     by the ledger's append-only rule. A colliding write must leave the original
     untouched, never
     replace it: the first vote under a fingerprint is THE vote for that question."""
-    store_votes(conn, {"fp1": _vote_record(reason="first")})
+    await store_votes(aconn, {"fp1": _vote_record(reason="first")})
 
-    assert store_votes(conn, {"fp1": _vote_record(reason="second")}) == 0
-    assert load_votes(conn, ["fp1"])["fp1"].reason == "first"
+    assert await store_votes(aconn, {"fp1": _vote_record(reason="second")}) == 0
+    assert (await load_votes(aconn, ["fp1"]))["fp1"].reason == "first"
 
 
 def test_every_table_denies_the_data_api_by_default(conn) -> None:

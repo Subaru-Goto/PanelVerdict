@@ -510,7 +510,7 @@ async def stream_analyst(
         return event.model_dump_json() + "\n"
 
     try:
-        stream = agent.astream_events(
+        stream = await agent.astream_events(
             {"messages": [HumanMessage(content=message)]},
             {"configurable": {"thread_id": thread_id}, "recursion_limit": limit},
             version="v3",

@@ -690,11 +690,14 @@ class StubTranslator:
 _JAPAN = TargetRequest(regions=[RequestedRegion(label="Japan", country_code="JP")])
 
 
-def test_select_panel_passes_the_description_to_the_translator(conn) -> None:
+@pytest.mark.anyio
+async def test_select_panel_passes_the_description_to_the_translator(
+    conn, aconn
+) -> None:
     translator = StubTranslator(_JAPAN)
 
-    select_panel(
-        conn,
+    await select_panel(
+        aconn,
         "Japanese homeowners",
         size=5,
         translator=translator,
@@ -703,7 +706,8 @@ def test_select_panel_passes_the_description_to_the_translator(conn) -> None:
     assert translator.descriptions == ["Japanese homeowners"]
 
 
-def test_select_panel_retrieves_only_matching_personas(conn) -> None:
+@pytest.mark.anyio
+async def test_select_panel_retrieves_only_matching_personas(conn, aconn) -> None:
     persist_pool(
         conn,
         [
@@ -712,8 +716,8 @@ def test_select_panel_retrieves_only_matching_personas(conn) -> None:
         ],
     )
 
-    selection = select_panel(
-        conn,
+    selection = await select_panel(
+        aconn,
         "Japan",
         size=5,
         translator=StubTranslator(_JAPAN),
@@ -722,7 +726,10 @@ def test_select_panel_retrieves_only_matching_personas(conn) -> None:
     assert [p.id for p in selection.panel] == ["JP-00000"]
 
 
-def test_a_temperament_target_reaches_the_pool_as_a_trait_filter(conn) -> None:
+@pytest.mark.anyio
+async def test_a_temperament_target_reaches_the_pool_as_a_trait_filter(
+    conn, aconn
+) -> None:
     """The whole path in one call: the description's temperament decides who is
     eligible, so a persona at the wrong level is not in the panel at any rank."""
     persist_pool(
@@ -743,8 +750,8 @@ def test_a_temperament_target_reaches_the_pool_as_a_trait_filter(conn) -> None:
         ],
     )
 
-    selection = select_panel(
-        conn,
+    selection = await select_panel(
+        aconn,
         "anxious Japanese",
         size=5,
         translator=StubTranslator(request),
@@ -753,7 +760,10 @@ def test_a_temperament_target_reaches_the_pool_as_a_trait_filter(conn) -> None:
     assert [p.id for p in selection.panel] == ["JP-00000"]
 
 
-def test_an_unservable_region_still_draws_a_panel_from_the_whole_pool(conn) -> None:
+@pytest.mark.anyio
+async def test_an_unservable_region_still_draws_a_panel_from_the_whole_pool(
+    conn, aconn
+) -> None:
     """The temperament half of a target is servable even when the geography is not, so
     the fallback has a real panel to filter rather than an empty one."""
     persist_pool(
@@ -769,8 +779,8 @@ def test_an_unservable_region_still_draws_a_panel_from_the_whole_pool(conn) -> N
         ],
     )
 
-    selection = select_panel(
-        conn,
+    selection = await select_panel(
+        aconn,
         "anxious Nigerians",
         size=5,
         translator=StubTranslator(request),
@@ -780,7 +790,8 @@ def test_an_unservable_region_still_draws_a_panel_from_the_whole_pool(conn) -> N
     assert any(n.severity == "warning" for n in selection.notices)
 
 
-def test_the_selection_carries_the_query_s_own_notices(conn) -> None:
+@pytest.mark.anyio
+async def test_the_selection_carries_the_query_s_own_notices(conn, aconn) -> None:
     """One place to read notices from, so a caller cannot show the retrieval's and
     forget the translation's."""
     persist_pool(conn, [make_assembled(make_persona(id_="JP-00000", country="JP"))])
@@ -789,8 +800,8 @@ def test_the_selection_carries_the_query_s_own_notices(conn) -> None:
         unmapped=["gamers"],
     )
 
-    selection = select_panel(
-        conn,
+    selection = await select_panel(
+        aconn,
         "Japanese gamers",
         size=1,
         translator=StubTranslator(request),
@@ -800,7 +811,8 @@ def test_the_selection_carries_the_query_s_own_notices(conn) -> None:
     assert selection.notices[: len(selection.query.notices)] == selection.query.notices
 
 
-def test_a_thin_panel_is_reported_as_a_shortfall(conn) -> None:
+@pytest.mark.anyio
+async def test_a_thin_panel_is_reported_as_a_shortfall(conn, aconn) -> None:
     """At n=200 this changes what the verdict can say, so it cannot be silent."""
     persist_pool(
         conn,
@@ -810,8 +822,8 @@ def test_a_thin_panel_is_reported_as_a_shortfall(conn) -> None:
         ],
     )
 
-    selection = select_panel(
-        conn,
+    selection = await select_panel(
+        aconn,
         "Japan",
         size=200,
         translator=StubTranslator(_JAPAN),
@@ -822,7 +834,8 @@ def test_a_thin_panel_is_reported_as_a_shortfall(conn) -> None:
     assert "200" in shortfall
 
 
-def test_a_full_panel_reports_no_shortfall(conn) -> None:
+@pytest.mark.anyio
+async def test_a_full_panel_reports_no_shortfall(conn, aconn) -> None:
     persist_pool(
         conn,
         [
@@ -831,8 +844,8 @@ def test_a_full_panel_reports_no_shortfall(conn) -> None:
         ],
     )
 
-    selection = select_panel(
-        conn,
+    selection = await select_panel(
+        aconn,
         "Japan",
         size=3,
         translator=StubTranslator(_JAPAN),
@@ -841,7 +854,8 @@ def test_a_full_panel_reports_no_shortfall(conn) -> None:
     assert selection.notices == selection.query.notices
 
 
-def test_the_same_target_draws_the_same_panel_twice(conn) -> None:
+@pytest.mark.anyio
+async def test_the_same_target_draws_the_same_panel_twice(conn, aconn) -> None:
     """Reproducibility at the level a customer sees it: one target, one panel."""
     persist_pool(
         conn,
@@ -851,18 +865,20 @@ def test_the_same_target_draws_the_same_panel_twice(conn) -> None:
         ],
     )
 
-    def draw() -> list[str]:
+    async def draw() -> list[str]:
         return [
             p.id
-            for p in select_panel(
-                conn,
-                "Japan",
-                size=5,
-                translator=StubTranslator(_JAPAN),
+            for p in (
+                await select_panel(
+                    aconn,
+                    "Japan",
+                    size=5,
+                    translator=StubTranslator(_JAPAN),
+                )
             ).panel
         ]
 
-    assert draw() == draw()
+    assert await draw() == await draw()
 
 
 def test_the_countries_the_panel_came_from_are_always_stated() -> None:
@@ -882,24 +898,26 @@ def test_the_countries_the_panel_came_from_are_always_stated() -> None:
     assert [m for m in _readings(query) if "United States" in m]
 
 
-def test_a_blank_target_never_reaches_the_translator(conn) -> None:
+@pytest.mark.anyio
+async def test_a_blank_target_never_reaches_the_translator(conn, aconn) -> None:
     """The one paid step in selection, skipped when there is nothing to
     translate: an empty description already resolves to the whole pool by the
     documented path, so buying the model's opinion of "" spends money on a
     result that was never in doubt."""
     translator = StubTranslator(_JAPAN)
 
-    selection = select_panel(conn, "   ", size=5, translator=translator)
+    selection = await select_panel(aconn, "   ", size=5, translator=translator)
 
     assert translator.descriptions == []
     assert selection.query.countries == tuple(Locale)
     assert selection.query.coverage == "requested"
 
 
-def test_an_untargeted_run_says_so(conn) -> None:
+@pytest.mark.anyio
+async def test_an_untargeted_run_says_so(conn, aconn) -> None:
     """A blank target resolves to every country, which is indistinguishable on
     the report from a target that asked for everywhere — and the report's job
     is telling what was asked apart from what was served."""
-    selection = select_panel(conn, "", size=5, translator=StubTranslator(_JAPAN))
+    selection = await select_panel(aconn, "", size=5, translator=StubTranslator(_JAPAN))
 
     assert any("no audience" in notice.message.lower() for notice in selection.notices)

@@ -437,14 +437,10 @@ async def run_panel_test(
     the controls and never translates (094), so this is the one caller the
     translator has left.
     """
-    selection = await select_panel(
-        conn, description, size=size, translator=translator
-    )
+    selection = await select_panel(conn, description, size=size, translator=translator)
     # Refused before the panel model is touched: nothing has been spent yet on a
     # target nobody matches, and nothing should be.
     if not selection.panel:
         raise EmptyPanel(f"no persona matches this target (size {size} requested)")
-    collected = await run_vote_loop(
-        conn, selection.panel, variants=variants, llm=llm
-    )
+    collected = await run_vote_loop(conn, selection.panel, variants=variants, llm=llm)
     return assemble_result(selection, collected, variants=variants, size=size)

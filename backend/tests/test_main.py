@@ -40,9 +40,9 @@ from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from openai import APIStatusError
-from pgvector.psycopg import register_vector
+from pgvector.psycopg import register_vector_async
 from pydantic import SecretStr
 from tests.factories import (
     FixedEmbedder,
@@ -113,7 +113,7 @@ def _edit(query: dict) -> dict:
 
 
 @pytest.fixture
-def client(conn, stub_llm, monkeypatch):
+def client(conn, pg_url, stub_llm, monkeypatch):
     """The app with every paid or external dependency replaced: the testcontainer
     connection and a stub panel model.
 
@@ -135,10 +135,21 @@ def client(conn, stub_llm, monkeypatch):
         "supabase_service_key",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
+
     # Every override is a zero-argument callable, never the class itself: FastAPI
     # reads a bare class's __init__ signature as a dependency and would turn its
     # parameters into the endpoint's body model.
-    app.dependency_overrides[get_conn] = lambda: conn
+    # An async dependency opening its own connection, rather than the `aconn`
+    # fixture: these tests are synchronous — `TestClient` drives the async app
+    # for them — and pytest cannot hand an async fixture to a sync test. The
+    # `conn` fixture above still seeds, and it autocommits, so what a test
+    # writes is visible to the connection the route gets.
+    async def request_connection():
+        async with await psycopg.AsyncConnection.connect(pg_url) as connection:
+            await register_vector_async(connection)
+            yield connection
+
+    app.dependency_overrides[get_conn] = request_connection
     app.dependency_overrides[get_panel_llm] = lambda: stub_llm(
         chosen="option_1", reason="clear discount framing"
     )
@@ -384,9 +395,9 @@ def test_concurrent_runs_cannot_outrun_the_ledger(
     monkeypatch.setattr(settings, "evaluate_runs_per_day", 3)
     seed_japanese(conn, 2)
 
-    def own_connection():
-        with psycopg.connect(pg_url) as connection:
-            register_vector(connection)
+    async def own_connection():
+        async with await psycopg.AsyncConnection.connect(pg_url) as connection:
+            await register_vector_async(connection)
             yield connection
 
     app.dependency_overrides[get_conn] = own_connection
@@ -581,9 +592,9 @@ def test_concurrent_runs_cannot_outspend_the_pool(
     monkeypatch.setattr(settings, "global_daily_cap_usd", 3.5 * run_price)
     seed_japanese(conn, 2)
 
-    def own_connection():
-        with psycopg.connect(pg_url) as connection:
-            register_vector(connection)
+    async def own_connection():
+        async with await psycopg.AsyncConnection.connect(pg_url) as connection:
+            await register_vector_async(connection)
             yield connection
 
     app.dependency_overrides[get_conn] = own_connection
@@ -916,7 +927,10 @@ def test_chat_streams_the_analysts_reply_as_ndjson(client) -> None:
     assert events[-1] == {"type": "done"}
 
 
-def test_the_chat_connection_can_bind_a_query_vector(conn, pg_url, monkeypatch) -> None:
+@pytest.mark.anyio
+async def test_the_chat_connection_can_bind_a_query_vector(
+    conn, pg_url, monkeypatch
+) -> None:
     """Every other test replaces get_conn with the fixture connection, which
     registers the pgvector adapter — only this test exercises the real
     dependency. search_personas binds a numpy vector; a connection without the
@@ -926,11 +940,13 @@ def test_the_chat_connection_can_bind_a_query_vector(conn, pg_url, monkeypatch) 
     monkeypatch.setattr(type(settings), "database_url", pg_url)
     dependency = get_conn()
     try:
-        live = next(dependency)
-        found = nearest_panelists(live, embedding=pointing(0), panel_ids=[], limit=1)
+        live = await anext(dependency)
+        found = await nearest_panelists(
+            live, embedding=pointing(0), panel_ids=[], limit=1
+        )
         assert found == []
     finally:
-        dependency.close()
+        await dependency.aclose()
 
 
 def test_the_lifespan_builds_the_postgres_checkpointer(pg_url, monkeypatch) -> None:
@@ -942,7 +958,7 @@ def test_the_lifespan_builds_the_postgres_checkpointer(pg_url, monkeypatch) -> N
     # database_url is a derived property, so the patch lands on the class.
     monkeypatch.setattr(type(settings), "database_url", pg_url)
     with TestClient(app):
-        assert isinstance(app.state.checkpointer, PostgresSaver)
+        assert isinstance(app.state.checkpointer, AsyncPostgresSaver)
 
 
 def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None:
@@ -1381,13 +1397,13 @@ def test_a_run_is_labelled_with_the_id_the_caller_is_given(
 
     def spy(**kwargs):
         graph = real(**kwargs)
-        invoke = graph.invoke
+        ainvoke = graph.ainvoke
 
-        def record(payload, config, *args, **rest):
+        async def record(payload, config, *args, **rest):
             seen["config"] = config
-            return invoke(payload, config, *args, **rest)
+            return await ainvoke(payload, config, *args, **rest)
 
-        monkeypatch.setattr(graph, "invoke", record)
+        monkeypatch.setattr(graph, "ainvoke", record)
         return graph
 
     monkeypatch.setattr(main, "build_evaluate_graph", spy)
@@ -1662,9 +1678,9 @@ def test_two_accepts_at_once_buy_one_panel(client, conn, pg_url) -> None:
     seed_japanese(conn, 5)
     paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
 
-    def own_connection():
-        with psycopg.connect(pg_url) as fresh:
-            register_vector(fresh)
+    async def own_connection():
+        async with await psycopg.AsyncConnection.connect(pg_url) as fresh:
+            await register_vector_async(fresh)
             yield fresh
 
     app.dependency_overrides[get_conn] = own_connection

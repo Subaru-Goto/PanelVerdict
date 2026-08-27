@@ -21,6 +21,7 @@ stops answering its question fails rather than moving the target with it.
 """
 
 import argparse
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -299,7 +300,7 @@ def _sample_result() -> EvaluateResponse:
     )
 
 
-def run_routing(
+async def run_routing(
     result, deps, model, checkpointer, questions, expect: str, rows: list[dict]
 ) -> None:
     """Which tools a live turn actually calls. No judge — this is observation.
@@ -308,7 +309,7 @@ def run_routing(
     """
     for i, question in enumerate(questions):
         tools: list[str] = []
-        for line in stream_analyst(
+        async for line in stream_analyst(
             model=model,
             result=result,
             thread_id=f"routing-{expect}-{i}",
@@ -381,26 +382,31 @@ def main() -> None:
                     base_url=settings.openrouter_base_url,
                     model=args.model,
                 )
-                deps = ToolDeps(conn=conn, embedder=embedder)
                 saver = InMemorySaver()
-                run_routing(
-                    _sample_result(),
-                    deps,
-                    chat,
-                    saver,
-                    ROUTING_QUESTIONS,
-                    "explain_the_report",
-                    rows,
-                )
-                run_routing(
-                    _sample_result(),
-                    deps,
-                    chat,
-                    saver,
-                    RUN_QUESTIONS,
-                    "analyze_results",
-                    rows,
-                )
+
+                # `stream_analyst` is an async generator since 111/#240, and a
+                # script has no loop of its own. One connection for both
+                # passes, opened inside the loop that uses it.
+                async def routing() -> None:
+                    async with await psycopg.AsyncConnection.connect(
+                        settings.database_url
+                    ) as live:
+                        deps = ToolDeps(conn=live, embedder=embedder)
+                        for questions, expect in (
+                            (ROUTING_QUESTIONS, "explain_the_report"),
+                            (RUN_QUESTIONS, "analyze_results"),
+                        ):
+                            await run_routing(
+                                _sample_result(),
+                                deps,
+                                chat,
+                                saver,
+                                questions,
+                                expect,
+                                rows,
+                            )
+
+                asyncio.run(routing())
             elif args.part == "retrieval":
                 run_retrieval(conn, embedder, PAIRS, rows)
             else:

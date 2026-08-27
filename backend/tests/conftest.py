@@ -68,21 +68,21 @@ def anyio_backend():
 
 
 @pytest.fixture
-async def aconn(pg_url):
+async def aconn(pg_url, conn):
     """The async twin of `conn`, for the request path 111/#240 converted.
 
-    Same preparation, and deliberately the same truncation: a test that reads
-    through the async connection and writes through the sync one is testing two
-    sessions, which is a different thing from what it says it tests. Schema
-    setup stays sync — `prepare_connection` is the seed's, and a script has no
-    event loop.
+    It depends on `conn` rather than preparing its own database so there is one
+    truncation per test, not two racing ones — and so a test that seeds through
+    the sync connection and reads through this one is using a database both
+    agree about.
+
+    **Seed with `conn` and commit before reading here.** Two connections are two
+    sessions, so an uncommitted write is invisible across them. That is a real
+    constraint rather than an oversight: the writers are `persist_pool` and
+    friends, which belong to the seed — a script with no event loop — and
+    giving them async twins to spare tests a `commit()` would shape production
+    code around the suite.
     """
-    with psycopg.connect(pg_url) as setup:
-        prepare_connection(setup)
-        setup.execute(
-            "TRUNCATE personas, votes, request_ledger, spend_ledger, corpus_chunks CASCADE"
-        )
-        setup.commit()
     async with await psycopg.AsyncConnection.connect(pg_url) as connection:
         await register_vector_async(connection)
         yield connection
@@ -90,7 +90,11 @@ async def aconn(pg_url):
 
 @pytest.fixture
 def conn(pg_url):
-    with psycopg.connect(pg_url) as connection:
+    # Autocommit: isolation between tests comes from the truncation above, not
+    # from a rolled-back transaction — and since 111/#240 a test may seed here
+    # and read through `aconn`, a second session that cannot see an uncommitted
+    # write. Leaving it off made setup invisible to half the suite.
+    with psycopg.connect(pg_url, autocommit=True) as connection:
         prepare_connection(connection)
         # votes has no FK to personas (the ledger must survive a pool reseed), so
         # CASCADE alone would leave cache rows leaking between tests.

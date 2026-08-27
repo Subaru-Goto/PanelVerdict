@@ -1,8 +1,8 @@
 import asyncio
 import hmac
 import logging
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal, NamedTuple
@@ -646,7 +646,9 @@ async def _charge_ledger(
         return
     async with conn.cursor() as cur:
         if pooled is not None:
-            await cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("spend-pool",))
+            await cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))", ("spend-pool",)
+            )
         for charge in sorted(active):
             await cur.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
@@ -1056,7 +1058,9 @@ async def _checked_or_refused(
     echoed.
     """
     await _charge_ledger(
-        conn, await _check_purchase(caller), spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY))
+        conn,
+        await _check_purchase(caller),
+        spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY)),
     )
     checked = generator.check(instruction=sentence)
     if checked.refusal is not None:

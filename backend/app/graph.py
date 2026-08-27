@@ -223,9 +223,7 @@ def build_evaluate_graph(
         """
         settled = state["query"]
         target = state.get("edited") or settled
-        panel = await retrieve_panel(
-            conn, target, size=state["size"], seed=PANEL_SEED
-        )
+        panel = await retrieve_panel(conn, target, size=state["size"], seed=PANEL_SEED)
         if not panel and state.get("panel") is None:
             # Nothing to show and nothing to approve: the run never starts.
             raise EmptyPanel(
