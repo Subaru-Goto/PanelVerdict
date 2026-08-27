@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import httpx
+
 import psycopg
 import pytest
 from app import graph as graph_module
@@ -935,18 +936,20 @@ async def test_the_chat_connection_can_bind_a_query_vector(
     registers the pgvector adapter — only this test exercises the real
     dependency. search_personas binds a numpy vector; a connection without the
     adapter cannot even send that query. (`conn` is here as a precondition:
-    it guarantees the container already has the extension and schema.)"""
+    it guarantees the container already has the extension and schema.)
+
+    Since 111/#240 the adapter is registered by the pool's `configure` rather
+    than per checkout, so this drives the real lifespan to get a real pool —
+    which is also the only way to prove `configure` was actually wired."""
     # database_url is a derived property, so the patch lands on the class.
     monkeypatch.setattr(type(settings), "database_url", pg_url)
-    dependency = get_conn()
-    try:
-        live = await anext(dependency)
-        found = await nearest_panelists(
-            live, embedding=pointing(0), panel_ids=[], limit=1
-        )
-        assert found == []
-    finally:
-        await dependency.aclose()
+
+    with TestClient(app):
+        async with app.state.requests.connection() as live:
+            found = await nearest_panelists(
+                live, embedding=pointing(0), panel_ids=[], limit=1
+            )
+            assert found == []
 
 
 def test_the_lifespan_builds_the_postgres_checkpointer(pg_url, monkeypatch) -> None:
@@ -959,6 +962,38 @@ def test_the_lifespan_builds_the_postgres_checkpointer(pg_url, monkeypatch) -> N
     monkeypatch.setattr(type(settings), "database_url", pg_url)
     with TestClient(app):
         assert isinstance(app.state.checkpointer, AsyncPostgresSaver)
+
+
+def test_a_resume_works_against_the_checkpointer_the_deploy_actually_uses(
+    client, conn, pg_url, monkeypatch
+) -> None:
+    """The gate, driven over the wire against the real `AsyncPostgresSaver`.
+
+    Every other route test overrides `get_checkpointer` with `InMemorySaver`,
+    whose synchronous methods are real ones — so the suite stayed green while
+    `/evaluate/resume` called `graph.get_state`, which `AsyncPostgresSaver`
+    refuses from its own event loop, 500-ing every resume in production. 717
+    passing tests said nothing about the whole human-in-the-loop gate being
+    dead (111/#240 review).
+
+    The saver has to be the one the lifespan builds, not one this test
+    constructs: it captures the running loop in `__init__`, so a saver made on
+    any other loop would not take the branch the deploy takes.
+    """
+    monkeypatch.setattr(type(settings), "database_url", pg_url)
+    seed_japanese(conn, 5)
+    del app.dependency_overrides[get_checkpointer]
+
+    with TestClient(app) as live:
+        assert isinstance(app.state.checkpointer, AsyncPostgresSaver)
+        paused = live.post("/evaluate", json=_UNAPPROVED_BODY).json()
+        body = live.post(
+            "/evaluate/resume",
+            json={"thread_id": paused["thread_id"], "action": "accept"},
+        ).json()
+
+    assert body["status"] == "complete"
+    assert body["counts"]["voted"] == 5
 
 
 def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None:

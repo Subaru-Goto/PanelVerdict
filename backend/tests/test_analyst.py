@@ -642,23 +642,31 @@ class TestExplainingWhatTheReportMeans:
     from the model's weights is a confident mismatch with what the system did,
     delivered to somebody with no way to check it."""
 
-    def test_the_answer_comes_back_with_something_to_check(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_the_answer_comes_back_with_something_to_check(
+        self, conn, aconn
+    ) -> None:
         from app.corpus import seed_corpus
         from tests.test_corpus_retrieval import FakeEmbedder
 
         seed_corpus(conn, FakeEmbedder())
         (explain,) = [
             t
-            for t in build_tools(_result(), _deps(conn, embedder=FakeEmbedder()))
+            for t in build_tools(_result(), _deps(aconn, embedder=FakeEmbedder()))
             if t.name == "explain_the_report"
         ]
 
-        answer = json.loads(explain.invoke({"question": "what is a practical tie"}))
+        answer = json.loads(
+            await explain.ainvoke({"question": "what is a practical tie"})
+        )
 
         assert answer, "the corpus should have a passage on this"
         assert all(passage["citation"] for passage in answer)
 
-    def test_a_question_the_corpus_cannot_answer_returns_nothing(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_question_the_corpus_cannot_answer_returns_nothing(
+        self, conn, aconn
+    ) -> None:
         """So the analyst says it does not know, rather than being handed the
         nearest passage and citing it."""
         from app.corpus import seed_corpus
@@ -667,11 +675,14 @@ class TestExplainingWhatTheReportMeans:
         seed_corpus(conn, FakeEmbedder())
         (explain,) = [
             t
-            for t in build_tools(_result(), _deps(conn, embedder=FakeEmbedder()))
+            for t in build_tools(_result(), _deps(aconn, embedder=FakeEmbedder()))
             if t.name == "explain_the_report"
         ]
 
-        assert json.loads(explain.invoke({"question": "how do I bake sourdough"})) == []
+        assert (
+            json.loads(await explain.ainvoke({"question": "how do I bake sourdough"}))
+            == []
+        )
 
 
 def test_a_concept_question_no_longer_routes_to_the_model_s_own_memory() -> None:

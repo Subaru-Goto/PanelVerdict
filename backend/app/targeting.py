@@ -10,6 +10,8 @@ than inside a model call, where a panel matched on the remaining words of the qu
 would be indistinguishable from a targeted one.
 """
 
+import asyncio
+
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -421,7 +423,9 @@ async def select_panel(
     """
     described = description.strip() != ""
     query = resolve_target(
-        translator.translate(description=description) if described else TargetRequest()
+        await asyncio.to_thread(translator.translate, description=description)
+        if described
+        else TargetRequest()
     )
     panel = await retrieve_panel(conn, query, size=size, seed=seed)
     # Said here rather than in `resolve_target`, which sees only the request: a

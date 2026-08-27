@@ -415,7 +415,7 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
         )
 
     @tool
-    def explain_the_report(question: str) -> str:
+    async def explain_the_report(question: str) -> str:
         """What something on this report MEANS — a trait, a level, the tie zone,
         the credible interval, why a run stopped early, what the method cannot
         show. Returns passages written for this product, each with a citation to
@@ -425,7 +425,7 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
         textbook one, and this product's is different. For this test's own
         numbers call analyze_results — this holds no figures at all. An empty
         result means the corpus does not cover it; say so."""
-        found = search_corpus(deps.conn, question, deps.embedder)
+        found = await search_corpus(deps.conn, question, deps.embedder)
         return json.dumps(
             [
                 {"citation": passage.citation, "passage": passage.passage}

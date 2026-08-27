@@ -9,6 +9,8 @@ Splitting follows the headings rather than a fixed window, because a heading is
 where the author put a claim together with the caveat that qualifies it.
 """
 
+import asyncio
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -243,8 +245,8 @@ LIMIT %(limit)s
 """
 
 
-def search_corpus(
-    conn: psycopg.Connection,
+async def search_corpus(
+    conn: psycopg.AsyncConnection,
     query: str,
     embedder: Embedder,
     *,
@@ -279,8 +281,10 @@ def search_corpus(
     """
     if not query.strip():
         return []
-    (vector,) = embedder.embed([query])
-    rows = conn.execute(
+    # Embedding is a paid model call over the network: to a thread, like every
+    # other blocking component call on an async path.
+    (vector,) = await asyncio.to_thread(embedder.embed, [query])
+    cur = await conn.execute(
         _SEARCH,
         {
             "vector": str(vector),
@@ -291,5 +295,6 @@ def search_corpus(
             "pool": max(limit * 3, 10),
             "limit": limit,
         },
-    ).fetchall()
+    )
+    rows = await cur.fetchall()
     return [Passage(source=s, section=sec, passage=p) for s, sec, p in rows]

@@ -501,7 +501,12 @@ class TestVoteCache:
         take them."""
         seed_japanese(conn, 5)
         await _run(aconn)
-        conn.rollback()
+        # Roll back the connection that did the writing. Rolling back `conn` —
+        # a different session — left the votes sitting in `aconn`'s own open
+        # transaction, where the second run read its own uncommitted rows and
+        # the assertion held whether or not the commit existed. Verified by
+        # deleting the commit in `_chunk_votes` and watching this go red.
+        await aconn.rollback()
 
         spy = SpyLLM()
         await _run(aconn, llm=spy)

@@ -96,7 +96,6 @@ elif settings.langsmith_tracing:
     )
 
 
-@asynccontextmanager
 def _sweep_data_api() -> None:
     """Close every table in `public` to the Data API, on its own connection.
 
@@ -108,6 +107,7 @@ def _sweep_data_api() -> None:
         deny_data_api(conn)
 
 
+@asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """The app's only startup/shutdown lifecycle: the analyst's checkpointer.
 
@@ -120,9 +120,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     one is startup-to-shutdown.
 
     A pool of exactly one connection, both halves on purpose:
-    - one, because PostgresSaver serializes every operation behind a process
-      lock (its `_cursor` takes `self.lock`), so a second connection could
-      never be used;
+    - one, because AsyncPostgresSaver serializes every operation behind a
+      process-wide lock (its `_cursor` takes `async with self.lock`), so a
+      second connection could never be used;
     - a pool rather than a bare Connection, because `check=` on checkout
       replaces a connection the Supabase pooler has dropped during an idle
       spell, where a bare Connection would stay broken until the next deploy.
@@ -151,22 +151,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # otherwise sit readable over the project's Data API — a surface this
         # release opens by shipping a publishable key to the browser
         # (063/#158).
-        # The one blocking call left, and it runs before anything is served:
+        # Blocking, and run before anything is served — `test_async_discipline`
+        # is what keeps that claim true of the request path rather than of my
+        # memory of it:
         # `deny_data_api` is also the seed's, so it stays sync rather than
         # growing an async twin for a single startup sweep. In a thread, so the
         # rule stays absolute — nothing blocking ever runs on the loop.
         await asyncio.to_thread(_sweep_data_api)
         app.state.checkpointer = checkpointer
-        if settings.api_shared_secret is not None and _VERIFIER is None:
-            # A shared secret set is this deployment saying it is not a laptop.
-            # Sign-in unconfigured alongside it is almost always a missing
-            # variable rather than a decision, and the symptom — every quota
-            # quietly counting an address again — is invisible from outside.
-            logger.warning(
-                "sign-in is not configured (SUPABASE_PROJECT_URL unset): run"
-                " limits count a forwarded address, not an account"
-            )
-        yield
+        # Request connections, pooled and bounded — see `get_conn`.
+        async with AsyncConnectionPool(
+            settings.database_url,
+            min_size=1,
+            max_size=_REQUEST_CONNECTIONS,
+            check=AsyncConnectionPool.check_connection,
+            configure=register_vector_async,
+            open=False,
+        ) as requests:
+            await requests.open(wait=True)
+            app.state.requests = requests
+            if settings.api_shared_secret is not None and _VERIFIER is None:
+                # A shared secret set is this deployment saying it is not a
+                # laptop. Sign-in unconfigured alongside it is almost always a
+                # missing variable rather than a decision, and the symptom —
+                # every quota quietly counting an address again — is invisible
+                # from outside.
+                logger.warning(
+                    "sign-in is not configured (SUPABASE_PROJECT_URL unset): run"
+                    " limits count a forwarded address, not an account"
+                )
+            yield
 
 
 app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
@@ -314,22 +328,34 @@ def budget_notice(remaining: float | None, *, size: int) -> tuple[Notice, ...]:
     )
 
 
-async def get_conn() -> AsyncIterator[psycopg.AsyncConnection]:
-    """One plain connection per request, pgvector adapter registered.
+async def get_conn(request: Request) -> AsyncIterator[psycopg.AsyncConnection]:
+    """One pooled connection per request, pgvector adapter already registered.
 
     The adapter is per-connection state and the chat path binds query vectors
-    (search_personas), so every checkout gets it. Deliberately NOT
-    `prepare_connection`: that also runs schema DDL, which is the seed's job,
-    not a request's.
+    (search_personas), so every checkout needs it — `configure` runs it once
+    when the pool opens a connection rather than four catalog round trips on
+    every request. Deliberately NOT `prepare_connection`: that also runs schema
+    DDL, which is the seed's job, not a request's.
 
-    Async since 111/#240: a `def` route runs in a threadpool and may block, an
-    `async def` route may not, and half of each is the arrangement that puts a
-    minutes-long panel run on the event loop.
+    **A pool, because the async conversion removed the ceiling that used to
+    bound this.** A sync `def` dependency was opened through FastAPI's
+    threadpool, so anyio's default `CapacityLimiter(40)` capped how many could
+    exist at once; an `async def` one connects on the loop with nothing
+    bounding it, and uvicorn's `limit_concurrency` is unset — so N in-flight
+    panel runs meant N live pooler connections, on a database whose connection
+    count is the scarce resource. `max_size` restores the number that arrangement
+    enforced (111/#240 review).
     """
-    async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
-        await register_vector_async(conn)
+    async with request.app.state.requests.connection() as conn:
         yield conn
 
+
+# The ceiling the sync arrangement enforced, restored explicitly: FastAPI ran a
+# `def` dependency through anyio's threadpool, whose default `CapacityLimiter`
+# is 40, so at most 40 handlers — and therefore 40 connections — could exist at
+# once. The async conversion removed that bound; this is the same number, said
+# out loud (111/#240 review).
+_REQUEST_CONNECTIONS = 40
 
 # The ledger's day, written once, because four things read it: the cap, the
 # sweep, the remaining-runs figure `/me` reports, and how long a paused run may
@@ -620,10 +646,16 @@ async def _charge_ledger(
     """Enforce every cap, then record one attempt against each — or refuse.
 
     Count-then-insert is not a limit under load: READ COMMITTED cannot see
-    another transaction's uncommitted rows and sync handlers run in a thread
-    pool, so simultaneous requests all read the same count and all pass — 10
-    concurrent requests took 7 slots out of a limit of 3, measured. Advisory
-    locks make the database arbitrate instead.
+    another transaction's uncommitted rows, so simultaneous requests all read
+    the same count and all pass — 10 concurrent requests took 7 slots out of a
+    limit of 3, measured. Advisory locks make the database arbitrate instead.
+
+    That measurement was taken when handlers ran in a threadpool (111/#240 made
+    them coroutines on one loop). The mechanism it demonstrates is the
+    isolation level's, not the threadpool's, so the conclusion survives the
+    conversion — but the figure was produced under an arrangement this codebase
+    no longer has, and re-measuring it belongs to whoever next doubts the
+    locks.
 
     - Locks are held to the end of the transaction and always taken in the
       same order (pool first, then per-key sorted), so callers charging the
@@ -732,7 +764,7 @@ async def health(
     """
     return {
         "status": "ok",
-        "db": "up" if check_connection() else "down",
+        "db": "up" if await asyncio.to_thread(check_connection) else "down",
         "auth": "off" if verifier is None else "on",
         # The form's disclosure line reads this. One deployment answers for
         # both, so the page cannot disagree with what is actually happening.
@@ -804,7 +836,7 @@ async def forget_me(
             detail="account deletion is not available on this deployment",
         )
     try:
-        deleter.delete(caller)
+        await asyncio.to_thread(deleter.delete, caller)
     except DeletionFailed:
         raise HTTPException(
             status_code=502,
@@ -1030,7 +1062,7 @@ def _edit_to_settle(request: ResumeRequest, values: dict) -> str | None:
     return edited
 
 
-async def _check_purchase(caller: str) -> _Charge:
+def _check_purchase(caller: str) -> _Charge:
     """One classifier reading, from the caller's daily allowance of them."""
     return _Charge(
         _CHECK,
@@ -1059,10 +1091,10 @@ async def _checked_or_refused(
     """
     await _charge_ledger(
         conn,
-        await _check_purchase(caller),
+        _check_purchase(caller),
         spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY)),
     )
-    checked = generator.check(instruction=sentence)
+    checked = await asyncio.to_thread(generator.check, instruction=sentence)
     if checked.refusal is not None:
         raise HTTPException(status_code=422, detail=checked.refusal_sentence)
     return checked.instruction
@@ -1200,7 +1232,7 @@ async def resume_evaluate(
     )
     config = {"configurable": {"thread_id": request.thread_id}}
     async with _only_one_answer(conn, request.thread_id):
-        snapshot = graph.get_state(config)
+        snapshot = await graph.aget_state(config)
         values = snapshot.values or {}
         # One sentence for "no such run" and "not yours": which it was is not
         # the caller's business.
