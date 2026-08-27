@@ -53,6 +53,18 @@ def stub_llm() -> type[StubLLM]:
     return StubLLM
 
 
+# A lock this suite waits on is a mistake, not a wait: nothing here legitimately
+# queues behind another session. Without it the mistake is a *hang* — a
+# non-autocommit read through `aconn` holds ACCESS SHARE for the rest of the
+# test, and DDL through `conn` in the same test then blocks until CI's own
+# timeout kills the job, with no failing test to point at. Five seconds is
+# generous against a suite whose longest legitimate lock wait is none.
+#
+# On both connections, not just the reader: the timeout has to be set on the
+# session that *waits*, and either one can be it.
+_LOCK_TIMEOUT = "SET lock_timeout = '5s'"
+
+
 @pytest.fixture(scope="module")
 def pg_url():
     # pgvector image, not stock postgres — the stock image lacks the extension.
@@ -85,6 +97,7 @@ async def aconn(pg_url, conn):
     """
     async with await psycopg.AsyncConnection.connect(pg_url) as connection:
         await register_vector_async(connection)
+        await connection.execute(_LOCK_TIMEOUT)
         yield connection
 
 
@@ -95,6 +108,7 @@ def conn(pg_url):
     # and read through `aconn`, a second session that cannot see an uncommitted
     # write. Leaving it off made setup invisible to half the suite.
     with psycopg.connect(pg_url, autocommit=True) as connection:
+        connection.execute(_LOCK_TIMEOUT)
         prepare_connection(connection)
         # votes has no FK to personas (the ledger must survive a pool reseed), so
         # CASCADE alone would leave cache rows leaking between tests.

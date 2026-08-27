@@ -49,6 +49,19 @@ BLOCKING = {
     "verifier.subject",  # a blocking JWKS fetch (app/auth.py)
     "remaining_credit",  # a live OpenRouter GET
     "_sweep_data_api",  # sync by design; the lifespan must thread it
+    # The graph and the checkpointer, whose sync and async halves differ by one
+    # letter — and whose sync half on an async path is the bug this file was
+    # written after. `setup` is deliberately absent: `AsyncPostgresSaver.setup`
+    # is a coroutine, so naming it would flag the lifespan's own `await`.
+    "graph.invoke",
+    "graph.stream",
+    "graph.get_state",
+    "graph.update_state",
+    "checkpointer.get",
+    "checkpointer.get_tuple",
+    "checkpointer.put",
+    "checkpointer.put_writes",
+    "checkpointer.list",
 }
 
 # Where a blocking call is allowed to appear inside an async function.
@@ -96,23 +109,59 @@ def _offences(tree: ast.AST, path: str) -> list[str]:
         if not isinstance(fn, ast.AsyncFunctionDef):
             continue
         body = _own_body(fn)
-        # What `asyncio.to_thread` was handed is exactly what is allowed. Keyed
-        # on identity: the argument node is the same object the call check sees.
-        excused = {
-            id(node.args[0])
-            for node in body
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "to_thread"
-            and node.args
-        }
+        # Nothing is excused, and that is the rule rather than a simplification.
+        # What `to_thread` is handed is a *reference* — `deleter.delete`, not
+        # `deleter.delete(...)` — so it is not a call and there is nothing here to
+        # exempt. A call written in that position would be evaluated before
+        # `to_thread` ever ran, i.e. on the loop, so exempting it would hide the
+        # offence rather than allow a safe one. An earlier version tried, keyed on
+        # node identity, and matched nothing at all.
         for node in body:
-            if not isinstance(node, ast.Call) or id(node) in excused:
+            if not isinstance(node, ast.Call):
                 continue
             spelling = _spelling(node.func)
             if spelling in BLOCKING:
                 found.append(f"{path}:{node.lineno} {fn.name} -> {spelling}()")
     return found
+
+
+class TestTheGateItself:
+    """The gate has been wrong twice — once flagging a line that was never a
+    problem, once passing a real one for an unrelated reason. Its logic is
+    checked against source it is handed, not only against `app/`."""
+
+    def test_a_blocking_call_inside_a_coroutine_is_found(self) -> None:
+        tree = ast.parse(
+            "async def answer(graph, config):\n    return graph.get_state(config)\n"
+        )
+
+        assert _offences(tree, "x.py")
+
+    def test_a_reference_handed_to_a_thread_is_not_a_call(self) -> None:
+        """`asyncio.to_thread(deleter.delete, caller)` passes the method, it does
+        not call it — the shape the rule exists to encourage."""
+        tree = ast.parse(
+            "async def forget(deleter, caller):\n"
+            "    await asyncio.to_thread(deleter.delete, caller)\n"
+        )
+
+        assert _offences(tree, "x.py") == []
+
+    def test_an_argument_to_a_thread_is_still_evaluated_on_the_loop(self) -> None:
+        """Why the gate excuses nothing.
+
+        It used to exempt `to_thread`'s first argument, keyed on the node's
+        identity. That was dead — the argument is a *reference*, never a `Call`,
+        so it could not match what the check looks at — and had it ever matched
+        it would have hidden a genuine offence: an argument is evaluated before
+        `to_thread` is called, so a call written there blocks the loop exactly as
+        if the wrapper were not there.
+        """
+        tree = ast.parse(
+            "async def boot():\n    await asyncio.to_thread(check_connection())\n"
+        )
+
+        assert _offences(tree, "x.py")
 
 
 SOURCES = sorted(APP.rglob("*.py"))

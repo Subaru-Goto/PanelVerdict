@@ -128,7 +128,7 @@ def no_saver_left_behind():
     """
     yield
 
-    assert "checkpointer" not in app.state._state, (
+    assert not hasattr(app.state, "checkpointer"), (
         "a saver was left on app.state — see the `real_lifespan` fixture"
     )
 
@@ -990,7 +990,8 @@ def real_lifespan(pg_url, monkeypatch):
     yield
 
     if found is None:
-        app.state._state.pop("checkpointer", None)
+        if hasattr(app.state, "checkpointer"):
+            del app.state.checkpointer
     else:
         app.state.checkpointer = found
 
