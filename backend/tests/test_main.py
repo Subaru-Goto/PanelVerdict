@@ -35,7 +35,11 @@ from app.main import (
     tracing_enabled,
 )
 from app.persistence import nearest_panelists, persist_pool
-from app.schemas import MAX_AUDIENCE_CHARS, EvaluateRequest
+from app.schemas import (
+    MAX_AUDIENCE_CHARS,
+    EvaluateRequest,
+    EvaluateResponse,
+)
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
 from fastapi import HTTPException
@@ -927,6 +931,24 @@ _CHAT_RESULT = {
     "variants": {"a": "Save 50% today", "b": "Members save half"},
     "votes": [],
 }
+
+
+def test_the_chat_fixture_is_still_a_body_a_run_could_emit() -> None:
+    """`_CHAT_RESULT` is the one hand-written transcription of `EvaluateResponse`
+    left on this side of the wire (048/#146), and every `/chat` test posts it.
+
+    Re-validating and re-dumping catches an added or removed field at *any*
+    depth: a new field with a default appears in the dump and not in the
+    literal, a deleted one the other way round. Neither is visible to the
+    literal's own validation — pydantic fills the default and ignores the stale
+    key — so the suite would stay green while every `/chat` test ran against a
+    payload no run emits. Needs no container: this is a claim about two shapes,
+    not about a run.
+    """
+    assert (
+        EvaluateResponse.model_validate(_CHAT_RESULT).model_dump(mode="json")
+        == _CHAT_RESULT
+    ), "_CHAT_RESULT no longer matches EvaluateResponse"
 
 
 def test_chat_streams_the_analysts_reply_as_ndjson(client) -> None:
@@ -2605,24 +2627,33 @@ class TestOnlyOneAnswer:
 def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     client, conn
 ) -> None:
-    """The only test that crosses both endpoints: start, answer the gate, chat.
+    """The only test that feeds one endpoint's body to the other: start a run,
+    answer the panel gate, then discuss what came back.
 
     Every other `/chat` test posts `_CHAT_RESULT`, a dict literal kept by hand,
-    so `EvaluateResponse` and the body the tests feed `/chat` are two
-    transcriptions of one contract with nothing asserting they agree. Here they
-    are the same object: whatever `/evaluate` emits is what `/chat` is asked to
-    accept, over the real JSON round trip.
+    so `EvaluateResponse` and the body the tests feed `/chat` were two
+    transcriptions of one contract. Here they are the same object, over the
+    real JSON round trip — and it is the whole body, `status` included, because
+    that is what the browser sends: the client stores `/evaluate`'s outcome
+    unchanged and forwards it (`use-evaluate.ts`, `chat.ts`). `EvaluateResponse`
+    tolerating that extra key is therefore load-bearing, not incidental.
 
-    Asserting on the analyst's words would be asserting on `ScriptedChatModel`'s
-    script. The assertion that matters is that the stream opens at all.
+    The gate is part of the path, not scenery: a first run always stops there
+    (076/#166), so a body nobody has approved is a body no reader ever sees.
     """
     seed_japanese(conn, 5)
-    paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
-    report = client.post(
+    started = client.post("/evaluate", json=_UNAPPROVED_BODY)
+    assert started.status_code == 200
+    assert started.json()["status"] == "paused"
+
+    resumed = client.post(
         "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    ).json()
-    # A precondition, not the subject: only a finished run has a body to pass on.
+        json={"thread_id": started.json()["thread_id"], "action": "accept"},
+    )
+    # Checked, not indexed: every refusal answers `{"detail": ...}`, so reading
+    # a key off one reports a KeyError instead of what the endpoint said.
+    assert resumed.status_code == 200
+    report = resumed.json()
     assert report["status"] == "complete"
 
     response = client.post(
@@ -2637,11 +2668,7 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     assert response.status_code == 200
     events = ndjson_events(response.text.splitlines())
     assert any(event["type"] == "token" for event in events)
-
-    # And the literal every *other* `/chat` test posts is still the same shape.
-    # Without this, a field added to `EvaluateResponse` with a default keeps the
-    # suite green while `_CHAT_RESULT` quietly stops resembling a real body.
-    # `status` is `CompletedRun`'s own and never travels back to `/chat`.
-    assert set(report) - {"status"} == set(_CHAT_RESULT), (
-        "_CHAT_RESULT has drifted from the body a real run emits"
-    )
+    # `/chat` commits its 200 at the first byte, so a turn that dies mid-stream
+    # is tokens followed by `error` and no `done`. Tolerant of `tool` events,
+    # which a scripted analyst that calls tools would add.
+    assert events[-1] == {"type": "done"}

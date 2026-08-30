@@ -613,6 +613,13 @@ class EvaluateResponse(BaseModel):
     under, `notices` is the complete reader-facing set including what retrieval
     itself revealed, and a projection type that subtracted one from the other would
     exist only to be re-joined in the UI.
+
+    No `extra="forbid"` here, unlike its siblings, and that is load-bearing: the
+    client stores what `/evaluate` answered and forwards it whole to `/chat`, so
+    every real turn arrives carrying `CompletedRun`'s `status`. Forbidding extras
+    would 402 nothing and 422 every analyst turn. Pinned by
+    `test_a_report_the_panel_produced_is_a_report_the_analyst_accepts` (048/#146),
+    the one test that posts the body the browser actually sends.
     """
 
     verdict: PanelVerdict
