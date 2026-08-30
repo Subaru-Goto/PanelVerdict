@@ -2597,3 +2597,51 @@ class TestOnlyOneAnswer:
                 raise HTTPException(status_code=402, detail="out of credit")
 
         assert raised.value.status_code == 402
+
+
+# --- The path a user takes (048/#146) ----------------------------------------
+
+
+def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
+    client, conn
+) -> None:
+    """The only test that crosses both endpoints: start, answer the gate, chat.
+
+    Every other `/chat` test posts `_CHAT_RESULT`, a dict literal kept by hand,
+    so `EvaluateResponse` and the body the tests feed `/chat` are two
+    transcriptions of one contract with nothing asserting they agree. Here they
+    are the same object: whatever `/evaluate` emits is what `/chat` is asked to
+    accept, over the real JSON round trip.
+
+    Asserting on the analyst's words would be asserting on `ScriptedChatModel`'s
+    script. The assertion that matters is that the stream opens at all.
+    """
+    seed_japanese(conn, 5)
+    paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+    report = client.post(
+        "/evaluate/resume",
+        json={"thread_id": paused["thread_id"], "action": "accept"},
+    ).json()
+    # A precondition, not the subject: only a finished run has a body to pass on.
+    assert report["status"] == "complete"
+
+    response = client.post(
+        "/chat",
+        json={
+            "thread_id": "t-e2e",
+            "message": "Why did it lean that way?",
+            "result": report,
+        },
+    )
+
+    assert response.status_code == 200
+    events = ndjson_events(response.text.splitlines())
+    assert any(event["type"] == "token" for event in events)
+
+    # And the literal every *other* `/chat` test posts is still the same shape.
+    # Without this, a field added to `EvaluateResponse` with a default keeps the
+    # suite green while `_CHAT_RESULT` quietly stops resembling a real body.
+    # `status` is `CompletedRun`'s own and never travels back to `/chat`.
+    assert set(report) - {"status"} == set(_CHAT_RESULT), (
+        "_CHAT_RESULT has drifted from the body a real run emits"
+    )
