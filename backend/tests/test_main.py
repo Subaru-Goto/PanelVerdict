@@ -153,12 +153,18 @@ def client(conn, pg_url, stub_llm, monkeypatch):
         "chat_turns_per_thread_per_day",
         "chat_turns_per_caller_per_day",
         "global_daily_cap_usd",
-        # Without this pin a developer whose .env points at a real Supabase
-        # project would watch every unauthenticated test turn 401.
+        # Pinned so `/health` reports sign-in off, which is what these tests
+        # expect. It does not switch sign-in off — see the override below.
         "supabase_project_url",
         "supabase_service_key",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
+
+    # What actually switches sign-in off. The endpoint does not read the setting:
+    # `_VERIFIER` is built once at import, so a developer whose .env points at a
+    # real Supabase project turned 81 of this file's tests 401 while CI stayed
+    # green — the pin above was believed to prevent exactly that (114/#245).
+    app.dependency_overrides[get_verifier] = lambda: None
 
     # Every override is a zero-argument callable, never the class itself: FastAPI
     # reads a bare class's __init__ signature as a dependency and would turn its
@@ -198,6 +204,25 @@ def client(conn, pg_url, stub_llm, monkeypatch):
     app.dependency_overrides[get_checkpointer] = lambda: saver
     yield TestClient(app)
     app.dependency_overrides.clear()
+
+
+def test_the_client_fixture_really_does_switch_sign_in_off(
+    client, conn, monkeypatch
+) -> None:
+    """The pin above claims a developer's own Supabase project cannot turn every
+    unauthenticated test 401. Asserted here rather than assumed, because the
+    setting is not what the endpoint reads: `_VERIFIER` is built once at import,
+    so `monkeypatch.setattr(settings, ...)` cannot unbuild it (114/#245).
+
+    Lives beside the fixture rather than in `test_fixture_guards.py` because
+    `client` is defined here; the reason it exists is that file's.
+    """
+    seed_japanese(conn, 5)
+    monkeypatch.setattr(main, "_VERIFIER", object())
+
+    response = client.post("/evaluate", json=_UNAPPROVED_BODY)
+
+    assert response.status_code == 200, response.json()
 
 
 def test_a_caller_without_the_shared_secret_cannot_start_a_paid_run(
