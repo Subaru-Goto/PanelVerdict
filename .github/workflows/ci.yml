@@ -42,4 +42,10 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
+      # Before the tests, and separate from them: `next build` type-checks only
+      # what it compiles into the app, so a type error in `__tests__` ships
+      # green — measured. That is where the hand-written mirror of
+      # `EvaluateResponse` lives (`__tests__/fixtures.ts`), so its annotation was
+      # the frontend's only check on the contract and nothing enforced it.
+      - run: npm run typecheck
       - run: npm test
