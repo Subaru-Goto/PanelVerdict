@@ -64,6 +64,18 @@ BLOCKING = {
     "checkpointer.put",
     "checkpointer.put_writes",
     "checkpointer.list",
+    # Every public entry point that takes a sync `psycopg.Connection`. These were
+    # absent, and `app/pool_overview.py` already calls `load_pool` — so a
+    # `GET /pool` written as `async def` would have put a full-table read on the
+    # loop with this gate green. Derived from the signatures, not recalled:
+    # `grep -n "conn: psycopg.Connection" app/`.
+    "apply_schema",
+    "prepare_connection",
+    "persist_pool",
+    "load_pool",
+    "load_persona_sample",
+    "seed_corpus",
+    "register_vector",  # the sync twin of register_vector_async
 }
 
 # Where a blocking call is allowed to appear inside an async function.
@@ -148,6 +160,13 @@ class TestTheGateItself:
         )
 
         assert _offences(tree, "x.py") == []
+
+    def test_a_sync_database_entry_point_is_found(self) -> None:
+        """The class of call the list had been missing entirely: a public helper
+        taking a sync `psycopg.Connection`, called straight from a coroutine."""
+        tree = ast.parse("async def overview(conn):\n    return load_pool(conn)\n")
+
+        assert _offences(tree, "x.py")
 
     def test_an_argument_to_a_thread_is_still_evaluated_on_the_loop(self) -> None:
         """Why the gate excuses nothing.
