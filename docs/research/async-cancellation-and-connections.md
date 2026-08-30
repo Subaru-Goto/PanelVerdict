@@ -90,9 +90,12 @@ of* whatever the run was already failing with — so `_run_graph`'s curated 402,
 `max_connections = 100`:
 
 ```
-sync handler + sync dep (main)  : 60/60 ok, peak 60 backends, wall 3.3s
-async handler + async dep       : 60/60 ok, peak 60 backends, wall 1.7s
+sync handler + sync dep (main)  : 60/60 ok, peak 60 backends, wall ~3.2s
+async handler + async dep       : 60/60 ok, peak 60 backends, wall ~1.7s
 ```
+
+Wall time moves by a tenth or two between runs; the count does not, and neither
+does the shape — two waves against one.
 
 Sixty live backends in both shapes. The limiter was working — 60 holds of 1.5s
 took two waves synchronously and one asynchronously, which is exactly 40 slots
