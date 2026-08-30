@@ -1,7 +1,8 @@
+import asyncio
 import hmac
 import logging
-from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal, NamedTuple
@@ -13,11 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
-from pgvector.psycopg import register_vector
+from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
+from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 
 from app.analyst import ToolDeps, analysis_facts, stream_analyst
@@ -48,7 +49,7 @@ from app.llm import (
     remaining_credit,
 )
 from app.panel import votes_with_voters
-from app.persistence import deny_data_api
+from app.persistence import adeny_data_api
 from app.pipeline import EmptyPanel, NoVotes
 from app.roleplay import RolePlayGenerator, RolePlayRefused
 from app.schemas import (
@@ -108,9 +109,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     one is startup-to-shutdown.
 
     A pool of exactly one connection, both halves on purpose:
-    - one, because PostgresSaver serializes every operation behind a process
-      lock (its `_cursor` takes `self.lock`), so a second connection could
-      never be used;
+    - one, because AsyncPostgresSaver serializes every operation behind a
+      process-wide lock (its `_cursor` takes `async with self.lock`), so a
+      second connection could never be used;
     - a pool rather than a bare Connection, because `check=` on checkout
       replaces a connection the Supabase pooler has dropped during an idle
       spell, where a bare Connection would stay broken until the next deploy.
@@ -123,22 +124,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     the session pooler (port 5432) is fine — 006f's rule bans only the
     transaction pooler.
     """
-    with ConnectionPool(
+    async with AsyncConnectionPool(
         settings.database_url,
         min_size=1,
         max_size=1,
-        check=ConnectionPool.check_connection,
+        check=AsyncConnectionPool.check_connection,
         kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+        open=False,
     ) as pool:
-        checkpointer = PostgresSaver(pool)
-        checkpointer.setup()
+        await pool.open(wait=True)
+        checkpointer = AsyncPostgresSaver(pool)
+        await checkpointer.setup()
         # After setup(), not before: the sweep must reach the tables the
         # library just created, which hold analyst transcripts and would
         # otherwise sit readable over the project's Data API — a surface this
         # release opens by shipping a publishable key to the browser
-        # (063/#158).
-        with pool.connection() as conn:
-            deny_data_api(conn)
+        # (063/#158). `test_the_lifespan_closes_every_table_to_the_data_api`
+        # asserts both halves against the database, ordering included.
+        #
+        # Through the pool's own connection, as the sync version did. A separate
+        # `psycopg.connect` here cost a second pooler slot at boot and needed a
+        # connect deadline nobody has measured for a cold pooler — a bounded
+        # failure invented to replace an unbounded wait that could not happen,
+        # since a borrowed connection performs no connect.
+        async with pool.connection() as swept:
+            await adeny_data_api(swept)
         app.state.checkpointer = checkpointer
         if settings.api_shared_secret is not None and _VERIFIER is None:
             # A shared secret set is this deployment saying it is not a laptop.
@@ -297,16 +307,42 @@ def budget_notice(remaining: float | None, *, size: int) -> tuple[Notice, ...]:
     )
 
 
-def get_conn() -> Iterator[psycopg.Connection]:
+async def get_conn() -> AsyncIterator[psycopg.AsyncConnection]:
     """One plain connection per request, pgvector adapter registered.
 
     The adapter is per-connection state and the chat path binds query vectors
     (search_personas), so every checkout gets it. Deliberately NOT
     `prepare_connection`: that also runs schema DDL, which is the seed's job,
     not a request's.
+
+    **Not pooled, and that is a decision rather than an omission.** A pool was
+    tried here (111/#240) to restore a ceiling the async conversion was thought
+    to have removed, and taken back out: the premise was wrong. FastAPI's
+    `contextmanager_in_threadpool` borrows a threadpool slot only for
+    `__enter__`/`__exit__`, and a dependency is solved before its handler queues
+    for a slot of its own — so anyio's `CapacityLimiter(40)` never bounded how
+    many connections were live.
+
+    Disputed once and now measured — 60 concurrent requests opened 60 backends in
+    *both* shapes, while the same 60 holds took two waves sync and one async. The
+    limiter shows up in wall time and nowhere in the connection count, so what
+    the conversion removed is a throughput bound, not a connection bound, and the
+    budget question stands on its own terms rather than as a ceiling to restore.
+    Figures and method: `docs/research/async-cancellation-and-connections.md`.
+
+    Reuse also broke two things a per-request connection makes structurally
+    impossible. `_only_one_answer` takes a *session*-scoped advisory lock whose
+    release is a `finally` that an aborted transaction can skip; closing the
+    connection releases it regardless, a returned pooled connection does not
+    (psycopg_pool only rolls back, never `DISCARD ALL`). And a pooled connection keeps psycopg's
+    default `prepare_threshold`, so statements are PREPAREd server-side and
+    survive the `ALTER TABLE` that invalidates them.
+
+    A pool may still be right, but it needs the number nothing here has: what
+    the session pooler will actually grant. Measuring that is 112/#242.
     """
-    with psycopg.connect(settings.database_url) as conn:
-        register_vector(conn)
+    async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+        await register_vector_async(conn)
         yield conn
 
 
@@ -456,10 +492,10 @@ def _unverified_caller(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def enforce_evaluate_limits(
+async def enforce_evaluate_limits(
     request: EvaluateRequest,
     caller: str = Depends(caller_id),
-    conn: psycopg.Connection = Depends(get_conn),
+    conn: psycopg.AsyncConnection = Depends(get_conn),
 ) -> None:
     """Charge for the preview. The panel is never bought here.
 
@@ -504,13 +540,13 @@ def enforce_evaluate_limits(
     # check that judges what it would be told, so a refused sentence never
     # costs a run: `/evaluate/resume` on accept, `/evaluate` for a run that
     # skips the gate.
-    _charge_ledger(conn, *charges, spend=spend)
+    await _charge_ledger(conn, *charges, spend=spend)
 
 
-def enforce_turn_limit(
+async def enforce_turn_limit(
     request: ChatRequest,
     caller: str = Depends(caller_id),
-    conn: psycopg.Connection = Depends(get_conn),
+    conn: psycopg.AsyncConnection = Depends(get_conn),
 ) -> None:
     """Two counts, because each bounds a different runaway (045/#143).
 
@@ -522,7 +558,7 @@ def enforce_turn_limit(
     Declaring the body model here shares FastAPI's single parse with the
     handler.
     """
-    _charge_ledger(
+    await _charge_ledger(
         conn,
         _Charge(
             "/chat",
@@ -558,7 +594,7 @@ def _capped(charge: _Charge) -> HTTPException:
     )
 
 
-def _refuse_if_run_capped(conn: psycopg.Connection, caller: str) -> None:
+async def _refuse_if_run_capped(conn: psycopg.AsyncConnection, caller: str) -> None:
     """Refuse a caller with no runs left before anything is spent on them.
 
     Advisory, and deliberately so: `_charge_ledger` is still the only place a
@@ -571,38 +607,44 @@ def _refuse_if_run_capped(conn: psycopg.Connection, caller: str) -> None:
     charge, _ = _panel_purchase(caller)
     if charge.limit <= 0:
         return
-    with conn.cursor() as cur:
-        cur.execute(
+    async with conn.cursor() as cur:
+        await cur.execute(
             "SELECT count(*) FROM request_ledger"
             f" WHERE endpoint = %s AND caller = %s AND {_LEDGER_WINDOW}",
             (charge.endpoint, charge.key),
         )
-        row = cur.fetchone()
+        row = await cur.fetchone()
     # Nothing was written, so this ends the read's transaction rather than
     # leaving it open across the model call that follows.
-    conn.rollback()
+    await conn.rollback()
     if (int(row[0]) if row else 0) >= charge.limit:
         raise _capped(charge)
 
 
-def _buy_panel(conn: psycopg.Connection, caller: str) -> None:
+async def _buy_panel(conn: psycopg.AsyncConnection, caller: str) -> None:
     """The moment a panel is bought: one slot from the day's runs, priced at
     the votes it may buy. Both doors call this, and both call it *after* the
     sentence the panel would be told has been judged."""
     charge, price = _panel_purchase(caller)
-    _charge_ledger(conn, charge, spend=_Spend(_EVALUATE, price))
+    await _charge_ledger(conn, charge, spend=_Spend(_EVALUATE, price))
 
 
-def _charge_ledger(
-    conn: psycopg.Connection, *charges: _Charge, spend: _Spend | None = None
+async def _charge_ledger(
+    conn: psycopg.AsyncConnection, *charges: _Charge, spend: _Spend | None = None
 ) -> None:
     """Enforce every cap, then record one attempt against each — or refuse.
 
     Count-then-insert is not a limit under load: READ COMMITTED cannot see
-    another transaction's uncommitted rows and sync handlers run in a thread
-    pool, so simultaneous requests all read the same count and all pass — 10
-    concurrent requests took 7 slots out of a limit of 3, measured. Advisory
-    locks make the database arbitrate instead.
+    another transaction's uncommitted rows, so simultaneous requests all read
+    the same count and all pass — 10 concurrent requests took 7 slots out of a
+    limit of 3, measured. Advisory locks make the database arbitrate instead.
+
+    That measurement was taken when handlers ran in a threadpool (111/#240 made
+    them coroutines on one loop). The mechanism it demonstrates is the
+    isolation level's, not the threadpool's, so the conclusion survives the
+    conversion — but the figure was produced under an arrangement this codebase
+    no longer has, and re-measuring it belongs to whoever next doubts the
+    locks.
 
     - Locks are held to the end of the transaction and always taken in the
       same order (pool first, then per-key sorted), so callers charging the
@@ -623,44 +665,46 @@ def _charge_ledger(
     pooled = spend if spend is not None and cap > 0 else None
     if not active and pooled is None:
         return
-    with conn.cursor() as cur:
+    async with conn.cursor() as cur:
         if pooled is not None:
-            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("spend-pool",))
+            await cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))", ("spend-pool",)
+            )
         for charge in sorted(active):
-            cur.execute(
+            await cur.execute(
                 "SELECT pg_advisory_xact_lock(hashtext(%s))",
                 (f"{charge.endpoint}:{charge.key}",),
             )
         for charge in active:
-            cur.execute(
+            await cur.execute(
                 "DELETE FROM request_ledger WHERE endpoint = %s AND caller = %s"
                 f" AND {_LEDGER_EXPIRED}",
                 (charge.endpoint, charge.key),
             )
-            cur.execute(
+            await cur.execute(
                 "SELECT count(*) FROM request_ledger"
                 f" WHERE endpoint = %s AND caller = %s AND {_LEDGER_WINDOW}",
                 (charge.endpoint, charge.key),
             )
-            row = cur.fetchone()
+            row = await cur.fetchone()
             if (int(row[0]) if row else 0) >= charge.limit:
                 # Release the locks now rather than at request teardown; the
                 # discarded sweep is opportunistic and costs nothing.
-                conn.rollback()
+                await conn.rollback()
                 raise _capped(charge)
         if pooled is not None:
-            cur.execute(
+            await cur.execute(
                 "DELETE FROM spend_ledger WHERE spent_at < now()"
                 f" - interval '{LEDGER_HOURS} hours'"
             )
-            cur.execute(
+            await cur.execute(
                 "SELECT coalesce(sum(usd), 0) FROM spend_ledger"
                 " WHERE spent_at > now() - interval '24 hours'"
             )
-            row = cur.fetchone()
+            row = await cur.fetchone()
             spent = Decimal(row[0]) if row else Decimal(0)
             if spent + pooled.usd > cap:
-                conn.rollback()
+                await conn.rollback()
                 # Names the remedy, never the figure — a number left would
                 # give an abuser a progress bar.
                 raise HTTPException(
@@ -671,16 +715,16 @@ def _charge_ledger(
                     ),
                 )
         for charge in active:
-            cur.execute(
+            await cur.execute(
                 "INSERT INTO request_ledger (endpoint, caller) VALUES (%s, %s)",
                 (charge.endpoint, charge.key),
             )
         if pooled is not None:
-            cur.execute(
+            await cur.execute(
                 "INSERT INTO spend_ledger (endpoint, usd) VALUES (%s, %s)",
                 (pooled.endpoint, pooled.usd),
             )
-    conn.commit()
+    await conn.commit()
 
 
 def tracing_enabled() -> bool:
@@ -693,7 +737,7 @@ def tracing_enabled() -> bool:
 
 
 @app.get("/health")
-def health(
+async def health(
     verifier: SupabaseVerifier | None = Depends(get_verifier),
     tracing: bool = Depends(tracing_enabled),
 ) -> dict[str, str]:
@@ -709,7 +753,7 @@ def health(
     """
     return {
         "status": "ok",
-        "db": "up" if check_connection() else "down",
+        "db": "up" if await asyncio.to_thread(check_connection) else "down",
         "auth": "off" if verifier is None else "on",
         # The form's disclosure line reads this. One deployment answers for
         # both, so the page cannot disagree with what is actually happening.
@@ -718,9 +762,9 @@ def health(
 
 
 @app.get("/me")
-def me(
+async def me(
     caller: str = Depends(caller_id),
-    conn: psycopg.Connection = Depends(get_conn),
+    conn: psycopg.AsyncConnection = Depends(get_conn),
 ) -> dict[str, int]:
     """What this account has left to spend today (092/#197).
 
@@ -734,19 +778,19 @@ def me(
     spend a run.
     """
     limit = settings.evaluate_runs_per_day
-    with conn.cursor() as cur:
-        cur.execute(
+    async with conn.cursor() as cur:
+        await cur.execute(
             "SELECT count(*) FROM request_ledger"
             f" WHERE endpoint = %s AND caller = %s AND {_LEDGER_WINDOW}",
             (_EVALUATE, caller),
         )
-        row = cur.fetchone()
+        row = await cur.fetchone()
     used = int(row[0]) if row else 0
     return {"runs_per_day": limit, "runs_remaining": max(0, limit - used)}
 
 
 @app.delete("/me", status_code=204)
-def forget_me(
+async def forget_me(
     caller: str = Depends(caller_id),
     deleter: AccountDeleter | None = Depends(get_account_deleter),
 ) -> Response:
@@ -781,7 +825,7 @@ def forget_me(
             detail="account deletion is not available on this deployment",
         )
     try:
-        deleter.delete(caller)
+        await asyncio.to_thread(deleter.delete, caller)
     except DeletionFailed:
         raise HTTPException(
             status_code=502,
@@ -851,7 +895,7 @@ def _outcome(
     )
 
 
-def _run_graph(graph, payload, thread_id: str):
+async def _run_graph(graph, payload, thread_id: str):
     """Run the graph and map its refusals to status codes.
 
     Every message forwarded here is this codebase's own: `EmptyPanel` is a fixed
@@ -859,7 +903,7 @@ def _run_graph(graph, payload, thread_id: str):
     model text.
     """
     try:
-        return graph.invoke(
+        return await graph.ainvoke(
             payload,
             {
                 "configurable": {"thread_id": thread_id},
@@ -889,12 +933,12 @@ def _run_graph(graph, payload, thread_id: str):
 
 
 @app.post("/evaluate")
-def evaluate(
+async def evaluate(
     request: EvaluateRequest,
     _limit: None = Depends(enforce_evaluate_limits),
     caller: str = Depends(caller_id),
     llm: PanelLLM = Depends(get_panel_llm),
-    conn: psycopg.Connection = Depends(get_conn),
+    conn: psycopg.AsyncConnection = Depends(get_conn),
     credit: float | None = Depends(get_remaining_credit),
     screener: Screener | None = Depends(get_screener),
     generator: RolePlayGenerator = Depends(get_generator),
@@ -913,10 +957,10 @@ def evaluate(
     # pays nothing to be told so; the panel is bought below, so a sentence that
     # will never run costs no run. The check itself is charged either way.
     if request.reading_accepted:
-        _refuse_if_run_capped(conn, caller)
-    instruction = _approved_on_entry(conn, request, generator, caller)
+        await _refuse_if_run_capped(conn, caller)
+    instruction = await _approved_on_entry(conn, request, generator, caller)
     if request.reading_accepted:
-        _buy_panel(conn, caller)
+        await _buy_panel(conn, caller)
     variants = {"a": request.headline_a, "b": request.headline_b}
     thread_id = str(uuid4())
     graph = build_evaluate_graph(
@@ -930,7 +974,7 @@ def evaluate(
     # is identical to one that asked for JP-to-DE everyone — so the
     # cross-section reading is said here or nowhere.
     untargeted = request.target == PanelEdit()
-    state = _run_graph(
+    state = await _run_graph(
         graph,
         {
             "query": _settled_query(request.target),
@@ -959,18 +1003,28 @@ def evaluate(
     return _outcome(state, thread_id=thread_id, variants=variants, credit=credit)
 
 
-@contextmanager
-def _only_one_answer(conn: psycopg.Connection, thread_id: str) -> Iterator[None]:
+@asynccontextmanager
+async def _only_one_answer(
+    conn: psycopg.AsyncConnection, thread_id: str
+) -> AsyncIterator[None]:
     """Hold a run while it is being answered, or refuse.
 
     A session lock, not a transaction lock: the vote loop commits per chunk, and
-    a transaction lock would be released by the first of them.
+    a transaction lock would be released by the first of them. Verified rather
+    than assumed — `pg_advisory_xact_lock` is gone by the time the second chunk
+    starts.
+
+    The release below is belt to the connection's braces. Postgres drops a
+    session lock when the backend exits, so `get_conn` closing this connection
+    at the end of the request releases it whatever happens here — including from
+    an aborted transaction. That is what lets the `finally` give up quietly. All
+    of it measured: `docs/research/async-cancellation-and-connections.md`.
     """
-    with conn.cursor() as cur:
-        cur.execute(
+    async with conn.cursor() as cur:
+        await cur.execute(
             "SELECT pg_try_advisory_lock(hashtext(%s))", (f"resume:{thread_id}",)
         )
-        row = cur.fetchone()
+        row = await cur.fetchone()
     if not (row and row[0]):
         raise HTTPException(
             status_code=409, detail="this run is already being answered"
@@ -978,9 +1032,23 @@ def _only_one_answer(conn: psycopg.Connection, thread_id: str) -> Iterator[None]
     try:
         yield
     finally:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT pg_advisory_unlock(hashtext(%s))", (f"resume:{thread_id}",)
+        try:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    "SELECT pg_advisory_unlock(hashtext(%s))", (f"resume:{thread_id}",)
+                )
+        except psycopg.Error as failed:
+            # Never at the cost of the error being unwound. A run that left the
+            # transaction aborted made this unlock raise `InFailedSqlTransaction`
+            # *during handling of* the original — so `_run_graph`'s curated 402,
+            # 422 or 502 became an opaque 500, readable only as `__context__`.
+            # Giving up costs nothing the connection close does not already
+            # cover, and the release is only ever early.
+            logger.warning(
+                "could not release the resume lock for %s (%s); the connection"
+                " close will release it",
+                thread_id,
+                failed.__class__.__name__,
             )
 
 
@@ -1015,8 +1083,8 @@ def _check_purchase(caller: str) -> _Charge:
     )
 
 
-def _checked_or_refused(
-    conn: psycopg.Connection,
+async def _checked_or_refused(
+    conn: psycopg.AsyncConnection,
     generator: RolePlayGenerator,
     caller: str,
     sentence: str,
@@ -1032,17 +1100,19 @@ def _checked_or_refused(
     of our own fixed sentences naming the remedy; the refused text is never
     echoed.
     """
-    _charge_ledger(
-        conn, _check_purchase(caller), spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY))
+    await _charge_ledger(
+        conn,
+        _check_purchase(caller),
+        spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY)),
     )
-    checked = generator.check(instruction=sentence)
+    checked = await asyncio.to_thread(generator.check, instruction=sentence)
     if checked.refusal is not None:
         raise HTTPException(status_code=422, detail=checked.refusal_sentence)
     return checked.instruction
 
 
-def _approved_on_entry(
-    conn: psycopg.Connection,
+async def _approved_on_entry(
+    conn: psycopg.AsyncConnection,
     request: EvaluateRequest,
     generator: RolePlayGenerator,
     caller: str,
@@ -1057,11 +1127,11 @@ def _approved_on_entry(
     """
     if not (request.instruction or "").strip() or not request.audience.strip():
         return ""
-    return _checked_or_refused(conn, generator, caller, request.instruction or "")
+    return await _checked_or_refused(conn, generator, caller, request.instruction or "")
 
 
-def _classify_edit(
-    conn: psycopg.Connection,
+async def _classify_edit(
+    conn: psycopg.AsyncConnection,
     request: ResumeRequest,
     values: dict,
     generator: RolePlayGenerator,
@@ -1081,7 +1151,7 @@ def _classify_edit(
     edited = _edit_to_settle(request, values)
     if edited is None:
         return ""
-    return _checked_or_refused(conn, generator, caller, edited)
+    return await _checked_or_refused(conn, generator, caller, edited)
 
 
 def _settled_query(edit: PanelEdit) -> TargetQuery:
@@ -1138,11 +1208,11 @@ def _expired(started_at: str | None) -> bool:
 
 
 @app.post("/evaluate/resume")
-def resume_evaluate(
+async def resume_evaluate(
     request: ResumeRequest,
     caller: str = Depends(caller_id),
     llm: PanelLLM = Depends(get_panel_llm),
-    conn: psycopg.Connection = Depends(get_conn),
+    conn: psycopg.AsyncConnection = Depends(get_conn),
     credit: float | None = Depends(get_remaining_credit),
     screener: Screener | None = Depends(get_screener),
     generator: RolePlayGenerator = Depends(get_generator),
@@ -1172,8 +1242,8 @@ def resume_evaluate(
         checkpointer=checkpointer,
     )
     config = {"configurable": {"thread_id": request.thread_id}}
-    with _only_one_answer(conn, request.thread_id):
-        snapshot = graph.get_state(config)
+    async with _only_one_answer(conn, request.thread_id):
+        snapshot = await graph.aget_state(config)
         values = snapshot.values or {}
         # One sentence for "no such run" and "not yours": which it was is not
         # the caller's business.
@@ -1201,13 +1271,13 @@ def resume_evaluate(
         approved = ""
         if request.action == "accept":
             # Above the purchase: a sentence that will never be run costs no run.
-            approved = _classify_edit(conn, request, values, generator, caller)
+            approved = await _classify_edit(conn, request, values, generator, caller)
         if request.action == "accept":
             # After the free refusals above, so a run that was never resumable
             # costs nothing, and inside the lock, so simultaneous accepts
             # cannot each pass a cap neither has yet recorded.
-            _buy_panel(conn, caller)
-        state = _run_graph(
+            await _buy_panel(conn, caller)
+        state = await _run_graph(
             graph,
             Command(
                 resume=GateDecision(
@@ -1227,11 +1297,11 @@ def resume_evaluate(
 
 
 @app.post("/chat")
-def chat(
+async def chat(
     request: ChatRequest,
     _limit: None = Depends(enforce_turn_limit),
     analyst: BaseChatModel = Depends(get_analyst),
-    conn: psycopg.Connection = Depends(get_conn),
+    conn: psycopg.AsyncConnection = Depends(get_conn),
     embedder: Embedder = Depends(get_embedder),
     checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
 ) -> StreamingResponse:

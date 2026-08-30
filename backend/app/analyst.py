@@ -10,9 +10,10 @@ survive restarts and are shared across workers; this module stays
 saver-agnostic and takes whatever `BaseCheckpointSaver` it is handed.
 """
 
+import asyncio
 import json
 from collections import Counter
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
 from statistics import median_low
 from typing import get_args, get_type_hints
@@ -344,7 +345,7 @@ class ToolDeps:
     connection and an embedder, neither of which can spend anything.
     """
 
-    conn: psycopg.Connection
+    conn: psycopg.AsyncConnection
     embedder: Embedder
 
 
@@ -379,15 +380,18 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
         return analysis_facts(result).model_dump_json()
 
     @tool
-    def search_personas(query: str) -> str:
+    async def search_personas(query: str) -> str:
         """Individual panelists of THIS test whose profiles best match a
         plain-language description, nearest first — for characterizing or
         quoting particular people. For the panel's overall make-up call
         analyze_results instead: this returns a handful of profiles, never a
         distribution. The query describes people, not SQL."""
-        found = nearest_panelists(
+        # The embedding is a model call: to a thread, so a tool cannot stall
+        # the loop mid-answer.
+        embedding = await asyncio.to_thread(deps.embedder.embed, [query])
+        found = await nearest_panelists(
             deps.conn,
-            embedding=deps.embedder.embed([query])[0],
+            embedding=embedding[0],
             panel_ids=[vote.persona_id for vote in result.votes],
             limit=_SEARCH_LIMIT,
         )
@@ -411,7 +415,7 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
         )
 
     @tool
-    def explain_the_report(question: str) -> str:
+    async def explain_the_report(question: str) -> str:
         """What something on this report MEANS — a trait, a level, the tie zone,
         the credible interval, why a run stopped early, what the method cannot
         show. Returns passages written for this product, each with a citation to
@@ -421,7 +425,7 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
         textbook one, and this product's is different. For this test's own
         numbers call analyze_results — this holds no figures at all. An empty
         result means the corpus does not cover it; say so."""
-        found = search_corpus(deps.conn, question, deps.embedder)
+        found = await search_corpus(deps.conn, question, deps.embedder)
         return json.dumps(
             [
                 {"citation": passage.citation, "passage": passage.passage}
@@ -463,7 +467,7 @@ def checkpointed_models(state: type) -> set[type[BaseModel]]:
     return found
 
 
-def stream_analyst(
+async def stream_analyst(
     *,
     model: BaseChatModel,
     result: EvaluateResponse,
@@ -471,7 +475,7 @@ def stream_analyst(
     message: str,
     checkpointer: BaseCheckpointSaver,
     deps: ToolDeps,
-) -> Iterator[str]:
+) -> AsyncIterator[str]:
     """Yield the agent's turn as NDJSON lines — one `ChatStreamEvent` each.
 
     The agent is rebuilt per request because the tools close over the request's
@@ -506,28 +510,39 @@ def stream_analyst(
         return event.model_dump_json() + "\n"
 
     try:
-        stream = agent.stream_events(
+        # `async with`, not a bare local: langgraph's own contract is that the
+        # run stream is closed to "guarantee clean shutdown on early exit", and
+        # this generator exits early on four paths — three `except … return`
+        # branches, plus the `GeneratorExit` Starlette raises when a reader
+        # navigates away mid-turn. `GeneratorExit` is a `BaseException`, so the
+        # broad `except Exception` below never sees it; without this the run
+        # kept making paid model calls with no consumer, and a run suspended
+        # inside `AsyncPostgresSaver._cursor` held that process-wide lock until
+        # arbitrary garbage collection — hanging every later `/chat` and
+        # `/evaluate` on their next checkpoint read. The sync generator this
+        # replaced was closed deterministically by refcount.
+        async with await agent.astream_events(
             {"messages": [HumanMessage(content=message)]},
             {"configurable": {"thread_id": thread_id}, "recursion_limit": limit},
             version="v3",
-        )
-        for event in stream:
-            data = event["params"]["data"]
-            if event["method"] == "tools" and data.get("event") == "tool-started":
-                yield line(ToolEvent(name=data["tool_name"]))
-            elif event["method"] == "messages":
-                payload = data[0] if isinstance(data, tuple) else data
+        ) as stream:
+            async for event in stream:
+                data = event["params"]["data"]
+                if event["method"] == "tools" and data.get("event") == "tool-started":
+                    yield line(ToolEvent(name=data["tool_name"]))
+                elif event["method"] == "messages":
+                    payload = data[0] if isinstance(data, tuple) else data
 
-                if isinstance(payload, AIMessage):
-                    if payload.text:
-                        yield line(TokenEvent(text=payload.text))
-                elif (
-                    isinstance(payload, dict)
-                    and payload.get("event") == "content-block-delta"
-                ):
-                    delta = payload.get("delta", {})
-                    if delta.get("type") == "text-delta" and delta.get("text"):
-                        yield line(TokenEvent(text=delta["text"]))
+                    if isinstance(payload, AIMessage):
+                        if payload.text:
+                            yield line(TokenEvent(text=payload.text))
+                    elif (
+                        isinstance(payload, dict)
+                        and payload.get("event") == "content-block-delta"
+                    ):
+                        delta = payload.get("delta", {})
+                        if delta.get("type") == "text-delta" and delta.get("text"):
+                            yield line(TokenEvent(text=delta["text"]))
     except GraphRecursionError:
         yield line(
             ErrorEvent(message=f"analyst was still calling tools after {limit} steps")

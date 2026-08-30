@@ -22,6 +22,7 @@ a pair with a clear winner and lets the stop fire for real.
 """
 
 import argparse
+import asyncio
 import json
 import logging
 from dataclasses import asdict, dataclass
@@ -29,6 +30,7 @@ from pathlib import Path
 from statistics import mean
 
 import psycopg
+from pgvector.psycopg import register_vector_async
 
 from app.config import PROFILES, ProfileName, settings
 from app.llm import OpenRouterPanelLLM, OpenRouterTargetTranslator
@@ -208,15 +210,26 @@ def main() -> None:
         base_url=settings.openrouter_base_url,
         model=settings.targeting_model,
     )
-    with psycopg.connect(settings.database_url) as conn:
-        result = run_panel_test(
-            conn,
-            description=args.description,
-            variants={"a": args.headline_a, "b": args.headline_b},
-            size=PROFILES[profile].size,
-            translator=translator,
-            llm=llm,
-        )
+
+    # `run_panel_test` followed its callees async (111/#240). A script has no
+    # event loop of its own, so it starts one here rather than the pipeline
+    # keeping a sync twin for one caller.
+    async def run() -> PanelTestResult:
+        async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+            # The adapter, for the reason `corpus_check._with_live` records: a
+            # bare connection aborts a paid run the moment anything binds a
+            # numpy vector, and nothing here would catch it until it happened.
+            await register_vector_async(conn)
+            return await run_panel_test(
+                conn,
+                description=args.description,
+                variants={"a": args.headline_a, "b": args.headline_b},
+                size=PROFILES[profile].size,
+                translator=translator,
+                llm=llm,
+            )
+
+    result = asyncio.run(run())
     _write(rows_from_votes(args.label, result.votes), args.out)
     _print_result(result)
 

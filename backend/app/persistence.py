@@ -77,6 +77,33 @@ def apply_schema(conn: psycopg.Connection) -> None:
         ) from error
 
 
+# A lock this sweep waits on is a mistake, not a wait. `ALTER TABLE ... ENABLE
+# ROW LEVEL SECURITY` takes ACCESS EXCLUSIVE, and the sweep only fires on the
+# boot after a new table appears — i.e. the deploy right after the checkpointer
+# migrates its tables, exactly when the outgoing instance may still be holding
+# ACCESS SHARE through a multi-minute vote chunk. With no timeout the new
+# instance's lifespan waits behind it with nothing served and nothing logged,
+# which is the symptom this sweep's own timeout was added to prevent, arriving
+# through the next door along. Five seconds is a chosen bound rather than a
+# measured one — disclosed, not dressed up — and it matches the figure the test
+# fixtures use for the same rule. Timing out fails the boot loudly, which is the
+# right outcome: a sweep that did not run leaves transcripts readable.
+_LOCK_TIMEOUT = "SET lock_timeout = '5s'"
+
+_DENY_DATA_API = (
+    "DO $$ DECLARE t record; BEGIN"
+    "  FOR t IN SELECT c.relname FROM pg_class c"
+    "    JOIN pg_namespace n ON n.oid = c.relnamespace"
+    "    WHERE n.nspname = 'public' AND c.relkind = 'r'"
+    "    AND NOT c.relrowsecurity"
+    "  LOOP"
+    "    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',"
+    "                   t.relname);"
+    "  END LOOP;"
+    "END $$;"
+)
+
+
 def deny_data_api(conn: psycopg.Connection) -> None:
     """Turn row-level security on for every table in `public`, with no policies.
 
@@ -93,19 +120,34 @@ def deny_data_api(conn: psycopg.Connection) -> None:
     those hold analyst transcripts. A list would have to be remembered; a sweep
     covers whatever is there, including tables added after this was written.
     """
-    conn.execute(
-        "DO $$ DECLARE t record; BEGIN"
-        "  FOR t IN SELECT c.relname FROM pg_class c"
-        "    JOIN pg_namespace n ON n.oid = c.relnamespace"
-        "    WHERE n.nspname = 'public' AND c.relkind = 'r'"
-        "    AND NOT c.relrowsecurity"
-        "  LOOP"
-        "    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',"
-        "                   t.relname);"
-        "  END LOOP;"
-        "END $$;"
-    )
+    conn.execute(_LOCK_TIMEOUT)
+    conn.execute(_DENY_DATA_API)
     conn.commit()
+
+
+async def adeny_data_api(conn: psycopg.AsyncConnection) -> None:
+    """`deny_data_api` for a caller that has an event loop — the lifespan.
+
+    Two implementations of three statements, rather than one shared one: the
+    sync version above is the seed's, a script with no loop, and the async
+    version lets the lifespan borrow the checkpointer pool's connection instead
+    of opening a second one. That borrow is the point. Opening its own
+    connection meant a second pooler slot at boot and, worse, a fresh connect on
+    the boot path — a deadline to pick where the code this replaced had no
+    connect at all and so could not time out.
+
+    The SQL is shared, so the two cannot drift on the part that carries the
+    meaning.
+    """
+    # Reset afterwards: this borrows the checkpointer pool's one connection,
+    # which then serves analyst transcripts for the life of the process. A bare
+    # `SET` would leave a lock deadline on a subsystem that never asked for one.
+    await conn.execute(_LOCK_TIMEOUT)
+    try:
+        await conn.execute(_DENY_DATA_API)
+        await conn.commit()
+    finally:
+        await conn.execute("RESET lock_timeout")
 
 
 def prepare_connection(conn: psycopg.Connection) -> None:
@@ -201,6 +243,24 @@ def _fetch_personas(
     return [_persona_from_row(cast(PersonaRow, row)) for row in rows]
 
 
+async def _afetch_personas(
+    conn: psycopg.AsyncConnection, sql: str, params: Sequence[SqlParam]
+) -> list[Persona]:
+    """The request path's twin of `_fetch_personas`.
+
+    Three lines of cursor plumbing duplicated rather than one implementation
+    shared, because the alternative is worse: `_fetch_personas` also serves the
+    seed and the pool audit, which are scripts with no event loop, and making
+    them async to spare this would drag `asyncio.run` into two command-line
+    tools to save four lines. The row mapping — the part with judgment in it —
+    is `_persona_from_row`, and both call it.
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(sql, params)
+        rows = await cur.fetchall()
+    return [_persona_from_row(cast(PersonaRow, row)) for row in rows]
+
+
 def _read_personas(
     conn: psycopg.Connection,
     *,
@@ -226,8 +286,8 @@ def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona
     return _read_personas(conn, order="random", limit=limit)
 
 
-def retrieve_panel(
-    conn: psycopg.Connection,
+async def retrieve_panel(
+    conn: psycopg.AsyncConnection,
     query: TargetQuery,
     *,
     size: int,
@@ -283,7 +343,7 @@ def retrieve_panel(
     # Ties break on id, so the panel cannot vary run to run for a reason the customer
     # could not see. Only an md5 collision could reach it, but the ordering has to be
     # total for `LIMIT` to mean anything.
-    return _fetch_personas(
+    return await _afetch_personas(
         conn,
         f"SELECT {_PERSONA_COLUMNS} FROM personas "
         f"WHERE {' AND '.join(conditions)} "
@@ -292,8 +352,8 @@ def retrieve_panel(
     )
 
 
-def nearest_panelists(
-    conn: psycopg.Connection,
+async def nearest_panelists(
+    conn: psycopg.AsyncConnection,
     *,
     embedding: Sequence[float],
     panel_ids: Sequence[str],
@@ -308,7 +368,7 @@ def nearest_panelists(
     """
     # `<=>` is cosine distance; the index opclass in schema.sql must agree
     # (vector_cosine_ops), or the planner quietly ignores the index.
-    return _fetch_personas(
+    return await _afetch_personas(
         conn,
         f"SELECT {_PERSONA_COLUMNS} FROM personas "
         "WHERE id = ANY(%s) "
@@ -333,7 +393,9 @@ class VoteRow(TypedDict):
 _VOTE_COLUMNS = ", ".join(VoteRow.__annotations__)
 
 
-def store_votes(conn: psycopg.Connection, votes: Mapping[str, VoteRecord]) -> int:
+async def store_votes(
+    conn: psycopg.AsyncConnection, votes: Mapping[str, VoteRecord]
+) -> int:
     """Append newly cast votes to the ledger; return how many were new.
 
     `ON CONFLICT DO NOTHING`, never update: votes are paid model output, and the
@@ -342,12 +404,12 @@ def store_votes(conn: psycopg.Connection, votes: Mapping[str, VoteRecord]) -> in
     the same answer — regrettable, but not a reason to rewrite history.
     """
     written = 0
-    with conn.transaction():
+    async with conn.transaction():
         for fingerprint, record in votes.items():
             # Columns spelled literally, not joined from `VoteRow`: the values
             # below are hand-ordered, and every column is text, so a reordered
             # TypedDict would land them in the wrong columns without an error.
-            result = conn.execute(
+            result = await conn.execute(
                 """
                 INSERT INTO votes (request_fingerprint, persona_id, test_id,
                     chosen_variant_id, presentation_order, reason)
@@ -367,8 +429,8 @@ def store_votes(conn: psycopg.Connection, votes: Mapping[str, VoteRecord]) -> in
     return written
 
 
-def load_votes(
-    conn: psycopg.Connection, fingerprints: Sequence[str]
+async def load_votes(
+    conn: psycopg.AsyncConnection, fingerprints: Sequence[str]
 ) -> dict[str, VoteRecord]:
     """The cached votes among `fingerprints`, keyed back on the fingerprint.
 
@@ -377,11 +439,12 @@ def load_votes(
     """
     if not fingerprints:
         return {}
-    with conn.cursor(row_factory=dict_row) as cur:
-        rows = cur.execute(
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
             f"SELECT {_VOTE_COLUMNS} FROM votes WHERE request_fingerprint = ANY(%s)",
             [list(fingerprints)],
-        ).fetchall()
+        )
+        rows = await cur.fetchall()
     return {
         row["request_fingerprint"]: VoteRecord(
             persona_id=row["persona_id"],

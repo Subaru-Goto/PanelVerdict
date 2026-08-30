@@ -5,6 +5,7 @@ stub model. The HTTP layer maps the two refusals below onto status codes; nothin
 knows what a status code is.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from time import perf_counter
@@ -166,8 +167,8 @@ def _vote_shortfall_notice(votes: PanelVotes, matched: int) -> tuple[Notice, ...
     )
 
 
-def _chunk_votes(
-    conn: psycopg.Connection,
+async def _chunk_votes(
+    conn: psycopg.AsyncConnection,
     panel: list[Persona],
     *,
     test_id: str,
@@ -199,13 +200,17 @@ def _chunk_votes(
         )
         for persona, order in zip(panel, orders)
     }
-    cached = load_votes(conn, list(fingerprints.values()))
+    cached = await load_votes(conn, list(fingerprints.values()))
     misses = [
         (persona, order)
         for persona, order in zip(panel, orders)
         if fingerprints[persona.id] not in cached
     ]
-    fresh = collect_panel_votes(
+    # 042/#140's `ThreadPoolExecutor` is untouched, and must not run here: a
+    # panel is minutes of model calls, and awaiting them on the event loop
+    # would stall every other request in the process for the whole run.
+    fresh = await asyncio.to_thread(
+        collect_panel_votes,
         test_id=test_id,
         variants=variants,
         panel=[persona for persona, _ in misses],
@@ -213,14 +218,14 @@ def _chunk_votes(
         enacted=enacted,
         orders=[order for _, order in misses],
     )
-    store_votes(
+    await store_votes(
         conn, {fingerprints[record.persona_id]: record for record in fresh.records}
     )
     # Committed per chunk, not per request: the endpoint's connection only commits
     # at a clean exit, so a store that waited for it would die with the run — and
     # the ledger exists precisely so a run that dies at vote 180 does not cost 180
     # votes to get back.
-    conn.commit()
+    await conn.commit()
 
     fresh_pairs = {
         record.persona_id: (record, usage)
@@ -248,8 +253,8 @@ class CollectedVotes:
     credit_exhausted: bool
 
 
-def run_vote_loop(
-    conn: psycopg.Connection,
+async def run_vote_loop(
+    conn: psycopg.AsyncConnection,
     panel: list[Persona],
     *,
     variants: dict[str, str],
@@ -283,7 +288,22 @@ def run_vote_loop(
     last_reading: tuple[StopReason, str] | None = None
     for start in range(0, len(panel), VOTE_CONCURRENCY):
         chunk_panel = panel[start : start + VOTE_CONCURRENCY]
-        chunk = _chunk_votes(
+        # Plainly awaited, and a shield here was tried and measured. The worry
+        # was real — `asyncio.to_thread` cannot be cancelled, so a cancel landing
+        # mid-chunk leaves the worker finishing all 25 paid model calls while
+        # `store_votes` and the commit below never run, and the resumed run
+        # re-buys what it just paid for. `asyncio.shield` does not address it:
+        # cancelling the awaiter is exactly what a shield permits, so the handler
+        # unwinds, `get_conn` closes this connection, and the detached chunk then
+        # reaches a closed one. Measured against uvicorn's own forced-shutdown
+        # call, shielded and plain preserved the same votes — the shield's only
+        # effect was an extra `OperationalError` and a chunk outliving its
+        # request. Measured in
+        # `docs/research/async-cancellation-and-connections.md`, which also
+        # records that nothing cancels this handler in the deployment today.
+        # Preserving the in-flight chunk needs a connection the chunk owns, which
+        # spends the connection budget 112/#242 has yet to measure.
+        chunk = await _chunk_votes(
             conn,
             chunk_panel,
             test_id=test_id,
@@ -417,8 +437,8 @@ def assemble_result(
     )
 
 
-def run_panel_test(
-    conn: psycopg.Connection,
+async def run_panel_test(
+    conn: psycopg.AsyncConnection,
     *,
     description: str,
     variants: dict[str, str],
@@ -432,10 +452,10 @@ def run_panel_test(
     the controls and never translates (094), so this is the one caller the
     translator has left.
     """
-    selection = select_panel(conn, description, size=size, translator=translator)
+    selection = await select_panel(conn, description, size=size, translator=translator)
     # Refused before the panel model is touched: nothing has been spent yet on a
     # target nobody matches, and nothing should be.
     if not selection.panel:
         raise EmptyPanel(f"no persona matches this target (size {size} requested)")
-    collected = run_vote_loop(conn, selection.panel, variants=variants, llm=llm)
+    collected = await run_vote_loop(conn, selection.panel, variants=variants, llm=llm)
     return assemble_result(selection, collected, variants=variants, size=size)

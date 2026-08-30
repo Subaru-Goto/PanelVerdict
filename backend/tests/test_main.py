@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import httpx
+
 import psycopg
 import pytest
 from app import graph as graph_module
@@ -18,6 +19,7 @@ from app.config import (
 )
 from app.main import (
     LEDGER_HOURS,
+    _only_one_answer,
     app,
     budget_notice,
     get_account_deleter,
@@ -36,13 +38,14 @@ from app.persistence import nearest_panelists, persist_pool
 from app.schemas import MAX_AUDIENCE_CHARS, EvaluateRequest
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from openai import APIStatusError
-from pgvector.psycopg import register_vector
+from pgvector.psycopg import register_vector_async
 from pydantic import SecretStr
 from tests.factories import (
     FixedEmbedder,
@@ -112,8 +115,25 @@ def _edit(query: dict) -> dict:
     return {field: query[field] for field in _EDITABLE}
 
 
+@pytest.fixture(autouse=True)
+def no_saver_left_behind():
+    """No test may leave a saver on `app.state`.
+
+    `app` is a module-level singleton and the saver a lifespan builds has a
+    closed pool the moment its `TestClient` context exits. Left in place it is
+    handed to any later test that reaches `get_checkpointer` without an
+    override, and the failure surfaces there rather than here. Autouse, so the
+    next test to run a real lifespan inherits the guard rather than the bug.
+    """
+    yield
+
+    assert not hasattr(app.state, "checkpointer"), (
+        "a saver was left on app.state — see the `real_lifespan` fixture"
+    )
+
+
 @pytest.fixture
-def client(conn, stub_llm, monkeypatch):
+def client(conn, pg_url, stub_llm, monkeypatch):
     """The app with every paid or external dependency replaced: the testcontainer
     connection and a stub panel model.
 
@@ -135,10 +155,21 @@ def client(conn, stub_llm, monkeypatch):
         "supabase_service_key",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
+
     # Every override is a zero-argument callable, never the class itself: FastAPI
     # reads a bare class's __init__ signature as a dependency and would turn its
     # parameters into the endpoint's body model.
-    app.dependency_overrides[get_conn] = lambda: conn
+    # An async dependency opening its own connection, rather than the `aconn`
+    # fixture: these tests are synchronous — `TestClient` drives the async app
+    # for them — and pytest cannot hand an async fixture to a sync test. The
+    # `conn` fixture above still seeds, and it autocommits, so what a test
+    # writes is visible to the connection the route gets.
+    async def request_connection():
+        async with await psycopg.AsyncConnection.connect(pg_url) as connection:
+            await register_vector_async(connection)
+            yield connection
+
+    app.dependency_overrides[get_conn] = request_connection
     app.dependency_overrides[get_panel_llm] = lambda: stub_llm(
         chosen="option_1", reason="clear discount framing"
     )
@@ -384,9 +415,9 @@ def test_concurrent_runs_cannot_outrun_the_ledger(
     monkeypatch.setattr(settings, "evaluate_runs_per_day", 3)
     seed_japanese(conn, 2)
 
-    def own_connection():
-        with psycopg.connect(pg_url) as connection:
-            register_vector(connection)
+    async def own_connection():
+        async with await psycopg.AsyncConnection.connect(pg_url) as connection:
+            await register_vector_async(connection)
             yield connection
 
     app.dependency_overrides[get_conn] = own_connection
@@ -581,9 +612,9 @@ def test_concurrent_runs_cannot_outspend_the_pool(
     monkeypatch.setattr(settings, "global_daily_cap_usd", 3.5 * run_price)
     seed_japanese(conn, 2)
 
-    def own_connection():
-        with psycopg.connect(pg_url) as connection:
-            register_vector(connection)
+    async def own_connection():
+        async with await psycopg.AsyncConnection.connect(pg_url) as connection:
+            await register_vector_async(connection)
             yield connection
 
     app.dependency_overrides[get_conn] = own_connection
@@ -916,33 +947,135 @@ def test_chat_streams_the_analysts_reply_as_ndjson(client) -> None:
     assert events[-1] == {"type": "done"}
 
 
-def test_the_chat_connection_can_bind_a_query_vector(conn, pg_url, monkeypatch) -> None:
+@pytest.mark.anyio
+async def test_the_chat_connection_can_bind_a_query_vector(
+    conn, pg_url, monkeypatch
+) -> None:
     """Every other test replaces get_conn with the fixture connection, which
     registers the pgvector adapter — only this test exercises the real
     dependency. search_personas binds a numpy vector; a connection without the
     adapter cannot even send that query. (`conn` is here as a precondition:
-    it guarantees the container already has the extension and schema.)"""
+    it guarantees the container already has the extension and schema.)
+
+    The connection stays per-request (see `get_conn`), so this exercises the
+    dependency directly."""
     # database_url is a derived property, so the patch lands on the class.
     monkeypatch.setattr(type(settings), "database_url", pg_url)
+
     dependency = get_conn()
     try:
-        live = next(dependency)
-        found = nearest_panelists(live, embedding=pointing(0), panel_ids=[], limit=1)
+        live = await anext(dependency)
+        found = await nearest_panelists(
+            live, embedding=pointing(0), panel_ids=[], limit=1
+        )
         assert found == []
     finally:
-        dependency.close()
+        await dependency.aclose()
 
 
-def test_the_lifespan_builds_the_postgres_checkpointer(pg_url, monkeypatch) -> None:
+@pytest.fixture
+def real_lifespan(pg_url, monkeypatch):
+    """Point the app at the testcontainer, and leave `app.state` as found.
+
+    `app` is a module-level singleton, so the saver its lifespan builds outlives
+    the test that built it — with its pool closed by then. A later test reaching
+    `get_checkpointer` without an override would be handed that closed saver,
+    and would fail somewhere with no trail back to here.
+    """
+    # database_url is a derived property, so the patch lands on the class.
+    monkeypatch.setattr(type(settings), "database_url", pg_url)
+    found = getattr(app.state, "checkpointer", None)
+
+    yield
+
+    if found is None:
+        if hasattr(app.state, "checkpointer"):
+            del app.state.checkpointer
+    else:
+        app.state.checkpointer = found
+
+
+def test_the_lifespan_builds_the_postgres_checkpointer(real_lifespan) -> None:
     """Every other test overrides get_checkpointer — only this one runs the
     real lifespan (TestClient does that as a context manager). It pins the
     wiring the deploy relies on: startup opens the pool, `setup()` migrates
     the library's checkpoint tables without error, and the saver the /chat
     dependency will hand out is the Postgres one."""
-    # database_url is a derived property, so the patch lands on the class.
-    monkeypatch.setattr(type(settings), "database_url", pg_url)
     with TestClient(app):
-        assert isinstance(app.state.checkpointer, PostgresSaver)
+        assert isinstance(app.state.checkpointer, AsyncPostgresSaver)
+
+
+def test_the_lifespan_closes_every_table_to_the_data_api(real_lifespan, conn) -> None:
+    """The startup sweep, asserted on the database rather than on its arguments.
+
+    Supabase serves `public` over a REST API the browser's publishable key can
+    reach, so a table with RLS off is readable by anyone who opens a console.
+    The sweep is the only thing closing it, and it has to run *after*
+    `checkpointer.setup()` — the tables the library creates hold analyst
+    transcripts, and they do not exist before it.
+
+    Checked as "no table is left open", not as a list: a list would have to be
+    remembered, and the tables that matter most are the ones added by a library
+    upgrade nobody here wrote.
+    """
+    with TestClient(app):
+        pass
+
+    open_tables = [
+        row[0]
+        for row in conn.execute(
+            "SELECT c.relname FROM pg_class c"
+            " JOIN pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE n.nspname = 'public' AND c.relkind = 'r'"
+            " AND NOT c.relrowsecurity"
+        ).fetchall()
+    ]
+
+    assert open_tables == [], open_tables
+    # The checkpointer's own tables specifically: they are created by `setup()`
+    # inside the lifespan, so their being closed is what proves the ordering.
+    closed = {
+        row[0]
+        for row in conn.execute(
+            "SELECT c.relname FROM pg_class c"
+            " JOIN pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity"
+        ).fetchall()
+    }
+    assert "checkpoints" in closed, closed
+
+
+def test_a_resume_works_against_the_checkpointer_the_deploy_actually_uses(
+    client, conn, real_lifespan
+) -> None:
+    """The gate, driven over the wire against the real `AsyncPostgresSaver`.
+
+    Every other route test overrides `get_checkpointer` with `InMemorySaver`,
+    whose synchronous methods are real ones — so the suite stayed green while
+    `/evaluate/resume` called `graph.get_state`, which `AsyncPostgresSaver`
+    refuses from its own event loop, 500-ing every resume in production. 717
+    passing tests said nothing about the whole human-in-the-loop gate being
+    dead (111/#240 review).
+
+    The saver has to be the one the lifespan builds, not one this test
+    constructs: it captures the running loop in `__init__`, so a saver made on
+    any other loop would not take the branch the deploy takes.
+    """
+    seed_japanese(conn, 5)
+    # Popped, not deleted: this test is about the real saver, and it should not
+    # also depend on the `client` fixture having installed an override to remove.
+    app.dependency_overrides.pop(get_checkpointer, None)
+
+    with TestClient(app) as live:
+        assert isinstance(app.state.checkpointer, AsyncPostgresSaver)
+        paused = live.post("/evaluate", json=_UNAPPROVED_BODY).json()
+        body = live.post(
+            "/evaluate/resume",
+            json={"thread_id": paused["thread_id"], "action": "accept"},
+        ).json()
+
+    assert body["status"] == "complete"
+    assert body["counts"]["voted"] == 5
 
 
 def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None:
@@ -1381,13 +1514,13 @@ def test_a_run_is_labelled_with_the_id_the_caller_is_given(
 
     def spy(**kwargs):
         graph = real(**kwargs)
-        invoke = graph.invoke
+        ainvoke = graph.ainvoke
 
-        def record(payload, config, *args, **rest):
+        async def record(payload, config, *args, **rest):
             seen["config"] = config
-            return invoke(payload, config, *args, **rest)
+            return await ainvoke(payload, config, *args, **rest)
 
-        monkeypatch.setattr(graph, "invoke", record)
+        monkeypatch.setattr(graph, "ainvoke", record)
         return graph
 
     monkeypatch.setattr(main, "build_evaluate_graph", spy)
@@ -1662,9 +1795,9 @@ def test_two_accepts_at_once_buy_one_panel(client, conn, pg_url) -> None:
     seed_japanese(conn, 5)
     paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
 
-    def own_connection():
-        with psycopg.connect(pg_url) as fresh:
-            register_vector(fresh)
+    async def own_connection():
+        async with await psycopg.AsyncConnection.connect(pg_url) as fresh:
+            await register_vector_async(fresh)
             yield fresh
 
     app.dependency_overrides[get_conn] = own_connection
@@ -2414,3 +2547,53 @@ def test_an_instruction_of_only_spaces_names_nothing_and_is_refused_free(
     assert response.status_code == 422
     assert generator.checked == []
     assert generator.drafted == []
+
+
+class TestOnlyOneAnswer:
+    """The lock that stops two accepts from buying one panel twice.
+
+    Tested here rather than through `/evaluate/resume`, because the release is
+    not observable through the API: every request gets its own connection, and
+    Postgres drops a session lock when the connection closes — so the explicit
+    unlock could be deleted outright and the endpoint would behave identically.
+    Mutation-checked, and that is exactly how the coverage was lost.
+    """
+
+    LOCKED = "SELECT pg_try_advisory_lock(hashtext(%s))"
+
+    async def _free(self, url: str, thread_id: str) -> bool:
+        """Whether another session can take the lock — the only vantage point
+        from which a release is visible at all."""
+        async with await psycopg.AsyncConnection.connect(url) as probe:
+            cur = await probe.execute(self.LOCKED, (f"resume:{thread_id}",))
+            return bool((await cur.fetchone())[0])
+
+    @pytest.mark.anyio
+    async def test_the_lock_is_released_once_the_answer_is_given(
+        self, aconn, pg_url
+    ) -> None:
+        async with _only_one_answer(aconn, "released"):
+            assert not await self._free(pg_url, "released")
+
+        assert await self._free(pg_url, "released")
+
+    @pytest.mark.anyio
+    async def test_the_unlock_never_replaces_the_error_it_is_unwinding(
+        self, aconn, pg_url
+    ) -> None:
+        """A 402 must still read as a 402.
+
+        `_run_graph` curates its failures — 402 out of credit, 422 unusable
+        input, 502 upstream — and the reader is told which. If the run left the
+        transaction aborted, the unlock in the `finally` raised
+        `InFailedSqlTransaction` *during handling of* that error and became the
+        exception the client saw: an opaque 500, with the curated status only
+        reachable as `__context__`.
+        """
+        with pytest.raises(HTTPException) as raised:
+            async with _only_one_answer(aconn, "aborted"):
+                with pytest.raises(psycopg.errors.DivisionByZero):
+                    await aconn.execute("SELECT 1 / 0")
+                raise HTTPException(status_code=402, detail="out of credit")
+
+        assert raised.value.status_code == 402

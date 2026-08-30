@@ -5,6 +5,7 @@ test_analyst.py; here it's the wire — event order, both token dialects, and
 the in-band error discipline.
 """
 
+import pytest
 from collections.abc import Iterator
 
 import psycopg
@@ -22,17 +23,18 @@ from tests.factories import (
 from tests.test_analyst import _deps, _result
 
 
-def _lines(
+async def _lines(
     model: ScriptedChatModel,
     *,
-    conn: psycopg.Connection,
+    conn: psycopg.AsyncConnection,
     thread_id: str,
     deps: ToolDeps | None = None,
 ) -> list[str]:
     """One streamed turn with the shared fixture result and question — every
     test here varies only the model and what it asserts about the wire."""
-    return list(
-        stream_analyst(
+    return [
+        line
+        async for line in stream_analyst(
             model=model,
             result=_result(),
             thread_id=thread_id,
@@ -40,11 +42,12 @@ def _lines(
             checkpointer=InMemorySaver(),
             deps=deps or _deps(conn),
         )
-    )
+    ]
 
 
 class TestStreamAnalyst:
-    def test_a_turn_streams_tool_then_tokens_then_done(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_turn_streams_tool_then_tokens_then_done(self, conn, aconn) -> None:
         """The whole contract in one transcript: the tool announces itself,
         the answer arrives in pieces, and the stream says it finished."""
         model = ScriptedChatModel(
@@ -54,7 +57,7 @@ class TestStreamAnalyst:
             ]
         )
 
-        events = ndjson_events(_lines(model, conn=conn, thread_id="s-1"))
+        events = ndjson_events(await _lines(model, conn=aconn, thread_id="s-1"))
 
         tool_at = events.index({"type": "tool", "name": "analyze_results"})
         first_token_at = next(i for i, e in enumerate(events) if e["type"] == "token")
@@ -65,14 +68,17 @@ class TestStreamAnalyst:
         # NDJSON discipline: every line parses alone, no blank tokens.
         assert all(e != {"type": "token", "text": ""} for e in events)
 
-    def test_a_never_answering_model_streams_one_error_event(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_never_answering_model_streams_one_error_event(
+        self, conn, aconn
+    ) -> None:
         """The step budget's stream face: the same fixed sentence a 502 used
         to carry, in-band and terminal — nothing follows it, least of all a
         `done` that would let the client mistake the turn for a clean finish."""
         # A one-message script repeats forever (see ScriptedChatModel).
         model = ScriptedChatModel(responses=[tool_call_message()])
 
-        events = ndjson_events(_lines(model, conn=conn, thread_id="s-2"))
+        events = ndjson_events(await _lines(model, conn=aconn, thread_id="s-2"))
 
         errors = [e for e in events if e["type"] == "error"]
         # Derived here the way it is derived there, rather than written down: the
@@ -90,7 +96,8 @@ class TestStreamAnalyst:
         assert events[-1]["type"] == "error"
         assert {"type": "done"} not in events
 
-    def test_error_events_never_carry_model_text(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_error_events_never_carry_model_text(self, conn, aconn) -> None:
         """The discipline the whole error design exists for: the exception
         *type* reaches the wire, the exception *message* — where provider and
         model text live — never does."""
@@ -108,7 +115,7 @@ class TestStreamAnalyst:
                 raise RuntimeError("api key sk-secret")
                 yield
 
-        lines = _lines(Leaky(responses=[]), conn=conn, thread_id="s-3")
+        lines = await _lines(Leaky(responses=[]), conn=aconn, thread_id="s-3")
         events = ndjson_events(lines)
 
         assert events[-1] == {
@@ -117,7 +124,10 @@ class TestStreamAnalyst:
         }
         assert all("sk-secret" not in line for line in lines)
 
-    def test_tokens_arrive_incrementally_not_as_one_block(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_tokens_arrive_incrementally_not_as_one_block(
+        self, conn, aconn
+    ) -> None:
         """The worked example above tolerates one whole-message token (the
         non-streaming dialect); this pins the delta dialect: many pieces,
         reassembling to the exact sentence."""
@@ -128,7 +138,7 @@ class TestStreamAnalyst:
             ]
         )
 
-        events = ndjson_events(_lines(model, conn=conn, thread_id="s-4"))
+        events = ndjson_events(await _lines(model, conn=aconn, thread_id="s-4"))
 
         tokens = [e["text"] for e in events if e["type"] == "token"]
         assert len(tokens) > 1

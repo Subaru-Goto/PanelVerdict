@@ -6,7 +6,7 @@ from langchain.agents import AgentState
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from app.analyst import (
@@ -274,17 +274,19 @@ class TestToolSurface:
         assert "run_panel_test" not in names
 
 
-def _deps(conn: psycopg.Connection, *, embedder: Embedder | None = None) -> ToolDeps:
+def _deps(
+    conn: psycopg.AsyncConnection, *, embedder: Embedder | None = None
+) -> ToolDeps:
     """What the analyst's tools need at call time. Short, now that none of them
     can start a test: a connection and a canned embedder, since a real
     embedding is a paid call and no test here buys one."""
     return ToolDeps(conn=conn, embedder=embedder or FixedEmbedder(pointing(0)))
 
 
-def _run(
+async def _run(
     model: ScriptedChatModel,
     *,
-    conn: psycopg.Connection,
+    conn: psycopg.AsyncConnection,
     checkpointer: BaseCheckpointSaver | None = None,
     thread_id: str = "t-1",
     message: str = "Why did it stop early?",
@@ -296,20 +298,26 @@ def _run(
 
     """
     events = ndjson_events(
-        stream_analyst(
-            model=model,
-            result=result or _result(),
-            thread_id=thread_id,
-            message=message,
-            checkpointer=checkpointer or InMemorySaver(),
-            deps=deps or _deps(conn),
-        )
+        [
+            line
+            async for line in stream_analyst(
+                model=model,
+                result=result or _result(),
+                thread_id=thread_id,
+                message=message,
+                checkpointer=checkpointer or InMemorySaver(),
+                deps=deps or _deps(conn),
+            )
+        ]
     )
     return "".join(e["text"] for e in events if e["type"] == "token")
 
 
 class TestAnalystAgent:
-    def test_the_agent_runs_our_tool_and_returns_the_final_reply(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_the_agent_runs_our_tool_and_returns_the_final_reply(
+        self, conn, aconn
+    ) -> None:
         """The one wiring fact worth pinning about create_agent: a ToolMessage
         carrying OUR recomputed facts only appears in the second prompt if the
         agent bound and executed the real analyze_results."""
@@ -320,7 +328,7 @@ class TestAnalystAgent:
             ]
         )
 
-        reply = _run(model, conn=conn)
+        reply = await _run(model, conn=aconn)
 
         assert reply == "The interval cleared the band."
         fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
@@ -329,7 +337,10 @@ class TestAnalystAgent:
             "Polling stopped once the panel had already decided."
         )
 
-    def test_one_tool_call_can_answer_why_the_panel_looks_wrong(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_one_tool_call_can_answer_why_the_panel_looks_wrong(
+        self, conn, aconn
+    ) -> None:
         """This ticket's whole pin, end to end: the live incident asked why a
         young-Japanese target seated a 90-year-old and the analyst looped
         until the budget killed the turn. One analyze_results call now
@@ -341,9 +352,9 @@ class TestAnalystAgent:
             ]
         )
 
-        reply = _run(
+        reply = await _run(
             model,
-            conn=conn,
+            conn=aconn,
             result=_result_with_voters(),
             message="Why does a young Japanese panel include a 90-year-old?",
         )
@@ -354,7 +365,8 @@ class TestAnalystAgent:
         assert (panel["age_min"], panel["age_max"]) == (23, 91)
         assert panel["countries"] == {"JP": 2, "US": 1}
 
-    def test_the_agent_searches_only_this_tests_panel(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_the_agent_searches_only_this_tests_panel(self, conn, aconn) -> None:
         """search_personas end to end: the query text is embedded, the panel
         scope comes from result.votes, and the ToolMessage lists panelists
         nearest first. The outsider matches the query PERFECTLY and still may
@@ -385,11 +397,11 @@ class TestAnalystAgent:
             update={"votes": [make_panel_vote("US-00000"), make_panel_vote("US-00001")]}
         )
 
-        reply = _run(
+        reply = await _run(
             model,
-            conn=conn,
+            conn=aconn,
             result=result,
-            deps=_deps(conn, embedder=FixedEmbedder(pointing(0))),
+            deps=_deps(aconn, embedder=FixedEmbedder(pointing(0))),
         )
 
         assert reply == "Two panelists match."
@@ -401,7 +413,10 @@ class TestAnalystAgent:
         assert found[0].startswith("A 27-year-old")
         assert found[1].startswith("A 61-year-old")
 
-    def test_a_search_never_hands_the_model_a_persona_id(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_search_never_hands_the_model_a_persona_id(
+        self, conn, aconn
+    ) -> None:
         """The lesson the analyst was breaking in live use: an id
         identifies a row, not a reader. Enforced by absence — the model
         cannot quote a handle it was never given."""
@@ -416,12 +431,15 @@ class TestAnalystAgent:
         )
         result = _result().model_copy(update={"votes": [make_panel_vote("US-00000")]})
 
-        _run(model, conn=conn, result=result)
+        await _run(model, conn=aconn, result=result)
 
         fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
         assert "US-00000" not in str(fed_back[0].content)
 
-    def test_a_question_needing_no_tool_is_answered_without_one(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_question_needing_no_tool_is_answered_without_one(
+        self, conn, aconn
+    ) -> None:
         """ "What does a credible interval mean?" has no tool and needs none.
         The agent must not require a tool round to produce a turn — the
         prompt's licence to answer general questions directly is worthless if
@@ -431,14 +449,17 @@ class TestAnalystAgent:
         )
 
         events = ndjson_events(
-            stream_analyst(
-                model=model,
-                result=_result(),
-                thread_id="t-direct",
-                message="What does a credible interval mean?",
-                checkpointer=InMemorySaver(),
-                deps=_deps(conn),
-            )
+            [
+                line
+                async for line in stream_analyst(
+                    model=model,
+                    result=_result(),
+                    thread_id="t-direct",
+                    message="What does a credible interval mean?",
+                    checkpointer=InMemorySaver(),
+                    deps=_deps(aconn),
+                )
+            ]
         )
 
         assert [e for e in events if e["type"] == "tool"] == []
@@ -447,7 +468,10 @@ class TestAnalystAgent:
         )
         assert events[-1] == {"type": "done"}
 
-    def test_a_hallucinated_tool_name_does_not_crash_the_run(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_hallucinated_tool_name_does_not_crash_the_run(
+        self, conn, aconn
+    ) -> None:
         model = ScriptedChatModel(
             responses=[
                 tool_call_message(name="drop_the_database"),
@@ -455,17 +479,20 @@ class TestAnalystAgent:
             ]
         )
 
-        reply = _run(model, conn=conn)
+        reply = await _run(model, conn=aconn)
 
         assert reply == "Sorry, I cannot do that."
         # The framework replies to the bad call id itself; the pinned fact is
         # only that the run survives and the model gets *some* ToolMessage.
         assert any(isinstance(m, ToolMessage) for m in model.seen[1])
 
-    def test_the_agent_owns_the_system_prompt_and_it_stays_constant(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_the_agent_owns_the_system_prompt_and_it_stays_constant(
+        self, conn, aconn
+    ) -> None:
         model = ScriptedChatModel(responses=[AIMessage(content="ok")])
 
-        _run(model, conn=conn)
+        await _run(model, conn=aconn)
 
         first = model.seen[0][0]
         assert isinstance(first, SystemMessage)
@@ -482,7 +509,10 @@ class TestAnalystAgent:
         assert "an AI system" in _SYSTEM_PROMPT
         assert "never a person" in _SYSTEM_PROMPT
 
-    def test_a_thread_remembers_its_tool_results_across_turns(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_thread_remembers_its_tool_results_across_turns(
+        self, conn, aconn
+    ) -> None:
         """The reason the checkpointer exists: turn two's prompt still carries
         turn one's ToolMessage, so a follow-up needs no repeat tool call."""
         checkpointer = InMemorySaver()
@@ -494,8 +524,10 @@ class TestAnalystAgent:
             ]
         )
 
-        _run(model, conn=conn, checkpointer=checkpointer, message="How sure are we?")
-        reply = _run(model, conn=conn, checkpointer=checkpointer, message="Why?")
+        await _run(
+            model, conn=aconn, checkpointer=checkpointer, message="How sure are we?"
+        )
+        reply = await _run(model, conn=aconn, checkpointer=checkpointer, message="Why?")
 
         assert reply == "Because the interval cleared the band."
         third_prompt = model.seen[2]
@@ -535,7 +567,10 @@ class TestAnalystAgent:
             revived = serde.loads_typed(serde.dumps_typed(instance))
             assert type(revived) is model_cls
 
-    def test_a_thread_survives_a_process_restart(self, conn, pg_url) -> None:
+    @pytest.mark.anyio
+    async def test_a_thread_survives_a_process_restart(
+        self, conn, aconn, pg_url
+    ) -> None:
         """The reason the saver moved to Postgres (#144): a second saver
         instance over the same database — a restarted process, or another
         worker — resumes the transcript the first one wrote, ToolMessages
@@ -548,20 +583,20 @@ class TestAnalystAgent:
             ]
         )
 
-        with PostgresSaver.from_conn_string(pg_url) as saver:
-            saver.setup()
-            _run(
+        async with AsyncPostgresSaver.from_conn_string(pg_url) as saver:
+            await saver.setup()
+            await _run(
                 model,
-                conn=conn,
+                conn=aconn,
                 checkpointer=saver,
                 thread_id="t-restart",
                 message="How sure are we?",
             )
         # A fresh saver over the same database is what a restart leaves behind.
-        with PostgresSaver.from_conn_string(pg_url) as saver:
-            reply = _run(
+        async with AsyncPostgresSaver.from_conn_string(pg_url) as saver:
+            reply = await _run(
                 model,
-                conn=conn,
+                conn=aconn,
                 checkpointer=saver,
                 thread_id="t-restart",
                 message="Why?",
@@ -575,20 +610,21 @@ class TestAnalystAgent:
             for m in third_prompt
         )
 
-    def test_threads_do_not_share_memory(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_threads_do_not_share_memory(self, conn, aconn) -> None:
         checkpointer = InMemorySaver()
         model = ScriptedChatModel(responses=[AIMessage(content="ok")])
 
-        _run(
+        await _run(
             model,
-            conn=conn,
+            conn=aconn,
             checkpointer=checkpointer,
             thread_id="t-1",
             message="secret question",
         )
-        _run(
+        await _run(
             model,
-            conn=conn,
+            conn=aconn,
             checkpointer=checkpointer,
             thread_id="t-2",
             message="hello",
@@ -606,23 +642,31 @@ class TestExplainingWhatTheReportMeans:
     from the model's weights is a confident mismatch with what the system did,
     delivered to somebody with no way to check it."""
 
-    def test_the_answer_comes_back_with_something_to_check(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_the_answer_comes_back_with_something_to_check(
+        self, conn, aconn
+    ) -> None:
         from app.corpus import seed_corpus
         from tests.test_corpus_retrieval import FakeEmbedder
 
         seed_corpus(conn, FakeEmbedder())
         (explain,) = [
             t
-            for t in build_tools(_result(), _deps(conn, embedder=FakeEmbedder()))
+            for t in build_tools(_result(), _deps(aconn, embedder=FakeEmbedder()))
             if t.name == "explain_the_report"
         ]
 
-        answer = json.loads(explain.invoke({"question": "what is a practical tie"}))
+        answer = json.loads(
+            await explain.ainvoke({"question": "what is a practical tie"})
+        )
 
         assert answer, "the corpus should have a passage on this"
         assert all(passage["citation"] for passage in answer)
 
-    def test_a_question_the_corpus_cannot_answer_returns_nothing(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_question_the_corpus_cannot_answer_returns_nothing(
+        self, conn, aconn
+    ) -> None:
         """So the analyst says it does not know, rather than being handed the
         nearest passage and citing it."""
         from app.corpus import seed_corpus
@@ -631,11 +675,14 @@ class TestExplainingWhatTheReportMeans:
         seed_corpus(conn, FakeEmbedder())
         (explain,) = [
             t
-            for t in build_tools(_result(), _deps(conn, embedder=FakeEmbedder()))
+            for t in build_tools(_result(), _deps(aconn, embedder=FakeEmbedder()))
             if t.name == "explain_the_report"
         ]
 
-        assert json.loads(explain.invoke({"question": "how do I bake sourdough"})) == []
+        assert (
+            json.loads(await explain.ainvoke({"question": "how do I bake sourdough"}))
+            == []
+        )
 
 
 def test_a_concept_question_no_longer_routes_to_the_model_s_own_memory() -> None:

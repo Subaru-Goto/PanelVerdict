@@ -9,11 +9,14 @@ Splitting follows the headings rather than a fixed window, because a heading is
 where the author put a claim together with the caveat that qualifies it.
 """
 
+import asyncio
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
 import psycopg
+from psycopg.rows import dict_row
 
 
 @dataclass(frozen=True)
@@ -243,8 +246,8 @@ LIMIT %(limit)s
 """
 
 
-def search_corpus(
-    conn: psycopg.Connection,
+async def search_corpus(
+    conn: psycopg.AsyncConnection,
     query: str,
     embedder: Embedder,
     *,
@@ -279,17 +282,31 @@ def search_corpus(
     """
     if not query.strip():
         return []
-    (vector,) = embedder.embed([query])
-    rows = conn.execute(
-        _SEARCH,
-        {
-            "vector": str(vector),
-            "query": query,
-            "k": _RRF_K,
-            # Deeper than `limit` so fusion has ranks to work with: a passage the
-            # keyword half puts fourth may still win once both halves agree.
-            "pool": max(limit * 3, 10),
-            "limit": limit,
-        },
-    ).fetchall()
-    return [Passage(source=s, section=sec, passage=p) for s, sec, p in rows]
+    # Embedding is a paid model call over the network: to a thread, like every
+    # other blocking component call on an async path.
+    (vector,) = await asyncio.to_thread(embedder.embed, [query])
+    # `dict_row` and its own cursor, matching `_afetch_personas` and `load_votes`
+    # — and for the same reason. Read positionally, this borrowed whatever
+    # `row_factory` the caller's connection carried: over a dict-row connection
+    # the unpacking took the three *keys*, so every passage came back as
+    # `Passage(source='source', ...)` — a fabricated citation, with no exception
+    # to notice. `get_conn` yields tuple rows today, which is what made that
+    # latent rather than live; a row read by name cannot go that way at all.
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            _SEARCH,
+            {
+                "vector": str(vector),
+                "query": query,
+                "k": _RRF_K,
+                # Deeper than `limit` so fusion has ranks to work with: a passage
+                # the keyword half puts fourth may still win once both agree.
+                "pool": max(limit * 3, 10),
+                "limit": limit,
+            },
+        )
+        rows = await cur.fetchall()
+    return [
+        Passage(source=row["source"], section=row["section"], passage=row["passage"])
+        for row in rows
+    ]

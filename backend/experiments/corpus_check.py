@@ -21,11 +21,13 @@ stops answering its question fails rather than moving the target with it.
 """
 
 import argparse
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
 
 import psycopg
+from pgvector.psycopg import register_vector_async
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, Field
 
@@ -149,7 +151,24 @@ class Grade(BaseModel):
     because: str = Field(description="One sentence on whichever scored lower.")
 
 
-def run_judged(
+async def _with_live(part, *args) -> None:
+    """Run one part against an async connection with the pgvector adapter.
+
+    Both halves matter. Async, because `search_corpus` and `nearest_panelists`
+    followed the request path (111/#240) and a script has no loop of its own.
+    Adapter-registered, because `nearest_panelists` binds a numpy query vector
+    and psycopg cannot even send that statement without it — the first version
+    of this conversion opened a bare connection here and would have aborted a
+    paid run the moment the model routed to `search_personas`.
+    """
+    async with await psycopg.AsyncConnection.connect(
+        settings.database_url, autocommit=True
+    ) as live:
+        await register_vector_async(live)
+        await part(live, *args)
+
+
+async def run_judged(
     conn, embedder, answerer, judge, pairs: tuple[Pair, ...], rows: list[dict]
 ) -> None:
     """Stage two: was the reader served, and only from what we retrieved?
@@ -159,7 +178,7 @@ def run_judged(
     expensive version of the same mistake.
     """
     for pair in pairs:
-        found = search_corpus(conn, pair.asked_as, embedder)
+        found = await search_corpus(conn, pair.asked_as, embedder)
         passages = "\n\n".join(f"[{p.citation}]\n{p.passage}" for p in found)
         answer = str(
             answerer.invoke(
@@ -204,7 +223,9 @@ def format_judged(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def run_retrieval(conn, embedder, pairs: tuple[Pair, ...], rows: list[dict]) -> None:
+async def run_retrieval(
+    conn, embedder, pairs: tuple[Pair, ...], rows: list[dict]
+) -> None:
     """Stage one: did the right section come back, and did the corpus decline?
 
     Appends into a list the caller owns, so a failure part-way through leaves the
@@ -213,7 +234,7 @@ def run_retrieval(conn, embedder, pairs: tuple[Pair, ...], rows: list[dict]) -> 
     which is what the salvage block below exists to prevent.
     """
     for pair in pairs:
-        found = search_corpus(conn, pair.asked_as, embedder)
+        found = await search_corpus(conn, pair.asked_as, embedder)
         sections = [passage.section for passage in found]
         rows.append(
             {
@@ -299,7 +320,7 @@ def _sample_result() -> EvaluateResponse:
     )
 
 
-def run_routing(
+async def run_routing(
     result, deps, model, checkpointer, questions, expect: str, rows: list[dict]
 ) -> None:
     """Which tools a live turn actually calls. No judge — this is observation.
@@ -308,7 +329,7 @@ def run_routing(
     """
     for i, question in enumerate(questions):
         tools: list[str] = []
-        for line in stream_analyst(
+        async for line in stream_analyst(
             model=model,
             result=result,
             thread_id=f"routing-{expect}-{i}",
@@ -381,28 +402,24 @@ def main() -> None:
                     base_url=settings.openrouter_base_url,
                     model=args.model,
                 )
-                deps = ToolDeps(conn=conn, embedder=embedder)
                 saver = InMemorySaver()
-                run_routing(
-                    _sample_result(),
-                    deps,
-                    chat,
-                    saver,
-                    ROUTING_QUESTIONS,
-                    "explain_the_report",
-                    rows,
-                )
-                run_routing(
-                    _sample_result(),
-                    deps,
-                    chat,
-                    saver,
-                    RUN_QUESTIONS,
-                    "analyze_results",
-                    rows,
-                )
+
+                # `stream_analyst` is an async generator since 111/#240, and a
+                # script has no loop of its own. One connection for both
+                # passes, opened inside the loop that uses it.
+                async def routing(live) -> None:
+                    deps = ToolDeps(conn=live, embedder=embedder)
+                    for questions, expect in (
+                        (ROUTING_QUESTIONS, "explain_the_report"),
+                        (RUN_QUESTIONS, "analyze_results"),
+                    ):
+                        await run_routing(
+                            _sample_result(), deps, chat, saver, questions, expect, rows
+                        )
+
+                asyncio.run(_with_live(routing))
             elif args.part == "retrieval":
-                run_retrieval(conn, embedder, PAIRS, rows)
+                asyncio.run(_with_live(run_retrieval, embedder, PAIRS, rows))
             else:
                 # A separate client on `judge_model`, not the answerer rebound.
                 # One instance grading its own output is the configuration
@@ -419,7 +436,9 @@ def main() -> None:
                     base_url=settings.openrouter_base_url,
                     model=args.judge_model,
                 ).with_structured_output(Grade)
-                run_judged(conn, embedder, answerer, judge, PAIRS, rows)
+                asyncio.run(
+                    _with_live(run_judged, embedder, answerer, judge, PAIRS, rows)
+                )
     finally:
         # Paid calls that do not reproduce: a failure on the last pair must not
         # also cost the report for every pair before it.

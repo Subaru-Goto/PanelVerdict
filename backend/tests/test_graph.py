@@ -5,9 +5,12 @@ reading a human has not accepted** — and the corollary that the pause itself
 costs nothing, because a gate that spends money before it asks is not a gate.
 """
 
+import asyncio
+import threading
+
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 
 from app.graph import GateDecision, build_evaluate_graph
@@ -45,9 +48,9 @@ class CountingLLM:
         return voted("option_1", "clear discount framing")
 
 
-def _graph(conn, *, llm=None, screener=None, saver=None, generator=None):
+def _graph(aconn, *, llm=None, screener=None, saver=None, generator=None):
     return build_evaluate_graph(
-        conn=conn,
+        conn=aconn,
         llm=llm or CountingLLM(),
         screener=screener,
         generator=generator or StubGenerator(),
@@ -83,24 +86,74 @@ def _config(thread: str = "t-1") -> dict:
     return {"configurable": {"thread_id": thread}}
 
 
-def test_the_run_stops_before_it_buys_anything(conn) -> None:
+class ThreadNotingGenerator(StubGenerator):
+    """Records which thread its blocking `draft` was called on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.thread: str | None = None
+        self.saw_a_running_loop: bool | None = None
+
+    def draft(self, *, words: str):
+        self.thread = threading.current_thread().name
+        try:
+            asyncio.get_running_loop()
+            self.saw_a_running_loop = True
+        except RuntimeError:
+            self.saw_a_running_loop = False
+        return super().draft(words=words)
+
+
+@pytest.mark.anyio
+async def test_the_sync_node_s_paid_call_never_reaches_the_event_loop(
+    conn, aconn
+) -> None:
+    """`roleplay` is a sync `def` deliberately, and this is what makes that safe.
+
+    LangGraph dispatches a sync node to a worker, so `generator.draft` — a paid
+    model call over the network — is already off the loop, and wrapping it in
+    `to_thread` would nest one thread inside another. That is a fact about
+    LangGraph rather than about this code, which is exactly why it is asserted
+    here instead of trusted: if an upgrade ever ran sync nodes inline, one
+    caller's `draft` would stall every other request on the worker, and nothing
+    else would catch it — `test_async_discipline` only inspects `async def`, and
+    this node is not one.
+    """
+    seed_japanese(conn, 5)
+    generator = ThreadNotingGenerator()
+
+    # Non-blank audience words: blank means demographics only and drafts nothing.
+    await _graph(aconn, generator=generator).ainvoke(
+        _start(audience="Japanese homeowners"), _config()
+    )
+
+    assert generator.thread is not None, "the roleplay node never ran"
+    assert generator.thread != threading.current_thread().name
+    assert generator.saw_a_running_loop is False
+
+
+@pytest.mark.anyio
+async def test_the_run_stops_before_it_buys_anything(conn, aconn) -> None:
     """The gate's whole claim. A pause that has already spent is not a gate —
     it is a receipt."""
     seed_japanese(conn, 5)
     llm = CountingLLM()
 
-    state = _graph(conn, llm=llm).invoke(_start(), _config())
+    state = await _graph(aconn, llm=llm).ainvoke(_start(), _config())
 
     assert state["__interrupt__"], "the run should be waiting for a human"
     assert llm.asked == 0
 
 
-def test_the_pause_says_who_would_be_seated_and_what_it_would_cost(conn) -> None:
+@pytest.mark.anyio
+async def test_the_pause_says_who_would_be_seated_and_what_it_would_cost(
+    conn, aconn
+) -> None:
     """A reader can only accept what they can see: the reading, the count, who
     it seats, and the price of finding out."""
     seed_japanese(conn, 5)
 
-    state = _graph(conn).invoke(_start(), _config())
+    state = await _graph(aconn).ainvoke(_start(), _config())
 
     preview = state["__interrupt__"][0].value
     assert preview["matched"] == 5
@@ -109,13 +162,14 @@ def test_the_pause_says_who_would_be_seated_and_what_it_would_cost(conn) -> None
     assert preview["estimated_usd"] > 0
 
 
-def test_accepting_buys_the_votes(conn) -> None:
+@pytest.mark.anyio
+async def test_accepting_buys_the_votes(conn, aconn) -> None:
     seed_japanese(conn, 5)
     llm = CountingLLM()
-    graph = _graph(conn, llm=llm)
-    graph.invoke(_start(), _config())
+    graph = _graph(aconn, llm=llm)
+    await graph.ainvoke(_start(), _config())
 
-    state = graph.invoke(
+    state = await graph.ainvoke(
         Command(resume=GateDecision(action="accept").model_dump()), _config()
     )
 
@@ -123,17 +177,20 @@ def test_accepting_buys_the_votes(conn) -> None:
     assert state["result"].counts.voted == 5
 
 
-def test_adjusting_reseats_the_panel_without_paying_to_translate_again(conn) -> None:
+@pytest.mark.anyio
+async def test_adjusting_reseats_the_panel_without_paying_to_translate_again(
+    conn, aconn
+) -> None:
     """Editing the reading is free and deterministic — pure SQL. A second
     translation would be paid, non-reproducible, and could quietly disagree
     with the edit it was meant to apply."""
     seed_japanese(conn, 5)
     llm = CountingLLM()
-    graph = _graph(conn, llm=llm)
-    first = graph.invoke(_start(), _config())
+    graph = _graph(aconn, llm=llm)
+    first = await graph.ainvoke(_start(), _config())
     edited = first["__interrupt__"][0].value["query"]
 
-    state = graph.invoke(
+    state = await graph.ainvoke(
         Command(resume=GateDecision(action="adjust", query=edited).model_dump()),
         _config(),
     )
@@ -143,15 +200,16 @@ def test_adjusting_reseats_the_panel_without_paying_to_translate_again(conn) -> 
     assert llm.asked == 0
 
 
-def test_an_adjustment_stops_again_rather_than_running_on(conn) -> None:
+@pytest.mark.anyio
+async def test_an_adjustment_stops_again_rather_than_running_on(conn, aconn) -> None:
     """The edited reading is a new reading, and nobody has accepted it yet."""
     seed_japanese(conn, 5)
     llm = CountingLLM()
-    graph = _graph(conn, llm=llm)
-    first = graph.invoke(_start(), _config())
+    graph = _graph(aconn, llm=llm)
+    first = await graph.ainvoke(_start(), _config())
     same = first["__interrupt__"][0].value["query"]
 
-    state = graph.invoke(
+    state = await graph.ainvoke(
         Command(resume=GateDecision(action="adjust", query=same).model_dump()),
         _config(),
     )
@@ -160,7 +218,8 @@ def test_an_adjustment_stops_again_rather_than_running_on(conn) -> None:
     assert llm.asked == 0
 
 
-def test_an_audience_already_accepted_does_not_stop_again(conn) -> None:
+@pytest.mark.anyio
+async def test_an_audience_already_accepted_does_not_stop_again(conn, aconn) -> None:
     """The gate fires on the first run and whenever the audience changes — not
     on every run (077, amended). Iterating on headlines against a fixed
     audience would otherwise train the reader to dismiss an approval unread,
@@ -169,7 +228,7 @@ def test_an_audience_already_accepted_does_not_stop_again(conn) -> None:
     seed_japanese(conn, 5)
     llm = CountingLLM()
 
-    state = _graph(conn, llm=llm).invoke(
+    state = await _graph(aconn, llm=llm).ainvoke(
         _start(reading_accepted=True), _config("t-repeat")
     )
 
@@ -177,19 +236,23 @@ def test_an_audience_already_accepted_does_not_stop_again(conn) -> None:
     assert state["result"].counts.voted == 5
 
 
-def test_a_target_the_pool_cannot_serve_is_refused_before_the_gate(conn) -> None:
+@pytest.mark.anyio
+async def test_a_target_the_pool_cannot_serve_is_refused_before_the_gate(
+    conn, aconn
+) -> None:
     """Nothing to approve and nothing to spend: the refusal belongs where the
     panel is drawn, not after a human has been asked about an empty room."""
     seed_japanese(conn, 5)
-    graph = _graph(conn)
+    graph = _graph(aconn)
     conn.execute("DELETE FROM personas")
     conn.commit()
 
     with pytest.raises(EmptyPanel):
-        graph.invoke(_start(), _config())
+        await graph.ainvoke(_start(), _config())
 
 
-def test_refused_text_never_reaches_the_panel(conn) -> None:
+@pytest.mark.anyio
+async def test_refused_text_never_reaches_the_panel(conn, aconn) -> None:
     """The screener's one remaining post: the vote. Nothing before the gate is
     text a model reads (094) — the controls are SQL and the audience has its
     own classifier — so a flagged headline is refused where headlines are first
@@ -201,11 +264,11 @@ def test_refused_text_never_reaches_the_panel(conn) -> None:
         def screen(self, text: str) -> ScreeningVerdict:
             return ScreeningVerdict(flagged=True, reason="prompt injection")
 
-    graph = _graph(conn, llm=llm, screener=Refusing())
-    graph.invoke(_start(), _config())
+    graph = _graph(aconn, llm=llm, screener=Refusing())
+    await graph.ainvoke(_start(), _config())
 
     with pytest.raises(UnsafeInput):
-        graph.invoke(
+        await graph.ainvoke(
             Command(resume=GateDecision(action="accept").model_dump()), _config()
         )
     assert llm.asked == 0
@@ -222,7 +285,8 @@ class CountingScreener:
         return ScreeningVerdict(flagged=False, reason="")
 
 
-def test_a_preview_screens_nothing(conn) -> None:
+@pytest.mark.anyio
+async def test_a_preview_screens_nothing(conn, aconn) -> None:
     """No text a model reads exists before the gate any more: the controls are
     SQL, and the audience is guarded by the generator's classifier rather than
     the copy screener. A preview that paid for screening would be buying a
@@ -231,39 +295,48 @@ def test_a_preview_screens_nothing(conn) -> None:
     seed_japanese(conn, 5)
     screener = CountingScreener()
 
-    _graph(conn, screener=screener).invoke(_start(), _config())
+    await _graph(aconn, screener=screener).ainvoke(_start(), _config())
 
     assert screener.seen == []
 
 
-def test_the_headlines_are_screened_before_they_reach_the_panel(conn) -> None:
+@pytest.mark.anyio
+async def test_the_headlines_are_screened_before_they_reach_the_panel(
+    conn, aconn
+) -> None:
     """Deferred, never dropped: the vote is the step that shows a headline to a
     model, so the check has to land before it."""
     seed_japanese(conn, 5)
     screener = CountingScreener()
-    graph = _graph(conn, screener=screener)
-    graph.invoke(_start(), _config())
+    graph = _graph(aconn, screener=screener)
+    await graph.ainvoke(_start(), _config())
 
-    graph.invoke(Command(resume=GateDecision(action="accept").model_dump()), _config())
+    await graph.ainvoke(
+        Command(resume=GateDecision(action="accept").model_dump()), _config()
+    )
 
     assert sorted(screener.seen) == sorted(_VARIANTS.values())
 
 
-def test_the_same_filter_seats_the_same_people(conn) -> None:
+@pytest.mark.anyio
+async def test_the_same_filter_seats_the_same_people(conn, aconn) -> None:
     """PANEL_SEED is fixed, so an unchanged audience is an unchanged panel —
     which is exactly why the gate can skip a repeat run without hiding
     anything."""
     seed_japanese(conn, 20)
-    graph = _graph(conn)
+    graph = _graph(aconn)
 
-    first = graph.invoke(_start(), _config("t-a"))["__interrupt__"][0].value
-    second = graph.invoke(_start(), _config("t-b"))["__interrupt__"][0].value
+    first = (await graph.ainvoke(_start(), _config("t-a")))["__interrupt__"][0].value
+    second = (await graph.ainvoke(_start(), _config("t-b")))["__interrupt__"][0].value
 
     assert PANEL_SEED == 0
     assert first["composition"] == second["composition"]
 
 
-def test_an_edit_that_matches_nobody_costs_a_click_not_the_run(conn) -> None:
+@pytest.mark.anyio
+async def test_an_edit_that_matches_nobody_costs_a_click_not_the_run(
+    conn, aconn
+) -> None:
     """A human can edit the reading into an empty room, and must be able to
     edit their way back out of it.
 
@@ -274,20 +347,20 @@ def test_an_edit_that_matches_nobody_costs_a_click_not_the_run(conn) -> None:
     """
     seed_japanese(conn, 5)
     llm = CountingLLM()
-    graph = _graph(conn, llm=llm)
-    first = graph.invoke(_start(), _config("t-edit"))
+    graph = _graph(aconn, llm=llm)
+    first = await graph.ainvoke(_start(), _config("t-edit"))
     original = first["__interrupt__"][0].value["query"]
     nobody = original | {"min_age": 99, "max_age": 100}
 
-    empty = graph.invoke(
+    empty = await graph.ainvoke(
         Command(resume=GateDecision(action="adjust", query=nobody).model_dump()),
         _config("t-edit"),
     )
-    back = graph.invoke(
+    back = await graph.ainvoke(
         Command(resume=GateDecision(action="adjust", query=original).model_dump()),
         _config("t-edit"),
     )
-    done = graph.invoke(
+    done = await graph.ainvoke(
         Command(resume=GateDecision(action="accept").model_dump()), _config("t-edit")
     )
 
@@ -301,20 +374,21 @@ def test_an_edit_that_matches_nobody_costs_a_click_not_the_run(conn) -> None:
     assert llm.asked == 5
 
 
-def test_an_accept_with_nobody_seated_buys_nothing(conn) -> None:
+@pytest.mark.anyio
+async def test_an_accept_with_nobody_seated_buys_nothing(conn, aconn) -> None:
     """The interface will not offer this, and the graph does not depend on the
     interface for it: a panel of zero has nobody to ask."""
     seed_japanese(conn, 5)
     llm = CountingLLM()
-    graph = _graph(conn, llm=llm)
-    first = graph.invoke(_start(), _config("t-zero"))
+    graph = _graph(aconn, llm=llm)
+    first = await graph.ainvoke(_start(), _config("t-zero"))
     nobody = first["__interrupt__"][0].value["query"] | {"min_age": 99, "max_age": 100}
-    graph.invoke(
+    await graph.ainvoke(
         Command(resume=GateDecision(action="adjust", query=nobody).model_dump()),
         _config("t-zero"),
     )
 
-    state = graph.invoke(
+    state = await graph.ainvoke(
         Command(resume=GateDecision(action="accept").model_dump()), _config("t-zero")
     )
 
@@ -322,7 +396,10 @@ def test_an_accept_with_nobody_seated_buys_nothing(conn) -> None:
     assert state["__interrupt__"][0].value["matched"] == 0
 
 
-def test_a_paused_run_outlives_the_process_that_started_it(conn, pg_url) -> None:
+@pytest.mark.anyio
+async def test_a_paused_run_outlives_the_process_that_started_it(
+    conn, aconn, pg_url
+) -> None:
     """The gate's second requirement, after costing nothing: surviving a deploy.
 
     A pause that a restart forgets turns an approval into a lost run — worse
@@ -337,14 +414,14 @@ def test_a_paused_run_outlives_the_process_that_started_it(conn, pg_url) -> None
     seed_japanese(conn, 5)
     llm = CountingLLM()
 
-    with PostgresSaver.from_conn_string(pg_url) as before:
-        before.setup()
-        paused = _graph(conn, llm=llm, saver=before).invoke(
+    async with AsyncPostgresSaver.from_conn_string(pg_url) as before:
+        await before.setup()
+        paused = await _graph(aconn, llm=llm, saver=before).ainvoke(
             _start(), _config("t-restart")
         )
 
-    with PostgresSaver.from_conn_string(pg_url) as after:
-        resumed = _graph(conn, llm=llm, saver=after).invoke(
+    async with AsyncPostgresSaver.from_conn_string(pg_url) as after:
+        resumed = await _graph(aconn, llm=llm, saver=after).ainvoke(
             Command(resume=GateDecision(action="accept").model_dump()),
             _config("t-restart"),
         )
@@ -353,7 +430,10 @@ def test_a_paused_run_outlives_the_process_that_started_it(conn, pg_url) -> None
     assert resumed["result"].counts.voted == 5
 
 
-def test_what_a_restart_restores_is_the_panel_a_human_approved(conn, pg_url) -> None:
+@pytest.mark.anyio
+async def test_what_a_restart_restores_is_the_panel_a_human_approved(
+    conn, aconn, pg_url
+) -> None:
     """Not the filter — the people.
 
     Re-selecting on resume would be a second query, and a second query is a
@@ -363,19 +443,20 @@ def test_what_a_restart_restores_is_the_panel_a_human_approved(conn, pg_url) -> 
     """
     seed_japanese(conn, 5)
 
-    with PostgresSaver.from_conn_string(pg_url) as before:
-        before.setup()
-        graph = _graph(conn, saver=before)
-        graph.invoke(_start(), _config("t-pool-change"))
+    async with AsyncPostgresSaver.from_conn_string(pg_url) as before:
+        await before.setup()
+        graph = _graph(aconn, saver=before)
+        await graph.ainvoke(_start(), _config("t-pool-change"))
         seated = [
-            p.id for p in graph.get_state(_config("t-pool-change")).values["panel"]
+            p.id
+            for p in (await graph.aget_state(_config("t-pool-change"))).values["panel"]
         ]
 
     conn.execute("DELETE FROM personas")
     conn.commit()
 
-    with PostgresSaver.from_conn_string(pg_url) as after:
-        resumed = _graph(conn, saver=after).invoke(
+    async with AsyncPostgresSaver.from_conn_string(pg_url) as after:
+        resumed = await _graph(aconn, saver=after).ainvoke(
             Command(resume=GateDecision(action="accept").model_dump()),
             _config("t-pool-change"),
         )
@@ -384,7 +465,8 @@ def test_what_a_restart_restores_is_the_panel_a_human_approved(conn, pg_url) -> 
     assert resumed["result"].counts.voted == 5
 
 
-def test_a_second_run_of_the_same_test_replays_for_nothing(conn) -> None:
+@pytest.mark.anyio
+async def test_a_second_run_of_the_same_test_replays_for_nothing(conn, aconn) -> None:
     """The replay guarantee, exercised through the graph rather than asserted.
 
     Votes are cached on the fingerprint of the exact question asked, so running
@@ -395,10 +477,10 @@ def test_a_second_run_of_the_same_test_replays_for_nothing(conn) -> None:
     seed_japanese(conn, 5)
     first_llm, second_llm = CountingLLM(), CountingLLM()
 
-    first = _graph(conn, llm=first_llm).invoke(
+    first = await _graph(aconn, llm=first_llm).ainvoke(
         _start(reading_accepted=True), _config("t-paid")
     )
-    second = _graph(conn, llm=second_llm).invoke(
+    second = await _graph(aconn, llm=second_llm).ainvoke(
         _start(reading_accepted=True), _config("t-replay")
     )
 
@@ -413,45 +495,55 @@ class TestEnactedContext:
     panel receives must be the same string — that is the whole point of stopping.
     """
 
-    def test_a_demographics_only_run_calls_no_generator(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_demographics_only_run_calls_no_generator(
+        self, conn, aconn
+    ) -> None:
         """Blank means demographics only, and the common case must stay free."""
         seed_japanese(conn, 5)
         generator = StubGenerator()
 
-        _graph(conn, generator=generator).invoke(_start(), _config())
+        await _graph(aconn, generator=generator).ainvoke(_start(), _config())
 
         assert generator.drafted == []
 
-    def test_the_gate_shows_the_sentence_the_panel_would_be_told(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_the_gate_shows_the_sentence_the_panel_would_be_told(
+        self, conn, aconn
+    ) -> None:
         seed_japanese(conn, 5)
 
-        state = _graph(conn).invoke(
+        state = await _graph(aconn).ainvoke(
             _start(audience="a parent of young children"), _config()
         )
 
         preview = state["__interrupt__"][0].value
         assert preview["instruction"] == "You are a parent of young children."
 
-    def test_the_approved_sentence_reaches_every_panelist(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_the_approved_sentence_reaches_every_panelist(
+        self, conn, aconn
+    ) -> None:
         seed_japanese(conn, 5)
         llm = CountingLLM()
-        graph = _graph(conn, llm=llm)
-        graph.invoke(_start(audience="a parent of young children"), _config())
+        graph = _graph(aconn, llm=llm)
+        await graph.ainvoke(_start(audience="a parent of young children"), _config())
 
-        graph.invoke(
+        await graph.ainvoke(
             Command(resume=GateDecision(action="accept").model_dump()), _config()
         )
 
         assert llm.enacted == ["You are a parent of young children."] * 5
 
-    def test_an_edited_sentence_is_what_runs(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_an_edited_sentence_is_what_runs(self, conn, aconn) -> None:
         """The edit *is* the human-in-the-loop. What is approved is what runs."""
         seed_japanese(conn, 5)
         llm = CountingLLM()
-        graph = _graph(conn, llm=llm)
-        graph.invoke(_start(audience="a parent of young children"), _config())
+        graph = _graph(aconn, llm=llm)
+        await graph.ainvoke(_start(audience="a parent of young children"), _config())
 
-        graph.invoke(
+        await graph.ainvoke(
             Command(
                 resume=GateDecision(
                     action="accept", instruction="You are a parent of two toddlers."
@@ -462,8 +554,9 @@ class TestEnactedContext:
 
         assert llm.enacted == ["You are a parent of two toddlers."] * 5
 
-    def test_the_backstop_still_guards_an_edit_the_classifier_passed(
-        self, conn
+    @pytest.mark.anyio
+    async def test_the_backstop_still_guards_an_edit_the_classifier_passed(
+        self, conn, aconn
     ) -> None:
         """The graph's own layer, and the last one before the prompt is built.
 
@@ -474,10 +567,10 @@ class TestEnactedContext:
         """
         seed_japanese(conn, 5)
         llm = CountingLLM()
-        graph = _graph(conn, llm=llm)
-        graph.invoke(_start(audience="a parent of young children"), _config())
+        graph = _graph(aconn, llm=llm)
+        await graph.ainvoke(_start(audience="a parent of young children"), _config())
 
-        state = graph.invoke(
+        state = await graph.ainvoke(
             Command(
                 resume=GateDecision(
                     action="accept",
@@ -491,45 +584,50 @@ class TestEnactedContext:
         assert state["__interrupt__"], "a refused edit returns to the gate"
         assert state["__interrupt__"][0].value["refusal_sentence"]
 
-    def test_accepting_the_untouched_draft_costs_no_check(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_accepting_the_untouched_draft_costs_no_check(
+        self, conn, aconn
+    ) -> None:
         """Its verdict is cached from generation, so a reader out of checks can
         still run honestly by restoring the model's draft."""
         seed_japanese(conn, 5)
         generator = StubGenerator()
-        graph = _graph(conn, generator=generator)
-        graph.invoke(_start(audience="a parent of young children"), _config())
+        graph = _graph(aconn, generator=generator)
+        await graph.ainvoke(_start(audience="a parent of young children"), _config())
 
-        graph.invoke(
+        await graph.ainvoke(
             Command(resume=GateDecision(action="accept").model_dump()), _config()
         )
 
         assert generator.checked == []
 
-    def test_a_refused_audience_never_reaches_the_gate(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_refused_audience_never_reaches_the_gate(self, conn, aconn) -> None:
         """No panel is drawn and no reader is asked to approve something we have
         already decided not to run."""
         seed_japanese(conn, 5)
         graph = _graph(
-            conn, generator=StubGenerator({"a named celebrity": "real_person"})
+            aconn, generator=StubGenerator({"a named celebrity": "real_person"})
         )
 
         with pytest.raises(RolePlayRefused) as refused:
-            graph.invoke(_start(audience="a named celebrity"), _config())
+            await graph.ainvoke(_start(audience="a named celebrity"), _config())
 
         assert refused.value.refusal == "real_person"
 
-    def test_the_verdict_says_the_portrayal_was_instructed_not_sampled(
-        self, conn
+    @pytest.mark.anyio
+    async def test_the_verdict_says_the_portrayal_was_instructed_not_sampled(
+        self, conn, aconn
     ) -> None:
         """The honesty condition this feature is allowed to exist under. The
         demographics behind a verdict are surveyed; this part of the panel is a
         model acting a description, and a report that does not say so is claiming
         evidence it does not have."""
         seed_japanese(conn, 5)
-        graph = _graph(conn)
-        graph.invoke(_start(audience="a parent of young children"), _config())
+        graph = _graph(aconn)
+        await graph.ainvoke(_start(audience="a parent of young children"), _config())
 
-        state = graph.invoke(
+        state = await graph.ainvoke(
             Command(resume=GateDecision(action="accept").model_dump()), _config()
         )
 
@@ -537,12 +635,15 @@ class TestEnactedContext:
         assert caveat, state["result"].notices
         assert "You are a parent of young children." in caveat[0].message
 
-    def test_a_demographics_only_verdict_carries_no_such_caveat(self, conn) -> None:
+    @pytest.mark.anyio
+    async def test_a_demographics_only_verdict_carries_no_such_caveat(
+        self, conn, aconn
+    ) -> None:
         seed_japanese(conn, 5)
-        graph = _graph(conn)
-        graph.invoke(_start(), _config())
+        graph = _graph(aconn)
+        await graph.ainvoke(_start(), _config())
 
-        state = graph.invoke(
+        state = await graph.ainvoke(
             Command(resume=GateDecision(action="accept").model_dump()), _config()
         )
 

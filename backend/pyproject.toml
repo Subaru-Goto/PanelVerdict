@@ -34,6 +34,11 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
+    # The pytest plugin the whole async suite runs on ships inside anyio, and
+    # nothing else here declares it — it arrives transitively via starlette, so
+    # a resolution that drops that edge takes every `@pytest.mark.anyio` test
+    # with it (107 of them, `pytest --collect-only -m anyio`, 2026-08-27).
+    "anyio>=4.14.2",
     "pytest>=9.1.1",
     "ruff>=0.15.22",
     "testcontainers[postgres]>=4.14.2",
