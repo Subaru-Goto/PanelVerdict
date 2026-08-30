@@ -2641,7 +2641,20 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     The gate is part of the path, not scenery: a first run always stops there
     (076/#166), so a body nobody has approved is a body no reader ever sees.
     """
+    # Fewer panelists than the profile seats, so the report carries a shortfall
+    # notice: `_CHAT_RESULT` hardcodes `notices: []`, so this is the only body
+    # reaching `/chat` with a `Notice` in it.
     seed_japanese(conn, 5)
+    # The analyst reads the report through its tools, and `votes[].voter` is the
+    # one part it cannot recompute — so one tool call, or the real demographics
+    # this run produced would be parsed and then dropped.
+    app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
+        responses=[
+            tool_call_message(name="search_personas", args={"query": "thrifty"}),
+            AIMessage(content="The interval cleared the band."),
+        ]
+    )
+
     started = client.post("/evaluate", json=_UNAPPROVED_BODY)
     assert started.status_code == 200
     assert started.json()["status"] == "paused"
@@ -2655,6 +2668,8 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     assert resumed.status_code == 200
     report = resumed.json()
     assert report["status"] == "complete"
+    assert report["counts"]["voted"] == 5
+    assert report["notices"]
 
     response = client.post(
         "/chat",
@@ -2667,6 +2682,7 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
 
     assert response.status_code == 200
     events = ndjson_events(response.text.splitlines())
+    assert {"type": "tool", "name": "search_personas"} in events
     assert any(event["type"] == "token" for event in events)
     # `/chat` commits its 200 at the first byte, so a turn that dies mid-stream
     # is tokens followed by `error` and no `done`. Tolerant of `tool` events,
