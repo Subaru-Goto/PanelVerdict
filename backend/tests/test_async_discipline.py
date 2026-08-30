@@ -5,8 +5,11 @@ missed three blocking calls and a whole module. The cause is structural rather
 than careless: `Screener`, `Embedder`, `RolePlayGenerator` and
 `TargetTranslator` are *sync* protocols, and `psycopg.Connection` is a sync
 type, so every async caller has to independently remember `asyncio.to_thread`.
-Four sites remembered and three forgot, and neither the type checker nor 717
-tests noticed.
+Four sites remembered and three forgot, and 717 tests did not notice. Nor could a
+type checker have: there is none here — `ci.yml` runs `pytest` alone and the dev
+group is anyio, pytest, ruff, testcontainers — so the ~30 `Connection` ->
+`AsyncConnection` signature changes this conversion made are enforced by nothing
+but this file and the suite. 103/#221 owns that gap.
 
 **What this is and is not.** The file list is derived from the tree, so a module
 added tomorrow is covered the day it appears. The *symbol* list below is not —
@@ -42,13 +45,12 @@ BLOCKING = {
     "deleter.delete",  # AccountDeleter — synchronous httpx
     "check_connection",  # app.db — psycopg.connect with a 3s timeout
     "screen_inputs",  # app.screening, wraps Screener
-    "deny_data_api",  # DDL on a sync connection
+    "deny_data_api",  # DDL on a sync connection; the lifespan uses the async twin
     "collect_panel_votes",  # the ThreadPoolExecutor over model calls
     "psycopg.connect",  # a sync connection, TLS handshake and all
     "_fetch_personas",  # the sync twin of `_afetch_personas`
     "verifier.subject",  # a blocking JWKS fetch (app/auth.py)
     "remaining_credit",  # a live OpenRouter GET
-    "_sweep_data_api",  # sync by design; the lifespan must thread it
     # The graph and the checkpointer, whose sync and async halves differ by one
     # letter — and whose sync half on an async path is the bug this file was
     # written after. `setup` is deliberately absent: `AsyncPostgresSaver.setup`

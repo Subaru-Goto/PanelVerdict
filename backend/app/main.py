@@ -39,7 +39,7 @@ from app.config import (
     USD_PER_VOTE,
     settings,
 )
-from app.db import CONNECT_TIMEOUT_SECONDS, check_connection
+from app.db import check_connection
 from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.llm import (
     OpenRouterEmbedder,
@@ -49,7 +49,7 @@ from app.llm import (
     remaining_credit,
 )
 from app.panel import votes_with_voters
-from app.persistence import deny_data_api
+from app.persistence import adeny_data_api
 from app.pipeline import EmptyPanel, NoVotes
 from app.roleplay import RolePlayGenerator, RolePlayRefused
 from app.schemas import (
@@ -96,32 +96,6 @@ elif settings.langsmith_tracing:
     )
 
 
-def _sweep_data_api() -> None:
-    """Close every table in `public` to the Data API, on its own connection.
-
-    Sync on purpose: `deny_data_api` is shared with the seed, which is a script
-    with no event loop. The lifespan hands this to a thread rather than giving
-    a one-off startup sweep an async twin to maintain.
-
-    Timed out, like the health check it borrows the figure from. This runs inside
-    an `asyncio.to_thread` the lifespan awaits, so a connect with no timeout does
-    not fail the boot — it hangs it, with nothing served and no error to read.
-
-    Its own connection costs one pooler slot at startup that the sync version did
-    not: that one borrowed the checkpointer pool's single connection, which is now
-    an `AsyncConnection` and cannot be handed to a sync function. The slot is held
-    for one DDL sweep at boot and then closed, which is the cheaper side of the
-    trade — the alternative is an async twin of `deny_data_api`, maintained for
-    one startup caller, and the seed still needing the sync one.
-    """
-    with psycopg.connect(
-        settings.database_url,
-        autocommit=True,
-        connect_timeout=CONNECT_TIMEOUT_SECONDS,
-    ) as conn:
-        deny_data_api(conn)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """The app's only startup/shutdown lifecycle: the analyst's checkpointer.
@@ -165,14 +139,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # library just created, which hold analyst transcripts and would
         # otherwise sit readable over the project's Data API — a surface this
         # release opens by shipping a publishable key to the browser
-        # (063/#158).
-        # Blocking, and run before anything is served — `test_async_discipline`
-        # is what keeps that claim true of the request path rather than of my
-        # memory of it:
-        # `deny_data_api` is also the seed's, so it stays sync rather than
-        # growing an async twin for a single startup sweep. In a thread, so the
-        # rule stays absolute — nothing blocking ever runs on the loop.
-        await asyncio.to_thread(_sweep_data_api)
+        # (063/#158). `test_the_lifespan_closes_every_table_to_the_data_api`
+        # asserts both halves against the database, ordering included.
+        #
+        # Through the pool's own connection, as the sync version did. A separate
+        # `psycopg.connect` here cost a second pooler slot at boot and needed a
+        # connect deadline nobody has measured for a cold pooler — a bounded
+        # failure invented to replace an unbounded wait that could not happen,
+        # since a borrowed connection performs no connect.
+        async with pool.connection() as swept:
+            await adeny_data_api(swept)
         app.state.checkpointer = checkpointer
         if settings.api_shared_secret is not None and _VERIFIER is None:
             # A shared secret set is this deployment saying it is not a laptop.

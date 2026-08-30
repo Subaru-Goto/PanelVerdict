@@ -5,10 +5,12 @@
 minute). Ticket: 111/#240, feeding 112/#242.
 
 Headline: **of five claims the branch's review rounds asserted about cancellation
-and connection limits, four were wrong — three pessimistic, one optimistic.** The
-optimistic one was a live defect and is fixed; the pessimistic ones had been
-about to buy fixes for problems that do not exist. Every figure the branch's
-comments now quote is from this run.
+and connection limits, four were wrong and one was right.** The four break down as
+three pessimistic — each about to buy a fix for a problem that does not exist —
+and one optimistic, a shield asserted to protect paid votes that protected
+nothing. The fifth, an aborted transaction masking the caller's error, was
+correct and was the round's one live defect; it is fixed. Every figure the
+branch's comments quote is from this run.
 
 ## What was claimed, and what ran
 
@@ -109,6 +111,22 @@ question is unchanged and stands on its own terms: **what will the Supabase
 session pooler actually grant?** Neither shape bounds connections, so that number
 was needed before this branch as well.
 
+**That is not the same as the conversion being free, and this section measured
+only connections.** The blocking work moved *into* a pool this run also asked
+about, and it is the smaller one:
+
+```
+anyio default thread limiter (bounded a sync handler) : 40
+asyncio default executor (bounds every to_thread now) : 14   -- min(32, cpu+4)
+```
+
+`min(32, cpu+4)` is 5 on a 1-vCPU container. Every `asyncio.to_thread` site shares
+it, and so does LangGraph's dispatch of every sync node — and so does
+`loop.getaddrinfo`, which `psycopg.AsyncConnection.connect` awaits, so a saturated
+executor delays *new connections* as well as threaded calls. Nothing here
+measures that pool under load; it belongs to #242 along with the pooler budget,
+and the comment on that ticket carries what has been measured so far.
+
 ## What this cannot see
 
 - One machine, one uvicorn worker, a local container. It measures *mechanism* —
@@ -117,8 +135,16 @@ was needed before this branch as well.
   harness deliberately does not guess at it.
 - `--part cleanup` proves the current FastAPI, Starlette and psycopg versions
   unwind the dependency outside the cancelled scope. It is a fact about those
-  libraries, not a guarantee they owe us; the pinned versions are in
-  `backend/pyproject.toml`, and an upgrade should re-run this part.
+  libraries, not a guarantee they owe us, and an upgrade should re-run this part.
+  The versions that were actually resolved are in `backend/uv.lock` —
+  `pyproject.toml` carries only `>=` floors and does not name Starlette at all.
+- The harness apps carry the deployment's middleware — `BaseHTTPMiddleware` via
+  `@app.middleware("http")`, then `CORSMiddleware` — because
+  `BaseHTTPMiddleware` runs the downstream app in its own task group and pumps
+  the body over a memory object stream, which is where streaming cancellation
+  ordering could plausibly differ. Measured with and without: same result, no
+  leak either way. It was a bare app for the first three runs of this document,
+  and that was a real gap rather than a safe simplification.
 - Nothing here says what a redeploy mid-run costs a paying caller. The in-flight
   chunk is lost, and the per-chunk ledger means earlier chunks are not — but the
   size of that loss in real votes has not been measured.

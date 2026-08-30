@@ -9,7 +9,6 @@ import pytest
 from app import graph as graph_module
 from app import main
 from app.auth import InvalidSession, SessionUnverifiable
-from app.db import CONNECT_TIMEOUT_SECONDS
 from app.config import (
     PROFILES,
     USD_PER_ROLEPLAY,
@@ -1004,6 +1003,46 @@ def test_the_lifespan_builds_the_postgres_checkpointer(real_lifespan) -> None:
     dependency will hand out is the Postgres one."""
     with TestClient(app):
         assert isinstance(app.state.checkpointer, AsyncPostgresSaver)
+
+
+def test_the_lifespan_closes_every_table_to_the_data_api(real_lifespan, conn) -> None:
+    """The startup sweep, asserted on the database rather than on its arguments.
+
+    Supabase serves `public` over a REST API the browser's publishable key can
+    reach, so a table with RLS off is readable by anyone who opens a console.
+    The sweep is the only thing closing it, and it has to run *after*
+    `checkpointer.setup()` — the tables the library creates hold analyst
+    transcripts, and they do not exist before it.
+
+    Checked as "no table is left open", not as a list: a list would have to be
+    remembered, and the tables that matter most are the ones added by a library
+    upgrade nobody here wrote.
+    """
+    with TestClient(app):
+        pass
+
+    open_tables = [
+        row[0]
+        for row in conn.execute(
+            "SELECT c.relname FROM pg_class c"
+            " JOIN pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE n.nspname = 'public' AND c.relkind = 'r'"
+            " AND NOT c.relrowsecurity"
+        ).fetchall()
+    ]
+
+    assert open_tables == [], open_tables
+    # The checkpointer's own tables specifically: they are created by `setup()`
+    # inside the lifespan, so their being closed is what proves the ordering.
+    closed = {
+        row[0]
+        for row in conn.execute(
+            "SELECT c.relname FROM pg_class c"
+            " JOIN pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity"
+        ).fetchall()
+    }
+    assert "checkpoints" in closed, closed
 
 
 def test_a_resume_works_against_the_checkpointer_the_deploy_actually_uses(
@@ -2558,28 +2597,3 @@ class TestOnlyOneAnswer:
                 raise HTTPException(status_code=402, detail="out of credit")
 
         assert raised.value.status_code == 402
-
-
-def test_the_startup_sweep_cannot_hang_the_boot(monkeypatch) -> None:
-    """The lifespan awaits this sweep in a thread, so a connect that never
-    returns is a boot that never finishes — nothing served, and no error to
-    read. It carries the health check's timeout for that reason."""
-    seen: dict[str, object] = {}
-
-    class Connected:
-        def __enter__(self) -> "Connected":
-            return self
-
-        def __exit__(self, *exc: object) -> bool:
-            return False
-
-    def connect(url: str, **kwargs: object) -> Connected:
-        seen.update(kwargs)
-        return Connected()
-
-    monkeypatch.setattr(main.psycopg, "connect", connect)
-    monkeypatch.setattr(main, "deny_data_api", lambda conn: None)
-
-    main._sweep_data_api()
-
-    assert seen["connect_timeout"] == CONNECT_TIMEOUT_SECONDS

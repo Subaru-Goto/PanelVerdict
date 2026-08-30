@@ -77,6 +77,33 @@ def apply_schema(conn: psycopg.Connection) -> None:
         ) from error
 
 
+# A lock this sweep waits on is a mistake, not a wait. `ALTER TABLE ... ENABLE
+# ROW LEVEL SECURITY` takes ACCESS EXCLUSIVE, and the sweep only fires on the
+# boot after a new table appears — i.e. the deploy right after the checkpointer
+# migrates its tables, exactly when the outgoing instance may still be holding
+# ACCESS SHARE through a multi-minute vote chunk. With no timeout the new
+# instance's lifespan waits behind it with nothing served and nothing logged,
+# which is the symptom this sweep's own timeout was added to prevent, arriving
+# through the next door along. Five seconds is a chosen bound rather than a
+# measured one — disclosed, not dressed up — and it matches the figure the test
+# fixtures use for the same rule. Timing out fails the boot loudly, which is the
+# right outcome: a sweep that did not run leaves transcripts readable.
+_LOCK_TIMEOUT = "SET lock_timeout = '5s'"
+
+_DENY_DATA_API = (
+    "DO $$ DECLARE t record; BEGIN"
+    "  FOR t IN SELECT c.relname FROM pg_class c"
+    "    JOIN pg_namespace n ON n.oid = c.relnamespace"
+    "    WHERE n.nspname = 'public' AND c.relkind = 'r'"
+    "    AND NOT c.relrowsecurity"
+    "  LOOP"
+    "    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',"
+    "                   t.relname);"
+    "  END LOOP;"
+    "END $$;"
+)
+
+
 def deny_data_api(conn: psycopg.Connection) -> None:
     """Turn row-level security on for every table in `public`, with no policies.
 
@@ -93,19 +120,34 @@ def deny_data_api(conn: psycopg.Connection) -> None:
     those hold analyst transcripts. A list would have to be remembered; a sweep
     covers whatever is there, including tables added after this was written.
     """
-    conn.execute(
-        "DO $$ DECLARE t record; BEGIN"
-        "  FOR t IN SELECT c.relname FROM pg_class c"
-        "    JOIN pg_namespace n ON n.oid = c.relnamespace"
-        "    WHERE n.nspname = 'public' AND c.relkind = 'r'"
-        "    AND NOT c.relrowsecurity"
-        "  LOOP"
-        "    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY',"
-        "                   t.relname);"
-        "  END LOOP;"
-        "END $$;"
-    )
+    conn.execute(_LOCK_TIMEOUT)
+    conn.execute(_DENY_DATA_API)
     conn.commit()
+
+
+async def adeny_data_api(conn: psycopg.AsyncConnection) -> None:
+    """`deny_data_api` for a caller that has an event loop — the lifespan.
+
+    Two implementations of three statements, rather than one shared one: the
+    sync version above is the seed's, a script with no loop, and the async
+    version lets the lifespan borrow the checkpointer pool's connection instead
+    of opening a second one. That borrow is the point. Opening its own
+    connection meant a second pooler slot at boot and, worse, a fresh connect on
+    the boot path — a deadline to pick where the code this replaced had no
+    connect at all and so could not time out.
+
+    The SQL is shared, so the two cannot drift on the part that carries the
+    meaning.
+    """
+    # Reset afterwards: this borrows the checkpointer pool's one connection,
+    # which then serves analyst transcripts for the life of the process. A bare
+    # `SET` would leave a lock deadline on a subsystem that never asked for one.
+    await conn.execute(_LOCK_TIMEOUT)
+    try:
+        await conn.execute(_DENY_DATA_API)
+        await conn.commit()
+    finally:
+        await conn.execute("RESET lock_timeout")
 
 
 def prepare_connection(conn: psycopg.Connection) -> None:

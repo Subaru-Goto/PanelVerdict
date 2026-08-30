@@ -34,10 +34,12 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import anyio
+import anyio.to_thread
 import httpx
 import psycopg
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from testcontainers.postgres import PostgresContainer
 
@@ -101,6 +103,34 @@ async def part_shield(url: str) -> None:
 # --- cleanup ----------------------------------------------------------------
 
 
+def _deployed_shape() -> FastAPI:
+    """A FastAPI carrying the middleware the deployment carries.
+
+    Not a detail. `app/main.py` registers `require_shared_secret` with
+    `@app.middleware("http")` — Starlette's `BaseHTTPMiddleware`, which runs the
+    downstream app inside its *own* `anyio.create_task_group()` and pumps the
+    response body across a memory object stream — and then adds
+    `CORSMiddleware`. That is exactly the layer where streaming disconnect and
+    cancellation ordering could diverge from a bare app, so a cleanup
+    measurement taken without it is a measurement of something the deployment
+    does not run. (It does not diverge, measured — but that is a result, not an
+    assumption to build in.)
+    """
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def guard(request: Request, call_next):
+        return await call_next(request)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3000"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type"],
+    )
+    return app
+
+
 async def part_cleanup(url: str) -> None:
     """Isolated cancel scope, then the same question end to end."""
     report("\n## cleanup: is the request's connection closed when a cancel lands?")
@@ -127,7 +157,7 @@ async def part_cleanup(url: str) -> None:
 
     report("  end to end, real uvicorn, client walks away mid-stream:")
     events: list[str] = []
-    app = FastAPI()
+    app = _deployed_shape()
 
     async def get_conn():
         async with await psycopg.AsyncConnection.connect(url) as conn:
@@ -241,7 +271,7 @@ async def part_locks(url: str) -> None:
 
 def _sync_app(url: str) -> FastAPI:
     """`main`'s shape: sync handler, sync generator dependency."""
-    app = FastAPI()
+    app = _deployed_shape()
 
     def get_conn():
         with psycopg.connect(url) as conn:
@@ -258,7 +288,7 @@ def _sync_app(url: str) -> FastAPI:
 
 def _async_app(url: str) -> FastAPI:
     """This branch's shape."""
-    app = FastAPI()
+    app = _deployed_shape()
 
     async def get_conn():
         async with await psycopg.AsyncConnection.connect(url) as conn:
@@ -273,6 +303,28 @@ def _async_app(url: str) -> FastAPI:
     return app
 
 
+def _anyio_limit() -> int:
+    """anyio's thread limiter — what bounded a sync handler before the
+    conversion."""
+
+    async def ask() -> int:
+        return int(anyio.to_thread.current_default_thread_limiter().total_tokens)
+
+    return anyio.run(ask)
+
+
+def _executor_size() -> int:
+    """asyncio's *default* ThreadPoolExecutor — what bounds every `to_thread`
+    and every LangGraph sync node after it. Smaller than the limiter it
+    replaced, which is the part worth printing beside it."""
+
+    async def ask() -> int:
+        await asyncio.to_thread(lambda: None)
+        return int(asyncio.get_running_loop()._default_executor._max_workers)
+
+    return asyncio.run(ask())
+
+
 def part_ceiling(url: str) -> None:
     report(
         f"\n## ceiling: peak live backends under {REQUESTS} concurrent requests"
@@ -280,7 +332,13 @@ def part_ceiling(url: str) -> None:
     )
     with psycopg.connect(url, autocommit=True) as conn:
         limit = conn.execute("SHOW max_connections").fetchone()[0]
-    report(f"  server max_connections = {limit}, anyio default thread limiter = 40")
+    # Asked, not typed. It sat here as a literal `40` beside a real `SHOW`, which
+    # is how a guess gets quoted downstream as a measurement.
+    report(
+        f"  server max_connections = {limit},"
+        f" anyio default thread limiter = {_anyio_limit()},"
+        f" asyncio default executor = {_executor_size()}"
+    )
 
     for label, build, port in (
         ("sync handler + sync dep (main)  ", _sync_app, 8781),

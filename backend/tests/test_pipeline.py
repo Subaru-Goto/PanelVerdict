@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import threading
+import time
 
 import pytest
 
@@ -8,7 +9,7 @@ from app.pipeline import EmptyPanel, NoVotes, run_panel_test, run_vote_loop
 from app.targeting import select_panel
 from app.persistence import persist_pool
 from app.schemas import PanelCounts, RequestedRegion, TargetRequest
-from app.vote import OutOfCredit, VoteResponse
+from app.vote import VOTE_CONCURRENCY, OutOfCredit, VoteResponse
 from tests.factories import (
     JAPAN_REQUEST,
     StubTranslator,
@@ -636,6 +637,8 @@ class BlockingLLM:
     def __init__(self) -> None:
         self.entered = threading.Event()
         self.release = threading.Event()
+        self.calls = 0
+        self._lock = threading.Lock()
 
     def vote(
         self,
@@ -645,27 +648,33 @@ class BlockingLLM:
         option_2: str,
         enacted: str = "",
     ) -> VoteResponse:
+        with self._lock:
+            self.calls += 1
         self.entered.set()
         self.release.wait(10)
         return voted("option_1", "blocked")
 
 
 @pytest.mark.anyio
-async def test_a_cancel_mid_chunk_detaches_nothing(conn, aconn) -> None:
-    """A cancelled run must stop, not carry on behind the request's back.
+async def test_a_cancel_stops_the_loop_at_the_chunk_in_flight(conn, aconn) -> None:
+    """What a cancel costs, and what it must not cost.
 
-    `asyncio.shield` used to wrap each chunk, to keep a cancel from throwing away
-    votes already paid for. Measured against uvicorn's own forced-shutdown call
-    (`task.cancel(msg="timeout graceful shutdown exceeded")`), it preserved no
-    votes at all: the awaiter is cancelled either way, the request's connection
-    closes as the handler unwinds, and the shielded chunk then reaches a closed
-    connection — the same votes lost, plus an `OperationalError` and a chunk
-    still running past the request that owned it.
+    The chunk already in flight is lost: `asyncio.to_thread` cannot be
+    cancelled, so its votes are paid for and never stored. That is accepted —
+    preserving them needs a connection the chunk owns, which spends the budget
+    112/#242 has yet to measure.
 
-    The chunk in flight is lost when a cancel lands, and this asserts only that
-    it is lost *promptly*. Preserving it needs a connection the chunk owns rather
-    than the request's, which is the connection budget's question — 112/#242,
-    where the number that decides it lives.
+    What must not happen is the loop buying *another* chunk, or leaving work
+    running behind the request that owned it. `asyncio.shield` used to wrap each
+    chunk to keep a cancel from throwing votes away; measured against uvicorn's
+    own forced-shutdown call it preserved none, and left the chunk writing to a
+    connection `get_conn` had already closed.
+
+    Both halves are asserted, because the first half alone is close to vacuous:
+    with the shield gone `_chunk_votes` is plainly awaited and never becomes a
+    Task, so "no task detached" can only ever catch a reintroduced shield. It is
+    kept as exactly that — a tripwire — and the call count is what shows the loop
+    actually stopped.
     """
     seed_japanese(conn, 75)
     llm = BlockingLLM()
@@ -677,22 +686,36 @@ async def test_a_cancel_mid_chunk_detaches_nothing(conn, aconn) -> None:
             translator=StubTranslator(JAPAN_REQUEST),
         )
     ).panel
+    assert len(panel) > VOTE_CONCURRENCY, "the panel must span more than one chunk"
+
+    known = asyncio.all_tasks()
     task = asyncio.create_task(run_vote_loop(aconn, panel, variants=_VARIANTS, llm=llm))
     try:
+        # Deadlined: `pytest-timeout` is not installed, so a chunk that never
+        # gets a worker would otherwise hang CI with no failing test.
+        deadline = time.monotonic() + 30
         while not llm.entered.is_set():
+            assert time.monotonic() < deadline, "the first chunk never started"
             await asyncio.sleep(0.01)
 
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
 
-        # Asserted while the chunk is still blocked: a shielded chunk is pending
-        # right here, and would have drained by the time the model returned.
-        leftover = [
-            t
-            for t in asyncio.all_tasks()
-            if t is not asyncio.current_task() and "_chunk_votes" in repr(t.get_coro())
-        ]
-        assert leftover == [], leftover
+        # Not keyed on a function name: anything left running that this test did
+        # not start, and did not know about beforehand.
+        detached = asyncio.all_tasks() - known - {asyncio.current_task()}
+        assert detached == set(), detached
     finally:
         llm.release.set()
+
+    # The chunk in flight finishes in its thread; nothing after it may be bought.
+    deadline = time.monotonic() + 30
+    while llm.calls < VOTE_CONCURRENCY and time.monotonic() < deadline:
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.2)
+
+    assert llm.calls == VOTE_CONCURRENCY, (
+        f"the loop bought {llm.calls} votes past a cancel; one chunk is"
+        f" {VOTE_CONCURRENCY}"
+    )

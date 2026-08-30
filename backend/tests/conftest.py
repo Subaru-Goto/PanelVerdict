@@ -62,7 +62,14 @@ def stub_llm() -> type[StubLLM]:
 #
 # On both connections, not just the reader: the timeout has to be set on the
 # session that *waits*, and either one can be it.
-_LOCK_TIMEOUT = "SET lock_timeout = '5s'"
+#
+# A libpq connection parameter, not a `SET` statement, and that is the whole
+# point: Postgres reverts a plain `SET` issued inside a transaction that then
+# rolls back, so the first `await aconn.rollback()` put the deadline back to 0
+# and voided the guard — in `test_paid_votes_survive_the_run_dying_before_the_
+# response`, which is precisely a test that rolls back. Set at connect it is
+# session state no transaction can undo.
+_LOCK_TIMEOUT_OPTION = "-c lock_timeout=5s"
 
 
 @pytest.fixture(scope="module")
@@ -95,9 +102,10 @@ async def aconn(pg_url, conn):
     giving them async twins to spare tests a `commit()` would shape production
     code around the suite.
     """
-    async with await psycopg.AsyncConnection.connect(pg_url) as connection:
+    async with await psycopg.AsyncConnection.connect(
+        pg_url, options=_LOCK_TIMEOUT_OPTION
+    ) as connection:
         await register_vector_async(connection)
-        await connection.execute(_LOCK_TIMEOUT)
         yield connection
 
 
@@ -107,8 +115,9 @@ def conn(pg_url):
     # from a rolled-back transaction — and since 111/#240 a test may seed here
     # and read through `aconn`, a second session that cannot see an uncommitted
     # write. Leaving it off made setup invisible to half the suite.
-    with psycopg.connect(pg_url, autocommit=True) as connection:
-        connection.execute(_LOCK_TIMEOUT)
+    with psycopg.connect(
+        pg_url, autocommit=True, options=_LOCK_TIMEOUT_OPTION
+    ) as connection:
         prepare_connection(connection)
         # votes has no FK to personas (the ledger must survive a pool reseed), so
         # CASCADE alone would leave cache rows leaking between tests.
