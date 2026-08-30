@@ -5,6 +5,9 @@ reading a human has not accepted** — and the corollary that the pause itself
 costs nothing, because a gate that spends money before it asks is not a gate.
 """
 
+import asyncio
+import threading
+
 import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -81,6 +84,52 @@ def _start(**overrides) -> dict:
 
 def _config(thread: str = "t-1") -> dict:
     return {"configurable": {"thread_id": thread}}
+
+
+class ThreadNotingGenerator(StubGenerator):
+    """Records which thread its blocking `draft` was called on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.thread: str | None = None
+        self.saw_a_running_loop: bool | None = None
+
+    def draft(self, *, words: str):
+        self.thread = threading.current_thread().name
+        try:
+            asyncio.get_running_loop()
+            self.saw_a_running_loop = True
+        except RuntimeError:
+            self.saw_a_running_loop = False
+        return super().draft(words=words)
+
+
+@pytest.mark.anyio
+async def test_the_sync_node_s_paid_call_never_reaches_the_event_loop(
+    conn, aconn
+) -> None:
+    """`roleplay` is a sync `def` deliberately, and this is what makes that safe.
+
+    LangGraph dispatches a sync node to a worker, so `generator.draft` — a paid
+    model call over the network — is already off the loop, and wrapping it in
+    `to_thread` would nest one thread inside another. That is a fact about
+    LangGraph rather than about this code, which is exactly why it is asserted
+    here instead of trusted: if an upgrade ever ran sync nodes inline, one
+    caller's `draft` would stall every other request on the worker, and nothing
+    else would catch it — `test_async_discipline` only inspects `async def`, and
+    this node is not one.
+    """
+    seed_japanese(conn, 5)
+    generator = ThreadNotingGenerator()
+
+    # Non-blank audience words: blank means demographics only and drafts nothing.
+    await _graph(aconn, generator=generator).ainvoke(
+        _start(audience="Japanese homeowners"), _config()
+    )
+
+    assert generator.thread is not None, "the roleplay node never ran"
+    assert generator.thread != threading.current_thread().name
+    assert generator.saw_a_running_loop is False
 
 
 @pytest.mark.anyio
