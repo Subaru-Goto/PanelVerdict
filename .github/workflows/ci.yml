@@ -47,5 +47,10 @@ jobs:
       # green — measured. That is where the hand-written mirror of
       # `EvaluateResponse` lives (`__tests__/fixtures.ts`), so its annotation was
       # the frontend's only check on the contract and nothing enforced it.
+      #
+      # The script runs `next typegen` first because `tsconfig.json` includes
+      # `next-env.d.ts`, which is generated and gitignored — so without it CI
+      # type-checks a different program than a developer does. Measured: on a
+      # checkout with no `next-env.d.ts`, an image import is `TS2307`.
       - run: npm run typecheck
       - run: npm test

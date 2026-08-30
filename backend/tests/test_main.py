@@ -153,18 +153,21 @@ def client(conn, pg_url, stub_llm, monkeypatch):
         "chat_turns_per_thread_per_day",
         "chat_turns_per_caller_per_day",
         "global_daily_cap_usd",
-        # Pinned so `/health` reports sign-in off, which is what these tests
-        # expect. It does not switch sign-in off — see the override below.
-        "supabase_project_url",
-        "supabase_service_key",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
 
-    # What actually switches sign-in off. The endpoint does not read the setting:
-    # `_VERIFIER` is built once at import, so a developer whose .env points at a
-    # real Supabase project turned 81 of this file's tests 401 while CI stayed
-    # green — the pin above was believed to prevent exactly that (114/#245).
+    # Sign-in and account deletion are switched off here, not pinned. Nothing at
+    # request time reads `supabase_project_url` or `supabase_service_key`: both
+    # are read once at import, by `verifier_from_settings` and
+    # `deleter_from_settings`, so the singletons those build are what the
+    # endpoints see. Pinning the settings was inert, and a developer whose .env
+    # points at a real project turned 81 of this file's tests 401 (114/#245).
+    #
+    # `None` is the safe default for the deleter in particular: a test that
+    # forgets its own override gets the 502 an unconfigured deploy gets, not a
+    # real admin deletion against somebody's project.
     app.dependency_overrides[get_verifier] = lambda: None
+    app.dependency_overrides[get_account_deleter] = lambda: None
 
     # Every override is a zero-argument callable, never the class itself: FastAPI
     # reads a bare class's __init__ signature as a dependency and would turn its
