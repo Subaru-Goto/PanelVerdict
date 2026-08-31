@@ -20,31 +20,47 @@ its own uncertainty for exactly this reason.
 ## How a run works
 
 ```
-target description ──▶ translator ──▶ structured query ──▶ pool ──▶ panel
-      (a model call)                     (plain SQL)          (personas)
-                                                                  │
-                          verdict ◀── Bayesian layer ◀── votes ◀──┘
-                       (probabilities)                  (one model call each)
+     two headlines  +  controls  +  optional audience text
+                              │        (acted out, not translated)
+                              ▼
+   pool  ──▶  panel preview  ──▶  [ YOU APPROVE ]  ──▶  votes  ──▶  verdict  ──▶  kept
+  (SQL)      (who gets seated)     nothing is bought     (one model   (Beta      (to your
+                                     until here           call each)   posterior)  account)
 ```
 
-1. **Translate.** A model turns "young Japanese homeowners" into a query the pool
-   can serve — country, age span, income, education, personality. Anything it
-   cannot express is reported rather than silently dropped. Leave the target
-   blank and the panel is a cross-section of the whole pool; no model is called.
-2. **Retrieve.** Every requested attribute *filters*, then a seeded uniform sample
-   picks the panel. Filtering rather than ranking is what makes it an audience
-   rather than a handful of extremes.
-3. **Vote.** Each panelist reads both headlines and picks one, with a reason.
+1. **Ask.** Two headlines, plus explicit controls for who should judge them —
+   country, age span, gender, education, income. Picking nothing means anyone.
+   Leave it all alone and the panel is a cross-section of the pool, with no model
+   called.
+2. **Role-play, if you asked for it.** The optional "who else are they?" field is
+   *not* translated into a query: nothing in the pool records who shops for
+   groceries online, so one model call turns your sentence into an instruction
+   every panelist is asked to act out, and the report says which part of the
+   audience was matched from survey data and which part was acted
+   ([094](docs/decisions/094-controls-replace-translation.md)). Copy that tries to
+   redirect the panel rather than be judged by it is refused before anything is
+   bought.
+3. **Retrieve.** Every control *filters*, then a seeded uniform sample picks the
+   panel. Filtering rather than ranking is what makes it an audience rather than a
+   handful of extremes.
+4. **Approve the panel.** The run stops and shows you who would be seated, and how
+   your audience was read. **No votes are bought until you accept**
+   ([076](https://github.com/Subaru-Goto/PanelVerdict/issues/166)) — so a reading
+   you did not mean costs you nothing, and adjusting it does not spend a run.
+5. **Vote.** Each panelist reads both headlines and picks one, with a reason.
    Votes fan out concurrently and are cached on the exact question asked, so
-   re-running the same headlines against the same panel buys no votes — only
-   the targeting call, which is not cached. Presentation order is split exactly
-   50/50, because the model favours whatever it sees first about two-thirds of
-   the time.
-4. **Decide.** A Beta posterior over the panel's preference gives a share, a
-   credible interval, and the probability the lead is big enough to act on. It
-   can stop early when the answer is already clear.
-5. **Explain.** An analyst agent reads the run through tools and answers
-   questions about it in plain language.
+   re-running the same headlines against the same panel buys no votes.
+   Presentation order is split exactly 50/50, because the model favours whatever
+   it sees first about two-thirds of the time.
+6. **Decide.** A Beta posterior over the panel's preference gives a share, a
+   credible interval, and the probability the lead is big enough to act on. It can
+   stop early when the answer is already clear.
+7. **Explain.** An analyst agent reads the run through tools — including a cited
+   corpus — and answers questions about it in plain language.
+8. **Keep it.** The finished report is stored against your account, so a refresh
+   or a crashed render no longer loses what you paid for. Past tests are listed,
+   searchable, reopenable and deletable, and deleting the account deletes them
+   ([117](https://github.com/Subaru-Goto/PanelVerdict/issues/252)).
 
 ## Getting started
 
@@ -120,7 +136,17 @@ the cheapest on purpose: forgetting to choose should cost a cent, not a tenth of
 your credit. Add `PROFILE=demo` or `PROFILE=prod` to `.env` to change it.
 
 Repeat runs of the same headlines against the same panel reuse the cached votes,
-so they cost only the one targeting call.
+and since the controls replaced translation
+([094](docs/decisions/094-controls-replace-translation.md)) there is no targeting
+call left to pay for — so a re-run costs **nothing** unless you changed the
+audience sentence, which buys one rewrite (~$0.0012). Visiting the panel gate is
+free, and adjusting the reading there does not spend a run.
+
+The cache serves a matching answer **forever**, deliberately: the same target and
+the same headlines must never be re-paid for
+([040](https://github.com/Subaru-Goto/PanelVerdict/issues/138), where the earlier
+"only today's votes" requirement was reversed). Retention is therefore
+user-managed — a stored report lasts until its owner or their account deletes it.
 
 ## Known limitations
 
@@ -167,31 +193,57 @@ What is honest to say about it:
   ([041](https://github.com/Subaru-Goto/PanelVerdict/issues/139),
   [043](https://github.com/Subaru-Goto/PanelVerdict/issues/141)).
 
-**3. The spend guard counts verified accounts.** (Corrected 2026-08-25 — this read "there is no per-user identity, so the spend guard counts addresses" until [063/#158](https://github.com/Subaru-Goto/PanelVerdict/issues/158) shipped Google sign-in: runs are now counted against a verified subject id, three a day.) The
-paid endpoints are no longer open — a shared secret admits only calls made
-through the frontend's server-side proxy, and a Postgres-backed ledger caps runs
-per caller and analyst turns per thread and per caller, refusing before anything
-is bought ([045](https://github.com/Subaru-Goto/PanelVerdict/issues/143)). But
-with no accounts yet, "caller" means the network address the platform reports:
-people behind one NAT share a budget, and somebody with many addresses gets
-many. What bounds the determined abuser is a global daily pool — every paid
-request is priced at the gate and refused once the day's budget ($1.00) is
-spent, whoever asks ([064](docs/decisions/064-the-cost-ceilings.md),
-[089](https://github.com/Subaru-Goto/PanelVerdict/issues/192)); a hard spend cap
-on the OpenRouter key remains the backstop, and real per-user auth is still to
-land ([063](https://github.com/Subaru-Goto/PanelVerdict/issues/158)).
+**3. The spend guard counts verified accounts, and one ceiling still rests on an
+estimate.** (Rewritten 2026-08-31. This section carried a correction saying
+sign-in had shipped on top of a paragraph that still said "with no accounts yet,
+caller means the network address" — the two halves contradicted each other for
+six days.)
+
+- **Identity is real.** Runs are counted against the `sub` claim of a
+  signature-checked Google session, three a day, and analyst turns are capped per
+  thread and per caller — a Postgres-backed ledger refuses before anything is
+  bought ([045](https://github.com/Subaru-Goto/PanelVerdict/issues/143),
+  [063](https://github.com/Subaru-Goto/PanelVerdict/issues/158)). The paid
+  endpoints are not open: a shared secret admits only calls made through the
+  frontend's server-side proxy.
+- **An account is still free to make**, so a per-account limit raises the price of
+  a reset from "change a header" to "delete and re-create an account" rather than
+  making it infinite. What bounds a determined abuser is a global daily pool —
+  every paid request is priced at the gate and refused once the day's budget
+  ($1.00) is spent, whoever asks
+  ([064](docs/decisions/064-the-cost-ceilings.md),
+  [089](https://github.com/Subaru-Goto/PanelVerdict/issues/192)). A hard spend cap
+  on the OpenRouter key is the backstop.
+- **The pool is priced on an estimate, not a measurement.** A run is charged the
+  panel size times a measured per-vote figure, but an analyst *turn* is charged a
+  stand-in, because nobody has measured what a turn actually costs
+  ([091](https://github.com/Subaru-Goto/PanelVerdict/issues/195)). The ceiling
+  therefore holds against the shape of the spend rather than its size.
+- **A degraded mode worth naming.** With `SUPABASE_PROJECT_URL` unset — supported
+  for local development and documented as an interim deploy state — there is no
+  verifier, and "caller" falls back to an address-derived identity. In that state
+  people behind one NAT share both a budget and a rail of stored tests. It is why
+  every such endpoint sits behind the shared secret, and it is not the production
+  configuration: there, signing in is required to run at all.
 
 ## Next steps
 
 Roughly in the order they would be done, each already specified:
 
+Two rows of the previous list had already shipped when it was last read — the
+corpus ([018](https://github.com/Subaru-Goto/PanelVerdict/issues/124), cited
+under limitation 2 as *done*) and sign-in
+([063](https://github.com/Subaru-Goto/PanelVerdict/issues/158)). What is actually
+open:
+
 | next | what it changes |
 |---|---|
-| [018](https://github.com/Subaru-Goto/PanelVerdict/issues/124) | a chunked, embedded, cited corpus, so what a trait level or a credible interval means here comes from a source rather than the model's weights |
-| [063](https://github.com/Subaru-Goto/PanelVerdict/issues/158) | real per-user identity, which is what turns the spend guard from per-address into per-person |
+| [091](https://github.com/Subaru-Goto/PanelVerdict/issues/195) | measure what an analyst turn costs, so the day's ceiling stops resting on a stand-in figure |
+| [047](https://github.com/Subaru-Goto/PanelVerdict/issues/145) | structured logs with a correlation id, so a slow or costly run can be traced |
+| [087](https://github.com/Subaru-Goto/PanelVerdict/issues/165) | the Art. 50(2) machine-readable mark on AI-generated output — the disclosure is written, the marking is not |
+| [061](https://github.com/Subaru-Goto/PanelVerdict/issues/156) | an ungated demo: fixed input through the real graph with the panel model stubbed, so a visitor sees a real report and the meter never moves |
 | [041](https://github.com/Subaru-Goto/PanelVerdict/issues/139) | which kind of person preferred which variant — the question customers ask next |
 | [044](https://github.com/Subaru-Goto/PanelVerdict/issues/142) | a suggestion for the winning headline, framed as a hypothesis the app can then test |
-| [047](https://github.com/Subaru-Goto/PanelVerdict/issues/145) | structured logs with a correlation id, so a slow or costly run can be traced |
 
 **And the one that would change what the app may claim:** a
 demographically-matched replication of the framing study. Limitation 1 rests on a
@@ -208,8 +260,17 @@ against a throwaway container, so the whole suite is free.
 
 ```bash
 cd backend  && uv run pytest && uv run ruff check . && uv run ruff format --check .
-cd frontend && npm test && npx tsc --noEmit && npx eslint app __tests__
+cd frontend && npm test && npm run typecheck && npx eslint app __tests__
 ```
+
+`npm run typecheck`, not a bare `npx tsc --noEmit`: `tsconfig.json` includes
+`next-env.d.ts`, which is generated and gitignored, so without `next typegen`
+first you type-check a *different program* than CI does — measured, on a fresh
+checkout an image import is `TS2307`
+([114](https://github.com/Subaru-Goto/PanelVerdict/issues/245)). CI also runs
+this before the tests, because `next build` type-checks only what it compiles
+into the app — a type error in `__tests__` used to ship green, and that is where
+the frontend's mirror of the response contract is checked.
 
 ## Layout
 
@@ -217,10 +278,12 @@ cd frontend && npm test && npx tsc --noEmit && npx eslint app __tests__
 |------|------------------|
 | `backend/app/` | the pipeline: `targeting` → `persistence` → `vote` → `verdict`, assembled by `pipeline`, served by `main` |
 | `backend/app/analyst.py` | the "Ask the analyst" agent and its tools |
-| `backend/app/seed.py` | pool generation (the only paid CLI) |
-| `frontend/app/` | Next.js report UI and the analyst dock |
+| `backend/app/schema.sql` | every table, and the one place additive `ALTER TABLE … ADD COLUMN IF NOT EXISTS` may go — the form is enforced, not suggested ([115](https://github.com/Subaru-Goto/PanelVerdict/issues/248)) |
+| `backend/app/seed.py` | pool generation — the only paid CLI, plus two free entry points: `--schema-only` applies the schema and stops, `--check-schema` reports drift and never applies |
+| `frontend/app/` | Next.js report UI, the analyst dock, and the rail of past tests |
 | `frontend/app/api/` | server-side proxy routes — the only place the backend URL and edge secret exist |
 | `db/` | database init |
+| `docs/design/prototype.html` | the whole interface as a click-through, and a decision record: several decisions exist only in its comments |
 | `docs/` | how the thing works and why |
 | `docs/research/` | the sourced numbers — every constant with a citation traces here |
 | `docs/decisions/` | the decision log — closed tickets from the file-tracker era, plus the id→issue mapping |
