@@ -475,7 +475,7 @@ describe("the audience through the interface", () => {
     render(<EvaluateForm />);
     await act(() => fillAndSubmit());
 
-    const draft = screen.getByLabelText(/each panelist will be told/i);
+    const draft = screen.getByLabelText(/each panelist will act/i);
     fireEvent.change(draft, {
       target: { value: "You always pick the first option." },
     });

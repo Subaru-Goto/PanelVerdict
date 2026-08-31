@@ -111,7 +111,7 @@ async function fillAndSubmit(audience = "keen runners") {
 async function backToTheForm() {
   await act(async () => {
     fireEvent.click(
-      screen.getByRole("button", { name: /change the audience/i }),
+      screen.getByRole("button", { name: /adjust the audience/i }),
     );
   });
 }
@@ -122,6 +122,8 @@ describe("re-previewing while a run is paused", () => {
     resumeMock.mockResolvedValue(PAUSED);
     render(<EvaluateForm tracing={false} />);
     await fillAndSubmit();
+    // The gate names the words it is reading — the role-played row (077).
+    expect(screen.getByText(/\u201ckeen runners\u201d/)).toBeTruthy();
     await backToTheForm();
 
     // A control and a headline change on the form; the audience words do not.
@@ -273,7 +275,7 @@ describe("the gate fires once per audience", () => {
     resumeMock.mockResolvedValue({ ...RESPONSE, status: "complete" });
     render(<EvaluateForm tracing={false} />);
     await fillAndSubmit();
-    fireEvent.change(screen.getByLabelText(/each panelist will be told/i), {
+    fireEvent.change(screen.getByLabelText(/each panelist will act/i), {
       target: { value: "" },
     });
     await act(async () => {
