@@ -203,6 +203,17 @@ async def _chunk_votes(
         for persona, order in zip(panel, orders)
     }
     cached = await load_votes(conn, list(fingerprints.values()))
+    # The read is over, so close its transaction before the wave: minutes of
+    # model calls with the connection idle-in-transaction is the state
+    # `idle_in_transaction_session_timeout` and pooler reapers kill — and a
+    # session killed mid-wave means the thread returns paid votes that
+    # `store_votes` has no connection to record: the loss the ledger exists to
+    # prevent. Also the ACCESS SHARE a concurrent deploy's DDL queued behind.
+    # A commit, and a safe one: everything that writes on this connection
+    # before the wave commits itself (`_charge_ledger`), so what is pending
+    # here is reads. The ledger's own ordering below — store, then commit —
+    # is untouched (113/#243).
+    await conn.commit()
     misses = [
         (persona, order)
         for persona, order in zip(panel, orders)
