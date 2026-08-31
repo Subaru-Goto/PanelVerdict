@@ -347,10 +347,21 @@ async function jsonOrThrow(res: Response): Promise<unknown> {
   return res.json();
 }
 
-/** This account's finished tests, newest first. */
-export async function myTests(): Promise<StoredTest[]> {
-  const res = await fetch("/api/tests", { headers: await authHeaders() });
-  return (await jsonOrThrow(res)) as StoredTest[];
+/** One page of the rail. `next_cursor` is opaque — hand it back to
+ * `myTests` for the page below; null exactly when that page would be empty. */
+export type StoredTestPage = {
+  tests: StoredTest[];
+  next_cursor: string | null;
+};
+
+/** One page of this account's finished tests, newest first. */
+export async function myTests(cursor?: string): Promise<StoredTestPage> {
+  const query =
+    cursor === undefined ? "" : `?cursor=${encodeURIComponent(cursor)}`;
+  const res = await fetch(`/api/tests${query}`, {
+    headers: await authHeaders(),
+  });
+  return (await jsonOrThrow(res)) as StoredTestPage;
 }
 
 /** One stored report, whole — what reopening a past test renders. */

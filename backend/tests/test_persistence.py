@@ -978,7 +978,7 @@ async def test_the_listing_is_newest_first_and_one_owners_only(conn, aconn):
     await store_report(aconn, test_id="t-2", owner="person-1", report=make_report())
     await store_report(aconn, test_id="t-3", owner="person-2", report=make_report())
 
-    listed = await list_reports(aconn, owner="person-1")
+    listed = await list_reports(aconn, owner="person-1", limit=10)
 
     assert [row["test_id"] for row in listed] == ["t-2", "t-1"]
     assert all(row["created_at"] is not None for row in listed)
@@ -994,7 +994,7 @@ async def test_the_listing_carries_the_headlines_and_never_the_whole_report(
     tests to draw a rail of labels."""
     await store_report(aconn, test_id="t-1", owner="person-1", report=make_report())
 
-    row = (await list_reports(aconn, owner="person-1"))[0]
+    row = (await list_reports(aconn, owner="person-1", limit=10))[0]
 
     assert row["variants"] == {"a": "Save 50% today", "b": "Limited time: half price"}
     assert "report" not in row, "the listing loaded the whole document"
@@ -1027,8 +1027,8 @@ async def test_deleting_an_account_takes_its_reports_with_it(conn, aconn):
 
     assert await delete_reports_of(aconn, owner="person-1") == 1
 
-    assert await list_reports(aconn, owner="person-1") == []
-    assert len(await list_reports(aconn, owner="person-2")) == 1
+    assert await list_reports(aconn, owner="person-1", limit=10) == []
+    assert len(await list_reports(aconn, owner="person-2", limit=10)) == 1
 
 
 @pytest.mark.anyio
@@ -1058,7 +1058,7 @@ async def test_a_report_this_build_cannot_render_is_invisible(conn, aconn):
     )
 
     assert await load_report(aconn, test_id="t-1", owner="person-1") is None
-    assert await list_reports(aconn, owner="person-1") == []
+    assert await list_reports(aconn, owner="person-1", limit=10) == []
     # Unrenderable is still the customer's content, so "delete my account" must
     # empty the table rather than the readable part of it.
     assert await delete_reports_of(aconn, owner="person-1") == 1

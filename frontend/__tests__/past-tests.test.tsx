@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -15,7 +16,7 @@ const forgetTestMock = vi.fn();
 let signedIn = true;
 
 vi.mock("../app/lib/api", () => ({
-  myTests: () => myTestsMock(),
+  myTests: (cursor?: string) => myTestsMock(cursor),
   myTest: (id: string) => myTestMock(id),
   forgetTest: (id: string) => forgetTestMock(id),
   onRunsChanged: () => () => {},
@@ -59,7 +60,7 @@ afterEach(() => {
 describe("the account's own tests", () => {
   it("renders nothing at all when nobody is signed in", async () => {
     signedIn = false;
-    myTestsMock.mockResolvedValue([stored()]);
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
 
     render(<PastTests onOpen={() => {}} />);
 
@@ -70,7 +71,7 @@ describe("the account's own tests", () => {
   });
 
   it("shows both headlines and a phrase the report would agree with", async () => {
-    myTestsMock.mockResolvedValue([stored()]);
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
 
     render(<PastTests onOpen={() => {}} />);
 
@@ -84,9 +85,10 @@ describe("the account's own tests", () => {
 
   it("says a tie is a tie rather than inventing a winner", async () => {
     const tied = makeTiedResponse();
-    myTestsMock.mockResolvedValue([
-      stored({ verdict: tied.verdict, tally: tied.tally }),
-    ]);
+    myTestsMock.mockResolvedValue({
+      tests: [stored({ verdict: tied.verdict, tally: tied.tally })],
+      next_cursor: null,
+    });
 
     render(<PastTests onOpen={() => {}} />);
 
@@ -95,7 +97,7 @@ describe("the account's own tests", () => {
 
   it("hands the whole stored report up when a row is opened", async () => {
     const report = makeResponse();
-    myTestsMock.mockResolvedValue([stored()]);
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
     myTestMock.mockResolvedValue(report);
     const onOpen = vi.fn();
 
@@ -111,7 +113,7 @@ describe("the account's own tests", () => {
   });
 
   it("drops a deleted row before the round trip settles", async () => {
-    myTestsMock.mockResolvedValue([stored()]);
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
     let settle: () => void = () => {};
     forgetTestMock.mockReturnValue(
       new Promise<void>((resolve) => {
@@ -134,13 +136,16 @@ describe("the account's own tests", () => {
   });
 
   it("searches the headlines it shows, and says when nothing matches", async () => {
-    myTestsMock.mockResolvedValue([
-      stored(),
-      stored({
-        test_id: "t-2",
-        variants: { a: "Book in 30 seconds", b: "Reserve your slot now" },
-      }),
-    ]);
+    myTestsMock.mockResolvedValue({
+      tests: [
+        stored(),
+        stored({
+          test_id: "t-2",
+          variants: { a: "Book in 30 seconds", b: "Reserve your slot now" },
+        }),
+      ],
+      next_cursor: null,
+    });
 
     render(<PastTests onOpen={() => {}} />);
     await screen.findByText(/“Save 50% today”/);
@@ -168,6 +173,103 @@ describe("the account's own tests", () => {
   });
 });
 
+describe("the rail reads in pages", () => {
+  it("asks for one page, and offers the rest only while there is more", async () => {
+    myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
+    myTestsMock.mockResolvedValueOnce({
+      tests: [
+        stored({
+          test_id: "t-2",
+          variants: { a: "Book in 30 seconds", b: "Reserve your slot now" },
+        }),
+      ],
+      next_cursor: null,
+    });
+
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/“Save 50% today”/);
+
+    // The first read named no cursor: it is the newest page, not a resumption.
+    expect(myTestsMock).toHaveBeenCalledWith(undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+
+    // The older rows join the newer ones — the reader is scrolling down their
+    // history, not turning a page that replaces it.
+    expect(await screen.findByText(/“Book in 30 seconds”/)).toBeTruthy();
+    expect(screen.getByText(/“Save 50% today”/)).toBeTruthy();
+    expect(myTestsMock).toHaveBeenLastCalledWith("c1");
+    // The server said that was everything, so nothing offers a fetch that
+    // would come back empty.
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+  });
+
+  it("never offers more when the first page is everything", async () => {
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
+
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/“Save 50% today”/);
+
+    expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
+  });
+
+  it("does not claim nothing matches while unsearched pages remain", async () => {
+    // The search reads the rows on hand, and older pages may hold the match —
+    // saying "no test matches" while a Show more could still find one would be
+    // a false sentence about the reader's own history.
+    myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
+
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/“Save 50% today”/);
+    fireEvent.change(screen.getByLabelText("Search your tests"), {
+      target: { value: "zzz" },
+    });
+
+    expect(screen.getByText(/No test loaded so far matches/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show more" })).toBeTruthy();
+  });
+
+  it("stops saying the rail failed once Show more succeeds", async () => {
+    // `load` clears the banner on success for exactly this reason (117/#252,
+    // review); the second reader must not drift from the first.
+    myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
+    myTestsMock.mockRejectedValueOnce(new Error("offline"));
+    myTestsMock.mockResolvedValueOnce({
+      tests: [
+        stored({
+          test_id: "t-2",
+          variants: { a: "Book in 30 seconds", b: "Reserve your slot now" },
+        }),
+      ],
+      next_cursor: null,
+    });
+
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/“Save 50% today”/);
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByText(/not lost/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+
+    expect(await screen.findByText(/“Book in 30 seconds”/)).toBeTruthy();
+    expect(screen.queryByText(/not lost/)).toBeNull();
+  });
+
+  it("a second click while the page is away buys nothing", async () => {
+    // Show more appends, so a double-click that fetched twice would show the
+    // same rows twice. The button goes quiet until the page lands.
+    myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/“Save 50% today”/);
+
+    myTestsMock.mockReturnValue(new Promise(() => {}));
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+
+    // One for the first page, one for the click — and nothing for the second.
+    expect(myTestsMock.mock.calls.length).toBe(2);
+  });
+});
+
 describe("the rail across a change of session", () => {
   it("clears one account's rows before showing another's", async () => {
     // `onAuthChange` is a live session listener, so this happens without a
@@ -177,12 +279,12 @@ describe("the rail across a change of session", () => {
     listeners.push((listener) => {
       announce = listener;
     });
-    myTestsMock.mockResolvedValue([stored()]);
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
 
     render(<PastTests onOpen={() => {}} />);
     await screen.findByText(/“Save 50% today”/);
 
-    myTestsMock.mockResolvedValue([]);
+    myTestsMock.mockResolvedValue({ tests: [], next_cursor: null });
     announce(false);
     announce(true);
 
@@ -191,12 +293,65 @@ describe("the rail across a change of session", () => {
     );
   });
 
+  it("never lands an old account's page in the new account's rail", async () => {
+    // Show more is an append, so a page fetched under the previous session
+    // must die with it — the clearing in the listener protects `load`, and
+    // this is the same guarantee for the slower, resumable read (117/#252
+    // taught the class of bug; 118/#253 adds the second member).
+    let announce: (value: boolean) => void = () => {};
+    listeners.push((listener) => {
+      announce = listener;
+    });
+    myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/“Save 50% today”/);
+
+    let settle: (page: unknown) => void = () => {};
+    myTestsMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        settle = resolve;
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+
+    myTestsMock.mockResolvedValue({
+      tests: [
+        stored({
+          test_id: "t-new",
+          variants: { a: "The new account's", b: "own row" },
+        }),
+      ],
+      next_cursor: null,
+    });
+    announce(false);
+    announce(true);
+    await screen.findByText(/“The new account's”/);
+
+    // Settled inside act, so the append (if the component wrongly performs
+    // one) has flushed before the assertion looks — a waitFor here would pass
+    // in the gap before the stale page landed.
+    await act(async () => {
+      settle({
+        tests: [
+          stored({
+            test_id: "t-old",
+            variants: { a: "The old account's", b: "stale page" },
+          }),
+        ],
+        next_cursor: null,
+      });
+    });
+
+    expect(screen.queryByText(/“The old account's”/)).toBeNull();
+    expect(screen.getByText(/“The new account's”/)).toBeTruthy();
+  });
+
   it("stops saying the rail failed once it loads", async () => {
     // A cold backend fails the first load; the run that follows fires
     // `onRunsChanged` and the rows arrive. The warning must not still be
     // standing above them.
     myTestsMock.mockRejectedValueOnce(new Error("offline"));
-    myTestsMock.mockResolvedValue([stored()]);
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
     let announce: (value: boolean) => void = () => {};
     listeners.push((listener) => {
       announce = listener;

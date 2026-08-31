@@ -59,6 +59,7 @@ export async function proxyToBackend(
     | "/chat"
     | "/me"
     | "/tests"
+    | `/tests?${string}`
     | `/tests/${string}`,
   method: "GET" | "POST" | "DELETE",
   request: Request,

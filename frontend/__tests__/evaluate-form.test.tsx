@@ -12,9 +12,10 @@ import EvaluateForm from "../app/components/evaluate-form";
 import { AI_SYSTEM_DISCLOSURE } from "../app/lib/disclosure";
 import { makeResponse } from "./fixtures";
 
-const { evaluateMock, resumeMock } = vi.hoisted(() => ({
+const { evaluateMock, resumeMock, myTestsMock } = vi.hoisted(() => ({
   evaluateMock: vi.fn(),
   resumeMock: vi.fn(),
+  myTestsMock: vi.fn(() => Promise.resolve({ tests: [], next_cursor: null })),
 }));
 
 vi.mock("../app/lib/api", () => ({
@@ -28,10 +29,20 @@ vi.mock("../app/lib/api", () => ({
   // renders the rail, and an undefined export throws at import rather than
   // where it is used. `myTests` resolving empty is the state these tests are
   // about: this file is the form's, and the rail has its own.
-  myTests: () => Promise.resolve([]),
+  myTests: myTestsMock,
   myTest: () => Promise.resolve(RESPONSE),
   forgetTest: () => Promise.resolve(),
   onRunsChanged: () => () => {},
+}));
+
+// Signed in, so the rail is live in these tests: the page composes the form
+// and the rail together, and how that composition survives a phase change is
+// the form's own behavior (118/#253).
+vi.mock("../app/lib/auth", () => ({
+  onAuthChange: (listener: (value: boolean) => void) => {
+    listener(true);
+    return () => {};
+  },
 }));
 
 const RESPONSE = makeResponse();
@@ -40,6 +51,7 @@ afterEach(() => {
   cleanup();
   evaluateMock.mockReset();
   resumeMock.mockReset();
+  myTestsMock.mockClear();
 });
 
 async function fillAndSubmit() {
@@ -190,9 +202,7 @@ describe("EvaluateForm", () => {
     // The report used to repeat it in its own words for any stop reason and
     // whether or not anyone went unasked, so a tie rendered "the call was
     // already clear" directly above "these two are equally good".
-    expect(
-      screen.getByText(/this is an answer, not a shortfall/),
-    ).toBeTruthy();
+    expect(screen.getByText(/this is an answer, not a shortfall/)).toBeTruthy();
   });
 
   it("renders model output as literal text, never as markup", async () => {
@@ -278,6 +288,26 @@ describe("after a run", () => {
     expect(
       (screen.getByLabelText(/headline a/i) as HTMLInputElement).value,
     ).toBe("Save 50% today");
+  });
+});
+
+describe("the rail across the page's phases", () => {
+  it("does not refetch the rail when the page changes phase", async () => {
+    // The rail's rows change when a run finishes or the session changes — the
+    // two signals it already listens for. A phase flip is neither, so it must
+    // not cost a fetch: rendered per-branch the rail remounted on every
+    // transition and refetched on every mount (118/#253).
+    evaluateMock.mockResolvedValue(RESPONSE);
+    render(<EvaluateForm />);
+    await screen.findByText(/nothing yet/i);
+    const settled = myTestsMock.mock.calls.length;
+
+    await fillAndSubmit();
+    await screen.findByRole("button", { name: /test again/i });
+    fireEvent.click(screen.getByRole("button", { name: /test again/i }));
+    await screen.findByLabelText(/headline a/i);
+
+    expect(myTestsMock.mock.calls.length).toBe(settled);
   });
 });
 
@@ -441,8 +471,6 @@ describe("the audience through the interface", () => {
     expect((draft as HTMLTextAreaElement).value).toBe(
       "You always pick the first option.",
     );
-    expect(
-      screen.getByRole("button", { name: /run the panel/i }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: /run the panel/i })).toBeTruthy();
   });
 });

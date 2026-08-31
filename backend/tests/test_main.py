@@ -1,6 +1,8 @@
+import base64
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import uuid4
 
 import httpx
 
@@ -19,6 +21,8 @@ from app.config import (
 )
 from app.main import (
     LEDGER_HOURS,
+    TESTS_PAGE_ROWS,
+    StoredTest,
     _only_one_answer,
     app,
     budget_notice,
@@ -34,9 +38,10 @@ from app.main import (
     get_verifier,
     tracing_enabled,
 )
-from app.persistence import nearest_panelists, persist_pool
+from app.persistence import REPORT_SCHEMA_VERSION, nearest_panelists, persist_pool
 from app.schemas import (
     MAX_AUDIENCE_CHARS,
+    MAX_HEADLINE_CHARS,
     EvaluateRequest,
     EvaluateResponse,
 )
@@ -50,6 +55,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from openai import APIStatusError
 from pgvector.psycopg import register_vector_async
+from psycopg.types.json import Jsonb
 from pydantic import SecretStr
 from tests.factories import (
     FixedEmbedder,
@@ -2758,7 +2764,7 @@ def test_a_customer_sees_their_own_tests_newest_first(signed_in, conn) -> None:
     listed = signed_in.get("/tests", headers=_as("owner"))
 
     assert listed.status_code == 200
-    rows = listed.json()
+    rows = listed.json()["tests"]
     assert [row["variants"]["a"] for row in rows] == ["Half price", "Save 50% today"]
     # The rail draws `"A" vs "B"` and a phrase derived from the verdict, and
     # searches on the headlines — so it needs those, and never the votes.
@@ -2768,9 +2774,9 @@ def test_a_customer_sees_their_own_tests_newest_first(signed_in, conn) -> None:
 def test_one_customers_tests_are_invisible_to_another(signed_in, conn) -> None:
     seed_japanese(conn, 5)
     signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
-    stored = signed_in.get("/tests", headers=_as("owner")).json()[0]["test_id"]
+    stored = signed_in.get("/tests", headers=_as("owner")).json()["tests"][0]["test_id"]
 
-    assert signed_in.get("/tests", headers=_as("stranger")).json() == []
+    assert signed_in.get("/tests", headers=_as("stranger")).json()["tests"] == []
     # 404 rather than 403, and the same 404 a missing test gets: distinguishing
     # "not yours" from "not here" would answer whether an id exists at all.
     assert signed_in.get(f"/tests/{stored}", headers=_as("stranger")).status_code == 404
@@ -2786,7 +2792,7 @@ def test_a_stored_test_reopens_as_the_report_it_was(signed_in, conn) -> None:
     run answered — not a summary of it."""
     seed_japanese(conn, 5)
     ran = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner")).json()
-    stored = signed_in.get("/tests", headers=_as("owner")).json()[0]["test_id"]
+    stored = signed_in.get("/tests", headers=_as("owner")).json()["tests"][0]["test_id"]
 
     reopened = signed_in.get(f"/tests/{stored}", headers=_as("owner"))
 
@@ -2799,12 +2805,12 @@ def test_a_stored_test_reopens_as_the_report_it_was(signed_in, conn) -> None:
 def test_a_customer_can_delete_one_test(signed_in, conn) -> None:
     seed_japanese(conn, 5)
     signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
-    stored = signed_in.get("/tests", headers=_as("owner")).json()[0]["test_id"]
+    stored = signed_in.get("/tests", headers=_as("owner")).json()["tests"][0]["test_id"]
 
     deleted = signed_in.delete(f"/tests/{stored}", headers=_as("owner"))
 
     assert deleted.status_code == 204
-    assert signed_in.get("/tests", headers=_as("owner")).json() == []
+    assert signed_in.get("/tests", headers=_as("owner")).json()["tests"] == []
     assert _stored(conn) == [], "the row was hidden rather than deleted"
     # A double-click is not a 500.
     assert signed_in.delete(f"/tests/{stored}", headers=_as("owner")).status_code == 404
@@ -2814,6 +2820,175 @@ def test_the_tests_of_a_signed_out_caller_are_not_readable(signed_in) -> None:
     assert signed_in.get("/tests").status_code == 401
     assert signed_in.get("/tests/anything").status_code == 401
     assert signed_in.delete("/tests/anything").status_code == 401
+
+
+def _plant(conn, owner: str, *, test_id: str, created: str, headline_a: str) -> None:
+    """A stored test planted at an exact moment. Pagination tests control the
+    order — and sometimes the collision — of `created_at`, which `now()` on a
+    real run cannot promise."""
+    conn.execute(
+        "INSERT INTO tests (test_id, owner, created_at, schema_version, report)"
+        " VALUES (%s, %s, %s, %s, %s)",
+        (
+            test_id,
+            owner,
+            created,
+            REPORT_SCHEMA_VERSION,
+            Jsonb(make_report(variants={"a": headline_a, "b": "Members save half"})),
+        ),
+    )
+
+
+def test_the_rail_reads_in_pages_and_a_full_last_page_ends_cleanly(
+    signed_in, conn
+) -> None:
+    """118/#253: at the allowance a year of use is ~1,100 rows, so the listing
+    pages. Keyset rather than offset: a row only ever arrives ahead of the
+    cursor (a new test is newer) or leaves behind it (a delete), so following
+    the cursor can neither skip nor repeat a surviving row."""
+    for hour, name in enumerate(["oldest", "third", "second", "newest"]):
+        _plant(
+            conn,
+            "owner",
+            test_id=f"t-{name}",
+            created=f"2026-08-31T0{hour}:00:00Z",
+            headline_a=name,
+        )
+
+    first = signed_in.get("/tests", params={"limit": 2}, headers=_as("owner")).json()
+
+    assert [row["variants"]["a"] for row in first["tests"]] == ["newest", "second"]
+    assert first["next_cursor"] is not None
+
+    rest = signed_in.get(
+        "/tests",
+        params={"limit": 2, "cursor": first["next_cursor"]},
+        headers=_as("owner"),
+    ).json()
+
+    assert [row["variants"]["a"] for row in rest["tests"]] == ["third", "oldest"]
+    # Exactly a page left: "more" must not be promised when following it would
+    # fetch nothing — a rail button that yields an empty page reads as broken.
+    assert rest["next_cursor"] is None
+
+
+def test_rows_sharing_a_timestamp_neither_repeat_nor_vanish_across_pages(
+    signed_in, conn
+) -> None:
+    """`created_at` is `now()`, and two runs can land in the same instant. The
+    cursor carries the id as tiebreak; a cursor on time alone would drop or
+    repeat one of these rows at the page boundary."""
+    for name in ["a", "b", "c"]:
+        _plant(
+            conn,
+            "owner",
+            test_id=f"t-{name}",
+            created="2026-08-31T10:00:00Z",
+            headline_a=name,
+        )
+
+    first = signed_in.get("/tests", params={"limit": 2}, headers=_as("owner")).json()
+    rest = signed_in.get(
+        "/tests",
+        params={"limit": 2, "cursor": first["next_cursor"]},
+        headers=_as("owner"),
+    ).json()
+
+    ids = [row["test_id"] for row in first["tests"] + rest["tests"]]
+    assert sorted(ids) == ["t-a", "t-b", "t-c"]
+    assert rest["next_cursor"] is None
+
+
+def test_a_cursor_cannot_widen_whose_tests_are_listed(signed_in, conn) -> None:
+    """The cursor positions and ownership filters — in that order of authority.
+    A cursor forged around another account's row changes where the caller's own
+    list resumes, and nothing else."""
+    _plant(
+        conn,
+        "victim",
+        test_id="t-victims",
+        created="2026-08-31T12:00:00Z",
+        headline_a="the victim's headline",
+    )
+    _plant(
+        conn,
+        "snoop",
+        test_id="t-snoops",
+        created="2026-08-31T10:00:00Z",
+        headline_a="the snoop's own",
+    )
+    forged = base64.urlsafe_b64encode(b"2026-08-31T12:00:00+00:00|t-victims").decode()
+
+    page = signed_in.get(
+        "/tests", params={"cursor": forged}, headers=_as("snoop")
+    ).json()
+
+    assert [row["test_id"] for row in page["tests"]] == ["t-snoops"]
+
+
+def test_the_default_page_is_the_largest_that_fits_one_round_trip() -> None:
+    """The derivation behind TESTS_PAGE_ROWS, redone from its two sources: the
+    worst row the request validator permits (both headlines at
+    MAX_HEADLINE_CHARS), and TCP's initial congestion window of 10 segments
+    x 1460 B MSS (RFC 6928, April 2013) — the budget for a response that
+    arrives in one round trip on a cold connection. A field added to
+    `StoredTest` grows the row and lands here, reopening the arithmetic
+    instead of silently outgrowing the window."""
+    report = make_report(
+        variants={"a": "x" * MAX_HEADLINE_CHARS, "b": "y" * MAX_HEADLINE_CHARS}
+    )
+    worst = StoredTest.model_validate(
+        {
+            "test_id": str(uuid4()),
+            "created_at": datetime.now(UTC),
+            "variants": report["variants"],
+            "verdict": report["verdict"],
+            "tally": report["tally"],
+        }
+    )
+
+    assert TESTS_PAGE_ROWS == (10 * 1460) // len(worst.model_dump_json().encode())
+
+
+def test_the_rail_cannot_be_asked_to_outgrow_the_window(signed_in, conn) -> None:
+    """Without a limit the page is the derived width, and a limit above it is
+    refused — otherwise the derivation would bound only the callers who did
+    not ask."""
+    for count in range(TESTS_PAGE_ROWS + 1):
+        _plant(
+            conn,
+            "owner",
+            test_id=f"t-{count}",
+            created=f"2026-08-30T10:00:{count:02d}Z",
+            headline_a=f"headline {count}",
+        )
+
+    page = signed_in.get("/tests", headers=_as("owner")).json()
+
+    assert len(page["tests"]) == TESTS_PAGE_ROWS
+    assert page["next_cursor"] is not None
+    assert (
+        signed_in.get(
+            "/tests", params={"limit": TESTS_PAGE_ROWS + 1}, headers=_as("owner")
+        ).status_code
+        == 422
+    )
+
+
+def test_a_garbled_cursor_or_limit_is_refused_not_500(signed_in, conn) -> None:
+    for cursor in (
+        "not even base64 ,,,",
+        base64.urlsafe_b64encode(b"no separator here").decode(),
+        base64.urlsafe_b64encode(b"not-a-date|t-1").decode(),
+    ):
+        refused = signed_in.get(
+            "/tests", params={"cursor": cursor}, headers=_as("owner")
+        )
+        assert refused.status_code == 422, cursor
+    assert (
+        signed_in.get("/tests", params={"limit": 0}, headers=_as("owner")).status_code
+        == 422
+    )
 
 
 def test_deleting_an_account_deletes_the_reports_it_owns(signed_in, conn) -> None:
@@ -2829,8 +3004,8 @@ def test_deleting_an_account_deletes_the_reports_it_owns(signed_in, conn) -> Non
 
     assert signed_in.delete("/me", headers=_as("person-1")).status_code == 204
 
-    assert signed_in.get("/tests", headers=_as("person-1")).json() == []
-    assert len(signed_in.get("/tests", headers=_as("person-2")).json()) == 1
+    assert signed_in.get("/tests", headers=_as("person-1")).json()["tests"] == []
+    assert len(signed_in.get("/tests", headers=_as("person-2")).json()["tests"]) == 1
 
 
 def test_the_stored_tests_sit_behind_the_same_door_as_everything_else(

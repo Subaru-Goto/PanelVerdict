@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   forgetTest,
@@ -25,19 +25,28 @@ import { railSummary } from "../lib/verdict";
  */
 export default function PastTests({
   onOpen,
+  hidden = false,
 }: {
   onOpen: (result: EvaluateResponse) => void;
+  /** Withheld from the eye, not unmounted: the owner decides where the rail
+   * belongs (not at the gate), and unmounting would forget the loaded pages
+   * and refetch them on the way back (118/#253). */
+  hidden?: boolean;
 }) {
   // null until the session is known, so a rail does not flash at a visitor who
   // turns out to be signed in — the reason `sign-in.tsx` starts here too.
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [tests, setTests] = useState<StoredTest[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [failed, setFailed] = useState(false);
+  const [fetchingMore, setFetchingMore] = useState(false);
 
   // Counts session notifications, so a refetch happens even when `signedIn`
-  // comes back the same value for a different account.
+  // comes back the same value for a different account. Mirrored in a ref so an
+  // in-flight "Show more" can tell its session ended while it was away.
   const [session, setSession] = useState(0);
+  const sessionRef = useRef(0);
 
   useEffect(
     () =>
@@ -50,18 +59,25 @@ export default function PastTests({
         // session shows the previous account's headlines until its own fetch
         // resolves, and a click on one 404s (117/#252, review).
         setTests(null);
+        setNextCursor(null);
         setFailed(false);
         setQuery("");
+        sessionRef.current += 1;
         setSession((count) => count + 1);
       }),
     [],
   );
 
+  // Replaces, never appends — after a finished run or a session change the
+  // rail deliberately holds the newest page again: the event that fired it
+  // put the newest row there, and stitching old pages onto a list that just
+  // changed underneath them could repeat or skip a row.
   const load = useCallback(() => {
     if (signedIn !== true) return;
     myTests().then(
-      (loaded) => {
-        setTests(loaded);
+      (page) => {
+        setTests(page.tests);
+        setNextCursor(page.next_cursor);
         // Cleared on success, or one cold start leaves "could not be loaded"
         // standing above the rows that then arrive — and permanently suppresses
         // the empty state, which is gated on it (117/#252, review).
@@ -70,6 +86,29 @@ export default function PastTests({
       () => setFailed(true),
     );
   }, [signedIn]);
+
+  // The page below the rows already shown. An append, so two rules `load`
+  // does not need: a page fetched under a session that ended while it was in
+  // flight is dropped — the same not-this-account's-headlines rule the
+  // listener's clearing enforces for the first read (117/#252, review) — and
+  // only one fetch is ever away, or a double-click would append the same page
+  // twice. The banner clears on success for `load`'s own documented reason.
+  async function loadNextPage(cursor: string): Promise<void> {
+    if (fetchingMore) return;
+    setFetchingMore(true);
+    const asked = sessionRef.current;
+    try {
+      const page = await myTests(cursor);
+      if (sessionRef.current !== asked) return;
+      setTests((current) => [...(current ?? []), ...page.tests]);
+      setNextCursor(page.next_cursor);
+      setFailed(false);
+    } catch {
+      if (sessionRef.current === asked) setFailed(true);
+    } finally {
+      setFetchingMore(false);
+    }
+  }
 
   // On mount, and again whenever the session is announced — `session` is in the
   // dependencies for that second reason, since `signedIn` can come back the
@@ -80,7 +119,7 @@ export default function PastTests({
   // rather than polling.
   useEffect(() => onRunsChanged(load), [load]);
 
-  if (signedIn !== true) return null;
+  if (hidden || signedIn !== true) return null;
 
   async function open(testId: string): Promise<void> {
     try {
@@ -166,7 +205,25 @@ export default function PastTests({
             ))}
           </ul>
           {shown.length === 0 && (
-            <p className="text-sm text-ink-2">No test matches “{query}”.</p>
+            <p className="text-sm text-ink-2">
+              {/* The search reads the rows on hand; a flat "no test matches"
+                  while unsearched pages remain would be a false sentence about
+                  the reader's own history. */}
+              {nextCursor === null
+                ? `No test matches “${query}”.`
+                : `No test loaded so far matches “${query}” — Show more reaches
+                   further back.`}
+            </p>
+          )}
+          {nextCursor !== null && (
+            <button
+              className="self-start text-sm text-ink-2 hover:text-ink hover:underline"
+              disabled={fetchingMore}
+              onClick={() => void loadNextPage(nextCursor)}
+              type="button"
+            >
+              Show more
+            </button>
           )}
         </>
       )}
