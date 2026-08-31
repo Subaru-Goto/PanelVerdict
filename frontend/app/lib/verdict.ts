@@ -24,3 +24,26 @@ export const leadingSide = (verdict: PanelVerdict): "a" | "b" =>
  *  disagreeing with itself. */
 export const isPracticalTie = (verdict: PanelVerdict): boolean =>
   verdict.probability_practical_tie >= verdict.credible_mass;
+
+/** The one-line summary the rail puts under a past test's headlines — "71%
+ *  preferred the first", "too close to call" (117/#252).
+ *
+ *  Derived here rather than sent by the backend, and derived from the same two
+ *  helpers the report itself uses: a phrase computed server-side would be a
+ *  second threshold to keep in step with `isPracticalTie`, and 020 keeps the
+ *  label out of the payload. So a rail row and the report it opens can never
+ *  disagree about whether the panel called it.
+ *
+ *  Named "first"/"second" rather than A/B because the rail shows the headlines
+ *  themselves, in that order — a reader scanning it has no A and B to map. */
+export const railSummary = (verdict: PanelVerdict): string => {
+  if (isPracticalTie(verdict)) return "too close to call";
+  const leading = leadingSide(verdict);
+  const share =
+    leading === "b"
+      ? verdict.share_preferring_b
+      : 1 - verdict.share_preferring_b;
+  return `${Math.round(share * 100)}% preferred the ${
+    leading === "b" ? "second" : "first"
+  }`;
+};

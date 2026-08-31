@@ -316,3 +316,61 @@ export async function remainingRuns(): Promise<number | null> {
   } | null;
   return typeof body?.runs_remaining === "number" ? body.runs_remaining : null;
 }
+
+/** One row of the account's own rail (117/#252).
+ *
+ * Three fragments of a stored report rather than the report: the rail shows
+ * `"A" vs "B"` and a phrase derived from the verdict, and searches on the two
+ * headlines. The votes stay on the server until a row is opened.
+ *
+ * No verdict *label* here, deliberately — `verdict.ts` derives it at render
+ * time from these same numbers, so there is one threshold rather than two. */
+export type StoredTest = {
+  test_id: string;
+  created_at: string;
+  variants: Record<string, string>;
+  verdict: PanelVerdict;
+  tally: VoteTally;
+};
+
+async function jsonOrThrow(res: Response): Promise<unknown> {
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as {
+      detail?: string;
+    } | null;
+    throw new Error(
+      typeof body?.detail === "string"
+        ? body.detail
+        : `API responded ${res.status}`,
+    );
+  }
+  return res.json();
+}
+
+/** This account's finished tests, newest first. */
+export async function myTests(): Promise<StoredTest[]> {
+  const res = await fetch("/api/tests", { headers: await authHeaders() });
+  return (await jsonOrThrow(res)) as StoredTest[];
+}
+
+/** One stored report, whole — what reopening a past test renders. */
+export async function myTest(testId: string): Promise<EvaluateResponse> {
+  const res = await fetch(`/api/tests/${encodeURIComponent(testId)}`, {
+    headers: await authHeaders(),
+  });
+  return (await jsonOrThrow(res)) as EvaluateResponse;
+}
+
+/** Delete one stored test, for good.
+ *
+ * A 404 is not raised: the row is already gone, which is what the caller
+ * wanted, and a second click on the × should not put an error on the page. */
+export async function forgetTest(testId: string): Promise<void> {
+  const res = await fetch(`/api/tests/${encodeURIComponent(testId)}`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+  });
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`API responded ${res.status}`);
+  }
+}

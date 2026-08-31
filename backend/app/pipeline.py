@@ -78,6 +78,8 @@ class PanelTestResult:
     counts: PanelCounts
     notices: tuple[Notice, ...]
     stop_reason: StopReason | None
+    # What a stored report is keyed on (117/#252).
+    test_id: str
 
 
 # Two consecutive boundaries must agree before a mid-run stop. Sourced by
@@ -251,6 +253,11 @@ class CollectedVotes:
     asked: int
     stop_reason: StopReason | None
     credit_exhausted: bool
+    # The id this run stamped on the votes it paid for, carried out so the
+    # stored report can be keyed on it (117/#252) — a report and the votes that
+    # run bought are then joinable. Not readable off the votes themselves: a
+    # cached vote keeps the id of the run that paid for it.
+    test_id: str
 
 
 async def run_vote_loop(
@@ -355,6 +362,7 @@ async def run_vote_loop(
         asked=asked,
         stop_reason=stop_reason,
         credit_exhausted=credit_exhausted,
+        test_id=test_id,
     )
 
 
@@ -434,6 +442,7 @@ def assemble_result(
         )
         + _vote_shortfall_notice(votes, len(selection.panel)),
         stop_reason=collected.stop_reason,
+        test_id=collected.test_id,
     )
 
 

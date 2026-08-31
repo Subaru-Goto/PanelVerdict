@@ -38,6 +38,7 @@ from app.persistence import nearest_panelists, persist_pool
 from app.schemas import (
     MAX_AUDIENCE_CHARS,
     EvaluateRequest,
+    EvaluateResponse,
 )
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
@@ -2663,3 +2664,248 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     # is tokens followed by `error` and no `done`. Tolerant of `tool` events,
     # which a scripted analyst that calls tools would add.
     assert events[-1] == {"type": "done"}
+
+
+# --- Keeping a finished test (117/#252) --------------------------------------
+
+
+def _stored(conn) -> list[tuple]:
+    return conn.execute(
+        "SELECT test_id, owner, report FROM tests ORDER BY created_at"
+    ).fetchall()
+
+
+def test_a_finished_run_is_kept_for_the_account_that_ran_it(
+    signed_in, conn, monkeypatch
+) -> None:
+    """A customer paid for this report; before now, a refresh lost it."""
+    seed_japanese(conn, 5)
+
+    response = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+
+    assert response.status_code == 200
+    rows = _stored(conn)
+    assert len(rows) == 1
+    test_id, owner, report = rows[0]
+    assert owner == "owner"
+    assert test_id
+    # The stored document is the report, not the response envelope: `status`
+    # belongs to the HTTP answer, and a row that carried it would be a body
+    # rather than a record.
+    assert "status" not in report
+    assert EvaluateResponse.model_validate(report).model_dump(mode="json") == report
+    assert report["variants"] == response.json()["variants"]
+
+
+def test_a_paused_run_is_not_kept(signed_in, conn) -> None:
+    """Only a finished test is a test. A run holding at the gate has bought
+    nothing and has no verdict to keep."""
+    seed_japanese(conn, 5)
+
+    signed_in.post("/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner"))
+
+    assert _stored(conn) == []
+
+
+def test_a_report_that_cannot_be_stored_still_reaches_the_customer(
+    signed_in, conn, monkeypatch
+) -> None:
+    """The asymmetry this write is built around (117/#252). When it runs the
+    votes are already bought, so raising would lose the report *and* the run —
+    which is 049/#147's own complaint arriving through the mechanism meant to
+    answer it. The customer holds the report in the body either way; a failure
+    costs the copy.
+    """
+    seed_japanese(conn, 5)
+
+    async def refuse(*args, **kwargs):
+        raise psycopg.OperationalError("the disk is on fire")
+
+    monkeypatch.setattr(main, "store_report", refuse)
+
+    response = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["status"] == "complete"
+    assert response.json()["counts"]["voted"] == 5
+    assert _stored(conn) == []
+
+
+def test_answering_the_gate_keeps_the_report_that_answer_bought(
+    signed_in, conn
+) -> None:
+    """The gate path is the one a first-time reader takes, so it is the path
+    that must keep a report — `/evaluate` alone only does when the reading was
+    already approved."""
+    seed_japanese(conn, 5)
+    paused = signed_in.post(
+        "/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner")
+    ).json()
+
+    resumed = _resume(signed_in, paused["thread_id"], headers=_as("owner"))
+
+    assert resumed.status_code == 200
+    rows = _stored(conn)
+    assert len(rows) == 1 and rows[0][1] == "owner"
+
+
+def test_a_customer_sees_their_own_tests_newest_first(signed_in, conn) -> None:
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+    second = _REQUEST_BODY | {"headline_a": "Half price", "headline_b": "50% off"}
+    signed_in.post("/evaluate", json=second, headers=_as("owner"))
+
+    listed = signed_in.get("/tests", headers=_as("owner"))
+
+    assert listed.status_code == 200
+    rows = listed.json()
+    assert [row["variants"]["a"] for row in rows] == ["Half price", "Save 50% today"]
+    # The rail draws `"A" vs "B"` and a phrase derived from the verdict, and
+    # searches on the headlines — so it needs those, and never the votes.
+    assert set(rows[0]) == {"test_id", "created_at", "variants", "verdict", "tally"}
+
+
+def test_one_customers_tests_are_invisible_to_another(signed_in, conn) -> None:
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+    stored = signed_in.get("/tests", headers=_as("owner")).json()[0]["test_id"]
+
+    assert signed_in.get("/tests", headers=_as("stranger")).json() == []
+    # 404 rather than 403, and the same 404 a missing test gets: distinguishing
+    # "not yours" from "not here" would answer whether an id exists at all.
+    assert signed_in.get(f"/tests/{stored}", headers=_as("stranger")).status_code == 404
+    assert (
+        signed_in.delete(f"/tests/{stored}", headers=_as("stranger")).status_code == 404
+    )
+    assert signed_in.get(f"/tests/{stored}", headers=_as("owner")).status_code == 200
+
+
+def test_a_stored_test_reopens_as_the_report_it_was(signed_in, conn) -> None:
+    """049/#147: a render crash loses the report the customer just paid for.
+    This is the read that gets it back, so what comes out has to be what the
+    run answered — not a summary of it."""
+    seed_japanese(conn, 5)
+    ran = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner")).json()
+    stored = signed_in.get("/tests", headers=_as("owner")).json()[0]["test_id"]
+
+    reopened = signed_in.get(f"/tests/{stored}", headers=_as("owner"))
+
+    assert reopened.status_code == 200
+    assert reopened.json() == {
+        key: value for key, value in ran.items() if key != "status"
+    }
+
+
+def test_a_customer_can_delete_one_test(signed_in, conn) -> None:
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+    stored = signed_in.get("/tests", headers=_as("owner")).json()[0]["test_id"]
+
+    deleted = signed_in.delete(f"/tests/{stored}", headers=_as("owner"))
+
+    assert deleted.status_code == 204
+    assert signed_in.get("/tests", headers=_as("owner")).json() == []
+    assert _stored(conn) == [], "the row was hidden rather than deleted"
+    # A double-click is not a 500.
+    assert signed_in.delete(f"/tests/{stored}", headers=_as("owner")).status_code == 404
+
+
+def test_the_tests_of_a_signed_out_caller_are_not_readable(signed_in) -> None:
+    assert signed_in.get("/tests").status_code == 401
+    assert signed_in.get("/tests/anything").status_code == 401
+    assert signed_in.delete("/tests/anything").status_code == 401
+
+
+def test_deleting_an_account_deletes_the_reports_it_owns(signed_in, conn) -> None:
+    """`forget_me` deleted nothing locally, and argued that was right because
+    what stayed behind was "not personal data once the account is gone" — an
+    opaque id and a timestamp. A report holds the customer's headline text and
+    the phrases their audience reading quoted, so it is the first table where
+    that reasoning fails (117/#252)."""
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-1"))
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-2"))
+    app.dependency_overrides[get_account_deleter] = lambda: RecordingDeleter()
+
+    assert signed_in.delete("/me", headers=_as("person-1")).status_code == 204
+
+    assert signed_in.get("/tests", headers=_as("person-1")).json() == []
+    assert len(signed_in.get("/tests", headers=_as("person-2")).json()) == 1
+
+
+def test_the_stored_tests_sit_behind_the_same_door_as_everything_else(
+    client, conn, monkeypatch
+) -> None:
+    """`DELETE /tests/{id}` is the second irreversible thing a caller can ask
+    for, and `/me`'s own guard comment gives the rule: "a stolen session token
+    should get no further against it than against a paid run" (117/#252).
+
+    It matters more than for a paid path. When `supabase_project_url` is unset —
+    a state `deploy.md` documents as supported — `caller_id` falls back to a
+    caller-written header, so without the edge guard the owner of a stored
+    report is whatever a request says it is.
+    """
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+
+    for method, path in (
+        ("get", "/tests"),
+        ("get", "/tests/anything"),
+        ("delete", "/tests/anything"),
+    ):
+        refused = getattr(client, method)(path)
+
+        assert refused.status_code == 401, f"{method.upper()} {path} was not guarded"
+
+
+def test_a_deletion_that_cannot_clear_the_reports_says_so(
+    signed_in, conn, monkeypatch
+) -> None:
+    """The account is erased by the provider first, so a failure clearing the
+    reports afterwards cannot be undone — and the subject id is gone with the
+    account, so no retry of `DELETE /me` and no `DELETE /tests/{id}` will ever
+    reach those rows again (117/#252, review).
+
+    A bare 500 would read as "it did not happen" over a state where the account
+    is gone and its content is not. The answer names both halves.
+    """
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-1"))
+    deleter = RecordingDeleter()
+    app.dependency_overrides[get_account_deleter] = lambda: deleter
+
+    async def refuse(*args, **kwargs):
+        raise psycopg.OperationalError("the pooler said no")
+
+    monkeypatch.setattr(main, "delete_reports_of", refuse)
+
+    response = signed_in.delete("/me", headers=_as("person-1"))
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    # Both facts, because either alone is misleading.
+    assert "account" in detail and "test" in detail
+    assert deleter.deleted == ["person-1"], "the account should already be gone"
+
+
+def test_the_stored_report_is_about_the_test_and_not_the_operators_wallet(
+    signed_in, conn, monkeypatch
+) -> None:
+    """`budget_notice` quotes the OpenRouter balance at one instant. Persisted,
+    a report reopened weeks later shows that figure as if it were current — and
+    it was never a fact about the test, it was a fact about the operator's
+    account (117/#252, review). The run's own notices are kept; that one is not.
+    """
+    seed_japanese(conn, 5)
+    # Thin enough to warn: the profile's votes cost more than this.
+    app.dependency_overrides[get_remaining_credit] = lambda: 0.0001
+
+    answered = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+
+    live = [notice["message"] for notice in answered.json()["notices"]]
+    assert any("OpenRouter credit" in message for message in live), live
+    kept = _stored(conn)[0][2]
+    assert not any(
+        "OpenRouter credit" in notice["message"] for notice in kept["notices"]
+    ), kept["notices"]
+    # The run's own notices survive — this is a shortfall run, so there is one.
+    assert kept["notices"]

@@ -49,7 +49,14 @@ from app.llm import (
     remaining_credit,
 )
 from app.panel import votes_with_voters
-from app.persistence import adeny_data_api
+from app.persistence import (
+    adeny_data_api,
+    delete_report,
+    delete_reports_of,
+    list_reports,
+    load_report,
+    store_report,
+)
 from app.pipeline import EmptyPanel, NoVotes
 from app.roleplay import RolePlayGenerator, RolePlayRefused
 from app.schemas import (
@@ -59,8 +66,10 @@ from app.schemas import (
     Locale,
     Notice,
     PanelEdit,
+    PanelVerdict,
     ResumeRequest,
     TargetQuery,
+    VoteTally,
 )
 from app.screening import OpenRouterScreener, Screener, UnsafeInput
 from app.tracing import configure_tracing
@@ -175,7 +184,15 @@ app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
 # thing a caller can ask for, and a stolen session token should get no further
 # against it than against a paid run. Its GET rides along — no reason to open a
 # door for the half that only reads.
-_GUARDED_PATHS = ("/evaluate", "/chat", "/me")
+#
+# /tests is here for both of those reasons at once (117/#252). `DELETE
+# /tests/{id}` is the second irreversible thing, and the reads hand back the
+# customer's own content — their headline text, and the phrases their audience
+# reading was quoted from. It matters more here than on a paid path: with
+# `supabase_project_url` unset, a state deploy.md documents as supported,
+# `caller_id` falls back to a caller-written header, so without this guard the
+# owner of a stored report would be whatever a request claimed it was.
+_GUARDED_PATHS = ("/evaluate", "/chat", "/me", "/tests")
 
 
 def _is_guarded(path: str) -> bool:
@@ -791,14 +808,24 @@ async def me(
 
 @app.delete("/me", status_code=204)
 async def forget_me(
+    conn: psycopg.AsyncConnection = Depends(get_conn),
     caller: str = Depends(caller_id),
     deleter: AccountDeleter | None = Depends(get_account_deleter),
 ) -> Response:
     """Erase the account, on request (063/#158).
 
-    Cheap, because the subject-id rule means there is nowhere else to look: the
-    address lives in the provider's `auth.users` table and this call removes
-    it. What stays behind is `request_ledger` rows holding an opaque id and a
+    Mostly cheap, because the subject-id rule means there is little else to look
+    at: the address lives in the provider's `auth.users` table and this call
+    removes it.
+
+    **One exception, and it is the reason this is not a one-liner (117/#252).**
+    `tests` holds the customer's own content — their headline text, and the
+    phrases their audience reading was quoted from — so those rows are deleted
+    here. Every clause of the argument below fails for them: a report is
+    personal data whether or not the account exists, it does not expire within
+    the day, and deleting one grants no budget, so there is nothing to sell.
+
+    What stays behind is `request_ledger` rows holding an opaque id and a
     timestamp — and they stay behind *on purpose*, against 063's original
     "delete our rows" wording:
 
@@ -820,6 +847,10 @@ async def forget_me(
     one.
     """
     if deleter is None:
+        # Refuses the whole operation, reports included. Deliberate: deleting a
+        # customer's stored tests while leaving the account that owns them is
+        # worse than doing neither, and they can still remove them one at a time
+        # through `DELETE /tests/{id}` (117/#252, review).
         raise HTTPException(
             status_code=503,
             detail="account deletion is not available on this deployment",
@@ -831,6 +862,98 @@ async def forget_me(
             status_code=502,
             detail="the account could not be deleted — nothing was changed",
         ) from None
+    # After the provider, not before: a local delete that ran and then failed to
+    # erase the account would take the customer's reports while leaving the
+    # account that owned them.
+    #
+    # And handled, because by here the account is already gone and the subject
+    # id with it — so no retry of this call, and no `DELETE /tests/{id}`, can
+    # ever reach these rows again. A bare 500 would read as "it did not happen"
+    # over a state where half of it did (117/#252, review).
+    try:
+        await delete_reports_of(conn, owner=caller)
+    except psycopg.Error:
+        logger.exception("account %s was erased but its stored tests were not", caller)
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "the account was erased, but its stored tests could not be "
+                "deleted — they are orphaned rather than reachable, and clearing "
+                "them now needs an operator. Nothing was left signed in."
+            ),
+        ) from None
+    return Response(status_code=204)
+
+
+class StoredTest(BaseModel):
+    """One row of the customer's own rail (117/#252).
+
+    Three fragments of a stored report rather than the report: the rail renders
+    `"A" vs "B"` and a phrase derived from the verdict, and searches on the two
+    headlines. Sending whole reports to draw a list of labels would ship every
+    vote and reason the customer has ever bought.
+
+    **No verdict label here, deliberately.** The phrase the rail shows ("too
+    close to call", "71% preferred the first") is derived at render time by
+    `frontend/app/lib/verdict.ts`, which already owns that rule for the report
+    itself — a second implementation would be a second threshold, and 020 keeps
+    the label out of the payload.
+
+    `verdict` and `tally` travel as their models rather than as raw JSON, so a
+    fragment that stopped matching its model fails here instead of in the rail.
+    """
+
+    test_id: str
+    created_at: datetime
+    variants: dict[str, str]
+    verdict: PanelVerdict
+    tally: VoteTally
+
+
+@app.get("/tests")
+async def my_tests(
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+    caller: str = Depends(caller_id),
+) -> list[StoredTest]:
+    """This account's finished tests, newest first."""
+    return [
+        StoredTest.model_validate(row) for row in await list_reports(conn, owner=caller)
+    ]
+
+
+@app.get("/tests/{test_id}")
+async def my_test(
+    test_id: str,
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+    caller: str = Depends(caller_id),
+) -> EvaluateResponse:
+    """One stored report, whole — the read that gets a report back after the
+    page that was drawing it crashed (049/#147).
+
+    404 for a test that is not this caller's, and the *same* 404 a missing one
+    gets: answering differently would say whether an id exists, and a test id is
+    not a credential.
+    """
+    report = await load_report(conn, test_id=test_id, owner=caller)
+    if report is None:
+        raise HTTPException(status_code=404, detail="no such test")
+    return EvaluateResponse.model_validate(report)
+
+
+@app.delete("/tests/{test_id}", status_code=204)
+async def forget_test(
+    test_id: str,
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+    caller: str = Depends(caller_id),
+) -> Response:
+    """Delete one of this account's tests, for good.
+
+    A real delete rather than a flag — a hidden row would leave the customer's
+    headline text in a table they asked to be rid of. 404 when nothing went,
+    which is also what a second click gets.
+    """
+    if not await delete_report(conn, test_id=test_id, owner=caller):
+        raise HTTPException(status_code=404, detail="no such test")
     return Response(status_code=204)
 
 
@@ -893,6 +1016,61 @@ def _outcome(
         variants=variants,
         votes=votes_with_voters(result.votes.records, result.selection.panel),
     )
+
+
+async def _kept(
+    outcome: PausedRun | CompletedRun,
+    *,
+    conn: psycopg.AsyncConnection,
+    state: dict,
+    caller: str,
+) -> PausedRun | CompletedRun:
+    """Keep a finished report for the account that ran it (117/#252).
+
+    **Best-effort, and never fails the response.** When this runs the votes are
+    already bought, so a raised write would lose the report *and* the run —
+    which is 049/#147's own complaint arriving through the mechanism meant to
+    answer it. The customer holds the report in the body either way; what a
+    failure costs is the copy, and that is the cheaper loss by a whole run.
+
+    A paused run is not kept: it has bought nothing and has no verdict.
+
+    `caller` is the owner, and what that is worth is what `caller_id` is worth.
+    With a verifier configured it is a signature-checked subject; unconfigured,
+    it is the pre-auth identity, which is only trustworthy because the edge
+    secret proved the request came from our proxy — which is why `/tests` is in
+    `_GUARDED_PATHS`. In that unconfigured state the identity is address-derived,
+    so two visitors behind one address share a rail. Acceptable where it applies
+    (local development and the documented interim deploy) and not in production,
+    where signing in is required to run at all.
+
+    `status` is excluded because it belongs to the HTTP answer rather than to
+    the record — a row carrying it would be a stored response, not a stored
+    test.
+    """
+    if not isinstance(outcome, CompletedRun):
+        return outcome
+    result = state["result"]
+    test_id = result.test_id
+    try:
+        await store_report(
+            conn,
+            test_id=test_id,
+            owner=caller,
+            # The run's own notices, not the response's: `_outcome` prepends
+            # `budget_notice`, which quotes the operator's OpenRouter balance at
+            # one instant. Stored, a report reopened weeks later would show that
+            # figure as if current — and it was never a fact about the test
+            # (117/#252, review).
+            report=outcome.model_copy(update={"notices": result.notices}).model_dump(
+                mode="json", exclude={"status"}
+            ),
+        )
+    except Exception:
+        # Logged with the id so the loss is traceable to a run, and swallowed on
+        # purpose — see the docstring.
+        logger.exception("could not keep the report for test_id=%s", test_id)
+    return outcome
 
 
 async def _run_graph(graph, payload, thread_id: str):
@@ -1000,7 +1178,12 @@ async def evaluate(
         },
         thread_id,
     )
-    return _outcome(state, thread_id=thread_id, variants=variants, credit=credit)
+    return await _kept(
+        _outcome(state, thread_id=thread_id, variants=variants, credit=credit),
+        conn=conn,
+        state=state,
+        caller=caller,
+    )
 
 
 @asynccontextmanager
@@ -1288,11 +1471,16 @@ async def resume_evaluate(
             ),
             request.thread_id,
         )
-    return _outcome(
-        state,
-        thread_id=request.thread_id,
-        variants=values["variants"],
-        credit=credit,
+    return await _kept(
+        _outcome(
+            state,
+            thread_id=request.thread_id,
+            variants=values["variants"],
+            credit=credit,
+        ),
+        conn=conn,
+        state=state,
+        caller=caller,
     )
 
 

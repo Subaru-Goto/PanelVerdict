@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import {
   evaluate,
@@ -31,10 +31,19 @@ export type EvaluateState =
       resuming?: boolean;
     }
   | { phase: "error"; message: string }
-  | { phase: "done"; result: EvaluateResponse };
+  /** `epoch` counts arrivals at this phase, and exists to be a React `key` on
+   *  the report. Replacing one report with another *without leaving this phase*
+   *  — which is what reopening a stored test does — reconciles the report in
+   *  place, so the analyst's thread id, its transcript and its
+   *  already-opened flag all survive into a report they are not about
+   *  (117/#252). Counting every arrival rather than only the reopen keeps the
+   *  key correct without depending on which transitions happen to remount. */
+  | { phase: "done"; result: EvaluateResponse; epoch: number };
 
 export function useEvaluate() {
   const [state, setState] = useState<EvaluateState>({ phase: "idle" });
+
+  const epoch = useRef(0);
 
   function land(outcome: EvaluateOutcome): void {
     setState(
@@ -44,7 +53,7 @@ export function useEvaluate() {
             threadId: outcome.thread_id,
             preview: outcome.preview,
           }
-        : { phase: "done", result: outcome },
+        : { phase: "done", result: outcome, epoch: ++epoch.current },
     );
   }
 
@@ -86,8 +95,7 @@ export function useEvaluate() {
         phase: "gated",
         threadId,
         preview,
-        notice:
-          error instanceof Error ? error.message : "Request failed",
+        notice: error instanceof Error ? error.message : "Request failed",
       });
     }
   }
@@ -99,5 +107,15 @@ export function useEvaluate() {
     setState({ phase: "idle" });
   }
 
-  return { state, submit, answerGate, reset };
+  /** Render a report this hook did not run: one reopened from the rail
+   *  (117/#252), or recovered after a crash lost the one on screen.
+   *
+   *  It lands in the same `done` phase a fresh run lands in, on purpose — a
+   *  stored report is the report, so a second render path for it would be a
+   *  second place for the report to be drawn wrongly. */
+  function show(result: EvaluateResponse): void {
+    setState({ phase: "done", result, epoch: ++epoch.current });
+  }
+
+  return { state, submit, answerGate, reset, show };
 }
