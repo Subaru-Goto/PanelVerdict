@@ -105,6 +105,102 @@ ALTER TABLE votes ADD COLUMN IF NOT EXISTS scored_at timestamptz;
 """
 
 
+def test_ddl_the_parser_refuses_is_refused_before_it_is_applied(conn, monkeypatch):
+    """The order the guard has to run in (115/#248, review).
+
+    Refusing a bare `ADD COLUMN` *after* `conn.execute(_SCHEMA_SQL)` has already
+    committed it reports a problem the check itself caused, and the second run
+    then dies on `DuplicateColumn` — which the curated handler does not catch,
+    so the operator gets a raw traceback and the RLS sweep never runs. The
+    parse is a pure function of the file, so it costs nothing to do first.
+    """
+    monkeypatch.setattr(
+        app.persistence,
+        "_SCHEMA_SQL",
+        "CREATE TABLE IF NOT EXISTS drift_probe (id text PRIMARY KEY\n);\n"
+        "ALTER TABLE drift_probe ADD COLUMN scored_at timestamptz;\n",
+    )
+    try:
+        with pytest.raises(ValueError, match="IF NOT EXISTS"):
+            apply_schema(conn)
+
+        landed = conn.execute(
+            "SELECT to_regclass('public.drift_probe') IS NOT NULL"
+        ).fetchone()
+        assert landed is not None and landed[0] is False, (
+            "the refused DDL was applied before being refused"
+        )
+    finally:
+        conn.execute("DROP TABLE IF EXISTS drift_probe")
+        conn.commit()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # Postgres makes COLUMN optional, so this is a legal addition.
+        "ALTER TABLE votes ADD scored_at timestamptz;",
+        # And the `IF EXISTS` guard on the table is legal too.
+        "ALTER TABLE IF EXISTS votes ADD COLUMN scored_at timestamptz;",
+        "ALTER TABLE votes ADD COLUMN scored_at timestamptz;",
+    ],
+)
+def test_an_addition_the_parser_does_not_understand_is_refused(statement) -> None:
+    """Recognising one spelling is not enforcing a form (115/#248, review).
+
+    Both alternative spellings are legal SQL that Postgres would apply, and
+    both used to parse to nothing at all: no `IF NOT EXISTS` complaint *and*
+    the new column never reached the probe list — so a column could go missing
+    on a deployed database undetected, which is the failure this parser exists
+    to remove. Anything but the documented form is refused.
+    """
+    with pytest.raises(ValueError, match="ALTER TABLE"):
+        schema_columns(
+            "CREATE TABLE IF NOT EXISTS votes (id text PRIMARY KEY\n);\n" + statement
+        )
+
+
+def test_a_column_spelling_the_parser_cannot_read_is_refused() -> None:
+    """A quoted or all-caps column name was dropped silently, which is a column
+    that exists in the table and is never probed — the exact blindness this
+    parser replaced. Refused rather than skipped, since a parser that guesses
+    is a probe that lies."""
+    with pytest.raises(ValueError, match="order"):
+        schema_columns(
+            'CREATE TABLE IF NOT EXISTS t (\n    "order" text NOT NULL,\n'
+            "    id text PRIMARY KEY\n);"
+        )
+
+
+def test_a_stale_schema_that_the_catalogue_cannot_explain_still_says_why(
+    conn, monkeypatch
+):
+    """The error path must never be empty (115/#248, review).
+
+    `schema.sql` can fail with `UndefinedColumn` over a column the parser never
+    learned about — an index referencing one, with no `ALTER` declaring it. The
+    catalogue then reports nothing missing, and the message named nothing and
+    offered no remedy: "missing a column this build writes — ." The old
+    hardcoded tuple at least named itself, so an empty message is a regression.
+    """
+    monkeypatch.setattr(
+        app.persistence,
+        "_SCHEMA_SQL",
+        "CREATE TABLE IF NOT EXISTS drift_probe (id text PRIMARY KEY\n);\n"
+        "CREATE INDEX IF NOT EXISTS drift_probe_idx ON drift_probe (scored_at);\n",
+    )
+    try:
+        with pytest.raises(RuntimeError) as failure:
+            apply_schema(conn)
+
+        message = str(failure.value)
+        assert "scored_at" in message, message
+        assert "— ." not in message, "the message named nothing"
+    finally:
+        conn.execute("DROP TABLE IF EXISTS drift_probe")
+        conn.commit()
+
+
 def test_the_drift_check_needs_select_and_not_only_connect(conn, pg_url) -> None:
     """What grant the CI credential actually needs (115/#248).
 

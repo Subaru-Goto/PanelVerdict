@@ -90,39 +90,76 @@ def schema_columns(sql: str | None = None) -> dict[str, tuple[str, ...]]:
     return tables
 
 
+# Table-level constraints open a line with one of these rather than a column
+# name: `PRIMARY KEY (a, b)`, `UNIQUE (…)`, `CHECK (…)`, `CONSTRAINT … `.
+_CONSTRAINT_KEYWORDS = (
+    "PRIMARY",
+    "UNIQUE",
+    "CHECK",
+    "CONSTRAINT",
+    "FOREIGN",
+    "EXCLUDE",
+    "LIKE",
+)
+
+
 def _declared_columns(body: str) -> Iterator[str]:
-    """The column names in one `CREATE TABLE` body."""
+    """The column names in one `CREATE TABLE` body.
+
+    A line this cannot classify raises rather than being skipped. Skipping was
+    silent, and it dropped two spellings Postgres accepts — a quoted identifier
+    (`"order" text`) and an all-caps name — each of which is a column that
+    exists in the table and never reaches the probe: the blindness this parser
+    was written to remove (115/#248, review).
+    """
     for line in body.splitlines():
         # Strip the trailing comment before looking for a name, so a `--` note
         # mentioning a word is never read as a column.
-        name = line.split("--")[0].strip().split(" ")[0].strip(",")
-        # Table-level constraints (`PRIMARY KEY (a, b)`, `UNIQUE (…)`) open with
-        # a keyword rather than a column name.
-        if name and name.isidentifier() and not name.isupper():
-            yield name
+        statement = line.split("--")[0].strip()
+        if not statement:
+            continue
+        name = statement.split(" ")[0].strip(",")
+        if name.upper() in _CONSTRAINT_KEYWORDS:
+            continue
+        if not name.isidentifier():
+            raise ValueError(
+                f"schema.sql declares {name!r}, which this parser cannot read as "
+                "a column name. Every column has to reach the completeness "
+                "probe, so an unreadable one is refused rather than skipped."
+            )
+        yield name
 
 
 def _added_columns(sql: str) -> Iterator[tuple[str, str]]:
-    """Every `(table, column)` an `ALTER TABLE … ADD COLUMN` statement adds.
+    """Every `(table, column)` an additive `ALTER TABLE` statement adds.
 
-    `IF NOT EXISTS` is required, not preferred: `schema.sql` runs on every seed
-    and every boot, so a bare `ADD COLUMN` fails the second time and takes the
-    RLS sweep after it down with it. Refused here rather than asked for in a
-    comment — the convention this file used to carry as a comment went eight
-    months without being followed.
+    Only the documented form is recognised, and every other `ALTER TABLE` is
+    refused rather than ignored. Recognising one spelling is not enforcing a
+    form: `ADD scored_at timestamptz` (Postgres makes `COLUMN` optional) and
+    `ALTER TABLE IF EXISTS … ADD COLUMN …` are both legal additions that used
+    to parse to nothing — no complaint, and the new column never reached the
+    probe either (115/#248, review).
+
+    `IF NOT EXISTS` is required because `schema.sql` runs on every seed: a bare
+    `ADD COLUMN` succeeds once and fails forever after, and the failure lands in
+    the middle of the file, so the row-level-security sweep at the end of
+    `prepare_connection` never runs.
     """
-    for table, guard, column in re.findall(
-        r"ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(IF NOT EXISTS\s+)?(\w+)",
-        sql,
-        re.IGNORECASE,
-    ):
-        if not guard:
-            raise ValueError(
-                f"schema.sql adds {table}.{column} without IF NOT EXISTS. The "
-                "file runs on every seed and every boot, so the second run "
-                "would fail and the RLS sweep after it would not run."
-            )
-        yield table, column
+    documented = re.compile(
+        r"^ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)\s+\S", re.IGNORECASE
+    )
+    for statement in re.findall(r"^\s*(ALTER TABLE\b[^;]*)", sql, re.MULTILINE):
+        collapsed = " ".join(statement.split())
+        if match := documented.match(collapsed):
+            yield match.group(1), match.group(2)
+            continue
+        raise ValueError(
+            f"schema.sql contains an ALTER this build cannot read: {collapsed!r}. "
+            "The one supported form is `ALTER TABLE <table> ADD COLUMN IF NOT "
+            "EXISTS <column> <type>;` — anything else is refused, because a "
+            "statement the parser skips is a column the completeness probe never "
+            "asks for."
+        )
 
 
 def apply_schema(conn: psycopg.Connection) -> None:
@@ -137,22 +174,29 @@ def apply_schema(conn: psycopg.Connection) -> None:
 
     Every table is probed, because every table can go stale the same way.
     """
+    # Parsed before a statement is executed, not after: the parse is a pure
+    # function of the file, and DDL the parser refuses must be refused *before*
+    # it lands. Refusing afterwards reports a problem this call just caused, and
+    # leaves the next run to die on DuplicateColumn — handled below, but only as
+    # a second line of defence.
+    wanted = schema_columns()
+
     # The index statements reference columns, so on some stale tables schema.sql
     # itself fails before the probe — same cause, same remedy, so both paths
     # land in the one curated error below.
     try:
         conn.execute(_SCHEMA_SQL)
         conn.commit()
-    except psycopg.errors.UndefinedColumn as error:
+    except (psycopg.errors.UndefinedColumn, psycopg.errors.DuplicateColumn) as error:
         conn.rollback()
-        raise RuntimeError(_stale_schema_message(conn)) from error
+        raise RuntimeError(_stale_schema_message(conn, error)) from error
 
-    for table, columns in schema_columns().items():
+    for table, columns in wanted.items():
         try:
             conn.execute(f"SELECT {', '.join(columns)} FROM {table} LIMIT 0")
         except psycopg.errors.UndefinedColumn as error:
             conn.rollback()
-            raise RuntimeError(_stale_schema_message(conn)) from error
+            raise RuntimeError(_stale_schema_message(conn, error)) from error
 
 
 def missing_columns(conn: psycopg.Connection) -> dict[str, tuple[str, ...]]:
@@ -178,7 +222,7 @@ def missing_columns(conn: psycopg.Connection) -> dict[str, tuple[str, ...]]:
     }
 
 
-def _stale_schema_message(conn: psycopg.Connection) -> str:
+def _stale_schema_message(conn: psycopg.Connection, error: psycopg.Error) -> str:
     """What to do about a database this build has outgrown.
 
     Composed rather than written once, because the remedy is not the same for
@@ -186,8 +230,27 @@ def _stale_schema_message(conn: psycopg.Connection) -> str:
     cannot — it is paid model output, so its only remedy is the additive DDL
     `schema.sql` documents. The catalogue says which tables are actually short,
     so the message names them rather than the one the probe happened to reach.
+
+    `error` is carried in for the case the catalogue cannot explain: `schema.sql`
+    can fail over a column no table declares — an index naming one — and the
+    catalogue then reports nothing missing. Naming the underlying failure is the
+    difference between a message and an empty sentence (115/#248, review).
     """
     stale = missing_columns(conn)
+    # The underlying failure travels with every one of these messages, because
+    # the catalogue can be silent or plainly wrong about the cause: an index
+    # naming a column no statement declares rolls the whole file back, so the
+    # tables it would have created read as absent and the remedy composed below
+    # blames them. Without this line that message named nothing at all
+    # (115/#248, review).
+    cause = f" Underlying failure: {error}"
+    if not stale:
+        return (
+            "applying schema.sql failed, yet every table this build writes has "
+            "the columns it declares — so the DDL is inconsistent with itself. "
+            "Look for a statement naming a column no CREATE TABLE or ALTER "
+            "TABLE in schema.sql declares." + cause
+        )
     named = ", ".join(
         f"{table} ({', '.join(columns)})" for table, columns in sorted(stale.items())
     )
@@ -206,7 +269,7 @@ def _stale_schema_message(conn: psycopg.Connection) -> str:
     return (
         f"the database is missing a column this build writes — {named}. {remedy}"
         "Never drop the whole database: the votes ledger is paid model output "
-        "and cannot be regenerated."
+        "and cannot be regenerated." + cause
     )
 
 
