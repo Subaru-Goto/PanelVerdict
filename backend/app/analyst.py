@@ -12,14 +12,13 @@ saver-agnostic and takes whatever `BaseCheckpointSaver` it is handed.
 
 import asyncio
 import json
-
-import anyio
 from collections import Counter
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
 from statistics import median_low
 from typing import get_args, get_type_hints
 
+import anyio
 import psycopg
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
@@ -530,8 +529,11 @@ async def stream_analyst(
         # from an anyio group leaks it. The task keeps langgraph's frames off
         # this one — the disconnect lands on the shield instead — and cleanup
         # then delivers at most one raw cancel into the pull and finishes
-        # `abort()` (what `async with` would have run, idempotent) behind a
-        # shield of its own. `GeneratorExit` and `CancelledError` are
+        # `abort()` behind a shield of its own — `abort()` is verbatim what the
+        # manager form runs (`AsyncGraphRunStream.__aexit__` is one line,
+        # `await self.abort()`, langgraph 1.x run_stream.py) and its docstring
+        # declares it idempotent, so a turn that ends normally pays one no-op
+        # call. `GeneratorExit` and `CancelledError` are
         # `BaseException`s, so the broad `except Exception` below sees neither.
         events = stream.__aiter__()
         pull: asyncio.Task | None = None
@@ -565,9 +567,11 @@ async def stream_analyst(
                     pull.cancel()
                     try:
                         await pull
-                    except BaseException:
-                        # The pull's own cancellation; anything else already
-                        # propagated through the shield above.
+                    except (asyncio.CancelledError, Exception):
+                        # The pull's own cancellation — or its last-instant
+                        # error, already surfaced through the shield above.
+                        # The pair langgraph's own `abort()` swallows here,
+                        # and like it, deliberately not SystemExit.
                         pass
                 await stream.abort()
     except GraphRecursionError:

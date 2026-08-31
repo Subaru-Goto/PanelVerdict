@@ -117,16 +117,13 @@ async def test_a_matched_target_returns_a_verdict_on_the_whole_panel(
 
 @pytest.mark.anyio
 async def test_the_paid_wave_runs_with_no_transaction_open(conn, aconn) -> None:
-    """113/#243: `load_votes` opened a transaction on the request connection,
-    and the whole model wave then ran inside `asyncio.to_thread` with the
-    connection idle-in-transaction — minutes, for a real panel, in the state
-    `idle_in_transaction_session_timeout` and pooler reapers kill, and an
-    ACCESS SHARE holder a concurrent deploy's DDL queues behind. A session
-    killed there means the thread returns a chunk of paid votes and
-    `store_votes` has no live connection to record them on: paid and
-    unrecorded, the exact loss the per-chunk ledger exists to prevent. The
-    read commits before the wave, so the connection waits idle instead —
-    observed from inside the wave, by the votes themselves.
+    """113/#243: `load_votes` opened a transaction and the whole model wave
+    then ran inside `asyncio.to_thread` with the connection idle-in-transaction
+    — a session killed there returns paid votes with no connection to record
+    them on, the exact loss the per-chunk ledger exists to prevent (the full
+    why lives with the commit in `_chunk_votes`). The read commits before the
+    wave, so the connection waits idle instead — observed from inside the
+    wave, by the votes themselves.
     """
     seed_japanese(conn, 5)
     seen: list[TransactionStatus] = []

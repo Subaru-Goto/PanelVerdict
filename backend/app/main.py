@@ -1,7 +1,5 @@
 import asyncio
 import base64
-
-import anyio
 import hmac
 import logging
 from collections.abc import AsyncIterator
@@ -11,6 +9,7 @@ from decimal import Decimal
 from typing import Literal, NamedTuple
 from uuid import uuid4
 
+import anyio
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +22,7 @@ from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
+from starlette.types import Receive, Scope, Send
 
 from app.analyst import ToolDeps, analysis_facts, stream_analyst
 from app.assembly import Embedder
@@ -1565,7 +1565,7 @@ class ClosingStreamingResponse(StreamingResponse):
     run's shutdown halfway through.
     """
 
-    async def __call__(self, scope, receive, send) -> None:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         try:
             await super().__call__(scope, receive, send)
         finally:
@@ -1604,7 +1604,9 @@ async def chat(
     # transaction for any sibling in the same gather (113/#243). Autocommit
     # makes the shared transaction not exist, rather than shorter-lived. The
     # turn charge is unaffected: `_charge_ledger` committed before this line,
-    # inside `enforce_turn_limit`.
+    # inside `enforce_turn_limit`. And the switch is its own guard — psycopg
+    # refuses it inside a transaction, so a future dependency that leaves one
+    # open on this connection fails loudly here, not by silently sharing it.
     await conn.set_autocommit(True)
     return ClosingStreamingResponse(
         stream_analyst(

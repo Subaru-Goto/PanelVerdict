@@ -1,4 +1,6 @@
+import asyncio
 import json
+import threading
 
 import psycopg
 import pytest
@@ -683,6 +685,74 @@ class TestExplainingWhatTheReportMeans:
             json.loads(await explain.ainvoke({"question": "how do I bake sourdough"}))
             == []
         )
+
+
+class TestToolsGatheredOnOneConnection:
+    """113/#243 finding 1: `ToolNode._afunc` ends with `asyncio.gather`, so a
+    turn's tool calls run concurrently on the one request connection. The
+    reproduced failure — `['tool A -> UndefinedColumn', 'tool B ->
+    InFailedSqlTransaction']` — was B's perfectly fine statement dying because
+    A had aborted the transaction they shared."""
+
+    @pytest.mark.anyio
+    async def test_a_tools_failure_cannot_fail_a_siblings_query(
+        self, conn, aconn
+    ) -> None:
+        """On the autocommit connection /chat hands the tools (pinned by
+        `test_no_transaction_outlives_a_chat_tools_read`), each read stands
+        alone: there is no shared transaction for A's wreck to abort under B.
+        B's embedding waits for A to have already failed, so this asserts the
+        exact ordering the ticket reproduced rather than racing for it. A's
+        failure is the ticket's own scenario — a wrong-dimension query vector,
+        the shape a model swap produces."""
+        from app.corpus import seed_corpus
+        from tests.test_corpus_retrieval import FakeEmbedder
+
+        persist_pool(
+            conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
+        )
+        seed_corpus(conn, FakeEmbedder())
+        await aconn.set_autocommit(True)
+
+        a_failed = threading.Event()
+
+        class SplitEmbedder:
+            """A vector no column can compare against for the search; a working
+            one, held until the search has already failed, for the corpus."""
+
+            def embed(self, texts: list[str]) -> list[list[float]]:
+                if any("thrifty" in text for text in texts):
+                    return [[1.0] for _ in texts]  # one dimension against 1536
+                assert a_failed.wait(timeout=5), "tool A never failed"
+                return FakeEmbedder().embed(texts)
+
+        result = _result().model_copy(update={"votes": [make_panel_vote("US-00000")]})
+        tools = {
+            tool.name: tool
+            for tool in build_tools(result, _deps(aconn, embedder=SplitEmbedder()))
+        }
+
+        async def doomed_search() -> str:
+            try:
+                return await tools["search_personas"].ainvoke({"query": "thrifty"})
+            finally:
+                a_failed.set()
+
+        searched, explained = await asyncio.gather(
+            doomed_search(),
+            tools["explain_the_report"].ainvoke(
+                {"question": "what is a practical tie"}
+            ),
+            return_exceptions=True,
+        )
+
+        # A's wreck is honestly A's own...
+        assert isinstance(searched, Exception)
+        assert "InFailedSqlTransaction" not in repr(searched)
+        # ...and B, landing strictly after it, still gets its passages.
+        assert not isinstance(explained, BaseException), explained
+        passages = json.loads(str(explained))
+        assert passages and all(passage["citation"] for passage in passages)
 
 
 def test_a_concept_question_no_longer_routes_to_the_model_s_own_memory() -> None:

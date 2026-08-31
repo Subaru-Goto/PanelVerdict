@@ -21,6 +21,7 @@ from app.config import (
     Settings,
     settings,
 )
+from app.corpus import seed_corpus
 from app.main import (
     LEDGER_HOURS,
     TESTS_PAGE_ROWS,
@@ -47,7 +48,6 @@ from app.schemas import (
     EvaluateRequest,
     EvaluateResponse,
 )
-from app.corpus import seed_corpus
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
 from fastapi import HTTPException
@@ -1027,8 +1027,8 @@ class HeldOpenChatModel(ScriptedChatModel):
     records in its stream's `finally` whether anything ever closed it. What a
     real provider stream looks like to a run whose reader left mid-answer."""
 
-    gates: list  # events guarding every token after the first
-    stream_closed: object  # set by the finally — closure is the subject
+    gates: list[asyncio.Event]  # each guards the next token after the first
+    stream_closed: asyncio.Event  # set by the finally — closure is the subject
 
     async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
         try:
@@ -1103,9 +1103,10 @@ async def _hang_up_mid_answer(model: HeldOpenChatModel, release) -> None:
     await asyncio.wait_for(first_chunk_read.wait(), 5)
     release.set()
     await asyncio.wait_for(backpressured.wait(), 5)
-    # Give the plumbing its loop turns: everything between the blocked send
-    # and the run's next suspension point is ready-to-run, so bare ticks are
-    # enough to park it there — no timer, nothing to wait out.
+    # Loop turns, not a timer: everything between the blocked send and the
+    # run's next suspension point is ready-to-run. Parked from 2 ticks on
+    # (measured 2026-08-31 with the response's close removed — the tick count
+    # at which the abandonment test first bites); 50 is margin, not tuning.
     for _ in range(50):
         await asyncio.sleep(0)
     hung_up.set()
@@ -1316,16 +1317,11 @@ def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None
 
 
 def test_no_transaction_outlives_a_chat_tools_read(client, conn, pg_url) -> None:
-    """The stream's tools share the request connection with nothing else, and
-    langgraph runs a turn's tool calls concurrently on it (`ToolNode._afunc`
-    gathers them). Non-autocommit, every tool's read opened a transaction
-    nothing closed: the connection sat idle-in-transaction from the first tool
-    to the end of the request — the state `idle_in_transaction_session_timeout`
-    and pooler reapers kill, and the ACCESS SHARE holder a deploy's DDL queues
-    behind — and one failing statement poisoned the shared transaction for any
-    sibling in the same gather (113/#243). /chat's connection is autocommit for
-    the stream, so a read stands alone and there is no transaction to poison
-    or to sit in. Probed between two tool turns, from inside the second one.
+    """/chat's connection is autocommit for the stream (113/#243): a tool's
+    read stands alone, so there is no shared transaction for a failing
+    statement to poison under a sibling, and no idle-in-transaction state for
+    a pooler reaper to kill — the why lives with `set_autocommit` in `chat`.
+    Probed between two tool turns, from inside the second one.
     """
     from tests.test_corpus_retrieval import FakeEmbedder
 
