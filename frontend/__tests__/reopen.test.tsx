@@ -25,15 +25,18 @@ vi.mock("../app/lib/api", () => ({
   MIN_PANEL_AGE: 18,
   MAX_PANEL_AGE: 100,
   myTests: () =>
-    Promise.resolve([
-      {
-        test_id: "t-older",
-        created_at: "2026-08-30T10:00:00Z",
-        variants: OTHER.variants,
-        verdict: OTHER.verdict,
-        tally: OTHER.tally,
-      },
-    ]),
+    Promise.resolve({
+      tests: [
+        {
+          test_id: "t-older",
+          created_at: "2026-08-30T10:00:00Z",
+          variants: OTHER.variants,
+          verdict: OTHER.verdict,
+          tally: OTHER.tally,
+        },
+      ],
+      next_cursor: null,
+    }),
   myTest: (id: string) => myTestMock(id),
   forgetTest: () => Promise.resolve(),
   onRunsChanged: () => () => {},

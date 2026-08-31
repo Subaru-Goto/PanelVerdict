@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type SubmitEvent } from "react";
+import { useEffect, useState, type ReactNode, type SubmitEvent } from "react";
 
 import {
   LOCALES,
@@ -173,11 +173,17 @@ export default function EvaluateForm({
     !agesValid ||
     state.phase === "loading";
 
+  // What the phase puts above the rail. The rail itself stays outside this
+  // switch: its rows change when a run finishes or the session changes, not
+  // when the page turns — rendered inside each branch it remounted on every
+  // transition, and every mount refetched (118/#253).
+  let main: ReactNode;
+
   // Once a report exists the page stops being a form: the reader wants the
   // answer at the top rather than the inputs they already filled in.
   if (state.phase === "done") {
-    return (
-      <div className="flex flex-col gap-6">
+    main = (
+      <>
         <button
           type="button"
           onClick={reset}
@@ -190,14 +196,13 @@ export default function EvaluateForm({
             that, and unkeyed it inherited the previous report's chat thread and
             transcript — see the epoch's comment in use-evaluate. */}
         <Report key={state.epoch} result={state.result} />
-        <PastTests onOpen={show} />
-      </div>
+      </>
     );
   }
 
   // Holding at the gate: the reader decides whether to buy the votes.
-  if (state.phase === "gated") {
-    return (
+  else if (state.phase === "gated") {
+    main = (
       <div className="flex flex-col gap-4">
         <PanelGate
           preview={state.preview}
@@ -212,177 +217,184 @@ export default function EvaluateForm({
         {state.resuming && <Waiting />}
       </div>
     );
+  } else {
+    main = (
+      <>
+        <form onSubmit={onSubmit} className="flex flex-col gap-3">
+          <fieldset className="flex flex-col gap-2 rounded border border-line p-3 text-sm">
+            <legend className="px-1">
+              Who should judge these? Leave a control alone to mean anyone.
+            </legend>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-ink-2">Country</span>
+              {LOCALES.map((code) => (
+                <Choice
+                  key={code}
+                  label={
+                    { US: "United States", JP: "Japan", DE: "Germany" }[code]
+                  }
+                  value={code}
+                  chosen={countries}
+                  onChange={setCountries}
+                />
+              ))}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-1.5">
+                Age from
+                <input
+                  type="number"
+                  min={MIN_PANEL_AGE}
+                  max={MAX_PANEL_AGE}
+                  value={minAge}
+                  onChange={(e) => setMinAge(Number(e.target.value))}
+                  className={`${INPUT_CLASS} w-20`}
+                />
+              </label>
+              <label className="flex items-center gap-1.5">
+                Age to
+                <input
+                  type="number"
+                  min={MIN_PANEL_AGE}
+                  max={MAX_PANEL_AGE}
+                  value={maxAge}
+                  onChange={(e) => setMaxAge(Number(e.target.value))}
+                  className={`${INPUT_CLASS} w-20`}
+                />
+              </label>
+              <label className="flex items-center gap-1.5">
+                Gender
+                <select
+                  value={gender}
+                  onChange={(e) => setGender(e.target.value as "" | Gender)}
+                  className={INPUT_CLASS}
+                >
+                  <option value="">any</option>
+                  <option value="female">female</option>
+                  <option value="male">male</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-ink-2">Education</span>
+              <Choice
+                label="below secondary"
+                value="below_secondary"
+                chosen={education}
+                onChange={setEducation}
+              />
+              <Choice
+                label="secondary"
+                value="secondary"
+                chosen={education}
+                onChange={setEducation}
+              />
+              <Choice
+                label="tertiary"
+                value="tertiary"
+                chosen={education}
+                onChange={setEducation}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Quintiles, lowest to highest — the pool's own income shape. */}
+              <span className="text-ink-2">Income</span>
+              <Choice
+                label="Q1 (lowest)"
+                value={1}
+                chosen={incomeQuintiles}
+                onChange={setIncomeQuintiles}
+              />
+              <Choice
+                label="Q2"
+                value={2}
+                chosen={incomeQuintiles}
+                onChange={setIncomeQuintiles}
+              />
+              <Choice
+                label="Q3"
+                value={3}
+                chosen={incomeQuintiles}
+                onChange={setIncomeQuintiles}
+              />
+              <Choice
+                label="Q4"
+                value={4}
+                chosen={incomeQuintiles}
+                onChange={setIncomeQuintiles}
+              />
+              <Choice
+                label="Q5 (highest)"
+                value={5}
+                chosen={incomeQuintiles}
+                onChange={setIncomeQuintiles}
+              />
+            </div>
+          </fieldset>
+          <Field
+            label="What are they like? (optional)"
+            value={audience}
+            onChange={setAudience}
+            placeholder="night-shift workers who commute by car"
+            multiline
+            // Mirrors MAX_AUDIENCE_CHARS (schemas.py); the backend refuses longer.
+            maxLength={200}
+          />
+          <Field
+            label="Headline A"
+            value={headlineA}
+            onChange={setHeadlineA}
+            placeholder="Save 50% this week"
+          />
+          <Field
+            label="Headline B"
+            value={headlineB}
+            onChange={setHeadlineB}
+            placeholder="Members save half price this week"
+          />
+          <button
+            type="submit"
+            disabled={disabled}
+            className="rounded bg-ink px-4 py-2 text-surface disabled:bg-surface-2 disabled:text-ink-3"
+          >
+            {state.phase === "loading" ? "Asking the panel…" : "Evaluate"}
+          </button>
+          {/* Submitting counts as interacting with an AI system, so the
+            disclosure sits with the submit control rather than in a footer —
+            told before the exchange, where the telling can still change it. */}
+          <p className="text-xs text-ink-2">{AI_SYSTEM_DISCLOSURE}</p>
+          {/* Only when this deployment is really tracing — the backend's own
+            answer, not a second flag here that could disagree with it. A
+            deterrent, not a control: the controls are the screener and the
+            limits. */}
+          {tracing && (
+            <p className="text-xs text-ink-2">
+              Runs are traced for debugging: what you type — your audience, both
+              headlines, and anything you later ask the analyst — is sent to
+              LangSmith, outside our infrastructure. Don&rsquo;t paste anything
+              unreleased.
+            </p>
+          )}
+        </form>
+
+        {state.phase === "loading" && <Waiting />}
+
+        {state.phase === "error" && (
+          <p className="text-red">Error: {state.message}</p>
+        )}
+      </>
+    );
   }
 
   return (
     <div className="flex flex-col gap-6">
-      <form onSubmit={onSubmit} className="flex flex-col gap-3">
-        <fieldset className="flex flex-col gap-2 rounded border border-line p-3 text-sm">
-          <legend className="px-1">
-            Who should judge these? Leave a control alone to mean anyone.
-          </legend>
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-ink-2">Country</span>
-            {LOCALES.map((code) => (
-              <Choice
-                key={code}
-                label={
-                  { US: "United States", JP: "Japan", DE: "Germany" }[code]
-                }
-                value={code}
-                chosen={countries}
-                onChange={setCountries}
-              />
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-1.5">
-              Age from
-              <input
-                type="number"
-                min={MIN_PANEL_AGE}
-                max={MAX_PANEL_AGE}
-                value={minAge}
-                onChange={(e) => setMinAge(Number(e.target.value))}
-                className={`${INPUT_CLASS} w-20`}
-              />
-            </label>
-            <label className="flex items-center gap-1.5">
-              Age to
-              <input
-                type="number"
-                min={MIN_PANEL_AGE}
-                max={MAX_PANEL_AGE}
-                value={maxAge}
-                onChange={(e) => setMaxAge(Number(e.target.value))}
-                className={`${INPUT_CLASS} w-20`}
-              />
-            </label>
-            <label className="flex items-center gap-1.5">
-              Gender
-              <select
-                value={gender}
-                onChange={(e) => setGender(e.target.value as "" | Gender)}
-                className={INPUT_CLASS}
-              >
-                <option value="">any</option>
-                <option value="female">female</option>
-                <option value="male">male</option>
-              </select>
-            </label>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-ink-2">Education</span>
-            <Choice
-              label="below secondary"
-              value="below_secondary"
-              chosen={education}
-              onChange={setEducation}
-            />
-            <Choice
-              label="secondary"
-              value="secondary"
-              chosen={education}
-              onChange={setEducation}
-            />
-            <Choice
-              label="tertiary"
-              value="tertiary"
-              chosen={education}
-              onChange={setEducation}
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Quintiles, lowest to highest — the pool's own income shape. */}
-            <span className="text-ink-2">Income</span>
-            <Choice
-              label="Q1 (lowest)"
-              value={1}
-              chosen={incomeQuintiles}
-              onChange={setIncomeQuintiles}
-            />
-            <Choice
-              label="Q2"
-              value={2}
-              chosen={incomeQuintiles}
-              onChange={setIncomeQuintiles}
-            />
-            <Choice
-              label="Q3"
-              value={3}
-              chosen={incomeQuintiles}
-              onChange={setIncomeQuintiles}
-            />
-            <Choice
-              label="Q4"
-              value={4}
-              chosen={incomeQuintiles}
-              onChange={setIncomeQuintiles}
-            />
-            <Choice
-              label="Q5 (highest)"
-              value={5}
-              chosen={incomeQuintiles}
-              onChange={setIncomeQuintiles}
-            />
-          </div>
-        </fieldset>
-        <Field
-          label="What are they like? (optional)"
-          value={audience}
-          onChange={setAudience}
-          placeholder="night-shift workers who commute by car"
-          multiline
-          // Mirrors MAX_AUDIENCE_CHARS (schemas.py); the backend refuses longer.
-          maxLength={200}
-        />
-        <Field
-          label="Headline A"
-          value={headlineA}
-          onChange={setHeadlineA}
-          placeholder="Save 50% this week"
-        />
-        <Field
-          label="Headline B"
-          value={headlineB}
-          onChange={setHeadlineB}
-          placeholder="Members save half price this week"
-        />
-        <button
-          type="submit"
-          disabled={disabled}
-          className="rounded bg-ink px-4 py-2 text-surface disabled:bg-surface-2 disabled:text-ink-3"
-        >
-          {state.phase === "loading" ? "Asking the panel…" : "Evaluate"}
-        </button>
-        {/* Submitting counts as interacting with an AI system, so the
-            disclosure sits with the submit control rather than in a footer —
-            told before the exchange, where the telling can still change it. */}
-        <p className="text-xs text-ink-2">{AI_SYSTEM_DISCLOSURE}</p>
-        {/* Only when this deployment is really tracing — the backend's own
-            answer, not a second flag here that could disagree with it. A
-            deterrent, not a control: the controls are the screener and the
-            limits. */}
-        {tracing && (
-          <p className="text-xs text-ink-2">
-            Runs are traced for debugging: what you type — your audience, both
-            headlines, and anything you later ask the analyst — is sent to
-            LangSmith, outside our infrastructure. Don&rsquo;t paste anything
-            unreleased.
-          </p>
-        )}
-      </form>
-
-      {state.phase === "loading" && <Waiting />}
-
-      {state.phase === "error" && (
-        <p className="text-red">Error: {state.message}</p>
-      )}
-
+      {main}
       {/* On the form and on the report, and deliberately not at the gate: the
           gate is a decision about spending money, and a list of other tests
-          beside it is an invitation to leave it half-answered. */}
-      <PastTests onOpen={show} />
+          beside it is an invitation to leave it half-answered. Hidden there
+          rather than unmounted, so holding at the gate does not cost a refetch
+          on the way back. */}
+      <PastTests onOpen={show} hidden={state.phase === "gated"} />
     </div>
   );
 }

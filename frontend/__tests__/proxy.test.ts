@@ -320,11 +320,16 @@ describe("the tracing disclosure's source", () => {
   it("gives up rather than holding the page open", async () => {
     // Without a bound, one cold start is a page that never paints.
     vi.stubEnv("API_URL", "http://backend.test");
-    const backend = vi.fn().mockImplementation(({ signal }: RequestInit = {}) =>
-      new Promise((_, reject) =>
-        signal?.addEventListener("abort", () => reject(new Error("aborted"))),
-      ),
-    );
+    const backend = vi
+      .fn()
+      .mockImplementation(
+        ({ signal }: RequestInit = {}) =>
+          new Promise((_, reject) =>
+            signal?.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            ),
+          ),
+      );
     vi.stubGlobal("fetch", (_url: string, init: RequestInit) => backend(init));
 
     expect(await backendTracing({ timeoutMs: 5 })).toBe(false);

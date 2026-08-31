@@ -25,8 +25,13 @@ import { railSummary } from "../lib/verdict";
  */
 export default function PastTests({
   onOpen,
+  hidden = false,
 }: {
   onOpen: (result: EvaluateResponse) => void;
+  /** Withheld from the eye, not unmounted: the owner decides where the rail
+   * belongs (not at the gate), and unmounting would forget the loaded pages
+   * and refetch them on the way back (118/#253). */
+  hidden?: boolean;
 }) {
   // null until the session is known, so a rail does not flash at a visitor who
   // turns out to be signed in — the reason `sign-in.tsx` starts here too.
@@ -102,7 +107,7 @@ export default function PastTests({
   // rather than polling.
   useEffect(() => onRunsChanged(load), [load]);
 
-  if (signedIn !== true) return null;
+  if (hidden || signedIn !== true) return null;
 
   async function open(testId: string): Promise<void> {
     try {
