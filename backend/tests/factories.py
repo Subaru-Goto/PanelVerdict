@@ -12,20 +12,32 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.tools import BaseTool
 
 from app.assembly import AssembledPersona
+from app.config import settings
 from app.persistence import persist_pool
 from app.schemas import (
+    INCOME_BAND_QUINTILES,
+    MAX_PERSONA_AGE,
+    MIN_PERSONA_AGE,
     BigFive,
     EducationLevel,
+    EvaluateResponse,
     Gender,
     IncomeBand,
     Locale,
+    Notice,
+    PanelCounts,
     PanelVote,
     PanelVoteOutput,
     Persona,
     RequestedRegion,
+    TargetQuery,
     TargetRequest,
+    TraitLevel,
+    TraitRequest,
     VoterSummary,
+    VoteTally,
 )
+from app.verdict import panel_verdict
 from app.vote import VoteResponse
 from app.roleplay import RolePlayOutcome, checked_instruction
 
@@ -80,6 +92,67 @@ def make_panel_vote(
             traits={},
         ),
     )
+
+
+def make_report(votes: Sequence[PanelVote] | None = None, **overrides) -> dict:
+    """A finished run's body, for the tests that hand `/evaluate`'s answer to
+    `/chat`. Built through the models and the app's own arithmetic, so it can
+    drift in neither shape nor fact — the literal it replaced said `voted: 50`
+    beside `votes: []` (114/#245).
+
+    The tally and verdict are computed from the votes with the pipeline's own
+    functions, the counts count them, and the query describes the panel the
+    voters actually are. Every container carries a representative element,
+    because an empty one is exactly what let an element-type change validate
+    unnoticed. `**overrides` replace whole top-level fields *after* the
+    arithmetic, raw — a test that posts a deliberately inconsistent body owns
+    the inconsistency at its own call site.
+    """
+    if votes is None:
+        votes = [
+            make_panel_vote(f"p-{i}", chosen=chosen, country=Locale.JP)
+            for i, chosen in enumerate(("a", "a", "a", "b", "b"), start=1)
+        ]
+    counts = {"a": 0, "b": 0}
+    for vote in votes:
+        counts[vote.chosen_variant_id] += 1
+    tally = VoteTally(counts=counts, total=len(votes))
+    reading = Notice(severity="reading", message="Matched against panelists in Japan.")
+    shortfall = Notice(
+        severity="warning",
+        message=f"Matched {len(votes)} of the {settings.panel.size} requested.",
+    )
+    report = EvaluateResponse(
+        verdict=panel_verdict(preferring_b=counts["b"], total=tally.total),
+        tally=tally,
+        counts=PanelCounts(
+            requested=settings.panel.size, matched=len(votes), voted=len(votes)
+        ),
+        query=TargetQuery(
+            countries=(Locale.JP,),
+            coverage="requested",
+            min_age=MIN_PERSONA_AGE,
+            max_age=MAX_PERSONA_AGE,
+            # Each filter names what `make_panel_vote`'s defaults already are,
+            # so the voters below are members of the panel the query describes.
+            gender="female",
+            income_quintiles=INCOME_BAND_QUINTILES["middle"],
+            education=(EducationLevel.TERTIARY,),
+            traits=(
+                TraitRequest(
+                    trait="conscientiousness",
+                    level=TraitLevel.HIGH,
+                    source_phrase="careful with money",
+                ),
+            ),
+            notices=(reading,),
+        ),
+        notices=(reading, shortfall),
+        stop_reason="decisive",
+        variants={"a": "Save 50% today", "b": "Limited time: half price"},
+        votes=list(votes),
+    )
+    return report.model_dump(mode="json") | dict(overrides)
 
 
 def tool_call_message(

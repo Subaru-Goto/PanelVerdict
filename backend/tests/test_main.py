@@ -38,7 +38,6 @@ from app.persistence import nearest_panelists, persist_pool
 from app.schemas import (
     MAX_AUDIENCE_CHARS,
     EvaluateRequest,
-    EvaluateResponse,
 )
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
@@ -58,6 +57,7 @@ from tests.factories import (
     make_assembled,
     make_panel_vote,
     make_persona,
+    make_report,
     ndjson_events,
     pointing,
     seed_japanese,
@@ -291,7 +291,7 @@ def test_chat_without_the_secret_is_refused_before_the_stream_opens(
     response = client.post(
         "/chat",
         json={
-            "result": _CHAT_RESULT,
+            "result": make_report(),
             "thread_id": "t-gate",
             "message": "why?",
         },
@@ -356,7 +356,7 @@ def test_a_thread_over_its_turn_limit_is_refused_before_the_stream(
     def turn(thread_id: str):
         return client.post(
             "/chat",
-            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "why?"},
+            json={"result": make_report(), "thread_id": thread_id, "message": "why?"},
             headers=headers,
         )
 
@@ -416,7 +416,7 @@ def test_rotating_thread_ids_does_not_escape_the_chat_limit(
     def turn(thread_id: str):
         return client.post(
             "/chat",
-            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "hi"},
+            json={"result": make_report(), "thread_id": thread_id, "message": "hi"},
             headers={"X-API-Key": "edge-secret", "X-Client-Id": "198.51.100.7"},
         )
 
@@ -492,7 +492,7 @@ def test_a_caller_cap_refusal_does_not_spend_the_threads_budget(
     def turn(thread_id: str):
         return client.post(
             "/chat",
-            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "hi"},
+            json={"result": make_report(), "thread_id": thread_id, "message": "hi"},
             headers=headers,
         )
 
@@ -548,7 +548,7 @@ def test_chat_turns_draw_from_the_same_days_pool(client, conn, monkeypatch) -> N
     spends_the_day = client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
     turn = client.post(
         "/chat",
-        json={"result": _CHAT_RESULT, "thread_id": "t-pool", "message": "why?"},
+        json={"result": make_report(), "thread_id": "t-pool", "message": "why?"},
         headers=headers,
     )
 
@@ -942,63 +942,13 @@ def test_the_preflight_warning_reaches_the_response(client, conn, monkeypatch) -
     assert any("credit" in m and "re-run" in m for m in messages)
 
 
-_CHAT_RESULT = {
-    "verdict": {
-        "share_preferring_b": 0.288,
-        "probability_majority_prefers_b": 0.001,
-        "credible_interval": [0.173, 0.418],
-        "credible_mass": 0.95,
-        "rope": [0.43, 0.57],
-        "probability_meaningfully_preferred": {"a": 0.984, "b": 0.0},
-        "probability_practical_tie": 0.016,
-        "detectable_gap": 0.167,
-        "expected_preference_shortfall": {"shipping_a": 0.004, "shipping_b": 0.212},
-    },
-    "tally": {"counts": {"a": 36, "b": 14}, "total": 50},
-    "counts": {"requested": 200, "matched": 200, "voted": 50},
-    "query": {
-        "countries": ["US"],
-        "coverage": "requested",
-        "min_age": 18,
-        "max_age": 100,
-        "gender": None,
-        "income_quintiles": [],
-        "education": [],
-        "traits": [],
-        "notices": [],
-    },
-    "notices": [],
-    "stop_reason": "decisive",
-    "variants": {"a": "Save 50% today", "b": "Members save half"},
-    "votes": [],
-}
-
-
-def test_the_chat_fixture_is_still_a_body_a_run_could_emit() -> None:
-    """`_CHAT_RESULT` is the one hand-written transcription of `EvaluateResponse`
-    left on this side of the wire (048/#146), and every `/chat` test posts it.
-
-    Re-validating and re-dumping catches an added or removed field at *any*
-    depth: a new field with a default appears in the dump and not in the
-    literal, a deleted one the other way round. Neither is visible to the
-    literal's own validation — pydantic fills the default and ignores the stale
-    key — so the suite would stay green while every `/chat` test ran against a
-    payload no run emits. Needs no container: this is a claim about two shapes,
-    not about a run.
-    """
-    assert (
-        EvaluateResponse.model_validate(_CHAT_RESULT).model_dump(mode="json")
-        == _CHAT_RESULT
-    ), "_CHAT_RESULT no longer matches EvaluateResponse"
-
-
 def test_chat_streams_the_analysts_reply_as_ndjson(client) -> None:
     response = client.post(
         "/chat",
         json={
             "thread_id": "t-main-1",
             "message": "Why did it stop early?",
-            "result": _CHAT_RESULT,
+            "result": make_report(),
         },
     )
 
@@ -1025,7 +975,7 @@ def test_a_reply_containing_unicode_line_breaks_survives_the_wire(client) -> Non
 
     response = client.post(
         "/chat",
-        json={"thread_id": "t-main-u2028", "message": "why?", "result": _CHAT_RESULT},
+        json={"thread_id": "t-main-u2028", "message": "why?", "result": make_report()},
     )
 
     assert response.status_code == 200
@@ -1181,17 +1131,14 @@ def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None
             AIMessage(content="One panelist stands out."),
         ]
     )
-    votes = [
-        make_panel_vote("US-00000").model_dump(mode="json"),
-        make_panel_vote("US-00001").model_dump(mode="json"),
-    ]
+    votes = [make_panel_vote("US-00000"), make_panel_vote("US-00001")]
 
     response = client.post(
         "/chat",
         json={
             "thread_id": "t-main-5",
             "message": "Who here is thrifty?",
-            "result": {**_CHAT_RESULT, "votes": votes},
+            "result": make_report(votes=votes),
         },
     )
 
@@ -1205,7 +1152,7 @@ def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None
 
 def test_chat_refuses_a_tally_naming_other_variants(client) -> None:
     """422 before any model call: the guard runs ahead of the paid agent."""
-    broken = {**_CHAT_RESULT, "tally": {"counts": {"x": 50}, "total": 50}}
+    broken = make_report(tally={"counts": {"x": 50}, "total": 50})
 
     response = client.post(
         "/chat",
@@ -1218,11 +1165,11 @@ def test_chat_refuses_a_tally_naming_other_variants(client) -> None:
 def test_chat_requires_a_message_and_a_thread(client) -> None:
     empty_message = client.post(
         "/chat",
-        json={"thread_id": "t-main-3", "message": "", "result": _CHAT_RESULT},
+        json={"thread_id": "t-main-3", "message": "", "result": make_report()},
     )
     empty_thread = client.post(
         "/chat",
-        json={"thread_id": "", "message": "hi", "result": _CHAT_RESULT},
+        json={"thread_id": "", "message": "hi", "result": make_report()},
     )
 
     assert empty_message.status_code == 422
@@ -1253,7 +1200,7 @@ def test_chat_exhausted_credit_is_an_in_band_error_event(client) -> None:
 
     response = client.post(
         "/chat",
-        json={"thread_id": "t-main-4", "message": "hi", "result": _CHAT_RESULT},
+        json={"thread_id": "t-main-4", "message": "hi", "result": make_report()},
     )
 
     assert response.status_code == 200
@@ -1471,7 +1418,7 @@ def test_chat_refuses_an_unsigned_request_before_the_stream(signed_in) -> None:
     refusal must land before there is a stream that cannot carry one."""
     response = signed_in.post(
         "/chat",
-        json={"result": _CHAT_RESULT, "thread_id": "t-signed-out", "message": "why?"},
+        json={"result": make_report(), "thread_id": "t-signed-out", "message": "why?"},
     )
 
     assert response.status_code == 401
@@ -2620,7 +2567,7 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     """The only test that feeds one endpoint's body to the other: start a run,
     answer the panel gate, then discuss what came back.
 
-    Every other `/chat` test posts `_CHAT_RESULT`, a dict literal kept by hand,
+    Every other `/chat` test posts `make_report()`, a dict literal kept by hand,
     so `EvaluateResponse` and the body the tests feed `/chat` were two
     transcriptions of one contract. Here they are the same object, over the
     real JSON round trip — and it is the whole body, `status` included, because
@@ -2632,7 +2579,7 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     (076/#166), so a body nobody has approved is a body no reader ever sees.
     """
     # Fewer panelists than the profile seats, so the report carries a shortfall
-    # notice: `_CHAT_RESULT` hardcodes `notices: []`, so this is the only body
+    # notice: `make_report()` hardcodes `notices: []`, so this is the only body
     # reaching `/chat` with a `Notice` in it.
     seed_japanese(conn, 5)
     # The analyst reads the report through its tools, and `votes[].voter` is the
