@@ -122,9 +122,10 @@ CREATE INDEX IF NOT EXISTS corpus_chunks_search_idx
 --
 --     ALTER TABLE votes ADD COLUMN IF NOT EXISTS scored_at timestamptz;
 --
--- IF NOT EXISTS because this file runs on every seed and every boot: a bare
--- ADD COLUMN succeeds once and fails forever after, taking the RLS sweep that
--- follows it down too.
+-- IF NOT EXISTS because this file runs on every seed and on every --schema-only
+-- apply: a bare ADD COLUMN succeeds once and fails forever after, mid-file, so
+-- the RLS sweep prepare_connection runs after it does not run either. (Not at
+-- boot: the request path deliberately does not apply DDL — app/main.py.)
 --
 -- Additive only. No DROP COLUMN, no type change, no rename — a reader of an
 -- older deploy is still serving requests during a rollout, and votes is paid

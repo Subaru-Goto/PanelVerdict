@@ -113,7 +113,7 @@ jobs:
           POSTGRES_PORT: ${{ secrets.DEPLOY_POSTGRES_PORT || '5432' }}
           POSTGRES_DB: ${{ secrets.DEPLOY_POSTGRES_DB || 'postgres' }}
         run: |
-          if [ -z "$POSTGRES_HOST" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+          if [ -z "$POSTGRES_HOST" ] || [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
             # A warning rather than a silent pass: this branch is fail-open, and
             # it cannot tell "not configured yet" from "secret deleted or
             # rotated away". An annotation puts that on the run summary instead

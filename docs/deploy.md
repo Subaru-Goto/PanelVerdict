@@ -71,7 +71,9 @@ command to run on a deploy that adds a table or a column.
 `backend/app/schema.sql`, in the documented `ALTER TABLE … ADD COLUMN IF NOT EXISTS`
 form — never by editing the `CREATE TABLE` above it, which `IF NOT EXISTS` will not
 re-apply. The form is enforced, not suggested: `app.persistence` refuses a bare `ADD
-COLUMN`, because the file runs on every seed and every boot. Additive only — no
+COLUMN`, because the file runs on every seed and every `--schema-only` apply, and
+a statement that fails mid-file takes the row-level-security sweep after it down
+too. Additive only — no
 `DROP COLUMN`, no rename, no type change: during a rollout an older instance is still
 serving, and `votes` is paid model output that cannot be regenerated. Applying is
 manual until launch; automating it is 083/#173's deferred half.

@@ -6,7 +6,7 @@ import pytest
 from factories import DIM
 
 from app.config import settings
-from app.persistence import apply_schema, missing_columns
+from app.persistence import apply_schema, missing_columns, schema_columns
 from app.schemas import Locale
 from app.seed import (
     SeedResult,
@@ -123,7 +123,9 @@ class TestSchemaOnly:
 
         main()
 
-        assert "5 tables" in capsys.readouterr().out
+        # Read from the schema, not written as a number: hand-coding the count
+        # is the maintenance trap `_REQUIRED_COLUMNS` was.
+        assert f"{len(schema_columns())} tables" in capsys.readouterr().out
         assert missing_columns(conn) == {}
         assert _count(conn, "corpus_chunks") == 0, "the corpus was reseeded"
 
@@ -132,6 +134,26 @@ class TestSchemaOnly:
         monkeypatch.setattr(settings, "openrouter_api_key", None)
 
         main()
+
+    def test_a_dry_run_applies_nothing(self, conn, pg_url, monkeypatch, capsys):
+        """`--schema-only --dry-run` used to apply every statement and take
+        ACCESS EXCLUSIVE on every table in `public`, against a flag whose help
+        says it writes nothing — the same shape as the `--corpus-only --dry-run`
+        bug the comment beside it records fixing (115/#248, review).
+        """
+        conn.execute("DROP TABLE IF EXISTS corpus_chunks CASCADE")
+        conn.commit()
+        self._prepare(monkeypatch, pg_url, "--schema-only", "--dry-run")
+
+        main()
+
+        assert "nothing written" in capsys.readouterr().out
+        absent = conn.execute(
+            "SELECT to_regclass('public.corpus_chunks') IS NULL"
+        ).fetchone()
+        assert absent is not None and absent[0] is True
+        apply_schema(conn)
+        conn.commit()
 
     def test_the_row_level_security_sweep_still_runs(self, conn, pg_url, monkeypatch):
         """The sweep is why additive DDL lives inside `schema.sql` rather than

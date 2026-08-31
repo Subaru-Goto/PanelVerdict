@@ -135,7 +135,10 @@ def _check_schema() -> None:
     and exits — `deploy.md` records three deploys where a missing table meant a
     500 on every request that touched it, and a red build is the alternative.
     """
-    with psycopg.connect(settings.database_url) as conn:
+    # Timed out like `db.py`'s pool: an unreachable or misspelled pooler host
+    # should fail this job in seconds with a readable error, not sit on the OS
+    # TCP timeout while a CI runner burns.
+    with psycopg.connect(settings.database_url, connect_timeout=3) as conn:
         stale = missing_columns(conn)
     if stale:
         raise SystemExit(
@@ -194,12 +197,24 @@ def main() -> None:
         return
 
     if args.schema_only:
+        tables = schema_columns()
+        listed = ", ".join(sorted(tables))
+        # Checked here and not only at the usual place further down, for the
+        # reason the `--corpus-only` comment below records: this branch returns
+        # before ever reaching that one, so `--schema-only --dry-run` applied
+        # every statement and took ACCESS EXCLUSIVE on every table in `public`
+        # — against a flag whose help says it writes nothing.
+        if args.dry_run:
+            print(
+                f"Dry run: nothing written. Would ensure {len(tables)} "
+                f"tables ({listed})."
+            )
+            return
         with psycopg.connect(settings.database_url, autocommit=True) as conn:
             prepare_connection(conn)
-            tables = schema_columns()
         print(
-            f"Schema applied: {len(tables)} tables "
-            f"({', '.join(sorted(tables))}), row-level security swept."
+            f"Schema applied: {len(tables)} tables ({listed}), "
+            "row-level security swept."
         )
         return
 

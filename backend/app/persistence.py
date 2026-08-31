@@ -140,10 +140,10 @@ def _added_columns(sql: str) -> Iterator[tuple[str, str]]:
     to parse to nothing — no complaint, and the new column never reached the
     probe either (115/#248, review).
 
-    `IF NOT EXISTS` is required because `schema.sql` runs on every seed: a bare
-    `ADD COLUMN` succeeds once and fails forever after, and the failure lands in
-    the middle of the file, so the row-level-security sweep at the end of
-    `prepare_connection` never runs.
+    `IF NOT EXISTS` is required because `schema.sql` runs on every seed and
+    every schema-only apply: a bare `ADD COLUMN` succeeds once and fails forever
+    after, and the failure lands mid-file, so the row-level-security sweep
+    `prepare_connection` runs after it never runs either.
     """
     documented = re.compile(
         r"^ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)\s+\S", re.IGNORECASE
