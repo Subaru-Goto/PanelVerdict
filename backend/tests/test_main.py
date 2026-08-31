@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -19,6 +21,7 @@ from app.config import (
     Settings,
     settings,
 )
+from app.corpus import seed_corpus
 from app.main import (
     LEDGER_HOURS,
     TESTS_PAGE_ROWS,
@@ -49,12 +52,13 @@ from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatResult
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from openai import APIStatusError
 from pgvector.psycopg import register_vector_async
+from psycopg.pq import TransactionStatus
 from psycopg.types.json import Jsonb
 from pydantic import SecretStr
 from tests.factories import (
@@ -1018,6 +1022,161 @@ async def test_the_chat_connection_can_bind_a_query_vector(
         await dependency.aclose()
 
 
+class HeldOpenChatModel(ScriptedChatModel):
+    """Streams a token, then one more per gate as the test releases them, and
+    records in its stream's `finally` whether anything ever closed it. What a
+    real provider stream looks like to a run whose reader left mid-answer."""
+
+    gates: list[asyncio.Event]  # each guards the next token after the first
+    stream_closed: asyncio.Event  # set by the finally — closure is the subject
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        try:
+            yield ChatGenerationChunk(message=AIMessageChunk(content="first "))
+            for turn, gate in enumerate(self.gates):
+                await gate.wait()
+                yield ChatGenerationChunk(message=AIMessageChunk(content=f"t{turn} "))
+        finally:
+            self.stream_closed.set()
+
+
+async def _hang_up_mid_answer(model: HeldOpenChatModel, release) -> None:
+    """POST /chat and walk away mid-stream: read two chunks, stop, hang up.
+
+    TestClient cannot hang up mid-stream, so this drives the app as the ASGI
+    callable uvicorn calls, with uvicorn's own shapes: `spec_version` "2.3"
+    (h11_impl.py pins it), and a `send` that raises `OSError` once the client
+    is gone — uvicorn's ClientDisconnected is an OSError. `release` is the
+    model gate to open after the first chunk arrives, so where the run is
+    suspended when the hangup lands is the caller's choice of gates.
+    """
+    app.dependency_overrides[get_analyst] = lambda: model
+
+    body = json.dumps(
+        {"thread_id": "t-walkaway", "message": "why?", "result": make_report()}
+    ).encode()
+
+    first_chunk_read = asyncio.Event()
+    backpressured = asyncio.Event()
+    hung_up = asyncio.Event()
+    body_served = False
+
+    async def receive():
+        nonlocal body_served
+        if not body_served:
+            body_served = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await hung_up.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if hung_up.is_set():
+            raise OSError("client went away")
+        if message["type"] == "http.response.body" and message.get("body"):
+            if first_chunk_read.is_set():
+                # TCP backpressure: the reader stopped reading, then closed.
+                backpressured.set()
+                await hung_up.wait()
+                raise OSError("client went away")
+            first_chunk_read.set()
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/chat",
+        "raw_path": b"/chat",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+            (b"host", b"testserver"),
+        ],
+        "client": ("127.0.0.1", 123),
+        "server": ("testserver", 80),
+    }
+
+    request = asyncio.create_task(app(scope, receive, send))
+    await asyncio.wait_for(first_chunk_read.wait(), 5)
+    release.set()
+    await asyncio.wait_for(backpressured.wait(), 5)
+    # Loop turns, not a timer: everything between the blocked send and the
+    # run's next suspension point is ready-to-run. Parked from 2 ticks on
+    # (measured 2026-08-31 with the response's close removed — the tick count
+    # at which the abandonment test first bites); 50 is margin, not tuning.
+    for _ in range(50):
+        await asyncio.sleep(0)
+    hung_up.set()
+
+    done, _ = await asyncio.wait([request], timeout=5)
+    assert done, "the request never unwound after the disconnect"
+    request.exception()  # the OSError is uvicorn's to swallow, not the subject
+
+
+@pytest.mark.anyio
+async def test_a_disconnect_landing_mid_pull_shuts_the_run_down(client) -> None:
+    """A disconnect while the run awaits its model must end the run there.
+
+    This is the cancellation door: Starlette's response plumbing cancels the
+    streaming task from an anyio task group, which re-delivers the cancel at
+    every await — measured tearing langgraph's own teardown apart halfway, so
+    the model task kept running with no reader, and as a live task it anchored
+    the whole run against garbage collection forever (113/#243: not closed at
+    unwind, not after ten loop ticks, not after an explicit gc.collect()).
+    """
+    release = asyncio.Event()
+    model = HeldOpenChatModel(
+        responses=[AIMessage(content="unused")],
+        # One gated token, then a gate that never opens: the hangup lands
+        # while the pull for the never-arriving token is in flight.
+        gates=[release, asyncio.Event()],
+        stream_closed=asyncio.Event(),
+    )
+
+    await _hang_up_mid_answer(model, release)
+
+    try:
+        await asyncio.wait_for(model.stream_closed.wait(), timeout=2)
+    except TimeoutError:
+        pytest.fail("the analyst run outlived its reader — nothing closed it")
+
+
+@pytest.mark.anyio
+async def test_a_reader_who_stopped_reading_then_left_leaves_no_run_behind(
+    client,
+) -> None:
+    """The abandonment door, the other way a disconnect arrives (113/#243).
+
+    Here a token is already on the wire behind the reader who stopped reading,
+    so the generator sits parked at its `yield` when the hangup lands — the
+    cancellation hits the blocked send and never enters the generator at all.
+    Nothing in Starlette closes a streaming body it abandons (1.3.1: neither
+    `StreamingResponse.__call__` nor the middleware's `_StreamingResponse`
+    calls `aclose()`), so unless the response closes its own generator, the
+    run is simply left suspended, holding its model task and its connection.
+    """
+    release = asyncio.Event()
+    ready = asyncio.Event()
+    ready.set()
+    model = HeldOpenChatModel(
+        responses=[AIMessage(content="unused")],
+        # After the gated token one more is ready at once, so the run yields
+        # it into the blocked send and parks; the last gate never opens.
+        gates=[release, ready, asyncio.Event()],
+        stream_closed=asyncio.Event(),
+    )
+
+    await _hang_up_mid_answer(model, release)
+
+    try:
+        await asyncio.wait_for(model.stream_closed.wait(), timeout=2)
+    except TimeoutError:
+        pytest.fail("the analyst run was abandoned mid-yield — nothing closed it")
+
+
 @pytest.fixture
 def real_lifespan(pg_url, monkeypatch):
     """Point the app at the testcontainer, and leave `app.state` as found.
@@ -1155,6 +1314,112 @@ def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None
     tokens = [e["text"] for e in events if e["type"] == "token"]
     assert "".join(tokens) == "One panelist stands out."
     assert events[-1] == {"type": "done"}
+
+
+def test_no_transaction_outlives_a_chat_tools_read(client, conn, pg_url) -> None:
+    """/chat's connection is autocommit for the stream (113/#243): a tool's
+    read stands alone, so there is no shared transaction for a failing
+    statement to poison under a sibling, and no idle-in-transaction state for
+    a pooler reaper to kill — the why lives with `set_autocommit` in `chat`.
+    Probed between two tool turns, from inside the second one.
+    """
+    from tests.test_corpus_retrieval import FakeEmbedder
+
+    persist_pool(
+        conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
+    )
+    seed_corpus(conn, FakeEmbedder())
+
+    captured: list[psycopg.AsyncConnection] = []
+
+    async def capturing_connection():
+        async with await psycopg.AsyncConnection.connect(pg_url) as connection:
+            await register_vector_async(connection)
+            captured.append(connection)
+            yield connection
+
+    status_between_tools: list[TransactionStatus] = []
+
+    class ProbeEmbedder:
+        """Reads the connection's transaction state at the exact moment the
+        second tool starts work — after the first tool's read has finished,
+        while the stream is still the connection's owner."""
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            if any("practical tie" in text for text in texts):
+                status_between_tools.append(captured[0].info.transaction_status)
+            return FakeEmbedder().embed(texts)
+
+    app.dependency_overrides[get_conn] = capturing_connection
+    app.dependency_overrides[get_embedder] = lambda: ProbeEmbedder()
+    app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
+        responses=[
+            tool_call_message(name="search_personas", args={"query": "thrifty"}),
+            tool_call_message(
+                name="explain_the_report", args={"question": "what is a practical tie"}
+            ),
+            AIMessage(content="A tie means the interval spans zero."),
+        ]
+    )
+
+    response = client.post(
+        "/chat",
+        json={
+            "thread_id": "t-main-autocommit",
+            "message": "who is thrifty, and what is a tie?",
+            "result": make_report(votes=[make_panel_vote("US-00000")]),
+        },
+    )
+
+    assert response.status_code == 200
+    assert ndjson_events(response.text)[-1] == {"type": "done"}
+    assert status_between_tools == [TransactionStatus.IDLE]
+
+
+def test_a_tools_failure_ends_the_turn_with_the_error_in_band(client, conn) -> None:
+    """What a really-failing tool does to a turn, pinned as the record.
+
+    113/#243 was filed on the reading that ToolNode turns a tool's exception
+    into a ToolMessage, so the model answers around a wreck and the stream
+    ends `done` as though nothing happened. The installed langgraph does not:
+    its default converts only invocation errors (a hallucinated name, bad
+    arguments), and an exception from the tool's own body propagates — the
+    turn ends with the in-band `error` event and its fixed sentence, never
+    `done`. The failure here is the ticket's own scenario, a wrong-dimension
+    query vector reaching `embedding <=>`, the shape a model swap produces.
+    """
+    persist_pool(
+        conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
+    )
+
+    class WrongDimensionEmbedder:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0] for _ in texts]  # one dimension against 1536
+
+    app.dependency_overrides[get_embedder] = lambda: WrongDimensionEmbedder()
+    app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
+        responses=[
+            tool_call_message(name="search_personas", args={"query": "thrifty"}),
+            AIMessage(content="never reached"),
+        ]
+    )
+
+    response = client.post(
+        "/chat",
+        json={
+            "thread_id": "t-main-toolwreck",
+            "message": "who is thrifty?",
+            "result": make_report(votes=[make_panel_vote("US-00000")]),
+        },
+    )
+
+    assert response.status_code == 200
+    events = ndjson_events(response.text)
+    assert events[-1]["type"] == "error"
+    assert "analyst failed" in events[-1]["message"]
+    # The fixed sentence names the class and nothing else: no SQL, no model
+    # text, and no sibling's InFailedSqlTransaction standing in for the cause.
+    assert "InFailedSqlTransaction" not in events[-1]["message"]
 
 
 def test_chat_refuses_a_tally_naming_other_variants(client) -> None:

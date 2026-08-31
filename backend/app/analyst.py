@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from statistics import median_low
 from typing import get_args, get_type_hints
 
+import anyio
 import psycopg
 from langchain.agents import create_agent
 from langchain_core.language_models import BaseChatModel
@@ -510,23 +511,40 @@ async def stream_analyst(
         return event.model_dump_json() + "\n"
 
     try:
-        # `async with`, not a bare local: langgraph's own contract is that the
-        # run stream is closed to "guarantee clean shutdown on early exit", and
-        # this generator exits early on four paths — three `except … return`
-        # branches, plus the `GeneratorExit` Starlette raises when a reader
-        # navigates away mid-turn. `GeneratorExit` is a `BaseException`, so the
-        # broad `except Exception` below never sees it; without this the run
-        # kept making paid model calls with no consumer, and a run suspended
-        # inside `AsyncPostgresSaver._cursor` held that process-wide lock until
-        # arbitrary garbage collection — hanging every later `/chat` and
-        # `/evaluate` on their next checkpoint read. The sync generator this
-        # replaced was closed deterministically by refcount.
-        async with await agent.astream_events(
+        stream = await agent.astream_events(
             {"messages": [HumanMessage(content=message)]},
             {"configurable": {"thread_id": thread_id}, "recursion_limit": limit},
             version="v3",
-        ) as stream:
-            async for event in stream:
+        )
+        # Pulled through a task behind `asyncio.shield`, not a plain
+        # `async for`, and closed by hand in a shield rather than by
+        # `async with` — because of who cancels this generator and how. A
+        # reader's disconnect is an anyio task-group cancellation (Starlette's
+        # response plumbing), and anyio re-delivers that cancellation at every
+        # await until its scope closes. A plain pull puts langgraph's own
+        # frames on this task's await chain, so the disconnect unwound the run
+        # stream from the inside and re-cancelled langgraph's teardown halfway:
+        # the model task kept running with no reader. Measured (113/#243): a
+        # single raw `task.cancel()` closes the run cleanly; the same cancel
+        # from an anyio group leaks it. The task keeps langgraph's frames off
+        # this one — the disconnect lands on the shield instead — and cleanup
+        # then delivers at most one raw cancel into the pull and finishes
+        # `abort()` behind a shield of its own — `abort()` is verbatim what the
+        # manager form runs (`AsyncGraphRunStream.__aexit__` is one line,
+        # `await self.abort()`, langgraph 1.x run_stream.py) and its docstring
+        # declares it idempotent, so a turn that ends normally pays one no-op
+        # call. `GeneratorExit` and `CancelledError` are
+        # `BaseException`s, so the broad `except Exception` below sees neither.
+        events = stream.__aiter__()
+        pull: asyncio.Task | None = None
+        try:
+            while True:
+                pull = asyncio.ensure_future(events.__anext__())
+                try:
+                    event = await asyncio.shield(pull)
+                except StopAsyncIteration:
+                    break
+                pull = None
                 data = event["params"]["data"]
                 if event["method"] == "tools" and data.get("event") == "tool-started":
                     yield line(ToolEvent(name=data["tool_name"]))
@@ -543,6 +561,19 @@ async def stream_analyst(
                         delta = payload.get("delta", {})
                         if delta.get("type") == "text-delta" and delta.get("text"):
                             yield line(TokenEvent(text=delta["text"]))
+        finally:
+            with anyio.CancelScope(shield=True):
+                if pull is not None and not pull.done():
+                    pull.cancel()
+                    try:
+                        await pull
+                    except (asyncio.CancelledError, Exception):
+                        # The pull's own cancellation — or its last-instant
+                        # error, already surfaced through the shield above.
+                        # The pair langgraph's own `abort()` swallows here,
+                        # and like it, deliberately not SystemExit.
+                        pass
+                await stream.abort()
     except GraphRecursionError:
         yield line(
             ErrorEvent(message=f"analyst was still calling tools after {limit} steps")

@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Literal, NamedTuple
 from uuid import uuid4
 
+import anyio
 import psycopg
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +22,7 @@ from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
+from starlette.types import Receive, Scope, Send
 
 from app.analyst import ToolDeps, analysis_facts, stream_analyst
 from app.assembly import Embedder
@@ -1543,6 +1545,34 @@ async def resume_evaluate(
     )
 
 
+class ClosingStreamingResponse(StreamingResponse):
+    """A StreamingResponse that closes its generator when the reader is gone.
+
+    Neither Starlette layer does: on a disconnect the stream task is cancelled
+    or its send raises, and the body generator is abandoned suspended at its
+    yield — nothing ever calls `aclose()` on it (starlette 1.3.1,
+    `StreamingResponse.__call__` and `BaseHTTPMiddleware._StreamingResponse`).
+    "Collected eventually, at GC" never arrives either, because the abandoned
+    run's model task is a live asyncio task, and live tasks anchor the whole
+    graph against collection — measured in 113/#243: not at unwind, not after
+    an explicit gc.collect(). So the run kept calling the model with no reader,
+    which is exactly what `stream_analyst`'s `async with` was added to end.
+
+    The close is shielded because there are two doors out of a disconnect and
+    one of them is a cancellation: `BaseHTTPMiddleware` cancels the task
+    running this response when the outer send's failure propagates, and an
+    unshielded await here would be re-cancelled mid-cleanup, aborting the
+    run's shutdown halfway through.
+    """
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            with anyio.CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
+
 @app.post("/chat")
 async def chat(
     request: ChatRequest,
@@ -1563,7 +1593,22 @@ async def chat(
         analysis_facts(request.result)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return StreamingResponse(
+    # Autocommit from here on: the stream's tools are this connection's only
+    # remaining users, every one of them reads, and langgraph runs a turn's
+    # tool calls concurrently on it (`ToolNode._afunc` gathers them).
+    # Non-autocommit, those reads shared one transaction nothing ever closed —
+    # the connection sat idle-in-transaction from the first tool to the end of
+    # the request (the state pooler reapers and
+    # `idle_in_transaction_session_timeout` kill, and the ACCESS SHARE holder
+    # a deploy's DDL queues behind), and one failing statement poisoned the
+    # transaction for any sibling in the same gather (113/#243). Autocommit
+    # makes the shared transaction not exist, rather than shorter-lived. The
+    # turn charge is unaffected: `_charge_ledger` committed before this line,
+    # inside `enforce_turn_limit`. And the switch is its own guard — psycopg
+    # refuses it inside a transaction, so a future dependency that leaves one
+    # open on this connection fails loudly here, not by silently sharing it.
+    await conn.set_autocommit(True)
+    return ClosingStreamingResponse(
         stream_analyst(
             model=analyst,
             result=request.result,
