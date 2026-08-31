@@ -54,3 +54,56 @@ jobs:
       # checkout with no `next-env.d.ts`, an image import is `TS2307`.
       - run: npm run typecheck
       - run: npm test
+
+  # The loud half of the schema story (115/#248). `deploy.md` records three
+  # deploys where a table the code expected and the database lacked meant a 500
+  # on every request that touched it — request_ledger, spend_ledger,
+  # corpus_chunks. Nothing re-runs the schema step for you, so this reports the
+  # gap on merge instead of leaving a user to find it.
+  #
+  # CHECK ONLY. `--check-schema` reads the catalogue and never applies, so the
+  # credential here needs SELECT and nothing more, and nothing automatic can
+  # push a wrong migration — applying by hand is the standing decision until
+  # launch (083/#173). Free to run: Actions minutes are free on public repos and
+  # a catalogue read costs nothing.
+  #
+  # The POSTGRES_* values are repository *secrets*, not variables (088):
+  # this repo is public, so run logs are public, and psycopg names the host in
+  # its connection errors — exactly when this check goes red. Secrets are
+  # masked; variables are not. Use the **session pooler** values (port 5432,
+  # user `postgres.<project-ref>`) — never the transaction pooler, per
+  # deploy.md §1.
+  #
+  # Until the secrets are set, the job skips quietly rather than failing: the
+  # workflow lands with the code, the deploy lands later. main only — a PR from
+  # a fork cannot read secrets, and a branch has nothing deployed to check.
+  schema-drift:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: check the deployed schema against what this build writes
+        env:
+          POSTGRES_HOST: ${{ secrets.DEPLOY_POSTGRES_HOST }}
+          POSTGRES_USER: ${{ secrets.DEPLOY_POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.DEPLOY_POSTGRES_PASSWORD }}
+          # Both have one right value on Supabase, so they are defaulted rather
+          # than made two more secrets to forget. Measured: an *empty*
+          # POSTGRES_PORT fails `Settings()` with `int_parsing` before the check
+          # can run, which would read as drift when it is a missing secret.
+          POSTGRES_PORT: ${{ secrets.DEPLOY_POSTGRES_PORT || '5432' }}
+          POSTGRES_DB: ${{ secrets.DEPLOY_POSTGRES_DB || 'postgres' }}
+        run: |
+          if [ -z "$POSTGRES_HOST" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+            echo "DEPLOY_POSTGRES_* secrets are not set — skipping the drift check."
+            echo "Set them in Settings → Secrets and variables → Actions → Secrets."
+            exit 0
+          fi
+          uv run python -m app.seed --check-schema

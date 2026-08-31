@@ -62,6 +62,32 @@ The corpus is also the one case with a cheap remedy: `uv run python -m app.seed
 of re-running `--size full` and paying for a plausibility-QC pass nobody needs.
 Re-running the same seed command creates all three.
 
+Cheaper still, and the right tool when nothing needs *seeding*: `uv run python -m
+app.seed --schema-only` applies `schema.sql` and the row-level-security sweep and
+stops there — no personas, no corpus, no embeddings, and no API key. That is the
+command to run on a deploy that adds a table or a column.
+
+**Adding a column to a table that already exists** goes at the bottom of
+`backend/app/schema.sql`, in the documented `ALTER TABLE … ADD COLUMN IF NOT EXISTS`
+form — never by editing the `CREATE TABLE` above it, which `IF NOT EXISTS` will not
+re-apply. The form is enforced, not suggested: `app.persistence` refuses a bare `ADD
+COLUMN`, because the file runs on every seed and every boot. Additive only — no
+`DROP COLUMN`, no rename, no type change: during a rollout an older instance is still
+serving, and `votes` is paid model output that cannot be regenerated. Applying is
+manual until launch; automating it is 083/#173's deferred half.
+
+**You do not have to remember any of this.** On every merge to `main`, CI's
+`schema-drift` job runs `--check-schema` against the project and fails red if the
+deployed database is missing anything this build writes. It reads and never applies,
+so the credential it uses needs SELECT and nothing more. Set five repository
+secrets — Settings → Secrets and variables → Actions → Secrets — from the **session
+pooler** values in step 2: `DEPLOY_POSTGRES_HOST`, `DEPLOY_POSTGRES_USER`,
+`DEPLOY_POSTGRES_PASSWORD`, and optionally `DEPLOY_POSTGRES_PORT` (defaults to
+`5432`) and `DEPLOY_POSTGRES_DB` (defaults to `postgres`). Until the secrets exist
+the job skips quietly, so this workflow lands with the code and the deploy lands
+later. Secrets rather than variables because this repo is public: run logs are
+public, and a connection error names the host exactly when the check goes red.
+
 ## 2 — Render (the backend)
 
 1. **Create a new workspace for PanelVerdict** — the 750 free hours/month are *per
