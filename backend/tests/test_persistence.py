@@ -1,4 +1,5 @@
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import get_args
 
 import numpy as np
@@ -205,30 +206,49 @@ def test_the_drift_check_needs_select_and_not_only_connect(conn, pg_url) -> None
     """What grant the CI credential actually needs (115/#248).
 
     `information_schema.columns` is privilege-filtered: it shows a role only the
-    columns that role may read. So a credential granted `CONNECT` alone — the
+    columns that role may read. So a credential granted `USAGE` alone — the
     intuitive "it only reads the catalogue" answer — sees *nothing*, and the
     check reports every table as missing: a red build on a current database.
     `SELECT` on the tables is the minimum that works, and it is still far less
     than the owner credential the deploy notes used to point at.
+
+    The connection is rebuilt from the container's own parts rather than by
+    string-substituting the URL. The substitution version passed locally and
+    failed in CI, and the reason is worse than the failure: where the pattern
+    did not match it connected as the *owner* and asserted nothing at all. So
+    `current_user` is checked first — a privilege test that quietly runs as
+    superuser is the shape of bug this whole ticket is about.
     """
     apply_schema(conn)
+    dsn = urlsplit(pg_url)
     conn.execute("DROP ROLE IF EXISTS drift_check")
     conn.execute("CREATE ROLE drift_check LOGIN PASSWORD 'probe'")
     conn.execute("GRANT USAGE ON SCHEMA public TO drift_check")
     conn.commit()
-    as_role = pg_url.replace("//test:test@", "//drift_check:probe@")
+
+    def as_role() -> psycopg.Connection:
+        return psycopg.connect(
+            host=dsn.hostname,
+            port=dsn.port,
+            dbname=dsn.path.lstrip("/"),
+            user="drift_check",
+            password="probe",
+        )
+
     try:
-        with psycopg.connect(as_role) as probe:
+        with as_role() as probe:
+            who = probe.execute("SELECT current_user").fetchone()
+            assert who is not None and who[0] == "drift_check"
             blind = missing_columns(probe)
 
         assert set(blind) == set(schema_columns()), (
-            "CONNECT alone should see no columns — if this fails, the grant "
+            "USAGE alone should see no columns — if this fails, the grant "
             "documented for CI is stricter than it needs to be"
         )
 
         conn.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO drift_check")
         conn.commit()
-        with psycopg.connect(as_role) as probe:
+        with as_role() as probe:
             assert missing_columns(probe) == {}
     finally:
         conn.execute("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM drift_check")
