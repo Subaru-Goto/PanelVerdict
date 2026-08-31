@@ -1751,6 +1751,43 @@ def test_the_owner_can_still_answer_their_own_gate(signed_in, conn) -> None:
     assert response.status_code == 200
 
 
+def test_one_subject_is_the_key_at_every_step_of_the_journey(
+    signed_in, conn, monkeypatch
+) -> None:
+    """Auth is covered per endpoint above; nobody crossed all three as one
+    signed-in caller (114/#245). What the crossing adds: the subject that
+    paused the run is the subject the resume checks, and the *report that run
+    produced* is then chatted about on that same subject's meter — not the
+    thread's, not the anonymous fallback's, not anyone else's.
+    """
+    seed_japanese(conn, 5)
+    monkeypatch.setattr(settings, "chat_turns_per_caller_per_day", 1)
+
+    paused = signed_in.post(
+        "/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner")
+    ).json()
+    report = _resume(signed_in, paused["thread_id"], headers=_as("owner")).json()
+    assert report["status"] == "complete"
+
+    def turn(thread_id: str, subject: str):
+        return signed_in.post(
+            "/chat",
+            json={"thread_id": thread_id, "message": "why?", "result": report},
+            headers=_as(subject),
+        )
+
+    first = turn("t-journey-1", "owner")
+    spent = turn("t-journey-2", "owner")
+    other = turn("t-journey-3", "somebody-else")
+
+    assert first.status_code == 200
+    assert ndjson_events(first.text)[-1] == {"type": "done"}
+    # The owner's one turn is spent — so the turn was metered on the verified
+    # subject — and only the owner's: a different subject still gets theirs.
+    assert spent.status_code == 429
+    assert other.status_code == 200
+
+
 def test_resuming_needs_the_edge_secret_like_every_other_paid_path(
     client, conn, monkeypatch
 ) -> None:
