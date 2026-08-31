@@ -15,6 +15,7 @@ import {
   MIN_PANEL_AGE,
   myTest,
   type EducationLevel,
+  type EvaluateInput,
   type Gender,
   type Locale,
 } from "../lib/api";
@@ -24,6 +25,7 @@ import SignInSheet from "./sign-in-sheet";
 import { useEvaluate } from "../lib/use-evaluate";
 import PanelGate from "./panel-gate";
 import Report from "./report";
+import { COUNTRY_LABELS, readingKey, readingSummary } from "../lib/reading";
 import { useGateSignal } from "./shell";
 import Stepper, { type StepName } from "./stepper";
 
@@ -150,7 +152,17 @@ export default function EvaluateForm({
   const [audience, setAudience] = useState("");
   const [headlineA, setHeadlineA] = useState("");
   const [headlineB, setHeadlineB] = useState("");
-  const { state, submit, answerGate, reset, show, fail } = useEvaluate();
+  const {
+    state,
+    submit,
+    answerGate,
+    reset,
+    show,
+    fail,
+    adjustAudience,
+    accepted,
+    forgetReading,
+  } = useEvaluate();
 
   // The frame puts the rail away while the gate is open (#252) — the page is
   // the only thing that knows which phase it is in.
@@ -220,22 +232,30 @@ export default function EvaluateForm({
     reset();
   }
 
+  const request: EvaluateInput = {
+    target: {
+      countries,
+      min_age: minAge,
+      max_age: maxAge,
+      gender: gender || null,
+      education,
+      income_quintiles: incomeQuintiles,
+    },
+    audience,
+    headlineA,
+    headlineB,
+  };
+
   function onSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
-    void submit({
-      target: {
-        countries,
-        min_age: minAge,
-        max_age: maxAge,
-        gender: gender || null,
-        education,
-        income_quintiles: incomeQuintiles,
-      },
-      audience,
-      headlineA,
-      headlineB,
-    });
+    void submit(request);
   }
+
+  // The approval stands for exactly one reading; the echo shows only while
+  // the form still describes it. Edit a control and the line withdraws on its
+  // own — the next submit gates again, which is what the reader just asked.
+  const standing =
+    accepted !== null && readingKey(request) === accepted.key ? accepted : null;
 
   // A cleared number input coerces to 0 and an inverted pair matches nobody;
   // the backend refuses both, but a submit that cannot succeed should not be
@@ -323,7 +343,7 @@ export default function EvaluateForm({
           onAccept={(instruction) =>
             answerGate("accept", undefined, instruction)
           }
-          onBack={reset}
+          onBack={adjustAudience}
         />
         {state.resuming && <Waiting />}
       </div>
@@ -341,9 +361,7 @@ export default function EvaluateForm({
               {LOCALES.map((code) => (
                 <Choice
                   key={code}
-                  label={
-                    { US: "United States", JP: "Japan", DE: "Germany" }[code]
-                  }
+                  label={COUNTRY_LABELS[code]}
                   value={code}
                   chosen={countries}
                   onChange={setCountries}
@@ -451,6 +469,21 @@ export default function EvaluateForm({
             // Mirrors MAX_AUDIENCE_CHARS (schemas.py); the backend refuses longer.
             maxLength={200}
           />
+          {standing !== null && (
+            <p className="flex items-center gap-2 text-xs text-ink-2">
+              <span>
+                Read as: {readingSummary(standing.preview)} — approved, so the
+                next run will not stop to ask again.
+              </span>
+              <button
+                type="button"
+                onClick={forgetReading}
+                className="underline underline-offset-2"
+              >
+                Change
+              </button>
+            </p>
+          )}
           <Field
             label="Headline A"
             value={headlineA}

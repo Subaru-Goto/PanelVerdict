@@ -201,6 +201,50 @@ async def test_adjusting_reseats_the_panel_without_paying_to_translate_again(
 
 
 @pytest.mark.anyio
+async def test_an_adjust_carries_edited_headlines_into_the_run(conn, aconn) -> None:
+    """A mid-gate typo fix must reach the vote. The paused thread keeps the
+    variants from the first submit, and resume updates graph state — that is
+    what HITL resume is for — so the panel votes the text the reader sees on
+    the form, not the one they already corrected (077, decided 2026-08-31)."""
+    seed_japanese(conn, 5)
+    graph = _graph(aconn)
+    first = await graph.ainvoke(_start(), _config())
+    kept = first["__interrupt__"][0].value["query"]
+    fixed = {"a": "Save 50% this week", "b": "Members save half price this week"}
+
+    state = await graph.ainvoke(
+        Command(
+            resume=GateDecision(
+                action="adjust", query=kept, variants=fixed
+            ).model_dump()
+        ),
+        _config(),
+    )
+
+    # Paused again — the edit is a new reading nobody accepted — and the
+    # corrected text is what any later accept will vote on.
+    assert state["__interrupt__"]
+    assert state["variants"] == fixed
+
+
+@pytest.mark.anyio
+async def test_an_adjust_without_headlines_keeps_the_originals(conn, aconn) -> None:
+    """Absence means untouched: an adjust that only re-seats must not blank
+    the text the run is about."""
+    seed_japanese(conn, 5)
+    graph = _graph(aconn)
+    first = await graph.ainvoke(_start(), _config())
+    kept = first["__interrupt__"][0].value["query"]
+
+    state = await graph.ainvoke(
+        Command(resume=GateDecision(action="adjust", query=kept).model_dump()),
+        _config(),
+    )
+
+    assert state["variants"] == _VARIANTS
+
+
+@pytest.mark.anyio
 async def test_an_adjustment_stops_again_rather_than_running_on(conn, aconn) -> None:
     """The edited reading is a new reading, and nobody has accepted it yet."""
     seed_japanese(conn, 5)

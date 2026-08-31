@@ -154,6 +154,9 @@ export type EvaluateInput = {
   /** This reading was already approved, so the panel gate should not stop the
    *  run again. The client says it; the server never infers it. */
   readingAccepted?: boolean;
+  /** The sentence approved at the gate, riding a run that skips it. The
+   *  backend refuses an approval that does not name what was approved. */
+  instruction?: string;
 };
 
 /** Who a run would seat and what it would cost, shown while the run holds at
@@ -213,6 +216,11 @@ export type GateAnswer = {
    *  the case that costs no check, since the draft was classified when it was
    *  written. "" is a real answer: demographics only after all. */
   instruction?: string;
+  /** Corrected headlines, when the reader fixed one mid-gate (077, decided
+   *  2026-08-31): the paused thread keeps the text from the first submit.
+   *  Both or neither — the backend refuses half a correction. */
+  headlineA?: string;
+  headlineB?: string;
 };
 
 /** Read a proxy response as an outcome, or throw the backend's own sentence.
@@ -260,6 +268,9 @@ export async function evaluate(
       headline_b: request.headlineB,
       reading_accepted: request.readingAccepted ?? false,
       audience: request.audience ?? "",
+      ...(request.instruction !== undefined
+        ? { instruction: request.instruction }
+        : {}),
     }),
   });
   return outcomeOf(res);
@@ -281,6 +292,9 @@ export async function resumeEvaluate(
       // undefined and "" diverge on the wire on purpose — see GateAnswer.
       ...(answer.instruction !== undefined
         ? { instruction: answer.instruction }
+        : {}),
+      ...(answer.headlineA !== undefined && answer.headlineB !== undefined
+        ? { headline_a: answer.headlineA, headline_b: answer.headlineB }
         : {}),
     }),
   });

@@ -2,12 +2,8 @@
 
 import { useState } from "react";
 
-import {
-  LOCALES,
-  MAX_PANEL_AGE,
-  MIN_PANEL_AGE,
-  type PanelPreview,
-} from "../lib/api";
+import { type PanelPreview } from "../lib/api";
+import { selectedFacts } from "../lib/reading";
 
 /** The panel gate: who would be seated, and the choice to pay for them.
  *
@@ -59,21 +55,9 @@ export default function PanelGate({
   const nobody = preview.matched === 0;
 
   // The reading as fact rows: the caller's own controls, no interpretation to
-  // explain (094). A control that narrowed nothing is not a row — every
-  // country and the full age span is just the pool.
-  const everyCountry = LOCALES.every((c) => query.countries.includes(c));
-  const selected: [string, string][] = [];
-  if (!everyCountry) selected.push(["Country", query.countries.join(", ")]);
-  if (query.min_age !== MIN_PANEL_AGE || query.max_age !== MAX_PANEL_AGE)
-    selected.push(["Age", `${query.min_age}–${query.max_age}`]);
-  if (query.gender) selected.push(["Gender", query.gender]);
-  if (query.education.length)
-    selected.push(["Education", query.education.join(", ").replace(/_/g, " ")]);
-  if (query.income_quintiles.length)
-    selected.push([
-      "Income",
-      query.income_quintiles.map((q) => `Q${q}`).join(", "),
-    ]);
+  // explain (094). Shared with the echo under the form, so the two speak
+  // identical words by construction.
+  const selected = selectedFacts(query);
 
   function accept(): void {
     setSent(true);
@@ -119,7 +103,10 @@ export default function PanelGate({
           />
           <Row label="Country" value={counted(composition.countries)} />
           <Row label="Gender" value={counted(composition.genders)} />
-          <Row label="Education" value={counted(composition.education_levels)} />
+          <Row
+            label="Education"
+            value={counted(composition.education_levels)}
+          />
           <Row label="Income" value={counted(composition.income_bands)} />
         </div>
       )}

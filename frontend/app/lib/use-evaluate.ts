@@ -11,6 +11,17 @@ import {
   type PanelPreview,
   type PanelEdit,
 } from "./api";
+import { readingKey, settledEdit } from "./reading";
+
+/** A reading a human accepted at the gate, remembered so the gate fires once
+ *  per audience (077/#167): a later run whose key matches rides as
+ *  `readingAccepted`, carrying the approved instruction. The preview is kept
+ *  for the echo under the form — the reader can see what stands approved. */
+export type AcceptedReading = {
+  key: string;
+  instruction: string;
+  preview: PanelPreview;
+};
 
 /** The request's four phases as one value, so contradictory combinations —
  *  loading with a stale result, an error beside a success — cannot be
@@ -45,6 +56,21 @@ export function useEvaluate() {
 
   const epoch = useRef(0);
 
+  // The run paused at the gate while the reader is back on the form. Kept so
+  // the next preview *resumes* it instead of starting over — a restart re-runs
+  // the paid, non-reproducible audience rewrite and can hand back a different
+  // reading than the one just rejected (077, decided 2026-08-31). The words
+  // are kept beside the id because only an unchanged audience may ride:
+  // rephrasing is a new reading and legitimately starts fresh.
+  const paused = useRef<{ threadId: string; audience: string } | null>(null);
+
+  // What the last request asked, so an accept can be remembered under the key
+  // of the audience it approved.
+  const asked = useRef<EvaluateInput | null>(null);
+
+  // Rendered state rather than a ref: the form shows the echo line for it.
+  const [accepted, setAccepted] = useState<AcceptedReading | null>(null);
+
   function land(outcome: EvaluateOutcome): void {
     setState(
       outcome.status === "paused"
@@ -70,7 +96,73 @@ export function useEvaluate() {
   }
 
   async function submit(request: EvaluateInput): Promise<void> {
+    asked.current = request;
+    const held = paused.current;
+    paused.current = null;
+
+    // A run holding at the gate outranks everything, standing approval
+    // included: skipping past it would orphan the thread and buy a second
+    // preview for the same test. Unchanged words may ride it — controls and
+    // headlines go along, the reading is not re-enacted. Changed words start
+    // fresh: rephrasing is a new reading.
+    if (held !== null && held.audience === (request.audience ?? "").trim()) {
+      await attempt(async () => {
+        try {
+          return await resumeEvaluate({
+            threadId: held.threadId,
+            action: "adjust",
+            query: settledEdit(request),
+            headlineA: request.headlineA,
+            headlineB: request.headlineB,
+          });
+        } catch (error) {
+          // Only a pause that is truly gone falls back to a fresh run — the
+          // backend's own sentences for expiry (410) and no-such-run (404).
+          // Anything else surfaces: a quiet restart would re-run the paid,
+          // non-reproducible rewrite behind the reader's back.
+          const gone =
+            error instanceof Error &&
+            /expired|no run is waiting/.test(error.message);
+          if (!gone) throw error;
+          return await evaluate(request);
+        }
+      });
+      return;
+    }
+
+    // The gate fires once per audience: a key match means this exact reading
+    // — every control and the words — was approved, so the approval rides.
+    if (accepted !== null && readingKey(request) === accepted.key) {
+      await attempt(() =>
+        evaluate(
+          accepted.instruction === ""
+            ? // A cleared instruction was the approval: demographics only
+              // after all. The skip contract requires an instruction whenever
+              // words ride, so the honest translation is no words at all —
+              // the run is exactly what was approved.
+              { ...request, audience: "", readingAccepted: true }
+            : {
+                ...request,
+                readingAccepted: true,
+                instruction: accepted.instruction,
+              },
+        ),
+      );
+      return;
+    }
+
     await attempt(() => evaluate(request));
+  }
+
+  /** Leave the gate for the form without abandoning the run: the pause is
+   *  kept, and the next preview with these words resumes it. */
+  function adjustAudience(): void {
+    if (state.phase !== "gated") return;
+    paused.current = {
+      threadId: state.threadId,
+      audience: (asked.current?.audience ?? "").trim(),
+    };
+    setState({ phase: "idle" });
   }
 
   /** Answer the gate. `accept` spends; `adjust` re-seats from an edited
@@ -89,7 +181,26 @@ export function useEvaluate() {
     const { threadId, preview } = state;
     setState({ phase: "gated", threadId, preview, resuming: true });
     try {
-      land(await resumeEvaluate({ threadId, action, query, instruction }));
+      const outcome = await resumeEvaluate({
+        threadId,
+        action,
+        query,
+        instruction,
+      });
+      if (action === "accept" && outcome.status === "complete") {
+        // This exact reading now stands approved: later runs under the same
+        // key skip the gate. Untouched rides as absence, so what stands is
+        // the draft the reader saw.
+        setAccepted({
+          // `asked` is always set: the only road to the gate is a submit.
+          // The empty-key fallback exists for the type, and can never match
+          // a real reading — `readingKey` always returns an object literal.
+          key: asked.current !== null ? readingKey(asked.current) : "",
+          instruction: instruction ?? preview.instruction,
+          preview,
+        });
+      }
+      land(outcome);
     } catch (error) {
       setState({
         phase: "gated",
@@ -124,5 +235,20 @@ export function useEvaluate() {
     setState({ phase: "error", message });
   }
 
-  return { state, submit, answerGate, reset, show, fail };
+  /** Withdraw the standing approval: the next submit gates again. */
+  function forgetReading(): void {
+    setAccepted(null);
+  }
+
+  return {
+    state,
+    submit,
+    answerGate,
+    reset,
+    show,
+    fail,
+    adjustAudience,
+    accepted,
+    forgetReading,
+  };
 }
