@@ -38,6 +38,7 @@ from app.persistence import nearest_panelists, persist_pool
 from app.schemas import (
     MAX_AUDIENCE_CHARS,
     EvaluateRequest,
+    EvaluateResponse,
 )
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
@@ -2663,3 +2664,86 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     # is tokens followed by `error` and no `done`. Tolerant of `tool` events,
     # which a scripted analyst that calls tools would add.
     assert events[-1] == {"type": "done"}
+
+
+# --- Keeping a finished test (117/#252) --------------------------------------
+
+
+def _stored(conn) -> list[tuple]:
+    return conn.execute(
+        "SELECT test_id, owner, report FROM tests ORDER BY created_at"
+    ).fetchall()
+
+
+def test_a_finished_run_is_kept_for_the_account_that_ran_it(
+    signed_in, conn, monkeypatch
+) -> None:
+    """A customer paid for this report; before now, a refresh lost it."""
+    seed_japanese(conn, 5)
+
+    response = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+
+    assert response.status_code == 200
+    rows = _stored(conn)
+    assert len(rows) == 1
+    test_id, owner, report = rows[0]
+    assert owner == "owner"
+    assert test_id
+    # The stored document is the report, not the response envelope: `status`
+    # belongs to the HTTP answer, and a row that carried it would be a body
+    # rather than a record.
+    assert "status" not in report
+    assert EvaluateResponse.model_validate(report).model_dump(mode="json") == report
+    assert report["variants"] == response.json()["variants"]
+
+
+def test_a_paused_run_is_not_kept(signed_in, conn) -> None:
+    """Only a finished test is a test. A run holding at the gate has bought
+    nothing and has no verdict to keep."""
+    seed_japanese(conn, 5)
+
+    signed_in.post("/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner"))
+
+    assert _stored(conn) == []
+
+
+def test_a_report_that_cannot_be_stored_still_reaches_the_customer(
+    signed_in, conn, monkeypatch
+) -> None:
+    """The asymmetry this write is built around (117/#252). When it runs the
+    votes are already bought, so raising would lose the report *and* the run —
+    which is 049/#147's own complaint arriving through the mechanism meant to
+    answer it. The customer holds the report in the body either way; a failure
+    costs the copy.
+    """
+    seed_japanese(conn, 5)
+
+    async def refuse(*args, **kwargs):
+        raise psycopg.OperationalError("the disk is on fire")
+
+    monkeypatch.setattr(main, "store_report", refuse)
+
+    response = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["status"] == "complete"
+    assert response.json()["counts"]["voted"] == 5
+    assert _stored(conn) == []
+
+
+def test_answering_the_gate_keeps_the_report_that_answer_bought(
+    signed_in, conn
+) -> None:
+    """The gate path is the one a first-time reader takes, so it is the path
+    that must keep a report — `/evaluate` alone only does when the reading was
+    already approved."""
+    seed_japanese(conn, 5)
+    paused = signed_in.post(
+        "/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner")
+    ).json()
+
+    resumed = _resume(signed_in, paused["thread_id"], headers=_as("owner"))
+
+    assert resumed.status_code == 200
+    rows = _stored(conn)
+    assert len(rows) == 1 and rows[0][1] == "owner"

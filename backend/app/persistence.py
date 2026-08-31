@@ -382,11 +382,14 @@ async def store_report(
     append-only rule — a report is derived, not paid for — but a report that
     changes under a reader is worse than one that is merely stale.
     """
-    result = await conn.execute(
-        "INSERT INTO tests (test_id, owner, schema_version, report)"
-        " VALUES (%s, %s, %s, %s) ON CONFLICT (test_id) DO NOTHING",
-        (test_id, owner, REPORT_SCHEMA_VERSION, Jsonb(report)),
-    )
+    # Its own transaction, like `store_votes`: the request connection is not
+    # autocommit, so a bare execute would be rolled back when it closes.
+    async with conn.transaction():
+        result = await conn.execute(
+            "INSERT INTO tests (test_id, owner, schema_version, report)"
+            " VALUES (%s, %s, %s, %s) ON CONFLICT (test_id) DO NOTHING",
+            (test_id, owner, REPORT_SCHEMA_VERSION, Jsonb(report)),
+        )
     return result.rowcount == 1
 
 
@@ -449,9 +452,10 @@ async def delete_report(
     table they asked to be rid of. Deleting what is not there is not an error,
     so a double-click is not a 500.
     """
-    result = await conn.execute(
-        "DELETE FROM tests WHERE test_id = %s AND owner = %s", (test_id, owner)
-    )
+    async with conn.transaction():
+        result = await conn.execute(
+            "DELETE FROM tests WHERE test_id = %s AND owner = %s", (test_id, owner)
+        )
     return result.rowcount == 1
 
 
@@ -462,7 +466,8 @@ async def delete_reports_of(conn: psycopg.AsyncConnection, *, owner: str) -> int
     a row this build cannot render is still the customer's content, and "delete
     my account" has to empty the table rather than the readable part of it.
     """
-    result = await conn.execute("DELETE FROM tests WHERE owner = %s", (owner,))
+    async with conn.transaction():
+        result = await conn.execute("DELETE FROM tests WHERE owner = %s", (owner,))
     return result.rowcount
 
 

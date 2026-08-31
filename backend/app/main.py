@@ -49,7 +49,7 @@ from app.llm import (
     remaining_credit,
 )
 from app.panel import votes_with_voters
-from app.persistence import adeny_data_api
+from app.persistence import adeny_data_api, store_report
 from app.pipeline import EmptyPanel, NoVotes
 from app.roleplay import RolePlayGenerator, RolePlayRefused
 from app.schemas import (
@@ -895,6 +895,44 @@ def _outcome(
     )
 
 
+async def _kept(
+    outcome: PausedRun | CompletedRun,
+    *,
+    conn: psycopg.AsyncConnection,
+    state: dict,
+    caller: str,
+) -> PausedRun | CompletedRun:
+    """Keep a finished report for the account that ran it (117/#252).
+
+    **Best-effort, and never fails the response.** When this runs the votes are
+    already bought, so a raised write would lose the report *and* the run —
+    which is 049/#147's own complaint arriving through the mechanism meant to
+    answer it. The customer holds the report in the body either way; what a
+    failure costs is the copy, and that is the cheaper loss by a whole run.
+
+    A paused run is not kept: it has bought nothing and has no verdict.
+
+    `status` is excluded because it belongs to the HTTP answer rather than to
+    the record — a row carrying it would be a stored response, not a stored
+    test.
+    """
+    if not isinstance(outcome, CompletedRun):
+        return outcome
+    test_id = state["result"].test_id
+    try:
+        await store_report(
+            conn,
+            test_id=test_id,
+            owner=caller,
+            report=outcome.model_dump(mode="json", exclude={"status"}),
+        )
+    except Exception:
+        # Logged with the id so the loss is traceable to a run, and swallowed on
+        # purpose — see the docstring.
+        logger.exception("could not keep the report for test_id=%s", test_id)
+    return outcome
+
+
 async def _run_graph(graph, payload, thread_id: str):
     """Run the graph and map its refusals to status codes.
 
@@ -1000,7 +1038,12 @@ async def evaluate(
         },
         thread_id,
     )
-    return _outcome(state, thread_id=thread_id, variants=variants, credit=credit)
+    return await _kept(
+        _outcome(state, thread_id=thread_id, variants=variants, credit=credit),
+        conn=conn,
+        state=state,
+        caller=caller,
+    )
 
 
 @asynccontextmanager
@@ -1288,11 +1331,16 @@ async def resume_evaluate(
             ),
             request.thread_id,
         )
-    return _outcome(
-        state,
-        thread_id=request.thread_id,
-        variants=values["variants"],
-        credit=credit,
+    return await _kept(
+        _outcome(
+            state,
+            thread_id=request.thread_id,
+            variants=values["variants"],
+            credit=credit,
+        ),
+        conn=conn,
+        state=state,
+        caller=caller,
     )
 
 
