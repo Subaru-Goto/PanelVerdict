@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hmac
 import logging
 from collections.abc import AsyncIterator
@@ -9,7 +10,7 @@ from typing import Literal, NamedTuple
 from uuid import uuid4
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
@@ -910,15 +911,71 @@ class StoredTest(BaseModel):
     tally: VoteTally
 
 
+# Derived, not chosen (118/#253): the largest page of worst-case rows — both
+# headlines at MAX_HEADLINE_CHARS, the request validator's own bound — that
+# fits TCP's initial congestion window of 10 segments x 1460 B MSS (RFC 6928,
+# April 2013). So the rail's first paint costs one round trip even on a cold
+# connection, whatever a customer wrote. Measured 2026-08-31: 1,625 B/row;
+# `test_the_default_page_is_the_largest_that_fits_one_round_trip` redoes the
+# arithmetic, so a field added to `StoredTest` reopens it instead of silently
+# outgrowing the window.
+TESTS_PAGE_ROWS = 14600 // 1625
+
+
+class StoredTestPage(BaseModel):
+    """One page of the rail, newest first.
+
+    `next_cursor` is present exactly when following it would fetch something —
+    a "show more" that yields an empty page reads as broken. Opaque to clients:
+    it encodes a position (a row's instant and id), and a client that parsed it
+    would inherit the encoding as API.
+    """
+
+    tests: list[StoredTest]
+    next_cursor: str | None
+
+
+def _tests_cursor(row: StoredTest) -> str:
+    return base64.urlsafe_b64encode(
+        f"{row.created_at.isoformat()}|{row.test_id}".encode()
+    ).decode()
+
+
+def _tests_cursor_position(cursor: str) -> tuple[datetime, str]:
+    """422 on anything unreadable — a cursor is only ever one we minted, so a
+    garbled one is a caller error, never a reason to 500. What it names is not
+    trusted: ownership is a WHERE clause in `list_reports`, so a forged cursor
+    moves where the caller's own list resumes and nothing else."""
+    try:
+        moment, _, test_id = (
+            base64.urlsafe_b64decode(cursor.encode()).decode().partition("|")
+        )
+        if not test_id:
+            raise ValueError("no separator")
+        return datetime.fromisoformat(moment), test_id
+    except ValueError:
+        raise HTTPException(status_code=422, detail="unreadable cursor") from None
+
+
 @app.get("/tests")
 async def my_tests(
+    cursor: str | None = None,
+    limit: int = Query(default=TESTS_PAGE_ROWS, ge=1, le=TESTS_PAGE_ROWS),
     conn: psycopg.AsyncConnection = Depends(get_conn),
     caller: str = Depends(caller_id),
-) -> list[StoredTest]:
-    """This account's finished tests, newest first."""
-    return [
-        StoredTest.model_validate(row) for row in await list_reports(conn, owner=caller)
-    ]
+) -> StoredTestPage:
+    """One page of this account's finished tests, newest first.
+
+    One row more than the page is fetched, so "is there more" is answered by
+    the same read that builds the page — a COUNT would race every new run.
+    """
+    before = _tests_cursor_position(cursor) if cursor is not None else None
+    rows = await list_reports(conn, owner=caller, limit=limit + 1, before=before)
+    tests = [StoredTest.model_validate(row) for row in rows[:limit]]
+    return StoredTestPage(
+        tests=tests,
+        next_cursor=_tests_cursor(tests[-1]) if len(rows) > limit else None,
+    )
 
 
 @app.get("/tests/{test_id}")

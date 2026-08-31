@@ -6,6 +6,7 @@ skips personas already present.
 """
 
 import re
+from datetime import datetime
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Literal, TypedDict, cast
@@ -413,21 +414,34 @@ async def load_report(
     return None if row is None else row[0]
 
 
-async def list_reports(conn: psycopg.AsyncConnection, *, owner: str) -> list[dict]:
+async def list_reports(
+    conn: psycopg.AsyncConnection,
+    *,
+    owner: str,
+    limit: int,
+    before: tuple[datetime, str] | None = None,
+) -> list[dict]:
     """This account's tests, newest first — what the sidebar renders.
 
     Three fragments of each document rather than the document: the rail shows
     the two headlines and a phrase derived from the verdict, and searches on the
     headlines. Loading whole reports to draw a list of labels would fetch every
     vote and every reason a customer has ever bought.
+
+    `limit` has no default on purpose — at the run allowance an account grows
+    without bound, so every caller must say how much of it they mean (118/#253).
+    `before` resumes below a row: strictly older, or the same instant with a
+    lesser id, which is one row comparison in SQL. Keyset rather than offset,
+    so a delete between pages shifts nothing.
     """
+    resume = " AND (created_at, test_id) < (%s, %s)" if before else ""
     rows = await (
         await conn.execute(
             "SELECT test_id, created_at, report -> 'variants' AS variants,"
             " report -> 'verdict' AS verdict, report -> 'tally' AS tally"
             " FROM tests WHERE owner = %s AND schema_version = ANY(%s)"
-            " ORDER BY created_at DESC, test_id DESC",
-            (owner, list(_READABLE_VERSIONS)),
+            f"{resume} ORDER BY created_at DESC, test_id DESC LIMIT %s",
+            (owner, list(_READABLE_VERSIONS), *(before or ()), limit),
         )
     ).fetchall()
     return [
