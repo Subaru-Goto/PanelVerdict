@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import Link from "next/link";
+
 import {
   forgetTest,
-  myTest,
   myTests,
   onRunsChanged,
-  type EvaluateResponse,
   type StoredTest,
 } from "../lib/api";
 import { onAuthChange } from "../lib/auth";
@@ -19,20 +19,12 @@ import { railSummary } from "../lib/verdict";
  * The tests are the account's, so a rail for a visitor with no account would be
  * a permanently empty box explaining itself.
  *
- * Reopening hands the stored report to the page's existing `done` phase rather
- * than rendering it here: a stored report *is* the report, so a second render
- * path for it would be a second place to draw it wrongly.
+ * A row is a link to the wizard, which fetches the stored report and hands it
+ * to its own `done` phase (119/#257): a stored report *is* the report, so a
+ * second render path for it would be a second place to draw it wrongly — and a
+ * link works from any page the rail shows on, not only the wizard.
  */
-export default function PastTests({
-  onOpen,
-  hidden = false,
-}: {
-  onOpen: (result: EvaluateResponse) => void;
-  /** Withheld from the eye, not unmounted: the owner decides where the rail
-   * belongs (not at the gate), and unmounting would forget the loaded pages
-   * and refetch them on the way back (118/#253). */
-  hidden?: boolean;
-}) {
+export default function PastTests() {
   // null until the session is known, so a rail does not flash at a visitor who
   // turns out to be signed in — the reason `sign-in.tsx` starts here too.
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
@@ -119,21 +111,7 @@ export default function PastTests({
   // rather than polling.
   useEffect(() => onRunsChanged(load), [load]);
 
-  if (hidden || signedIn !== true) return null;
-
-  async function open(testId: string): Promise<void> {
-    try {
-      onOpen(await myTest(testId));
-    } catch (error) {
-      // A 404 means the row is stale — deleted in another tab — and reloading
-      // the rail is both the recovery and the explanation. Anything else and
-      // the row is still there, so a silent reload would look like the click
-      // did nothing (117/#252, review).
-      const stale = error instanceof Error && /404/.test(error.message);
-      if (!stale) setFailed(true);
-      load();
-    }
-  }
+  if (signedIn !== true) return null;
 
   async function forget(testId: string): Promise<void> {
     // Removed here first: the delete is idempotent and a 404 is not an error,
@@ -181,10 +159,9 @@ export default function PastTests({
           <ul className="flex flex-col gap-2">
             {shown.map((test) => (
               <li className="flex items-start gap-2" key={test.test_id}>
-                <button
+                <Link
                   className="flex-1 text-left text-sm hover:underline"
-                  onClick={() => void open(test.test_id)}
-                  type="button"
+                  href={`/test?open=${test.test_id}`}
                 >
                   <span className="block">
                     “{test.variants.a}” vs “{test.variants.b}”
@@ -192,7 +169,7 @@ export default function PastTests({
                   <span className="block text-ink-2">
                     {railSummary(test.verdict)}
                   </span>
-                </button>
+                </Link>
                 <button
                   aria-label={`Delete the test of “${test.variants.a}”`}
                   className="text-ink-2 hover:text-ink"

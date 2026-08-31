@@ -398,6 +398,10 @@
 <aside class="side" aria-label="Your tests and sample verdicts">
   <!-- Signed out the rail is a demo shelf: samples only, no control that needs
        an account. Signed in it is yours: new test + saved tests, samples gone. -->
+  <!-- Amended 2026-08-31 (119): in the real app the rail is put away while the
+       panel gate is open — the gate is a spend decision, and a click away
+       abandons the paused run and its audience-reading call (#252's decision,
+       kept). This prototype renders the rail at the gate; the app does not. -->
   <button class="side-new" id="side-new" onclick="go('step1')" style="display:none">New test</button>
   <!-- Owned history (decided 2026-08-25, reopening the blocked history ticket):
        tests stored to the account, reopenable, deletable, searchable. The
@@ -440,6 +444,9 @@
          gate-at-the-run): signed out, the only runnable thing is the demo —
          fixed headlines, a stored verdict, replayed steps. The form itself is
          behind Google. Signed in, the same button becomes the run. -->
+    <!-- Amended 2026-08-31 (119): until the demo replay exists (061), the
+         signed-out button reads "Sign in to run a test" and opens the sheet —
+         no control promises a demo that does not exist. 061 restores this. -->
     <div class="hero-actions">
       <button class="btn btn-primary" id="hero-primary" onclick="showSample()">Run the demo test</button>
     </div>

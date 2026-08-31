@@ -30,7 +30,10 @@ const BASE: EvaluateResponse = {
     notices: [],
   },
   notices: [
-    { severity: "warning", message: "2 of the 200 matched panelists did not vote." },
+    {
+      severity: "warning",
+      message: "2 of the 200 matched panelists did not vote.",
+    },
     {
       severity: "reading",
       // The backend's own sentence (`pipeline.py`, `_stopped_early_notice`),
@@ -145,7 +148,6 @@ export const makeResponse = (
   overrides: Partial<EvaluateResponse> = {},
 ): EvaluateResponse => ({ ...BASE, ...overrides });
 
-
 /** A /chat response whose NDJSON lines are fed one enqueue at a time, so a test
  *  can assert what the UI shows BETWEEN events — a transient status is only
  *  visible mid-stream. Shared, because the dock and the report both open
@@ -165,3 +167,16 @@ export const manualStream = () => {
     close: () => controller.close(),
   };
 };
+
+/** One stored test as GET /tests pages it — the rail's row. */
+export function makeStoredTest(over: Partial<Record<string, unknown>> = {}) {
+  const response = makeResponse();
+  return {
+    test_id: "t-1",
+    created_at: "2026-08-31T10:00:00Z",
+    variants: { a: "Save 50% today", b: "Members save half" },
+    verdict: response.verdict,
+    tally: response.tally,
+    ...over,
+  };
+}

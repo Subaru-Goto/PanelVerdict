@@ -8,7 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { makeResponse, makeTiedResponse } from "./fixtures";
+import { makeStoredTest, makeTiedResponse } from "./fixtures";
 
 const myTestsMock = vi.fn();
 const myTestMock = vi.fn();
@@ -36,17 +36,7 @@ vi.mock("../app/lib/auth", () => ({
 
 const { default: PastTests } = await import("../app/components/past-tests");
 
-function stored(over: Partial<Record<string, unknown>> = {}) {
-  const response = makeResponse();
-  return {
-    test_id: "t-1",
-    created_at: "2026-08-31T10:00:00Z",
-    variants: { a: "Save 50% today", b: "Members save half" },
-    verdict: response.verdict,
-    tally: response.tally,
-    ...over,
-  };
-}
+const stored = makeStoredTest;
 
 afterEach(() => {
   cleanup();
@@ -62,7 +52,7 @@ describe("the account's own tests", () => {
     signedIn = false;
     myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
 
     // Not an empty rail and not a prompt: the tests are the account's, so a box
     // for a visitor without one could only explain itself.
@@ -73,7 +63,7 @@ describe("the account's own tests", () => {
   it("shows both headlines and a phrase the report would agree with", async () => {
     myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
 
     expect(
       await screen.findByText(/“Save 50% today” vs “Members save half”/),
@@ -90,26 +80,24 @@ describe("the account's own tests", () => {
       next_cursor: null,
     });
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
 
     expect(await screen.findByText("too close to call")).toBeTruthy();
   });
 
-  it("hands the whole stored report up when a row is opened", async () => {
-    const report = makeResponse();
+  it("gives every row the test's own address, fetching nothing", async () => {
     myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
-    myTestMock.mockResolvedValue(report);
-    const onOpen = vi.fn();
 
-    render(<PastTests onOpen={onOpen} />);
-    fireEvent.click(
-      await screen.findByText(/“Save 50% today” vs “Members save half”/),
-    );
+    render(<PastTests />);
+    const row = (
+      await screen.findByText(/“Save 50% today” vs “Members save half”/)
+    ).closest("a");
 
-    // The report itself, not a summary: this is the read that gets a paid
-    // report back after the page drawing it crashed (049/#147).
-    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(report));
-    expect(myTestMock).toHaveBeenCalledWith("t-1");
+    // A row is a link to the wizard, which fetches the stored report itself
+    // (119/#257): one render path for reports, reachable from anywhere the
+    // rail shows — including a page that is not the wizard.
+    expect(row?.getAttribute("href")).toBe("/test?open=t-1");
+    expect(myTestMock).not.toHaveBeenCalled();
   });
 
   it("drops a deleted row before the round trip settles", async () => {
@@ -121,7 +109,7 @@ describe("the account's own tests", () => {
       }),
     );
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
     fireEvent.click(
       await screen.findByLabelText("Delete the test of “Save 50% today”"),
     );
@@ -147,7 +135,7 @@ describe("the account's own tests", () => {
       next_cursor: null,
     });
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
     await screen.findByText(/“Save 50% today”/);
     fireEvent.change(screen.getByLabelText("Search your tests"), {
       target: { value: "Book" },
@@ -165,7 +153,7 @@ describe("the account's own tests", () => {
   it("says the tests are not lost when the rail cannot load them", async () => {
     myTestsMock.mockRejectedValue(new Error("offline"));
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
 
     // The distinction that matters to someone who paid for those reports: the
     // rail failed, the reports did not.
@@ -186,7 +174,7 @@ describe("the rail reads in pages", () => {
       next_cursor: null,
     });
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
     await screen.findByText(/“Save 50% today”/);
 
     // The first read named no cursor: it is the newest page, not a resumption.
@@ -206,7 +194,7 @@ describe("the rail reads in pages", () => {
   it("never offers more when the first page is everything", async () => {
     myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
     await screen.findByText(/“Save 50% today”/);
 
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
@@ -218,7 +206,7 @@ describe("the rail reads in pages", () => {
     // a false sentence about the reader's own history.
     myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
     await screen.findByText(/“Save 50% today”/);
     fireEvent.change(screen.getByLabelText("Search your tests"), {
       target: { value: "zzz" },
@@ -243,7 +231,7 @@ describe("the rail reads in pages", () => {
       next_cursor: null,
     });
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
     await screen.findByText(/“Save 50% today”/);
     fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     await screen.findByText(/not lost/);
@@ -258,7 +246,7 @@ describe("the rail reads in pages", () => {
     // Show more appends, so a double-click that fetched twice would show the
     // same rows twice. The button goes quiet until the page lands.
     myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
     await screen.findByText(/“Save 50% today”/);
 
     myTestsMock.mockReturnValue(new Promise(() => {}));
@@ -281,7 +269,7 @@ describe("the rail across a change of session", () => {
     });
     myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
     await screen.findByText(/“Save 50% today”/);
 
     myTestsMock.mockResolvedValue({ tests: [], next_cursor: null });
@@ -303,7 +291,7 @@ describe("the rail across a change of session", () => {
       announce = listener;
     });
     myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
     await screen.findByText(/“Save 50% today”/);
 
     let settle: (page: unknown) => void = () => {};
@@ -357,7 +345,7 @@ describe("the rail across a change of session", () => {
       announce = listener;
     });
 
-    render(<PastTests onOpen={() => {}} />);
+    render(<PastTests />);
     await screen.findByText(/not lost/);
 
     announce(false);

@@ -117,5 +117,12 @@ export function useEvaluate() {
     setState({ phase: "done", result, epoch: ++epoch.current });
   }
 
-  return { state, submit, answerGate, reset, show };
+  /** Land on the error phase for a failure this hook did not produce — a
+   *  stored test that would not open. Same phase as a failed run, on purpose:
+   *  one place draws errors. */
+  function fail(message: string): void {
+    setState({ phase: "error", message });
+  }
+
+  return { state, submit, answerGate, reset, show, fail };
 }
