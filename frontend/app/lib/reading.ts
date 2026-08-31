@@ -18,6 +18,19 @@ export const COUNTRY_LABELS: Record<Locale, string> = {
   DE: "Germany",
 };
 
+/** A composition dimension keyed by country name instead of code — the strip
+ *  labels speak the same words as the fact rows. */
+export function countryGroups(
+  groups: Record<string, number>,
+): Record<string, number> {
+  return Object.fromEntries(
+    Object.entries(groups).map(([code, count]) => [
+      COUNTRY_LABELS[code as Locale] ?? code,
+      count,
+    ]),
+  );
+}
+
 /** The selections that narrowed the pool, as [label, value] rows — the gate's
  *  facts and the echo's phrases come from this one builder, so they cannot
  *  drift apart. A control that narrowed nothing is not a row: every country

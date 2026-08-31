@@ -37,6 +37,9 @@ const PREVIEW = {
     income_bands: { middle: 5 },
   },
   notices: [],
+  // The wire always carries these: "" is a demographics-only run.
+  instruction: "",
+  refusal_sentence: null,
   estimated_usd: 0.001,
 };
 
@@ -44,11 +47,26 @@ const PREVIEW = {
 const preview = PREVIEW as any;
 
 describe("the panel gate", () => {
-  it("says how many people would be seated and what it would cost", async () => {
-    render(<PanelGate preview={preview} onAccept={vi.fn()} onBack={vi.fn()} />);
+  it("shows panel size and matched count as plain numbers, with no price", async () => {
+    render(
+      <PanelGate
+        preview={{ ...preview, matched: 312 }}
+        onAccept={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
 
-    expect(screen.getByText(/5 people/i)).toBeTruthy();
-    expect(screen.getByText(/\$0\.00/)).toBeTruthy();
+    // Seated (5, from the composition) and matched (312) are separate facts.
+    expect(screen.getByText("5")).toBeTruthy();
+    expect(screen.getByText("312")).toBeTruthy();
+    expect(
+      screen.getByText(/readers, each voting once and giving a reason/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/personas in the pool that fit the description/i),
+    ).toBeTruthy();
+    // Cost is the footnote about the one small call — never a price tag.
+    expect(screen.queryByText(/\$/)).toBeNull();
   });
 
   it("only spends when a person says so", async () => {
@@ -86,7 +104,9 @@ describe("the panel gate", () => {
     const onAccept = vi.fn();
     render(<PanelGate preview={preview} onAccept={onAccept} onBack={onBack} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /change/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /adjust the audience/i }),
+    );
 
     expect(onBack).toHaveBeenCalled();
     expect(onAccept).not.toHaveBeenCalled();
@@ -109,7 +129,7 @@ describe("the panel gate", () => {
   });
 });
 
-// 094/#200: the sentence each panelist will be told to be, shown at the gate
+// 094/#200: the sentence each panelist will act to be, shown at the gate
 // where a human can change it. What is approved is exactly what runs.
 describe("the selected reading at the gate", () => {
   it("shows the controls as fact rows, exactly as set", () => {
@@ -179,7 +199,7 @@ describe("the instruction at the gate", () => {
     );
 
     const field = screen.getByLabelText(
-      /each panelist will be told/i,
+      /each panelist will act/i,
     ) as HTMLTextAreaElement;
     expect(field.value).toBe("You are a keen long-distance runner.");
   });
@@ -209,7 +229,7 @@ describe("the instruction at the gate", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/each panelist will be told/i), {
+    fireEvent.change(screen.getByLabelText(/each panelist will act/i), {
       target: { value: "You are a parent of young children." },
     });
     fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
@@ -229,7 +249,7 @@ describe("the instruction at the gate", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText(/each panelist will be told/i), {
+    fireEvent.change(screen.getByLabelText(/each panelist will act/i), {
       target: { value: "" },
     });
     fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
@@ -263,9 +283,11 @@ describe("the instruction at the gate", () => {
       />,
     );
 
-    const field = screen.getByLabelText(/each panelist will be told/i);
+    const field = screen.getByLabelText(/each panelist will act/i);
     fireEvent.change(field, { target: { value: "You are someone else." } });
-    fireEvent.click(screen.getByRole("button", { name: /restore the draft/i }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /restore the model.s draft/i }),
+    );
 
     expect((field as HTMLTextAreaElement).value).toBe(
       "You are a keen long-distance runner.",
@@ -284,7 +306,7 @@ describe("the instruction at the gate", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: /restore the draft/i }),
+      screen.queryByRole("button", { name: /restore the model.s draft/i }),
     ).toBeNull();
   });
 
@@ -293,7 +315,7 @@ describe("the instruction at the gate", () => {
     const bare = { ...PREVIEW, instruction: "", refusal_sentence: null } as any;
     render(<PanelGate preview={bare} onAccept={vi.fn()} onBack={vi.fn()} />);
 
-    expect(screen.queryByLabelText(/each panelist will be told/i)).toBeNull();
+    expect(screen.queryByLabelText(/each panelist will act/i)).toBeNull();
   });
 
   it("says why an edit was refused, in our sentence, never the edit", () => {
@@ -348,5 +370,140 @@ describe("the gate while an accept is in flight", () => {
     expect(onAccept).toHaveBeenCalledTimes(1);
 
     await act(async () => settle());
+  });
+});
+
+// 077's settled presentation: the numbers are facts, the tags say how each
+// row narrows the pool, and the one decision on the page sits in its own box.
+describe("the settled gate presentation", () => {
+  const withInstruction = {
+    ...PREVIEW,
+    instruction: "You are a young father.",
+    refusal_sentence: null,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any;
+
+  it("tags each control row Selected, and the audience words Role-played", () => {
+    render(
+      <PanelGate
+        preview={withInstruction}
+        audience="young dads."
+        onAccept={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+
+    // One tag per control row: this query narrows country and age.
+    expect(screen.getAllByText("Selected")).toHaveLength(2);
+    // The words verbatim, quoted, trailing stop dropped — with the reason
+    // they cannot be a filter.
+    expect(screen.getByText(/\u201cyoung dads\u201d/)).toBeTruthy();
+    expect(screen.getByText("Role-played")).toBeTruthy();
+    expect(
+      screen.getByText(/no data to pick them by — acted instead/i),
+    ).toBeTruthy();
+  });
+
+  it("shows no role-played row when no words were given", () => {
+    render(<PanelGate preview={preview} onAccept={vi.fn()} onBack={vi.fn()} />);
+
+    expect(screen.queryByText("Role-played")).toBeNull();
+  });
+
+  it("draws who is seated as stacked strips with direct labels", () => {
+    const seated = {
+      ...preview,
+      composition: {
+        ...PREVIEW.composition,
+        genders: { male: 3, female: 2 },
+        education_levels: { below_secondary: 1, tertiary: 4 },
+      },
+    };
+    render(<PanelGate preview={seated} onAccept={vi.fn()} onBack={vi.fn()} />);
+
+    expect(screen.getByText("male · 60%")).toBeTruthy();
+    expect(screen.getByText("female · 40%")).toBeTruthy();
+    // The report's vocabulary, humanised the same way its rows are.
+    expect(screen.getByText("below secondary · 20%")).toBeTruthy();
+    expect(screen.getByText("tertiary · 80%")).toBeTruthy();
+  });
+
+  it("orders ordered dimensions by class, never by count", () => {
+    const seated = {
+      ...preview,
+      composition: {
+        ...PREVIEW.composition,
+        income_bands: { upper: 4, lower: 1 },
+      },
+    };
+    render(<PanelGate preview={seated} onAccept={vi.fn()} onBack={vi.fn()} />);
+
+    const lower = screen.getByText("lower · 20%");
+    const upper = screen.getByText("upper · 80%");
+    expect(
+      lower.compareDocumentPosition(upper) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("shows no role-played row when the words resolved entirely to controls", () => {
+    // The translator can map words wholly onto demographics; the preview then
+    // carries no instruction, and a row promising "the instruction below"
+    // would point at nothing.
+    render(
+      <PanelGate
+        preview={preview}
+        audience="young dads."
+        onAccept={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Role-played")).toBeNull();
+  });
+
+  it("labels every segment for hover too — a sliver keeps its words", () => {
+    const seated = {
+      ...preview,
+      composition: {
+        ...PREVIEW.composition,
+        genders: { male: 3, female: 2 },
+      },
+    };
+    render(<PanelGate preview={seated} onAccept={vi.fn()} onBack={vi.fn()} />);
+
+    expect(screen.getByText("male · 60%").getAttribute("title")).toBe(
+      "male · 60%",
+    );
+  });
+
+  it("says an edited sentence is checked, only once there is an edit", () => {
+    render(
+      <PanelGate
+        preview={withInstruction}
+        onAccept={vi.fn()}
+        onBack={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/checked before it runs/i)).toBeNull();
+    fireEvent.change(screen.getByLabelText(/each panelist will act/i), {
+      target: { value: "You are a devoted father." },
+    });
+    expect(screen.getByText(/checked before it runs/i)).toBeTruthy();
+  });
+
+  it("boxes the one decision, cost reduced to the footnote", () => {
+    render(<PanelGate preview={preview} onAccept={vi.fn()} onBack={vi.fn()} />);
+
+    expect(
+      screen.getByRole("heading", { name: /approve this reading\?/i }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /looks right — run the panel/i }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: /adjust the audience/i }),
+    ).toBeTruthy();
+    expect(screen.getByText(/one small call/i)).toBeTruthy();
   });
 });

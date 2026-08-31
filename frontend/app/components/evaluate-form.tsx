@@ -337,6 +337,9 @@ export default function EvaluateForm({
       <div className="flex flex-col gap-4">
         <PanelGate
           preview={state.preview}
+          // The words as submitted — while the gate is up the form is away,
+          // so this state still reads exactly what the run was asked with.
+          audience={audience}
           notice={state.notice ?? null}
           // Returned, not voided: the gate re-arms its button when this
           // settles, and a swallowed promise would re-arm it mid-spend.
