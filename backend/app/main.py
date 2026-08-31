@@ -184,7 +184,15 @@ app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
 # thing a caller can ask for, and a stolen session token should get no further
 # against it than against a paid run. Its GET rides along — no reason to open a
 # door for the half that only reads.
-_GUARDED_PATHS = ("/evaluate", "/chat", "/me")
+#
+# /tests is here for both of those reasons at once (117/#252). `DELETE
+# /tests/{id}` is the second irreversible thing, and the reads hand back the
+# customer's own content — their headline text, and the phrases their audience
+# reading was quoted from. It matters more here than on a paid path: with
+# `supabase_project_url` unset, a state deploy.md documents as supported,
+# `caller_id` falls back to a caller-written header, so without this guard the
+# owner of a stored report would be whatever a request claimed it was.
+_GUARDED_PATHS = ("/evaluate", "/chat", "/me", "/tests")
 
 
 def _is_guarded(path: str) -> bool:
@@ -853,7 +861,23 @@ async def forget_me(
     # After the provider, not before: a local delete that ran and then failed to
     # erase the account would take the customer's reports while leaving the
     # account that owned them.
-    await delete_reports_of(conn, owner=caller)
+    #
+    # And handled, because by here the account is already gone and the subject
+    # id with it — so no retry of this call, and no `DELETE /tests/{id}`, can
+    # ever reach these rows again. A bare 500 would read as "it did not happen"
+    # over a state where half of it did (117/#252, review).
+    try:
+        await delete_reports_of(conn, owner=caller)
+    except psycopg.Error:
+        logger.exception("account %s was erased but its stored tests were not", caller)
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "the account was erased, but its stored tests could not be "
+                "deleted — they are orphaned rather than reachable, and clearing "
+                "them now needs an operator. Nothing was left signed in."
+            ),
+        ) from None
     return Response(status_code=204)
 
 
@@ -1006,6 +1030,15 @@ async def _kept(
     failure costs is the copy, and that is the cheaper loss by a whole run.
 
     A paused run is not kept: it has bought nothing and has no verdict.
+
+    `caller` is the owner, and what that is worth is what `caller_id` is worth.
+    With a verifier configured it is a signature-checked subject; unconfigured,
+    it is the pre-auth identity, which is only trustworthy because the edge
+    secret proved the request came from our proxy — which is why `/tests` is in
+    `_GUARDED_PATHS`. In that unconfigured state the identity is address-derived,
+    so two visitors behind one address share a rail. Acceptable where it applies
+    (local development and the documented interim deploy) and not in production,
+    where signing in is required to run at all.
 
     `status` is excluded because it belongs to the HTTP answer rather than to
     the record — a row carrying it would be a stored response, not a stored

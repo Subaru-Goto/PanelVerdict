@@ -2831,3 +2831,57 @@ def test_deleting_an_account_deletes_the_reports_it_owns(signed_in, conn) -> Non
 
     assert signed_in.get("/tests", headers=_as("person-1")).json() == []
     assert len(signed_in.get("/tests", headers=_as("person-2")).json()) == 1
+
+
+def test_the_stored_tests_sit_behind_the_same_door_as_everything_else(
+    client, conn, monkeypatch
+) -> None:
+    """`DELETE /tests/{id}` is the second irreversible thing a caller can ask
+    for, and `/me`'s own guard comment gives the rule: "a stolen session token
+    should get no further against it than against a paid run" (117/#252).
+
+    It matters more than for a paid path. When `supabase_project_url` is unset —
+    a state `deploy.md` documents as supported — `caller_id` falls back to a
+    caller-written header, so without the edge guard the owner of a stored
+    report is whatever a request says it is.
+    """
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+
+    for method, path in (
+        ("get", "/tests"),
+        ("get", "/tests/anything"),
+        ("delete", "/tests/anything"),
+    ):
+        refused = getattr(client, method)(path)
+
+        assert refused.status_code == 401, f"{method.upper()} {path} was not guarded"
+
+
+def test_a_deletion_that_cannot_clear_the_reports_says_so(
+    signed_in, conn, monkeypatch
+) -> None:
+    """The account is erased by the provider first, so a failure clearing the
+    reports afterwards cannot be undone — and the subject id is gone with the
+    account, so no retry of `DELETE /me` and no `DELETE /tests/{id}` will ever
+    reach those rows again (117/#252, review).
+
+    A bare 500 would read as "it did not happen" over a state where the account
+    is gone and its content is not. The answer names both halves.
+    """
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-1"))
+    deleter = RecordingDeleter()
+    app.dependency_overrides[get_account_deleter] = lambda: deleter
+
+    async def refuse(*args, **kwargs):
+        raise psycopg.OperationalError("the pooler said no")
+
+    monkeypatch.setattr(main, "delete_reports_of", refuse)
+
+    response = signed_in.delete("/me", headers=_as("person-1"))
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    # Both facts, because either alone is misleading.
+    assert "account" in detail and "test" in detail
+    assert deleter.deleted == ["person-1"], "the account should already be gone"
