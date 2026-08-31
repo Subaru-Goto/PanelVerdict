@@ -24,6 +24,14 @@ vi.mock("../app/lib/api", () => ({
   LOCALES: ["US", "JP", "DE"],
   MIN_PANEL_AGE: 18,
   MAX_PANEL_AGE: 100,
+  // The rail's reads (117/#252). Stubbed rather than left out because the form
+  // renders the rail, and an undefined export throws at import rather than
+  // where it is used. `myTests` resolving empty is the state these tests are
+  // about: this file is the form's, and the rail has its own.
+  myTests: () => Promise.resolve([]),
+  myTest: () => Promise.resolve(RESPONSE),
+  forgetTest: () => Promise.resolve(),
+  onRunsChanged: () => () => {},
 }));
 
 const RESPONSE = makeResponse();

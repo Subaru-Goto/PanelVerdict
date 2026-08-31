@@ -49,7 +49,17 @@ export async function backendTracing({
 }
 
 export async function proxyToBackend(
-  path: "/evaluate" | "/evaluate/resume" | "/chat" | "/me",
+  // A closed set, plus the one path with a caller-supplied segment. The
+  // template literal keeps `/tests/<id>` inside the type while still requiring
+  // every other path to be spelled here — a bare `string` would let any caller
+  // text become a backend path (117/#252).
+  path:
+    | "/evaluate"
+    | "/evaluate/resume"
+    | "/chat"
+    | "/me"
+    | "/tests"
+    | `/tests/${string}`,
   method: "GET" | "POST" | "DELETE",
   request: Request,
 ): Promise<Response> {

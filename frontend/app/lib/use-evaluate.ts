@@ -99,5 +99,15 @@ export function useEvaluate() {
     setState({ phase: "idle" });
   }
 
-  return { state, submit, answerGate, reset };
+  /** Render a report this hook did not run: one reopened from the rail
+   *  (117/#252), or recovered after a crash lost the one on screen.
+   *
+   *  It lands in the same `done` phase a fresh run lands in, on purpose — a
+   *  stored report is the report, so a second render path for it would be a
+   *  second place for the report to be drawn wrongly. */
+  function show(result: EvaluateResponse): void {
+    setState({ phase: "done", result });
+  }
+
+  return { state, submit, answerGate, reset, show };
 }

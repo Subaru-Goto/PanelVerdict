@@ -11,12 +11,12 @@ import {
   type Locale,
 } from "../lib/api";
 import { AI_SYSTEM_DISCLOSURE } from "../lib/disclosure";
+import PastTests from "./past-tests";
 import { useEvaluate } from "../lib/use-evaluate";
 import PanelGate from "./panel-gate";
 import Report from "./report";
 
-const INPUT_CLASS =
-  "rounded border border-line px-3 py-2";
+const INPUT_CLASS = "rounded border border-line px-3 py-2";
 
 function Field({
   label,
@@ -139,7 +139,7 @@ export default function EvaluateForm({
   const [audience, setAudience] = useState("");
   const [headlineA, setHeadlineA] = useState("");
   const [headlineB, setHeadlineB] = useState("");
-  const { state, submit, answerGate, reset } = useEvaluate();
+  const { state, submit, answerGate, reset, show } = useEvaluate();
 
   function onSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -186,6 +186,7 @@ export default function EvaluateForm({
           Test again
         </button>
         <Report result={state.result} />
+        <PastTests onOpen={show} />
       </div>
     );
   }
@@ -221,7 +222,9 @@ export default function EvaluateForm({
             {LOCALES.map((code) => (
               <Choice
                 key={code}
-                label={{ US: "United States", JP: "Japan", DE: "Germany" }[code]}
+                label={
+                  { US: "United States", JP: "Japan", DE: "Germany" }[code]
+                }
                 value={code}
                 chosen={countries}
                 onChange={setCountries}
@@ -266,18 +269,58 @@ export default function EvaluateForm({
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-ink-2">Education</span>
-            <Choice label="below secondary" value="below_secondary" chosen={education} onChange={setEducation} />
-            <Choice label="secondary" value="secondary" chosen={education} onChange={setEducation} />
-            <Choice label="tertiary" value="tertiary" chosen={education} onChange={setEducation} />
+            <Choice
+              label="below secondary"
+              value="below_secondary"
+              chosen={education}
+              onChange={setEducation}
+            />
+            <Choice
+              label="secondary"
+              value="secondary"
+              chosen={education}
+              onChange={setEducation}
+            />
+            <Choice
+              label="tertiary"
+              value="tertiary"
+              chosen={education}
+              onChange={setEducation}
+            />
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {/* Quintiles, lowest to highest — the pool's own income shape. */}
             <span className="text-ink-2">Income</span>
-            <Choice label="Q1 (lowest)" value={1} chosen={incomeQuintiles} onChange={setIncomeQuintiles} />
-            <Choice label="Q2" value={2} chosen={incomeQuintiles} onChange={setIncomeQuintiles} />
-            <Choice label="Q3" value={3} chosen={incomeQuintiles} onChange={setIncomeQuintiles} />
-            <Choice label="Q4" value={4} chosen={incomeQuintiles} onChange={setIncomeQuintiles} />
-            <Choice label="Q5 (highest)" value={5} chosen={incomeQuintiles} onChange={setIncomeQuintiles} />
+            <Choice
+              label="Q1 (lowest)"
+              value={1}
+              chosen={incomeQuintiles}
+              onChange={setIncomeQuintiles}
+            />
+            <Choice
+              label="Q2"
+              value={2}
+              chosen={incomeQuintiles}
+              onChange={setIncomeQuintiles}
+            />
+            <Choice
+              label="Q3"
+              value={3}
+              chosen={incomeQuintiles}
+              onChange={setIncomeQuintiles}
+            />
+            <Choice
+              label="Q4"
+              value={4}
+              chosen={incomeQuintiles}
+              onChange={setIncomeQuintiles}
+            />
+            <Choice
+              label="Q5 (highest)"
+              value={5}
+              chosen={incomeQuintiles}
+              onChange={setIncomeQuintiles}
+            />
           </div>
         </fieldset>
         <Field
@@ -331,6 +374,11 @@ export default function EvaluateForm({
       {state.phase === "error" && (
         <p className="text-red">Error: {state.message}</p>
       )}
+
+      {/* On the form and on the report, and deliberately not at the gate: the
+          gate is a decision about spending money, and a list of other tests
+          beside it is an invitation to leave it half-answered. */}
+      <PastTests onOpen={show} />
     </div>
   );
 }
