@@ -38,7 +38,6 @@ from app.persistence import nearest_panelists, persist_pool
 from app.schemas import (
     MAX_AUDIENCE_CHARS,
     EvaluateRequest,
-    EvaluateResponse,
 )
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
@@ -58,6 +57,7 @@ from tests.factories import (
     make_assembled,
     make_panel_vote,
     make_persona,
+    make_report,
     ndjson_events,
     pointing,
     seed_japanese,
@@ -90,6 +90,19 @@ def _evaluate(client, *, audience: str = "", **overrides):
         json=_REQUEST_BODY
         | {"reading_accepted": False, "audience": audience}
         | overrides,
+    )
+
+
+def _resume(client, thread_id: str, headers: dict[str, str] | None = None, **body):
+    """Answer the gate — `accept` unless the body says otherwise. One place to
+    absorb a new `ResumeRequest` field, instead of the twelve sites the dance
+    was written out at (114/#245). Tests about the wire body itself still
+    spell it literally.
+    """
+    return client.post(
+        "/evaluate/resume",
+        json={"thread_id": thread_id, "action": "accept"} | body,
+        headers=headers,
     )
 
 
@@ -278,7 +291,7 @@ def test_chat_without_the_secret_is_refused_before_the_stream_opens(
     response = client.post(
         "/chat",
         json={
-            "result": _CHAT_RESULT,
+            "result": make_report(),
             "thread_id": "t-gate",
             "message": "why?",
         },
@@ -343,7 +356,7 @@ def test_a_thread_over_its_turn_limit_is_refused_before_the_stream(
     def turn(thread_id: str):
         return client.post(
             "/chat",
-            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "why?"},
+            json={"result": make_report(), "thread_id": thread_id, "message": "why?"},
             headers=headers,
         )
 
@@ -403,7 +416,7 @@ def test_rotating_thread_ids_does_not_escape_the_chat_limit(
     def turn(thread_id: str):
         return client.post(
             "/chat",
-            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "hi"},
+            json={"result": make_report(), "thread_id": thread_id, "message": "hi"},
             headers={"X-API-Key": "edge-secret", "X-Client-Id": "198.51.100.7"},
         )
 
@@ -479,7 +492,7 @@ def test_a_caller_cap_refusal_does_not_spend_the_threads_budget(
     def turn(thread_id: str):
         return client.post(
             "/chat",
-            json={"result": _CHAT_RESULT, "thread_id": thread_id, "message": "hi"},
+            json={"result": make_report(), "thread_id": thread_id, "message": "hi"},
             headers=headers,
         )
 
@@ -535,7 +548,7 @@ def test_chat_turns_draw_from_the_same_days_pool(client, conn, monkeypatch) -> N
     spends_the_day = client.post("/evaluate", json=_REQUEST_BODY, headers=headers)
     turn = client.post(
         "/chat",
-        json={"result": _CHAT_RESULT, "thread_id": "t-pool", "message": "why?"},
+        json={"result": make_report(), "thread_id": "t-pool", "message": "why?"},
         headers=headers,
     )
 
@@ -929,71 +942,46 @@ def test_the_preflight_warning_reaches_the_response(client, conn, monkeypatch) -
     assert any("credit" in m and "re-run" in m for m in messages)
 
 
-_CHAT_RESULT = {
-    "verdict": {
-        "share_preferring_b": 0.288,
-        "probability_majority_prefers_b": 0.001,
-        "credible_interval": [0.173, 0.418],
-        "credible_mass": 0.95,
-        "rope": [0.43, 0.57],
-        "probability_meaningfully_preferred": {"a": 0.984, "b": 0.0},
-        "probability_practical_tie": 0.016,
-        "detectable_gap": 0.167,
-        "expected_preference_shortfall": {"shipping_a": 0.004, "shipping_b": 0.212},
-    },
-    "tally": {"counts": {"a": 36, "b": 14}, "total": 50},
-    "counts": {"requested": 200, "matched": 200, "voted": 50},
-    "query": {
-        "countries": ["US"],
-        "coverage": "requested",
-        "min_age": 18,
-        "max_age": 100,
-        "gender": None,
-        "income_quintiles": [],
-        "education": [],
-        "traits": [],
-        "notices": [],
-    },
-    "notices": [],
-    "stop_reason": "decisive",
-    "variants": {"a": "Save 50% today", "b": "Members save half"},
-    "votes": [],
-}
-
-
-def test_the_chat_fixture_is_still_a_body_a_run_could_emit() -> None:
-    """`_CHAT_RESULT` is the one hand-written transcription of `EvaluateResponse`
-    left on this side of the wire (048/#146), and every `/chat` test posts it.
-
-    Re-validating and re-dumping catches an added or removed field at *any*
-    depth: a new field with a default appears in the dump and not in the
-    literal, a deleted one the other way round. Neither is visible to the
-    literal's own validation — pydantic fills the default and ignores the stale
-    key — so the suite would stay green while every `/chat` test ran against a
-    payload no run emits. Needs no container: this is a claim about two shapes,
-    not about a run.
-    """
-    assert (
-        EvaluateResponse.model_validate(_CHAT_RESULT).model_dump(mode="json")
-        == _CHAT_RESULT
-    ), "_CHAT_RESULT no longer matches EvaluateResponse"
-
-
 def test_chat_streams_the_analysts_reply_as_ndjson(client) -> None:
     response = client.post(
         "/chat",
         json={
             "thread_id": "t-main-1",
             "message": "Why did it stop early?",
-            "result": _CHAT_RESULT,
+            "result": make_report(),
         },
     )
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/x-ndjson")
-    events = ndjson_events(response.text.splitlines())
+    events = ndjson_events(response.text)
     tokens = [e["text"] for e in events if e["type"] == "token"]
     assert "".join(tokens) == "The interval cleared the band."
+    assert events[-1] == {"type": "done"}
+
+
+def test_a_reply_containing_unicode_line_breaks_survives_the_wire(client) -> None:
+    """`model_dump_json()` emits U+2028, U+2029 and U+0085 raw, and
+    `str.splitlines()` breaks on all three — so reading the transcript with
+    `splitlines()` cuts a JSON string in half mid-event and the decode dies
+    with `Unterminated string` (114/#245). Latent in every stream test only
+    because the scripted analyst answers in ASCII; the persona reasons that
+    reach real streams are not.
+    """
+    reply = "One thought\u2028then another\u2029and\u0085a third."
+    app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
+        responses=[AIMessage(content=reply)]
+    )
+
+    response = client.post(
+        "/chat",
+        json={"thread_id": "t-main-u2028", "message": "why?", "result": make_report()},
+    )
+
+    assert response.status_code == 200
+    events = ndjson_events(response.text)
+    tokens = [event["text"] for event in events if event["type"] == "token"]
+    assert "".join(tokens) == reply
     assert events[-1] == {"type": "done"}
 
 
@@ -1119,10 +1107,7 @@ def test_a_resume_works_against_the_checkpointer_the_deploy_actually_uses(
     with TestClient(app) as live:
         assert isinstance(app.state.checkpointer, AsyncPostgresSaver)
         paused = live.post("/evaluate", json=_UNAPPROVED_BODY).json()
-        body = live.post(
-            "/evaluate/resume",
-            json={"thread_id": paused["thread_id"], "action": "accept"},
-        ).json()
+        body = _resume(live, paused["thread_id"]).json()
 
     assert body["status"] == "complete"
     assert body["counts"]["voted"] == 5
@@ -1146,22 +1131,19 @@ def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None
             AIMessage(content="One panelist stands out."),
         ]
     )
-    votes = [
-        make_panel_vote("US-00000").model_dump(mode="json"),
-        make_panel_vote("US-00001").model_dump(mode="json"),
-    ]
+    votes = [make_panel_vote("US-00000"), make_panel_vote("US-00001")]
 
     response = client.post(
         "/chat",
         json={
             "thread_id": "t-main-5",
             "message": "Who here is thrifty?",
-            "result": {**_CHAT_RESULT, "votes": votes},
+            "result": make_report(votes=votes),
         },
     )
 
     assert response.status_code == 200
-    events = ndjson_events(response.text.splitlines())
+    events = ndjson_events(response.text)
     assert {"type": "tool", "name": "search_personas"} in events
     tokens = [e["text"] for e in events if e["type"] == "token"]
     assert "".join(tokens) == "One panelist stands out."
@@ -1170,7 +1152,7 @@ def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None
 
 def test_chat_refuses_a_tally_naming_other_variants(client) -> None:
     """422 before any model call: the guard runs ahead of the paid agent."""
-    broken = {**_CHAT_RESULT, "tally": {"counts": {"x": 50}, "total": 50}}
+    broken = make_report(tally={"counts": {"x": 50}, "total": 50})
 
     response = client.post(
         "/chat",
@@ -1183,11 +1165,11 @@ def test_chat_refuses_a_tally_naming_other_variants(client) -> None:
 def test_chat_requires_a_message_and_a_thread(client) -> None:
     empty_message = client.post(
         "/chat",
-        json={"thread_id": "t-main-3", "message": "", "result": _CHAT_RESULT},
+        json={"thread_id": "t-main-3", "message": "", "result": make_report()},
     )
     empty_thread = client.post(
         "/chat",
-        json={"thread_id": "", "message": "hi", "result": _CHAT_RESULT},
+        json={"thread_id": "", "message": "hi", "result": make_report()},
     )
 
     assert empty_message.status_code == 422
@@ -1218,11 +1200,11 @@ def test_chat_exhausted_credit_is_an_in_band_error_event(client) -> None:
 
     response = client.post(
         "/chat",
-        json={"thread_id": "t-main-4", "message": "hi", "result": _CHAT_RESULT},
+        json={"thread_id": "t-main-4", "message": "hi", "result": make_report()},
     )
 
     assert response.status_code == 200
-    events = ndjson_events(response.text.splitlines())
+    events = ndjson_events(response.text)
     assert events[-1] == {
         "type": "error",
         "message": "OpenRouter credit exhausted (402)",
@@ -1436,7 +1418,7 @@ def test_chat_refuses_an_unsigned_request_before_the_stream(signed_in) -> None:
     refusal must land before there is a stream that cannot carry one."""
     response = signed_in.post(
         "/chat",
-        json={"result": _CHAT_RESULT, "thread_id": "t-signed-out", "message": "why?"},
+        json={"result": make_report(), "thread_id": "t-signed-out", "message": "why?"},
     )
 
     assert response.status_code == 401
@@ -1619,10 +1601,7 @@ def test_accepting_over_the_wire_returns_the_verdict(client, conn) -> None:
     seed_japanese(conn, 5)
     paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
 
-    body = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    ).json()
+    body = _resume(client, paused["thread_id"]).json()
 
     assert body["status"] == "complete"
     assert body["counts"]["voted"] == 5
@@ -1649,9 +1628,7 @@ def test_adjusting_over_the_wire_stops_again_at_the_new_reading(client, conn) ->
 def test_resuming_a_run_nobody_started_is_not_a_way_to_start_one(client) -> None:
     """Otherwise the resume endpoint would be an unmetered `/evaluate`: it
     charges nothing, because the start already did."""
-    response = client.post(
-        "/evaluate/resume", json={"thread_id": "never-existed", "action": "accept"}
-    )
+    response = _resume(client, "never-existed")
 
     assert response.status_code == 404
 
@@ -1664,10 +1641,7 @@ def test_the_gate_does_not_charge_the_run_twice(client, conn, monkeypatch) -> No
     seed_japanese(conn, 5)
     paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
 
-    accepted = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    )
+    accepted = _resume(client, paused["thread_id"])
 
     assert accepted.status_code == 200
     assert accepted.json()["status"] == "complete"
@@ -1711,10 +1685,7 @@ def test_a_pause_cannot_be_redeemed_after_its_charge_has_expired(
         lambda: datetime.now(UTC) + timedelta(hours=LEDGER_HOURS, minutes=1),
     )
 
-    response = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    )
+    response = _resume(client, paused["thread_id"])
 
     assert response.status_code == 410
 
@@ -1726,10 +1697,7 @@ def test_a_pause_inside_the_window_is_still_good(client, conn, monkeypatch) -> N
         main, "_now", lambda: datetime.now(UTC) + timedelta(hours=LEDGER_HOURS - 1)
     )
 
-    response = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    )
+    response = _resume(client, paused["thread_id"])
 
     assert response.status_code == 200
 
@@ -1746,11 +1714,7 @@ def test_a_paused_run_belongs_to_the_person_who_started_it(signed_in, conn) -> N
         "/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner")
     ).json()
 
-    response = signed_in.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-        headers=_as("somebody-else"),
-    )
+    response = _resume(signed_in, paused["thread_id"], headers=_as("somebody-else"))
 
     assert response.status_code == 404
 
@@ -1782,13 +1746,46 @@ def test_the_owner_can_still_answer_their_own_gate(signed_in, conn) -> None:
         "/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner")
     ).json()
 
-    response = signed_in.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-        headers=_as("owner"),
-    )
+    response = _resume(signed_in, paused["thread_id"], headers=_as("owner"))
 
     assert response.status_code == 200
+
+
+def test_one_subject_is_the_key_at_every_step_of_the_journey(
+    signed_in, conn, monkeypatch
+) -> None:
+    """Auth is covered per endpoint above; nobody crossed all three as one
+    signed-in caller (114/#245). What the crossing adds: the subject that
+    paused the run is the subject the resume checks, and the *report that run
+    produced* is then chatted about on that same subject's meter — not the
+    thread's, not the anonymous fallback's, not anyone else's.
+    """
+    seed_japanese(conn, 5)
+    monkeypatch.setattr(settings, "chat_turns_per_caller_per_day", 1)
+
+    paused = signed_in.post(
+        "/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner")
+    ).json()
+    report = _resume(signed_in, paused["thread_id"], headers=_as("owner")).json()
+    assert report["status"] == "complete"
+
+    def turn(thread_id: str, subject: str):
+        return signed_in.post(
+            "/chat",
+            json={"thread_id": thread_id, "message": "why?", "result": report},
+            headers=_as(subject),
+        )
+
+    first = turn("t-journey-1", "owner")
+    spent = turn("t-journey-2", "owner")
+    other = turn("t-journey-3", "somebody-else")
+
+    assert first.status_code == 200
+    assert ndjson_events(first.text)[-1] == {"type": "done"}
+    # The owner's one turn is spent — so the turn was metered on the verified
+    # subject — and only the owner's: a different subject still gets theirs.
+    assert spent.status_code == 429
+    assert other.status_code == 200
 
 
 def test_resuming_needs_the_edge_secret_like_every_other_paid_path(
@@ -1797,9 +1794,7 @@ def test_resuming_needs_the_edge_secret_like_every_other_paid_path(
     """The accept is what buys the votes, so it sits behind the same door."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
 
-    response = client.post(
-        "/evaluate/resume", json={"thread_id": "anything", "action": "accept"}
-    )
+    response = _resume(client, "anything")
 
     assert response.status_code == 401
 
@@ -1823,17 +1818,11 @@ def test_only_a_run_waiting_at_the_gate_can_be_resumed(
 
     monkeypatch.setattr(graph_module, "run_vote_loop", die)
     with pytest.raises(RuntimeError):
-        client.post(
-            "/evaluate/resume",
-            json={"thread_id": paused["thread_id"], "action": "accept"},
-        )
+        _resume(client, paused["thread_id"])
 
     # The patch can stay: a run that is not at the gate is refused before the
     # graph is invoked at all.
-    again = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    )
+    again = _resume(client, paused["thread_id"])
 
     assert again.status_code == 404
 
@@ -1853,10 +1842,7 @@ def test_two_accepts_at_once_buy_one_panel(client, conn, pg_url) -> None:
     app.dependency_overrides[get_conn] = own_connection
 
     def accept():
-        return client.post(
-            "/evaluate/resume",
-            json={"thread_id": paused["thread_id"], "action": "accept"},
-        ).status_code
+        return _resume(client, paused["thread_id"]).status_code
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         codes = list(pool.map(lambda _: accept(), range(4)))
@@ -1930,10 +1916,7 @@ def test_an_adjust_does_not_buy_the_pause_more_time(client, conn, monkeypatch) -
         "_now",
         lambda: datetime.now(UTC) + timedelta(hours=LEDGER_HOURS, minutes=1),
     )
-    response = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    )
+    response = _resume(client, paused["thread_id"])
 
     assert response.status_code == 410
 
@@ -1964,12 +1947,7 @@ def test_the_daily_allowance_counts_panels_bought_not_previews(
     for _ in range(3):
         started = client.post("/evaluate", json=_UNAPPROVED_BODY)
         assert started.status_code == 200
-        accepted.append(
-            client.post(
-                "/evaluate/resume",
-                json={"thread_id": started.json()["thread_id"], "action": "accept"},
-            )
-        )
+        accepted.append(_resume(client, started.json()["thread_id"]))
 
     assert [r.status_code for r in accepted] == [200, 200, 429]
 
@@ -1990,9 +1968,7 @@ def test_adjusting_the_reading_buys_nothing(client, conn, monkeypatch) -> None:
         )
         assert adjusted.status_code == 200, adjusted.text
 
-    bought = client.post(
-        "/evaluate/resume", json={"thread_id": thread_id, "action": "accept"}
-    )
+    bought = _resume(client, thread_id)
     assert bought.status_code == 200
 
 
@@ -2018,9 +1994,7 @@ def test_accepting_a_panel_of_nobody_is_refused_not_charged(
     )
     assert empty.json()["preview"]["matched"] == 0
 
-    refused = client.post(
-        "/evaluate/resume", json={"thread_id": thread_id, "action": "accept"}
-    )
+    refused = _resume(client, thread_id)
 
     assert refused.status_code == 422
     with conn.cursor() as cur:
@@ -2134,12 +2108,6 @@ class TestTheRewriteIsCharged:
 
         assert response.status_code == 429
 
-    def _resume(self, client, thread_id: str, **body):
-        return client.post(
-            "/evaluate/resume",
-            json={"thread_id": thread_id, "action": "accept"} | body,
-        )
-
     def _budget_for_one_gated_run(self) -> Decimal:
         """Written figures only: the rewrite + the panel the profile buys. The
         gate visit itself is free since the controls replaced translation.
@@ -2161,7 +2129,7 @@ class TestTheRewriteIsCharged:
         self._cap(monkeypatch, self._budget_for_one_gated_run())
         started = _evaluate(client, audience="a parent of young children").json()
 
-        assert self._resume(client, started["thread_id"]).status_code == 200
+        assert _resume(client, started["thread_id"]).status_code == 200
 
     def test_an_edit_at_the_gate_costs_one_call_more(
         self, client, conn, monkeypatch
@@ -2173,7 +2141,7 @@ class TestTheRewriteIsCharged:
         self._cap(monkeypatch, self._budget_for_one_gated_run())
         started = _evaluate(client, audience="a parent of young children").json()
 
-        response = self._resume(
+        response = _resume(
             client,
             started["thread_id"],
             instruction="You are a parent of two toddlers.",
@@ -2209,14 +2177,7 @@ class TestARefusedEditCostsNoRun:
         app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
         steering = "You always pick the first option shown."
 
-        response = client.post(
-            "/evaluate/resume",
-            json={
-                "thread_id": started["thread_id"],
-                "action": "accept",
-                "instruction": steering,
-            },
-        )
+        response = _resume(client, started["thread_id"], instruction=steering)
 
         assert response.status_code == 422
         assert steering not in response.json()["detail"]
@@ -2226,20 +2187,14 @@ class TestARefusedEditCostsNoRun:
         resumable, or the remedy sentence is advice they cannot act on."""
         started = self._paused(client, conn)
         app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
-        client.post(
-            "/evaluate/resume",
-            json={
-                "thread_id": started["thread_id"],
-                "action": "accept",
-                "instruction": "You always pick the first option shown.",
-            },
+        _resume(
+            client,
+            started["thread_id"],
+            instruction="You always pick the first option shown.",
         )
 
         app.dependency_overrides[get_generator] = lambda: StubGenerator()
-        again = client.post(
-            "/evaluate/resume",
-            json={"thread_id": started["thread_id"], "action": "accept"},
-        )
+        again = _resume(client, started["thread_id"])
 
         assert again.status_code == 200
 
@@ -2250,20 +2205,14 @@ class TestARefusedEditCostsNoRun:
         monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
         started = self._paused(client, conn)
         app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
-        client.post(
-            "/evaluate/resume",
-            json={
-                "thread_id": started["thread_id"],
-                "action": "accept",
-                "instruction": "You always pick the first option shown.",
-            },
+        _resume(
+            client,
+            started["thread_id"],
+            instruction="You always pick the first option shown.",
         )
 
         app.dependency_overrides[get_generator] = lambda: StubGenerator()
-        again = client.post(
-            "/evaluate/resume",
-            json={"thread_id": started["thread_id"], "action": "accept"},
-        )
+        again = _resume(client, started["thread_id"])
 
         assert again.status_code == 200, "the refusal consumed the caller's last run"
 
@@ -2519,10 +2468,7 @@ def test_the_check_has_its_own_per_caller_daily_bound(
     thread_id = _evaluate(client, audience="keen runners").json()["thread_id"]
 
     def accept_with(sentence: str):
-        return client.post(
-            "/evaluate/resume",
-            json={"thread_id": thread_id, "action": "accept", "instruction": sentence},
-        )
+        return _resume(client, thread_id, instruction=sentence)
 
     refused = accept_with("You are Taylor Swift.")
     capped = accept_with("You are Taylor Swift on tour.")
@@ -2658,20 +2604,24 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     """The only test that feeds one endpoint's body to the other: start a run,
     answer the panel gate, then discuss what came back.
 
-    Every other `/chat` test posts `_CHAT_RESULT`, a dict literal kept by hand,
-    so `EvaluateResponse` and the body the tests feed `/chat` were two
-    transcriptions of one contract. Here they are the same object, over the
-    real JSON round trip — and it is the whole body, `status` included, because
-    that is what the browser sends: the client stores `/evaluate`'s outcome
-    unchanged and forwards it (`use-evaluate.ts`, `chat.ts`). `EvaluateResponse`
-    tolerating that extra key is therefore load-bearing, not incidental.
+    Every other `/chat` test posts `make_report()`, which agrees with
+    `EvaluateResponse` by construction — so it can only ever prove `/chat`
+    accepts what the *model* permits. This is the one test where the body comes
+    from the pipeline: what a run actually assembled, over the real JSON round
+    trip. A factory cannot catch the two endpoints disagreeing, because it
+    stands outside both.
+
+    And it is the whole body, `status` included, because that is what the
+    browser sends: the client stores `/evaluate`'s outcome unchanged and
+    forwards it (`use-evaluate.ts`, `chat.ts`). `EvaluateResponse` tolerating
+    that extra key is therefore load-bearing, not incidental.
 
     The gate is part of the path, not scenery: a first run always stops there
     (076/#166), so a body nobody has approved is a body no reader ever sees.
     """
     # Fewer panelists than the profile seats, so the report carries a shortfall
-    # notice: `_CHAT_RESULT` hardcodes `notices: []`, so this is the only body
-    # reaching `/chat` with a `Notice` in it.
+    # notice the run wrote itself — the factory writes its own, which proves
+    # nothing about what the pipeline puts there.
     seed_japanese(conn, 5)
     # The analyst reads the report through its tools, and `votes[].voter` is the
     # one part it cannot recompute — so one tool call, or the real demographics
@@ -2687,10 +2637,7 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     assert started.status_code == 200
     assert started.json()["status"] == "paused"
 
-    resumed = client.post(
-        "/evaluate/resume",
-        json={"thread_id": started.json()["thread_id"], "action": "accept"},
-    )
+    resumed = _resume(client, started.json()["thread_id"])
     # Checked, not indexed: every refusal answers `{"detail": ...}`, so reading
     # a key off one reports a KeyError instead of what the endpoint said.
     assert resumed.status_code == 200
@@ -2709,7 +2656,7 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     )
 
     assert response.status_code == 200
-    events = ndjson_events(response.text.splitlines())
+    events = ndjson_events(response.text)
     assert {"type": "tool", "name": "search_personas"} in events
     assert any(event["type"] == "token" for event in events)
     # `/chat` commits its 200 at the first byte, so a turn that dies mid-stream

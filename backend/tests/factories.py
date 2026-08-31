@@ -2,8 +2,9 @@
 
 import json
 import re
+from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
-from typing import Literal
+from typing import Literal, get_args
 
 import psycopg
 from langchain_core.language_models import BaseChatModel
@@ -12,20 +13,33 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.tools import BaseTool
 
 from app.assembly import AssembledPersona
+from app.config import settings
 from app.persistence import persist_pool
 from app.schemas import (
+    INCOME_BAND_QUINTILES,
+    MAX_PERSONA_AGE,
+    MIN_PERSONA_AGE,
     BigFive,
     EducationLevel,
+    EvaluateResponse,
     Gender,
     IncomeBand,
     Locale,
+    Notice,
+    PanelCounts,
     PanelVote,
     PanelVoteOutput,
     Persona,
     RequestedRegion,
+    TargetQuery,
     TargetRequest,
+    TraitLevel,
+    TraitName,
+    TraitRequest,
     VoterSummary,
+    VoteTally,
 )
+from app.verdict import panel_verdict
 from app.vote import VoteResponse
 from app.roleplay import RolePlayOutcome, checked_instruction
 
@@ -63,10 +77,17 @@ def make_panel_vote(
     gender: Gender = "female",
     education: EducationLevel = EducationLevel.TERTIARY,
     income_band: IncomeBand = "middle",
+    traits: dict[TraitName, TraitLevel] | None = None,
 ) -> PanelVote:
     """One panelist's vote, with both halves overridable: the demographics for
     tests about who the panel was, the choice and reason for tests about what
-    it said. Every default is stub so a test varies only what it is about."""
+    it said. Every default is stub so a test varies only what it is about.
+
+    `traits` defaults to all five at the middle level, because a real voter
+    always carries all five (`panel.py` buckets every sampled score) — an empty
+    dict was a shape no run emits, and the one container `make_report`'s guard
+    could not see into (114/#245).
+    """
     return PanelVote(
         persona_id=persona_id,
         chosen_variant_id=chosen,
@@ -77,9 +98,132 @@ def make_panel_vote(
             gender=gender,
             education=education,
             income_band=income_band,
-            traits={},
+            traits=traits
+            if traits is not None
+            else dict.fromkeys(get_args(TraitName), TraitLevel.MEDIUM),
         ),
     )
+
+
+def make_report(
+    votes: Sequence[PanelVote] | None = None,
+    variants: dict[str, str] | None = None,
+    **overrides,
+) -> dict:
+    """A finished run's body, for the tests that hand `/evaluate`'s answer to
+    `/chat`. Built through the models and the app's own arithmetic, so it can
+    drift in neither shape nor fact — the literal it replaced said `voted: 50`
+    beside `votes: []` (114/#245).
+
+    Everything is derived from the votes: the tally counts them, the verdict is
+    the pipeline's own `panel_verdict` over that tally, and **the query
+    describes the panel these voters are** rather than a fixed target the
+    caller's votes could contradict. A caller passing US voters gets a query
+    naming the US, because a report claiming a Japan-only panel of Americans is
+    a body no run emits — and the analyst is handed both halves together
+    (`analyst.analysis_facts`).
+
+    Every container carries a representative element, since an empty one is
+    exactly what let an element-type change validate unnoticed. `**overrides`
+    replace whole top-level fields *after* the arithmetic, raw — a test that
+    posts a deliberately inconsistent body owns the inconsistency at its own
+    call site.
+    """
+    if votes is None:
+        votes = [
+            make_panel_vote(f"p-{i}", chosen=chosen, country=Locale.JP)
+            for i, chosen in enumerate(("a", "a", "a", "b", "b"), start=1)
+        ]
+    if not votes:
+        raise ValueError(
+            "make_report needs at least one vote: an empty panel is the "
+            "`voted` beside `votes: []` mismatch this factory exists to "
+            "abolish, and it guards no element type. Override the dumped "
+            "field if a test means to post one."
+        )
+    variants = variants or {"a": "Save 50% today", "b": "Limited time: half price"}
+
+    chosen = Counter(vote.chosen_variant_id for vote in votes)
+    unknown = sorted(set(chosen) - set(variants))
+    if unknown:
+        raise ValueError(
+            f"votes chose {unknown}, which no variant offers ({sorted(variants)}) "
+            "— pass `variants=` for the ones this panel was shown."
+        )
+    # Zero-filled over the variants, the way `verdict.tally_votes` fills it: a
+    # variant nobody chose still reports 0.
+    tally = VoteTally(
+        counts={variant_id: chosen[variant_id] for variant_id in variants},
+        total=len(votes),
+    )
+
+    voters = [vote.voter for vote in votes]
+    countries = tuple(sorted({voter.country for voter in voters}))
+    genders = {voter.gender for voter in voters}
+    reading = Notice(
+        severity="reading",
+        message="Matched against panelists in "
+        + ", ".join(country.value for country in countries)
+        + ".",
+    )
+    shortfall = Notice(
+        severity="warning",
+        message=f"Matched {len(votes)} of the {settings.panel.size} requested.",
+    )
+    query = TargetQuery(
+        countries=countries,
+        coverage="requested",
+        # The widest range any persona can hold, so no voter falls outside it.
+        min_age=MIN_PERSONA_AGE,
+        max_age=MAX_PERSONA_AGE,
+        # A filter is only named when the whole panel satisfies it: one gender
+        # across every voter is a gender the target could have asked for, a mix
+        # is not.
+        gender=genders.pop() if len(genders) == 1 else None,
+        income_quintiles=tuple(
+            sorted(
+                {
+                    quintile
+                    for voter in voters
+                    for quintile in INCOME_BAND_QUINTILES[voter.income_band]
+                }
+            )
+        ),
+        education=tuple(sorted({voter.education for voter in voters})),
+        traits=_shared_traits(voters),
+        notices=(reading,),
+    )
+    report = EvaluateResponse(
+        verdict=panel_verdict(preferring_b=chosen["b"], total=tally.total),
+        tally=tally,
+        counts=PanelCounts(
+            requested=settings.panel.size, matched=len(votes), voted=len(votes)
+        ),
+        query=query,
+        notices=(reading, shortfall),
+        stop_reason="decisive",
+        variants=variants,
+        votes=list(votes),
+    )
+    return report.model_dump(mode="json") | dict(overrides)
+
+
+def _shared_traits(voters: Sequence[VoterSummary]) -> tuple[TraitRequest, ...]:
+    """The trait levels the whole panel shares, as the target's own ask.
+
+    A trait request is a filter, so naming one the panel does not satisfy would
+    describe a run that could not have happened. One request rather than five:
+    the tuple exists so an element-type change has an element to fail on.
+    """
+    shared = [
+        TraitRequest(
+            trait=trait, level=level, source_phrase="read from the audience description"
+        )
+        for trait in get_args(TraitName)
+        if len({voter.traits.get(trait) for voter in voters}) == 1
+        and (level := voters[0].traits.get(trait)) is not None
+    ]
+    return tuple(shared[:1])
 
 
 def tool_call_message(
@@ -95,10 +239,18 @@ def tool_call_message(
     )
 
 
-def ndjson_events(lines: Iterable[str]) -> list[dict[str, str]]:
+def ndjson_events(transcript: str | Iterable[str]) -> list[dict[str, str]]:
     """Decode a ChatStreamEvent wire transcript, one JSON object per line —
-    the reading half of the NDJSON contract, shared by every stream test."""
-    return [json.loads(line) for line in lines]
+    the reading half of the NDJSON contract, shared by every stream test.
+
+    Takes the whole transcript (a response body, or the chunks a stream
+    yielded) and does its own splitting, on `"\n"` alone: `str.splitlines()`
+    also breaks on U+2028, U+2029 and U+0085, which `model_dump_json()` emits
+    raw inside strings — so it cuts a JSON string in half mid-event (114/#245).
+    Only the writer's own delimiter is a line break here.
+    """
+    text = transcript if isinstance(transcript, str) else "".join(transcript)
+    return [json.loads(line) for line in text.split("\n") if line]
 
 
 def voted(
