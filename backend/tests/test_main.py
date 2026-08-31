@@ -2747,3 +2747,87 @@ def test_answering_the_gate_keeps_the_report_that_answer_bought(
     assert resumed.status_code == 200
     rows = _stored(conn)
     assert len(rows) == 1 and rows[0][1] == "owner"
+
+
+def test_a_customer_sees_their_own_tests_newest_first(signed_in, conn) -> None:
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+    second = _REQUEST_BODY | {"headline_a": "Half price", "headline_b": "50% off"}
+    signed_in.post("/evaluate", json=second, headers=_as("owner"))
+
+    listed = signed_in.get("/tests", headers=_as("owner"))
+
+    assert listed.status_code == 200
+    rows = listed.json()
+    assert [row["variants"]["a"] for row in rows] == ["Half price", "Save 50% today"]
+    # The rail draws `"A" vs "B"` and a phrase derived from the verdict, and
+    # searches on the headlines — so it needs those, and never the votes.
+    assert set(rows[0]) == {"test_id", "created_at", "variants", "verdict", "tally"}
+
+
+def test_one_customers_tests_are_invisible_to_another(signed_in, conn) -> None:
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+    stored = signed_in.get("/tests", headers=_as("owner")).json()[0]["test_id"]
+
+    assert signed_in.get("/tests", headers=_as("stranger")).json() == []
+    # 404 rather than 403, and the same 404 a missing test gets: distinguishing
+    # "not yours" from "not here" would answer whether an id exists at all.
+    assert signed_in.get(f"/tests/{stored}", headers=_as("stranger")).status_code == 404
+    assert (
+        signed_in.delete(f"/tests/{stored}", headers=_as("stranger")).status_code == 404
+    )
+    assert signed_in.get(f"/tests/{stored}", headers=_as("owner")).status_code == 200
+
+
+def test_a_stored_test_reopens_as_the_report_it_was(signed_in, conn) -> None:
+    """049/#147: a render crash loses the report the customer just paid for.
+    This is the read that gets it back, so what comes out has to be what the
+    run answered — not a summary of it."""
+    seed_japanese(conn, 5)
+    ran = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner")).json()
+    stored = signed_in.get("/tests", headers=_as("owner")).json()[0]["test_id"]
+
+    reopened = signed_in.get(f"/tests/{stored}", headers=_as("owner"))
+
+    assert reopened.status_code == 200
+    assert reopened.json() == {
+        key: value for key, value in ran.items() if key != "status"
+    }
+
+
+def test_a_customer_can_delete_one_test(signed_in, conn) -> None:
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+    stored = signed_in.get("/tests", headers=_as("owner")).json()[0]["test_id"]
+
+    deleted = signed_in.delete(f"/tests/{stored}", headers=_as("owner"))
+
+    assert deleted.status_code == 204
+    assert signed_in.get("/tests", headers=_as("owner")).json() == []
+    assert _stored(conn) == [], "the row was hidden rather than deleted"
+    # A double-click is not a 500.
+    assert signed_in.delete(f"/tests/{stored}", headers=_as("owner")).status_code == 404
+
+
+def test_the_tests_of_a_signed_out_caller_are_not_readable(signed_in) -> None:
+    assert signed_in.get("/tests").status_code == 401
+    assert signed_in.get("/tests/anything").status_code == 401
+    assert signed_in.delete("/tests/anything").status_code == 401
+
+
+def test_deleting_an_account_deletes_the_reports_it_owns(signed_in, conn) -> None:
+    """`forget_me` deleted nothing locally, and argued that was right because
+    what stayed behind was "not personal data once the account is gone" — an
+    opaque id and a timestamp. A report holds the customer's headline text and
+    the phrases their audience reading quoted, so it is the first table where
+    that reasoning fails (117/#252)."""
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-1"))
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-2"))
+    app.dependency_overrides[get_account_deleter] = lambda: RecordingDeleter()
+
+    assert signed_in.delete("/me", headers=_as("person-1")).status_code == 204
+
+    assert signed_in.get("/tests", headers=_as("person-1")).json() == []
+    assert len(signed_in.get("/tests", headers=_as("person-2")).json()) == 1

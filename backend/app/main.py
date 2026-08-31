@@ -49,7 +49,14 @@ from app.llm import (
     remaining_credit,
 )
 from app.panel import votes_with_voters
-from app.persistence import adeny_data_api, store_report
+from app.persistence import (
+    adeny_data_api,
+    delete_report,
+    delete_reports_of,
+    list_reports,
+    load_report,
+    store_report,
+)
 from app.pipeline import EmptyPanel, NoVotes
 from app.roleplay import RolePlayGenerator, RolePlayRefused
 from app.schemas import (
@@ -59,8 +66,10 @@ from app.schemas import (
     Locale,
     Notice,
     PanelEdit,
+    PanelVerdict,
     ResumeRequest,
     TargetQuery,
+    VoteTally,
 )
 from app.screening import OpenRouterScreener, Screener, UnsafeInput
 from app.tracing import configure_tracing
@@ -791,14 +800,24 @@ async def me(
 
 @app.delete("/me", status_code=204)
 async def forget_me(
+    conn: psycopg.AsyncConnection = Depends(get_conn),
     caller: str = Depends(caller_id),
     deleter: AccountDeleter | None = Depends(get_account_deleter),
 ) -> Response:
     """Erase the account, on request (063/#158).
 
-    Cheap, because the subject-id rule means there is nowhere else to look: the
-    address lives in the provider's `auth.users` table and this call removes
-    it. What stays behind is `request_ledger` rows holding an opaque id and a
+    Mostly cheap, because the subject-id rule means there is little else to look
+    at: the address lives in the provider's `auth.users` table and this call
+    removes it.
+
+    **One exception, and it is the reason this is not a one-liner (117/#252).**
+    `tests` holds the customer's own content — their headline text, and the
+    phrases their audience reading was quoted from — so those rows are deleted
+    here. Every clause of the argument below fails for them: a report is
+    personal data whether or not the account exists, it does not expire within
+    the day, and deleting one grants no budget, so there is nothing to sell.
+
+    What stays behind is `request_ledger` rows holding an opaque id and a
     timestamp — and they stay behind *on purpose*, against 063's original
     "delete our rows" wording:
 
@@ -831,6 +850,82 @@ async def forget_me(
             status_code=502,
             detail="the account could not be deleted — nothing was changed",
         ) from None
+    # After the provider, not before: a local delete that ran and then failed to
+    # erase the account would take the customer's reports while leaving the
+    # account that owned them.
+    await delete_reports_of(conn, owner=caller)
+    return Response(status_code=204)
+
+
+class StoredTest(BaseModel):
+    """One row of the customer's own rail (117/#252).
+
+    Three fragments of a stored report rather than the report: the rail renders
+    `"A" vs "B"` and a phrase derived from the verdict, and searches on the two
+    headlines. Sending whole reports to draw a list of labels would ship every
+    vote and reason the customer has ever bought.
+
+    **No verdict label here, deliberately.** The phrase the rail shows ("too
+    close to call", "71% preferred the first") is derived at render time by
+    `frontend/app/lib/verdict.ts`, which already owns that rule for the report
+    itself — a second implementation would be a second threshold, and 020 keeps
+    the label out of the payload.
+
+    `verdict` and `tally` travel as their models rather than as raw JSON, so a
+    fragment that stopped matching its model fails here instead of in the rail.
+    """
+
+    test_id: str
+    created_at: datetime
+    variants: dict[str, str]
+    verdict: PanelVerdict
+    tally: VoteTally
+
+
+@app.get("/tests")
+async def my_tests(
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+    caller: str = Depends(caller_id),
+) -> list[StoredTest]:
+    """This account's finished tests, newest first."""
+    return [
+        StoredTest.model_validate(row) for row in await list_reports(conn, owner=caller)
+    ]
+
+
+@app.get("/tests/{test_id}")
+async def my_test(
+    test_id: str,
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+    caller: str = Depends(caller_id),
+) -> EvaluateResponse:
+    """One stored report, whole — the read that gets a report back after the
+    page that was drawing it crashed (049/#147).
+
+    404 for a test that is not this caller's, and the *same* 404 a missing one
+    gets: answering differently would say whether an id exists, and a test id is
+    not a credential.
+    """
+    report = await load_report(conn, test_id=test_id, owner=caller)
+    if report is None:
+        raise HTTPException(status_code=404, detail="no such test")
+    return EvaluateResponse.model_validate(report)
+
+
+@app.delete("/tests/{test_id}", status_code=204)
+async def forget_test(
+    test_id: str,
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+    caller: str = Depends(caller_id),
+) -> Response:
+    """Delete one of this account's tests, for good.
+
+    A real delete rather than a flag — a hidden row would leave the customer's
+    headline text in a table they asked to be rid of. 404 when nothing went,
+    which is also what a second click gets.
+    """
+    if not await delete_report(conn, test_id=test_id, owner=caller):
+        raise HTTPException(status_code=404, detail="no such test")
     return Response(status_code=204)
 
 
