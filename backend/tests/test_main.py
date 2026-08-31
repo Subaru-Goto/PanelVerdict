@@ -2604,20 +2604,24 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     """The only test that feeds one endpoint's body to the other: start a run,
     answer the panel gate, then discuss what came back.
 
-    Every other `/chat` test posts `make_report()`, a dict literal kept by hand,
-    so `EvaluateResponse` and the body the tests feed `/chat` were two
-    transcriptions of one contract. Here they are the same object, over the
-    real JSON round trip — and it is the whole body, `status` included, because
-    that is what the browser sends: the client stores `/evaluate`'s outcome
-    unchanged and forwards it (`use-evaluate.ts`, `chat.ts`). `EvaluateResponse`
-    tolerating that extra key is therefore load-bearing, not incidental.
+    Every other `/chat` test posts `make_report()`, which agrees with
+    `EvaluateResponse` by construction — so it can only ever prove `/chat`
+    accepts what the *model* permits. This is the one test where the body comes
+    from the pipeline: what a run actually assembled, over the real JSON round
+    trip. A factory cannot catch the two endpoints disagreeing, because it
+    stands outside both.
+
+    And it is the whole body, `status` included, because that is what the
+    browser sends: the client stores `/evaluate`'s outcome unchanged and
+    forwards it (`use-evaluate.ts`, `chat.ts`). `EvaluateResponse` tolerating
+    that extra key is therefore load-bearing, not incidental.
 
     The gate is part of the path, not scenery: a first run always stops there
     (076/#166), so a body nobody has approved is a body no reader ever sees.
     """
     # Fewer panelists than the profile seats, so the report carries a shortfall
-    # notice: `make_report()` hardcodes `notices: []`, so this is the only body
-    # reaching `/chat` with a `Notice` in it.
+    # notice the run wrote itself — the factory writes its own, which proves
+    # nothing about what the pipeline puts there.
     seed_japanese(conn, 5)
     # The analyst reads the report through its tools, and `votes[].voter` is the
     # one part it cannot recompute — so one tool call, or the real demographics
