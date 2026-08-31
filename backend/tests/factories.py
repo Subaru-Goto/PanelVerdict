@@ -95,10 +95,18 @@ def tool_call_message(
     )
 
 
-def ndjson_events(lines: Iterable[str]) -> list[dict[str, str]]:
+def ndjson_events(transcript: str | Iterable[str]) -> list[dict[str, str]]:
     """Decode a ChatStreamEvent wire transcript, one JSON object per line —
-    the reading half of the NDJSON contract, shared by every stream test."""
-    return [json.loads(line) for line in lines]
+    the reading half of the NDJSON contract, shared by every stream test.
+
+    Takes the whole transcript (a response body, or the chunks a stream
+    yielded) and does its own splitting, on `"\n"` alone: `str.splitlines()`
+    also breaks on U+2028, U+2029 and U+0085, which `model_dump_json()` emits
+    raw inside strings — so it cuts a JSON string in half mid-event (114/#245).
+    Only the writer's own delimiter is a line break here.
+    """
+    text = transcript if isinstance(transcript, str) else "".join(transcript)
+    return [json.loads(line) for line in text.split("\n") if line]
 
 
 def voted(

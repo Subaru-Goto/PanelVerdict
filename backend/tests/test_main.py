@@ -991,9 +991,34 @@ def test_chat_streams_the_analysts_reply_as_ndjson(client) -> None:
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/x-ndjson")
-    events = ndjson_events(response.text.splitlines())
+    events = ndjson_events(response.text)
     tokens = [e["text"] for e in events if e["type"] == "token"]
     assert "".join(tokens) == "The interval cleared the band."
+    assert events[-1] == {"type": "done"}
+
+
+def test_a_reply_containing_unicode_line_breaks_survives_the_wire(client) -> None:
+    """`model_dump_json()` emits U+2028, U+2029 and U+0085 raw, and
+    `str.splitlines()` breaks on all three — so reading the transcript with
+    `splitlines()` cuts a JSON string in half mid-event and the decode dies
+    with `Unterminated string` (114/#245). Latent in every stream test only
+    because the scripted analyst answers in ASCII; the persona reasons that
+    reach real streams are not.
+    """
+    reply = "One thought\u2028then another\u2029and\u0085a third."
+    app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
+        responses=[AIMessage(content=reply)]
+    )
+
+    response = client.post(
+        "/chat",
+        json={"thread_id": "t-main-u2028", "message": "why?", "result": _CHAT_RESULT},
+    )
+
+    assert response.status_code == 200
+    events = ndjson_events(response.text)
+    tokens = [event["text"] for event in events if event["type"] == "token"]
+    assert "".join(tokens) == reply
     assert events[-1] == {"type": "done"}
 
 
@@ -1161,7 +1186,7 @@ def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None
     )
 
     assert response.status_code == 200
-    events = ndjson_events(response.text.splitlines())
+    events = ndjson_events(response.text)
     assert {"type": "tool", "name": "search_personas"} in events
     tokens = [e["text"] for e in events if e["type"] == "token"]
     assert "".join(tokens) == "One panelist stands out."
@@ -1222,7 +1247,7 @@ def test_chat_exhausted_credit_is_an_in_band_error_event(client) -> None:
     )
 
     assert response.status_code == 200
-    events = ndjson_events(response.text.splitlines())
+    events = ndjson_events(response.text)
     assert events[-1] == {
         "type": "error",
         "message": "OpenRouter credit exhausted (402)",
@@ -2709,7 +2734,7 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     )
 
     assert response.status_code == 200
-    events = ndjson_events(response.text.splitlines())
+    events = ndjson_events(response.text)
     assert {"type": "tool", "name": "search_personas"} in events
     assert any(event["type"] == "token" for event in events)
     # `/chat` commits its 200 at the first byte, so a turn that dies mid-stream
