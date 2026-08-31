@@ -2,9 +2,11 @@ import argparse
 import sys
 
 import psycopg
+import pytest
 from factories import DIM
 
 from app.config import settings
+from app.persistence import apply_schema, missing_columns, schema_columns
 from app.schemas import Locale
 from app.seed import (
     SeedResult,
@@ -28,7 +30,11 @@ class CountingEmbedder:
 
 
 def _persona_count(conn: psycopg.Connection) -> int:
-    return conn.execute("SELECT count(*) FROM personas").fetchone()[0]
+    return _count(conn, "personas")
+
+
+def _count(conn: psycopg.Connection, table: str) -> int:
+    return conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 
 
 def test_seed_pool_persists_all_when_empty(conn):
@@ -91,6 +97,138 @@ def test_build_quotas_hits_exact_size_split_across_countries():
     assert set(quotas) == {Locale.US, Locale.JP, Locale.DE}
     assert sum(quotas.values()) == 5000  # remainder spread, not dropped
     assert max(quotas.values()) - min(quotas.values()) <= 1
+
+
+class TestSchemaOnly:
+    """CI and a fresh deploy both need the schema and neither wants the seed:
+    `--corpus-only` applies schema *and* pays to embed 15 passages on every
+    run, and `--dry-run` deliberately refuses to touch schema at all, so there
+    was no way to reach the DDL for free (115/#248)."""
+
+    def _prepare(self, monkeypatch, pg_url: str, *extra: str) -> None:
+        monkeypatch.setattr(sys, "argv", ["seed", *extra])
+        monkeypatch.setattr(type(settings), "database_url", property(lambda _: pg_url))
+
+    def test_it_applies_the_schema_and_pays_for_nothing(
+        self, conn, pg_url, monkeypatch, capsys
+    ):
+        def fail(*args, **kwargs):
+            raise AssertionError("applying schema must not construct a paid client")
+
+        monkeypatch.setattr("app.seed.OpenRouterEmbedder", fail)
+        monkeypatch.setattr("app.seed.OpenRouterJudge", fail)
+        conn.execute("DROP TABLE IF EXISTS corpus_chunks CASCADE")
+        conn.commit()
+        self._prepare(monkeypatch, pg_url, "--schema-only")
+
+        main()
+
+        # Read from the schema, not written as a number: hand-coding the count
+        # is the maintenance trap `_REQUIRED_COLUMNS` was.
+        assert f"{len(schema_columns())} tables" in capsys.readouterr().out
+        assert missing_columns(conn) == {}
+        assert _count(conn, "corpus_chunks") == 0, "the corpus was reseeded"
+
+    def test_it_needs_no_api_key(self, conn, pg_url, monkeypatch):
+        self._prepare(monkeypatch, pg_url, "--schema-only")
+        monkeypatch.setattr(settings, "openrouter_api_key", None)
+
+        main()
+
+    def test_a_dry_run_applies_nothing(self, conn, pg_url, monkeypatch, capsys):
+        """`--schema-only --dry-run` used to apply every statement and take
+        ACCESS EXCLUSIVE on every table in `public`, against a flag whose help
+        says it writes nothing — the same shape as the `--corpus-only --dry-run`
+        bug the comment beside it records fixing (115/#248, review).
+        """
+        conn.execute("DROP TABLE IF EXISTS corpus_chunks CASCADE")
+        conn.commit()
+        self._prepare(monkeypatch, pg_url, "--schema-only", "--dry-run")
+
+        main()
+
+        assert "nothing written" in capsys.readouterr().out
+        absent = conn.execute(
+            "SELECT to_regclass('public.corpus_chunks') IS NULL"
+        ).fetchone()
+        assert absent is not None and absent[0] is True
+        apply_schema(conn)
+        conn.commit()
+
+    def test_the_row_level_security_sweep_still_runs(self, conn, pg_url, monkeypatch):
+        """The sweep is why additive DDL lives inside `schema.sql` rather than
+        beside it. An entry point that applied schema and skipped the sweep
+        would leave a new table readable through the data API."""
+        conn.execute("DROP TABLE IF EXISTS spend_ledger CASCADE")
+        conn.commit()
+        self._prepare(monkeypatch, pg_url, "--schema-only")
+
+        main()
+
+        unswept = conn.execute(
+            "SELECT relname FROM pg_class c JOIN pg_namespace n"
+            " ON n.oid = c.relnamespace WHERE n.nspname = 'public'"
+            " AND c.relkind = 'r' AND NOT c.relrowsecurity"
+        ).fetchall()
+        assert unswept == []
+
+
+class TestCheckSchema:
+    """The CI drift check. Reads and never writes, so the credential it runs
+    under can be SELECT-only — nothing automatic can push a wrong migration
+    (115/#248, and the least-privilege stance in docs/least-privilege.md)."""
+
+    def _prepare(self, monkeypatch, pg_url: str) -> None:
+        monkeypatch.setattr(sys, "argv", ["seed", "--check-schema"])
+        monkeypatch.setattr(type(settings), "database_url", property(lambda _: pg_url))
+
+    def test_a_current_database_passes(self, conn, pg_url, monkeypatch, capsys):
+        apply_schema(conn)
+        conn.commit()
+        self._prepare(monkeypatch, pg_url)
+
+        main()
+
+        assert "up to date" in capsys.readouterr().out
+
+    def test_a_missing_column_fails_the_build_and_names_it(
+        self, conn, pg_url, monkeypatch
+    ):
+        apply_schema(conn)
+        conn.execute("ALTER TABLE spend_ledger DROP COLUMN usd CASCADE")
+        conn.commit()
+        try:
+            self._prepare(monkeypatch, pg_url)
+
+            with pytest.raises(SystemExit) as exit_info:
+                main()
+
+            assert "spend_ledger" in str(exit_info.value)
+            assert "usd" in str(exit_info.value)
+        finally:
+            conn.execute("DROP TABLE spend_ledger CASCADE")
+            conn.commit()
+            apply_schema(conn)
+
+    def test_it_writes_nothing_at_all(self, conn, pg_url, monkeypatch):
+        """The point of a check-only entry point: run it against a database
+        missing a whole table and the table is still missing afterwards. A
+        check that quietly applied would defeat the manual-apply decision
+        (083/#173) and would need a credential that could."""
+        conn.execute("DROP TABLE IF EXISTS corpus_chunks CASCADE")
+        conn.commit()
+        self._prepare(monkeypatch, pg_url)
+        try:
+            with pytest.raises(SystemExit):
+                main()
+
+            exists = conn.execute(
+                "SELECT to_regclass('public.corpus_chunks') IS NOT NULL"
+            ).fetchone()
+            assert exists is not None and exists[0] is False
+        finally:
+            apply_schema(conn)
+            conn.commit()
 
 
 class TestDryRun:

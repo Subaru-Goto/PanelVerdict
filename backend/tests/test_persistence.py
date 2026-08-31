@@ -1,3 +1,5 @@
+from pathlib import Path
+from urllib.parse import urlsplit
 from typing import get_args
 
 import numpy as np
@@ -5,10 +7,13 @@ import psycopg
 import pytest
 from factories import DIM, big_five, make_assembled, make_persona, pointing
 
+import app.persistence
 from app.assembly import AssembledPersona
 from app.persistence import (
+    _PERSONA_COLUMNS,
     apply_schema,
     deny_data_api,
+    missing_columns,
     load_pool,
     load_votes,
     nearest_panelists,
@@ -16,6 +21,7 @@ from app.persistence import (
     persist_pool,
     prepare_connection,
     retrieve_panel,
+    schema_columns,
     store_votes,
 )
 from app.schemas import (
@@ -66,6 +72,258 @@ def test_apply_schema_is_idempotent(conn):
     apply_schema(conn)
 
 
+def test_every_table_the_schema_declares_is_parsed_out_of_it() -> None:
+    """The probe reads its table list out of `schema.sql` (115/#248), which
+    makes the parser the single point of failure: a reformat the regex stops
+    matching would leave `apply_schema` probing nothing at all, silently, and
+    the protection this ticket adds would evaporate with no test to notice.
+
+    Counted a second way — by counting the `CREATE TABLE` lines — so the claim
+    does not rest on the same reading twice.
+    """
+    schema = (Path(app.persistence.__file__).parent / "schema.sql").read_text()
+    parsed = schema_columns()
+    # A second reading rather than the same one: whole lines, not regex-matched
+    # bodies. Comment lines are dropped because the file documents its own DDL
+    # in prose — this counts statements, not occurrences of the phrase.
+    declared = sum(
+        line.startswith("CREATE TABLE IF NOT EXISTS") for line in schema.splitlines()
+    )
+
+    assert declared > 0, "schema.sql declares no tables — read the wrong file?"
+    assert len(parsed) == declared
+    for table, columns in parsed.items():
+        assert columns, f"{table} parsed with no columns"
+
+
+_ADDITIVE = """
+CREATE TABLE IF NOT EXISTS votes (
+    request_fingerprint text PRIMARY KEY,
+    reason              text NOT NULL
+);
+
+ALTER TABLE votes ADD COLUMN IF NOT EXISTS scored_at timestamptz;
+"""
+
+
+def test_ddl_the_parser_refuses_is_refused_before_it_is_applied(conn, monkeypatch):
+    """The order the guard has to run in (115/#248, review).
+
+    Refusing a bare `ADD COLUMN` *after* `conn.execute(_SCHEMA_SQL)` has already
+    committed it reports a problem the check itself caused, and the second run
+    then dies on `DuplicateColumn` — which the curated handler does not catch,
+    so the operator gets a raw traceback and the RLS sweep never runs. The
+    parse is a pure function of the file, so it costs nothing to do first.
+    """
+    monkeypatch.setattr(
+        app.persistence,
+        "_SCHEMA_SQL",
+        "CREATE TABLE IF NOT EXISTS drift_probe (id text PRIMARY KEY\n);\n"
+        "ALTER TABLE drift_probe ADD COLUMN scored_at timestamptz;\n",
+    )
+    try:
+        with pytest.raises(ValueError, match="IF NOT EXISTS"):
+            apply_schema(conn)
+
+        landed = conn.execute(
+            "SELECT to_regclass('public.drift_probe') IS NOT NULL"
+        ).fetchone()
+        assert landed is not None and landed[0] is False, (
+            "the refused DDL was applied before being refused"
+        )
+    finally:
+        conn.execute("DROP TABLE IF EXISTS drift_probe")
+        conn.commit()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # Postgres makes COLUMN optional, so this is a legal addition.
+        "ALTER TABLE votes ADD scored_at timestamptz;",
+        # And the `IF EXISTS` guard on the table is legal too.
+        "ALTER TABLE IF EXISTS votes ADD COLUMN scored_at timestamptz;",
+        "ALTER TABLE votes ADD COLUMN scored_at timestamptz;",
+    ],
+)
+def test_an_addition_the_parser_does_not_understand_is_refused(statement) -> None:
+    """Recognising one spelling is not enforcing a form (115/#248, review).
+
+    Both alternative spellings are legal SQL that Postgres would apply, and
+    both used to parse to nothing at all: no `IF NOT EXISTS` complaint *and*
+    the new column never reached the probe list — so a column could go missing
+    on a deployed database undetected, which is the failure this parser exists
+    to remove. Anything but the documented form is refused.
+    """
+    with pytest.raises(ValueError, match="ALTER TABLE"):
+        schema_columns(
+            "CREATE TABLE IF NOT EXISTS votes (id text PRIMARY KEY\n);\n" + statement
+        )
+
+
+def test_a_column_spelling_the_parser_cannot_read_is_refused() -> None:
+    """A quoted or all-caps column name was dropped silently, which is a column
+    that exists in the table and is never probed — the exact blindness this
+    parser replaced. Refused rather than skipped, since a parser that guesses
+    is a probe that lies."""
+    with pytest.raises(ValueError, match="order"):
+        schema_columns(
+            'CREATE TABLE IF NOT EXISTS t (\n    "order" text NOT NULL,\n'
+            "    id text PRIMARY KEY\n);"
+        )
+
+
+def test_a_stale_schema_that_the_catalogue_cannot_explain_still_says_why(
+    conn, monkeypatch
+):
+    """The error path must never be empty (115/#248, review).
+
+    `schema.sql` can fail with `UndefinedColumn` over a column the parser never
+    learned about — an index referencing one, with no `ALTER` declaring it. The
+    catalogue then reports nothing missing, and the message named nothing and
+    offered no remedy: "missing a column this build writes — ." The old
+    hardcoded tuple at least named itself, so an empty message is a regression.
+    """
+    monkeypatch.setattr(
+        app.persistence,
+        "_SCHEMA_SQL",
+        "CREATE TABLE IF NOT EXISTS drift_probe (id text PRIMARY KEY\n);\n"
+        "CREATE INDEX IF NOT EXISTS drift_probe_idx ON drift_probe (scored_at);\n",
+    )
+    try:
+        with pytest.raises(RuntimeError) as failure:
+            apply_schema(conn)
+
+        message = str(failure.value)
+        assert "scored_at" in message, message
+        assert "— ." not in message, "the message named nothing"
+    finally:
+        conn.execute("DROP TABLE IF EXISTS drift_probe")
+        conn.commit()
+
+
+def test_the_drift_check_needs_select_and_not_only_connect(conn, pg_url) -> None:
+    """What grant the CI credential actually needs (115/#248).
+
+    `information_schema.columns` is privilege-filtered: it shows a role only the
+    columns that role may read. So a credential granted `USAGE` alone — the
+    intuitive "it only reads the catalogue" answer — sees *nothing*, and the
+    check reports every table as missing: a red build on a current database.
+    `SELECT` on the tables is the minimum that works, and it is still far less
+    than the owner credential the deploy notes used to point at.
+
+    The connection is rebuilt from the container's own parts rather than by
+    string-substituting the URL. The substitution version passed locally and
+    failed in CI, and the reason is worse than the failure: where the pattern
+    did not match it connected as the *owner* and asserted nothing at all. So
+    `current_user` is checked first — a privilege test that quietly runs as
+    superuser is the shape of bug this whole ticket is about.
+    """
+    apply_schema(conn)
+    dsn = urlsplit(pg_url)
+    conn.execute("DROP ROLE IF EXISTS drift_check")
+    conn.execute("CREATE ROLE drift_check LOGIN PASSWORD 'probe'")
+    conn.execute("GRANT USAGE ON SCHEMA public TO drift_check")
+    conn.commit()
+
+    def as_role() -> psycopg.Connection:
+        return psycopg.connect(
+            host=dsn.hostname,
+            port=dsn.port,
+            dbname=dsn.path.lstrip("/"),
+            user="drift_check",
+            password="probe",
+        )
+
+    try:
+        with as_role() as probe:
+            who = probe.execute("SELECT current_user").fetchone()
+            assert who is not None and who[0] == "drift_check"
+            blind = missing_columns(probe)
+
+        assert set(blind) == set(schema_columns()), (
+            "USAGE alone should see no columns — if this fails, the grant "
+            "documented for CI is stricter than it needs to be"
+        )
+
+        conn.execute("GRANT SELECT ON ALL TABLES IN SCHEMA public TO drift_check")
+        conn.commit()
+        with as_role() as probe:
+            assert missing_columns(probe) == {}
+    finally:
+        conn.execute("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM drift_check")
+        conn.execute("REVOKE ALL ON SCHEMA public FROM drift_check")
+        conn.execute("DROP ROLE IF EXISTS drift_check")
+        conn.commit()
+
+
+def test_a_column_added_by_alter_is_a_column_the_probe_asks_for() -> None:
+    """Additive DDL is the strategy `votes` depends on (083/#173), and a column
+    it adds has to reach the probe — a parser reading only `CREATE TABLE`
+    bodies would be blind to exactly the columns the strategy exists to add,
+    which is the same hole one layer along (115/#248).
+    """
+    assert schema_columns(_ADDITIVE)["votes"] == (
+        "request_fingerprint",
+        "reason",
+        "scored_at",
+    )
+
+
+def test_a_commented_out_statement_is_documentation_and_not_ddl() -> None:
+    """Reproduced on the real file: `schema.sql` documents the additive form by
+    showing an `ALTER TABLE … ADD COLUMN IF NOT EXISTS scored_at`, and the
+    parser read the example, so the probe demanded a column no table has and
+    `apply_schema` refused a perfectly current database (115/#248).
+    """
+    parsed = schema_columns(
+        "CREATE TABLE IF NOT EXISTS votes (id text PRIMARY KEY\n);\n"
+        "-- ALTER TABLE votes ADD COLUMN IF NOT EXISTS scored_at timestamptz;\n"
+        "--     ALTER TABLE votes ADD COLUMN scored_at timestamptz;\n"
+    )
+
+    assert parsed == {"votes": ("id",)}
+
+
+def test_an_addition_that_could_not_be_re_run_is_refused() -> None:
+    """`schema.sql` runs on every seed and every boot, so a bare `ADD COLUMN`
+    fails the second time and takes the RLS sweep after it down. The form is
+    enforced here rather than asked for in a comment, because the last
+    convention this file carried in a comment — "extend this whenever a column
+    is added" — was never extended.
+    """
+    with pytest.raises(ValueError, match="IF NOT EXISTS"):
+        schema_columns("ALTER TABLE votes ADD COLUMN scored_at timestamptz;")
+
+
+def test_a_column_added_to_a_table_nobody_declares_is_refused() -> None:
+    """A typo in the table name would otherwise create a phantom entry, and the
+    probe would then `SELECT` from a table that does not exist — reporting a
+    stale schema on a database that is perfectly current."""
+    with pytest.raises(ValueError, match="vote"):
+        schema_columns(
+            "CREATE TABLE IF NOT EXISTS votes (id text PRIMARY KEY\n);\n"
+            "ALTER TABLE vote ADD COLUMN IF NOT EXISTS scored_at timestamptz;"
+        )
+
+
+def test_the_probe_and_the_persona_writer_read_the_same_columns(conn) -> None:
+    """`_PERSONA_COLUMNS` is what the INSERT names; the probe is what a stale
+    table is measured against. Two lists of one table's columns, so this pins
+    that the probe is a superset — a column the writer writes but the probe
+    never asks for is a column that can go missing undetected, which is the
+    whole failure mode.
+    """
+    apply_schema(conn)
+
+    written = {name.strip() for name in _PERSONA_COLUMNS.split(",")}
+
+    assert written <= set(schema_columns()["personas"])
+    # And the database really has them: the parse is only worth something if the
+    # names it produces are the names Postgres knows.
+    assert missing_columns(conn) == {}
+
+
 def test_apply_schema_refuses_a_table_missing_a_column_it_writes(conn):
     # CREATE TABLE IF NOT EXISTS accepts a stale table, and the failure is
     # otherwise invisible: a full old pool makes every id a resume-skip, so no
@@ -79,6 +337,37 @@ def test_apply_schema_refuses_a_table_missing_a_column_it_writes(conn):
             apply_schema(conn)
     finally:
         conn.execute("DROP TABLE personas")
+        conn.commit()
+        apply_schema(conn)
+
+
+@pytest.mark.parametrize(
+    "table, column",
+    [
+        ("votes", "test_id"),
+        ("request_ledger", "caller"),
+        ("spend_ledger", "usd"),
+        ("corpus_chunks", "passage"),
+    ],
+)
+def test_apply_schema_refuses_a_stale_table_that_is_not_personas(conn, table, column):
+    """The probe read one table of the five the build writes, and its own
+    comment said to extend it — with nowhere to extend it to (115/#248).
+
+    A ledger missing a column is not a seed-time inconvenience: the seed never
+    touches the ledgers, so the first notice is a 500 on a paying request.
+    Parametrised over the four unprobed tables rather than asserting one, since
+    the point is that no table is exempt.
+    """
+    conn.execute(f"ALTER TABLE {table} DROP COLUMN {column} CASCADE")
+    conn.commit()
+    try:
+        with pytest.raises(RuntimeError, match=f"{table}.*{column}"):
+            apply_schema(conn)
+    finally:
+        # The container is module-scoped, so the table goes back as schema.sql
+        # builds it — `CREATE TABLE IF NOT EXISTS` cannot restore a column.
+        conn.execute(f"DROP TABLE {table} CASCADE")
         conn.commit()
         apply_schema(conn)
 

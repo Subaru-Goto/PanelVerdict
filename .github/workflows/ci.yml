@@ -54,3 +54,71 @@ jobs:
       # checkout with no `next-env.d.ts`, an image import is `TS2307`.
       - run: npm run typecheck
       - run: npm test
+
+  # The loud half of the schema story (115/#248). `deploy.md` records three
+  # deploys where a table the code expected and the database lacked meant a 500
+  # on every request that touched it — request_ledger, spend_ledger,
+  # corpus_chunks. Nothing re-runs the schema step for you, so this reports the
+  # gap on merge instead of leaving a user to find it.
+  #
+  # CHECK ONLY. `--check-schema` reads the catalogue and never applies, so
+  # nothing automatic can push a wrong migration — applying by hand is the
+  # standing decision until launch (083/#173). Free to run: Actions minutes are
+  # free on public repos and a catalogue read costs nothing.
+  #
+  # Use a dedicated role, NOT the pooler owner the seed step uses. `deploy.md`
+  # carries the two `GRANT` statements. The role needs `SELECT` on the tables
+  # and not merely `CONNECT`: `information_schema.columns` is
+  # privilege-filtered, so a connect-only role sees no columns at all and this
+  # check reports every table missing on a perfectly current database —
+  # measured, in `test_the_drift_check_needs_select_and_not_only_connect`.
+  #
+  # The POSTGRES_* values are repository *secrets*, not variables (088):
+  # this repo is public, so run logs are public, and psycopg names the host in
+  # its connection errors — exactly when this check goes red. Secrets are
+  # masked; variables are not. Use the **session pooler** values (port 5432,
+  # user `postgres.<project-ref>`) — never the transaction pooler, per
+  # deploy.md §1.
+  #
+  # Until the secrets are set, the job skips quietly rather than failing: the
+  # workflow lands with the code, the deploy lands later. main only — a PR from
+  # a fork cannot read secrets, and a branch has nothing deployed to check.
+  schema-drift:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    # This job is the only one that holds a production credential, so it reads
+    # the repository and pins the action that runs before the secret step to a
+    # commit rather than the moving `v5` tag: a compromised release of an action
+    # in this job sees the database password, which is not true of the others.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5.4.2
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: check the deployed schema against what this build writes
+        env:
+          POSTGRES_HOST: ${{ secrets.DEPLOY_POSTGRES_HOST }}
+          POSTGRES_USER: ${{ secrets.DEPLOY_POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.DEPLOY_POSTGRES_PASSWORD }}
+          # Both have one right value on Supabase, so they are defaulted rather
+          # than made two more secrets to forget. Measured: an *empty*
+          # POSTGRES_PORT fails `Settings()` with `int_parsing` before the check
+          # can run, which would read as drift when it is a missing secret.
+          POSTGRES_PORT: ${{ secrets.DEPLOY_POSTGRES_PORT || '5432' }}
+          POSTGRES_DB: ${{ secrets.DEPLOY_POSTGRES_DB || 'postgres' }}
+        run: |
+          if [ -z "$POSTGRES_HOST" ] || [ -z "$POSTGRES_USER" ] || [ -z "$POSTGRES_PASSWORD" ]; then
+            # A warning rather than a silent pass: this branch is fail-open, and
+            # it cannot tell "not configured yet" from "secret deleted or
+            # rotated away". An annotation puts that on the run summary instead
+            # of leaving a green tick to imply the schema was checked.
+            echo "::warning title=Schema drift unchecked::DEPLOY_POSTGRES_* secrets are not set, so the deployed schema was NOT checked. Set them in Settings → Secrets and variables → Actions → Secrets (see docs/deploy.md §1)."
+            exit 0
+          fi
+          uv run python -m app.seed --check-schema

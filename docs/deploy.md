@@ -62,6 +62,59 @@ The corpus is also the one case with a cheap remedy: `uv run python -m app.seed
 of re-running `--size full` and paying for a plausibility-QC pass nobody needs.
 Re-running the same seed command creates all three.
 
+Cheaper still, and the right tool when nothing needs *seeding*: `uv run python -m
+app.seed --schema-only` applies `schema.sql` and the row-level-security sweep and
+stops there — no personas, no corpus, no embeddings, and no API key. That is the
+command to run on a deploy that adds a table or a column.
+
+**Adding a column to a table that already exists** goes at the bottom of
+`backend/app/schema.sql`, in the documented `ALTER TABLE … ADD COLUMN IF NOT EXISTS`
+form — never by editing the `CREATE TABLE` above it, which `IF NOT EXISTS` will not
+re-apply. The form is enforced, not suggested: `app.persistence` refuses a bare `ADD
+COLUMN`, because the file runs on every seed and every `--schema-only` apply, and
+a statement that fails mid-file takes the row-level-security sweep after it down
+too. Additive only — no
+`DROP COLUMN`, no rename, no type change: during a rollout an older instance is still
+serving, and `votes` is paid model output that cannot be regenerated. Applying is
+manual until launch; automating it is 083/#173's deferred half.
+
+**You do not have to remember any of this.** On every merge to `main`, CI's
+`schema-drift` job runs `--check-schema` against the project and fails red if the
+deployed database is missing anything this build writes. It reads and never applies.
+
+Give it a role of its own — **not** the pooler owner the seed step uses. That owner
+can read every table and drop any of them, including `votes`, which is paid model
+output. Anything holding the CI secret can use it, so the secret should not be able
+to do more than look:
+
+```sql
+-- In Supabase: SQL Editor. Pick your own password.
+CREATE ROLE drift_check LOGIN PASSWORD '…';
+GRANT USAGE ON SCHEMA public TO drift_check;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO drift_check;
+```
+
+`SELECT` and not merely `CONNECT`, which looks like the tighter answer and is not:
+`information_schema.columns` shows a role only the columns it may read, so a
+connect-only role sees nothing and the check reports *every* table as missing on a
+current database. Measured — `test_the_drift_check_needs_select_and_not_only_connect`
+pins both halves. Re-run the second `GRANT` after adding a table; it covers existing
+tables only.
+
+Then set the repository secrets — Settings → Secrets and variables → Actions →
+Secrets: `DEPLOY_POSTGRES_HOST`, `DEPLOY_POSTGRES_USER`, `DEPLOY_POSTGRES_PASSWORD`,
+and optionally `DEPLOY_POSTGRES_PORT` (defaults to `5432`) and `DEPLOY_POSTGRES_DB`
+(defaults to `postgres`). Host and port are the **session pooler**'s, as in step 2.
+Copy the username from Connect → Session pooler rather than composing it: the pooler
+qualifies the role with the project ref, the way `postgres.<project-ref>` is
+qualified there.
+
+Until the secrets exist the job posts a warning on the run and passes, so this
+workflow lands with the code and the deploy lands later — a green tick alone does not
+mean the schema was checked, which is why the warning is there. Secrets rather than
+variables because this repo is public: run logs are public, and a connection error
+names the host exactly when the check goes red.
+
 ## 2 — Render (the backend)
 
 1. **Create a new workspace for PanelVerdict** — the 750 free hours/month are *per
