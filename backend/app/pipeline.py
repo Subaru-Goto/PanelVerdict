@@ -154,19 +154,40 @@ def _vote_shortfall_notice(votes: PanelVotes, matched: int) -> tuple[Notice, ...
     "transient — a re-run may recover them" beside "credit ran out" would read as a
     contradiction about the same failures.
     """
-    transient = [f for f in votes.failures if _failure_kind(f) != "OutOfCredit"]
-    if not transient:
-        return ()
-    return (
-        Notice(
-            severity="warning",
-            message=(
-                f"{len(transient)} of the {matched} matched panelists did not "
-                "vote, so the verdict rests on fewer votes. These failures are "
-                "transient — a re-run may recover them."
-            ),
-        ),
-    )
+    # NotCaptured is the demo's replay of a vote the captured run itself lost
+    # (061/#156): permanent by construction, so promising a re-run will
+    # recover it would be invented copy on the page arguing the report is real.
+    replayed = [f for f in votes.failures if _failure_kind(f) == "NotCaptured"]
+    transient = [
+        f
+        for f in votes.failures
+        if _failure_kind(f) not in ("OutOfCredit", "NotCaptured")
+    ]
+    notices = []
+    if replayed:
+        notices.append(
+            Notice(
+                severity="warning",
+                message=(
+                    f"{len(replayed)} of the {matched} matched panelists cast "
+                    "no vote when this demo was captured, so the verdict "
+                    "rests on fewer votes — the replay reports the run as it "
+                    "was bought."
+                ),
+            )
+        )
+    if transient:
+        notices.append(
+            Notice(
+                severity="warning",
+                message=(
+                    f"{len(transient)} of the {matched} matched panelists did "
+                    "not vote, so the verdict rests on fewer votes. These "
+                    "failures are transient — a re-run may recover them."
+                ),
+            )
+        )
+    return tuple(notices)
 
 
 async def _chunk_votes(

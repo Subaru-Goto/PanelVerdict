@@ -21,15 +21,16 @@ from app.persistence import retrieve_panel
 from app.schemas import (
     COUNTRY_CULTURE_TAG,
     COUNTRY_NAME,
-    INCOME_BAND_QUINTILES,
-    MAX_PERSONA_AGE,
-    MIN_PERSONA_AGE,
     CoverageRung,
     CultureTag,
     EducationLevel,
+    INCOME_BAND_QUINTILES,
     IncomeBand,
     Locale,
+    MAX_PERSONA_AGE,
+    MIN_PERSONA_AGE,
     Notice,
+    PanelEdit,
     Persona,
     RequestedRegion,
     TargetQuery,
@@ -446,4 +447,41 @@ async def select_panel(
         panel=panel,
         query=query,
         notices=untargeted + query.notices + shortfall_notices(panel, size),
+    )
+
+
+# Only the layer that saw the request knows every control was left alone — the
+# query it builds is identical to one that asked for JP-to-DE everyone — so the
+# cross-section reading is said by that layer or nowhere. Shared by /evaluate
+# and /demo, which is untargeted by construction.
+CROSS_SECTION_NOTICE = Notice(
+    severity="reading",
+    message=(
+        "No control narrowed the panel, so it is a cross-section of the "
+        "whole pool rather than a match to anyone in particular."
+    ),
+)
+
+
+def settled_query(edit: PanelEdit) -> TargetQuery:
+    """Controls → the reading, verbatim. Both doors pass through here — the
+    form's controls and the gate's edit — so what runs is always exactly what a
+    human set.
+
+    `coverage` is `requested` by definition: a control cannot be misread, so
+    there is no ladder to report. `notices` start empty for the same reason —
+    they existed to explain how free text was interpreted, and nothing is
+    interpreted any more. `traits` are always empty: temperament left targeting
+    when the controls arrived (094).
+
+    `countries` is the one control whose blank needs translating: TargetQuery
+    keeps countries explicit — empty means *no* country and matches nobody —
+    while an untouched control means the caller didn't care. Every place, said
+    outright.
+    """
+    return TargetQuery(
+        **edit.model_dump() | {"countries": edit.countries or list(Locale)},
+        traits=[],
+        coverage="requested",
+        notices=[],
     )

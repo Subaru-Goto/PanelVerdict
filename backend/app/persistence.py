@@ -598,6 +598,18 @@ def _read_personas(
     )
 
 
+async def load_personas_by_id(
+    conn: psycopg.AsyncConnection, ids: Sequence[str]
+) -> list[Persona]:
+    """The named rows, for the demo's replay index (061/#156): the same pool
+    rows `select` seats, rendered into the prompts the replay answers by."""
+    return await _afetch_personas(
+        conn,
+        f"SELECT {_PERSONA_COLUMNS} FROM personas WHERE id = ANY(%s)",
+        [list(ids)],
+    )
+
+
 def load_pool(conn: psycopg.Connection) -> list[Persona]:
     """Every persona, in id order — the aggregate view pool QC audits."""
     return _read_personas(conn, order="id")

@@ -43,6 +43,7 @@ from app.config import (
     settings,
 )
 from app.db import check_connection
+from app.demo import DEMO_CASES, ReplayPanel, UnreachableGenerator, load_fixture
 from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.llm import (
     OpenRouterEmbedder,
@@ -51,12 +52,13 @@ from app.llm import (
     analyst_chat_model,
     remaining_credit,
 )
-from app.panel import votes_with_voters
+from app.panel import render_persona_prompt, votes_with_voters
 from app.persistence import (
     adeny_data_api,
     delete_report,
     delete_reports_of,
     list_reports,
+    load_personas_by_id,
     load_report,
     store_report,
 )
@@ -66,7 +68,6 @@ from app.schemas import (
     ChatRequest,
     EvaluateRequest,
     EvaluateResponse,
-    Locale,
     Notice,
     PanelEdit,
     PanelVerdict,
@@ -75,6 +76,8 @@ from app.schemas import (
     VoteTally,
 )
 from app.screening import OpenRouterScreener, Screener, UnsafeInput
+from app.targeting import CROSS_SECTION_NOTICE, settled_query
+from langgraph.checkpoint.memory import InMemorySaver
 from app.tracing import configure_tracing
 from app.vote import OutOfCredit, PanelLLM
 
@@ -195,6 +198,10 @@ app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
 # `supabase_project_url` unset, a state deploy.md documents as supported,
 # `caller_id` falls back to a caller-written header, so without this guard the
 # owner of a stored report would be whatever a request claimed it was.
+#
+# /demo is deliberately absent (061/#156): it spends nothing, serves the same
+# replayed reports to everyone, and the states screen promises it stays
+# readable when budgets are spent — a guard here would break that promise.
 _GUARDED_PATHS = ("/evaluate", "/chat", "/me", "/tests")
 
 
@@ -1171,6 +1178,74 @@ async def _run_graph(graph, payload, thread_id: str):
         raise HTTPException(status_code=402, detail=str(error)) from error
 
 
+class DemoRun(CompletedRun):
+    """A replayed run, plus the captured run's own per-step seconds — the
+    frontend replays those, because inventing durations is forbidden (061)."""
+
+    step_seconds: dict[str, float]
+
+
+@app.get("/demo/{case}")
+async def demo(
+    case: str,
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+) -> DemoRun:
+    """Serve one demo case: a captured run, replayed through the real graph.
+
+    Deliberately outside `caller_id`, the edge guard and every budget — the
+    demo spends nothing, and the refusal screens promise the sample stays
+    free to read precisely when budgets are spent. No model is called: the
+    panel is a replay, the screener is off because this pair was screened
+    when the capture bought it, and the generator is unreachable because the
+    audience is empty. Not `_kept` either — nobody owns a demo report, and
+    the rail's samples are links to this route, not rows in `tests`. The
+    checkpointer is per-request and in memory for the same reason: a replay
+    never pauses, so durability would only grow the checkpoint table by one
+    anonymous thread per click.
+    """
+    if case not in DEMO_CASES:
+        raise HTTPException(status_code=404, detail="no such demo")
+    fixture = load_fixture(case)
+    if fixture is None:
+        raise HTTPException(
+            status_code=503, detail="this demo is not seeded on this deployment"
+        )
+    personas = await load_personas_by_id(
+        conn, [vote.persona_id for vote in fixture.votes]
+    )
+    thread_id = str(uuid4())
+    graph = build_evaluate_graph(
+        conn=conn,
+        llm=ReplayPanel(fixture, {render_persona_prompt(p): p.id for p in personas}),
+        screener=None,
+        generator=UnreachableGenerator(),
+        checkpointer=InMemorySaver(),
+    )
+    state = await _run_graph(
+        graph,
+        {
+            "query": settled_query(PanelEdit()),
+            "notices": [CROSS_SECTION_NOTICE],
+            "audience": "",
+            "instruction": "",
+            "variants": fixture.variants,
+            # The capture's size, not this deployment's profile: the replay
+            # must ask for the panel the votes were bought for.
+            "size": fixture.size,
+            "reading_accepted": True,
+            "started_at": _now().isoformat(),
+        },
+        thread_id,
+    )
+    outcome = _outcome(
+        state, thread_id=thread_id, variants=fixture.variants, credit=None
+    )
+    if not isinstance(outcome, CompletedRun):  # pragma: no cover
+        # reading_accepted means no gate; a pause here is a broken premise.
+        raise HTTPException(status_code=500, detail="the demo run did not finish")
+    return DemoRun(**outcome.model_dump(), step_seconds=fixture.step_seconds)
+
+
 @app.post("/evaluate")
 async def evaluate(
     request: EvaluateRequest,
@@ -1216,19 +1291,8 @@ async def evaluate(
     state = await _run_graph(
         graph,
         {
-            "query": _settled_query(request.target),
-            "notices": [
-                Notice(
-                    severity="reading",
-                    message=(
-                        "No control narrowed the panel, so it is a "
-                        "cross-section of the whole pool rather than a match "
-                        "to anyone in particular."
-                    ),
-                )
-            ]
-            if untargeted
-            else [],
+            "query": settled_query(request.target),
+            "notices": [CROSS_SECTION_NOTICE] if untargeted else [],
             "audience": request.audience,
             "instruction": instruction,
             "variants": variants,
@@ -1398,35 +1462,11 @@ async def _classify_edit(
     return await _checked_or_refused(conn, generator, caller, edited)
 
 
-def _settled_query(edit: PanelEdit) -> TargetQuery:
-    """Controls → the reading, verbatim. Both doors pass through here — the
-    form's controls and the gate's edit — so what runs is always exactly what a
-    human set.
-
-    `coverage` is `requested` by definition: a control cannot be misread, so
-    there is no ladder to report. `notices` start empty for the same reason —
-    they existed to explain how free text was interpreted, and nothing is
-    interpreted any more. `traits` are always empty: temperament left targeting
-    when the controls arrived (094).
-
-    `countries` is the one control whose blank needs translating: TargetQuery
-    keeps countries explicit — empty means *no* country and matches nobody —
-    while an untouched control means the caller didn't care. Every place, said
-    outright.
-    """
-    return TargetQuery(
-        **edit.model_dump() | {"countries": edit.countries or list(Locale)},
-        traits=[],
-        coverage="requested",
-        notices=[],
-    )
-
-
 def _edited(request: ResumeRequest, values: dict) -> TargetQuery | None:
     """The edited reading, when the gate's answer carries one."""
     if request.query is None:
         return None
-    return _settled_query(request.query)
+    return settled_query(request.query)
 
 
 def _expired(started_at: str | None) -> bool:
