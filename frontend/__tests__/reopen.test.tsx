@@ -12,6 +12,16 @@ import { makeResponse } from "./fixtures";
 const evaluateMock = vi.fn();
 const myTestMock = vi.fn();
 const streamChatMock = vi.fn();
+const replaceMock = vi.fn();
+
+// The wizard learns which stored test to reopen from its address (119/#257):
+// the rail lives in the shell now, and a row is a link to `/test?open=<id>`.
+let search = new URLSearchParams();
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => search,
+  useRouter: () => ({ replace: replaceMock, push: vi.fn() }),
+}));
 
 const OTHER = {
   ...makeResponse(),
@@ -65,6 +75,8 @@ afterEach(() => {
   evaluateMock.mockReset();
   myTestMock.mockReset();
   streamChatMock.mockReset();
+  replaceMock.mockReset();
+  search = new URLSearchParams();
 });
 
 describe("reopening a stored test while a report is on screen", () => {
@@ -77,7 +89,7 @@ describe("reopening a stored test while a report is on screen", () => {
     evaluateMock.mockResolvedValue({ ...makeResponse(), status: "complete" });
     myTestMock.mockResolvedValue(OTHER);
 
-    render(<EvaluateForm tracing={false} />);
+    const { rerender } = render(<EvaluateForm tracing={false} />);
     fireEvent.click(screen.getByRole("checkbox", { name: /japan/i }));
     fireEvent.change(screen.getByLabelText(/headline a/i), {
       target: { value: "Save 50% today" },
@@ -90,7 +102,10 @@ describe("reopening a stored test while a report is on screen", () => {
     await waitFor(() => expect(streamChatMock).toHaveBeenCalledTimes(1));
     const first = streamChatMock.mock.calls[0][0] as { threadId: string };
 
-    fireEvent.click(await screen.findByText(/“Older line” vs “Its rival”/));
+    // The rail's link landed: same page, new address.
+    search = new URLSearchParams("open=t-older");
+    rerender(<EvaluateForm tracing={false} />);
+    await waitFor(() => expect(myTestMock).toHaveBeenCalledWith("t-older"));
 
     // A second opening send, against a thread of its own.
     await waitFor(() => expect(streamChatMock).toHaveBeenCalledTimes(2));
@@ -100,5 +115,32 @@ describe("reopening a stored test while a report is on screen", () => {
     };
     expect(second.threadId).not.toBe(first.threadId);
     expect(second.result.variants).toEqual(OTHER.variants);
+  });
+
+  it("New test from a reopened report clears it back to the form", async () => {
+    // Both the rail's rows and "New test" are links into the same route, so
+    // Next reuses the mounted page: no remount, only the params change. The
+    // wizard must treat losing `?open=` as the instruction it is.
+    myTestMock.mockResolvedValue(OTHER);
+    search = new URLSearchParams("open=t-older");
+    const { rerender } = render(<EvaluateForm tracing={false} />);
+    await screen.findByRole("button", { name: /test again/i });
+
+    search = new URLSearchParams();
+    rerender(<EvaluateForm tracing={false} />);
+
+    expect(await screen.findByLabelText(/headline a/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /test again/i })).toBeNull();
+  });
+
+  it("says when a stored test cannot be opened, instead of a silent blank form", async () => {
+    // The link can be stale — deleted in another tab — or the fetch can just
+    // fail. Either way a wordless fall to the empty form reads as data loss:
+    // the reader clicked a report they paid for and got nothing.
+    myTestMock.mockRejectedValue(new Error("API responded 404"));
+    search = new URLSearchParams("open=t-gone");
+    render(<EvaluateForm tracing={false} />);
+
+    expect(await screen.findByText(/could not be opened/i)).toBeTruthy();
   });
 });

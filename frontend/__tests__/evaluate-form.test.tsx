@@ -9,6 +9,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import EvaluateForm from "../app/components/evaluate-form";
+import Shell from "../app/components/shell";
 import { AI_SYSTEM_DISCLOSURE } from "../app/lib/disclosure";
 import { makeResponse } from "./fixtures";
 
@@ -16,6 +17,13 @@ const { evaluateMock, resumeMock, myTestsMock } = vi.hoisted(() => ({
   evaluateMock: vi.fn(),
   resumeMock: vi.fn(),
   myTestsMock: vi.fn(() => Promise.resolve({ tests: [], next_cursor: null })),
+}));
+
+// The wizard reads `?open=` from its address and clears it on reset
+// (119/#257); none of these tests arrive with one.
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ replace: () => {}, push: () => {} }),
 }));
 
 vi.mock("../app/lib/api", () => ({
@@ -30,6 +38,7 @@ vi.mock("../app/lib/api", () => ({
   // where it is used. `myTests` resolving empty is the state these tests are
   // about: this file is the form's, and the rail has its own.
   myTests: myTestsMock,
+  remainingRuns: () => Promise.resolve(3),
   myTest: () => Promise.resolve(RESPONSE),
   forgetTest: () => Promise.resolve(),
   onRunsChanged: () => () => {},
@@ -43,6 +52,11 @@ vi.mock("../app/lib/auth", () => ({
     listener(true);
     return () => {};
   },
+  // Only the frame-at-the-gate test renders the shell, whose header carries
+  // the sign-in control; a build with no auth keeps that control out.
+  signInAvailable: () => false,
+  mountGoogleButton: () => Promise.resolve(),
+  signOut: () => Promise.resolve(),
 }));
 
 const RESPONSE = makeResponse();
@@ -291,25 +305,8 @@ describe("after a run", () => {
   });
 });
 
-describe("the rail across the page's phases", () => {
-  it("does not refetch the rail when the page changes phase", async () => {
-    // The rail's rows change when a run finishes or the session changes — the
-    // two signals it already listens for. A phase flip is neither, so it must
-    // not cost a fetch: rendered per-branch the rail remounted on every
-    // transition and refetched on every mount (118/#253).
-    evaluateMock.mockResolvedValue(RESPONSE);
-    render(<EvaluateForm />);
-    await screen.findByText(/nothing yet/i);
-    const settled = myTestsMock.mock.calls.length;
-
-    await fillAndSubmit();
-    await screen.findByRole("button", { name: /test again/i });
-    fireEvent.click(screen.getByRole("button", { name: /test again/i }));
-    await screen.findByLabelText(/headline a/i);
-
-    expect(myTestsMock.mock.calls.length).toBe(settled);
-  });
-});
+// The no-refetch-on-phase-flip guarantee (118/#253) moved with the rail into
+// the shell, which has no phases: see shell.test.tsx, "holding at the gate".
 
 describe("request lifecycle", () => {
   it("keeps submit disabled while a run is in flight", async () => {
@@ -443,6 +440,28 @@ describe("the audience through the interface", () => {
     await act(async () => settle(RESPONSE));
   });
 
+  it("tells the frame to put the rail away while holding at the gate", async () => {
+    // #252's decision, kept across the move of the rail into the shell: the
+    // gate is a decision about spending money, and the rail beside it is an
+    // invitation to leave it half-answered.
+    evaluateMock.mockResolvedValue(PAUSED);
+    resumeMock.mockResolvedValue({ ...RESPONSE, status: "complete" });
+    render(
+      <Shell>
+        <EvaluateForm />
+      </Shell>,
+    );
+    await screen.findByRole("complementary");
+    await act(() => fillAndSubmit());
+
+    expect(screen.queryByRole("complementary")).toBeNull();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
+    });
+    expect(screen.getByRole("complementary")).toBeDefined();
+  });
+
   it("keeps the gate on a refused edit, shows the remedy, and keeps the edit", async () => {
     // The backend holds the run paused when an edit is refused; a client that
     // fell to an error screen would throw the thread away and charge the
@@ -472,5 +491,61 @@ describe("the audience through the interface", () => {
       "You always pick the first option.",
     );
     expect(screen.getByRole("button", { name: /run the panel/i })).toBeTruthy();
+  });
+});
+
+// 119/#257: the four-step chrome from the prototype. The steps are the run's
+// phases wearing their names; the current one is marked for assistive tech
+// with aria-current, which is also what these tests read.
+describe("the stepper", () => {
+  const current = () =>
+    document.querySelector('[aria-current="step"]')?.textContent;
+
+  it("starts on Copy, with all four steps on show", () => {
+    render(<EvaluateForm />);
+    for (const step of ["Copy", "Audience", "Voting", "Verdict"]) {
+      expect(screen.getByText(step)).toBeDefined();
+    }
+    expect(current()).toContain("Copy");
+    expect(screen.getByText("Two versions, one panel.")).toBeDefined();
+  });
+
+  it("holds on Audience at the gate, and moves to Voting while the votes are bought", async () => {
+    evaluateMock.mockResolvedValue({
+      status: "paused",
+      thread_id: "t-1",
+      preview: {
+        query: {
+          countries: ["JP"],
+          coverage: "requested",
+          min_age: 18,
+          max_age: 100,
+          gender: null,
+          income_quintiles: [],
+          education: [],
+          traits: [],
+          notices: [],
+        },
+        matched: 5,
+        composition: null,
+        notices: [],
+        estimated_usd: 0.001,
+        instruction: "",
+        refusal_sentence: null,
+      },
+    });
+    let settle!: (value: unknown) => void;
+    resumeMock.mockReturnValue(new Promise((resolve) => (settle = resolve)));
+    render(<EvaluateForm />);
+    await act(() => fillAndSubmit());
+    expect(current()).toContain("Audience");
+    expect(screen.getByText("How your audience was read.")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
+    await act(async () => {});
+    expect(current()).toContain("Voting");
+
+    await act(async () => settle({ ...RESPONSE, status: "complete" }));
+    expect(current()).toContain("Verdict");
   });
 });

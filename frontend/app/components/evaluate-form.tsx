@@ -1,20 +1,31 @@
 "use client";
 
-import { useEffect, useState, type ReactNode, type SubmitEvent } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type SubmitEvent,
+} from "react";
 
 import {
   LOCALES,
   MAX_PANEL_AGE,
   MIN_PANEL_AGE,
+  myTest,
   type EducationLevel,
   type Gender,
   type Locale,
 } from "../lib/api";
 import { AI_SYSTEM_DISCLOSURE } from "../lib/disclosure";
-import PastTests from "./past-tests";
+import { onAuthChange, signInAvailable } from "../lib/auth";
+import SignInSheet from "./sign-in-sheet";
 import { useEvaluate } from "../lib/use-evaluate";
 import PanelGate from "./panel-gate";
 import Report from "./report";
+import { useGateSignal } from "./shell";
+import Stepper, { type StepName } from "./stepper";
 
 const INPUT_CLASS = "rounded border border-line px-3 py-2";
 
@@ -139,7 +150,75 @@ export default function EvaluateForm({
   const [audience, setAudience] = useState("");
   const [headlineA, setHeadlineA] = useState("");
   const [headlineB, setHeadlineB] = useState("");
-  const { state, submit, answerGate, reset, show } = useEvaluate();
+  const { state, submit, answerGate, reset, show, fail } = useEvaluate();
+
+  // The frame puts the rail away while the gate is open (#252) — the page is
+  // the only thing that knows which phase it is in.
+  useGateSignal(state.phase === "gated");
+
+  // The form itself is behind Google (prototype, 2026-08-25): the backend
+  // refuses unsigned runs, so a form a signed-out visitor could fill in would
+  // be a promise the submit cannot keep. null until the session is known — a
+  // wall must not flash at a reader who turns out to be signed in. A build
+  // with no identity provider at all keeps the form: a wall nothing can open
+  // would make the app undevelopable (the sign-in control's own rule).
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const authGated = signInAvailable();
+  useEffect(
+    () =>
+      onAuthChange((value) => {
+        setSignedIn(value);
+        if (value) setSheetOpen(false);
+      }),
+    [],
+  );
+
+  // The wizard learns which stored test to show from its address (119/#257):
+  // the rail lives in the shell and a row is a link to `/test?open=<id>`, so
+  // reopening works from any page the rail shows on. `live` guards the late
+  // answer — a second link clicked before the first resolves must win.
+  const router = useRouter();
+  const openId = useSearchParams().get("open");
+  // The rail's rows and "New test" are links into this same route, so Next
+  // reuses the mounted page and only the params change. The previous id is
+  // what tells "never had one" apart from "just lost one" — the second is
+  // "New test" clicked from a reopened report, and means back to the form.
+  const previousOpenId = useRef<string | null>(null);
+  useEffect(() => {
+    const wasOpen = previousOpenId.current !== null;
+    previousOpenId.current = openId;
+    if (openId === null) {
+      if (wasOpen) reset();
+      return;
+    }
+    let live = true;
+    myTest(openId).then(
+      (result) => {
+        if (live) show(result);
+      },
+      () => {
+        // Stale — deleted in another tab — or the fetch just failed. Either
+        // way it must say so: a wordless fall to the blank form reads as data
+        // loss. The address keeps the id, so a reload retries.
+        if (live)
+          fail("That test could not be opened — it may have been deleted.");
+      },
+    );
+    return () => {
+      live = false;
+    };
+    // `show`, `reset` and `fail` are stable for the component's life; the id
+    // is the input that means anything.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openId]);
+
+  // Leaving the report must also leave its address, or a reload would bring
+  // the abandoned report straight back.
+  function startOver(): void {
+    if (openId !== null) router.replace("/test");
+    reset();
+  }
 
   function onSubmit(event: SubmitEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -177,6 +256,38 @@ export default function EvaluateForm({
   // switch: its rows change when a run finishes or the session changes, not
   // when the page turns — rendered inside each branch it remounted on every
   // transition, and every mount refetched (118/#253).
+  if (authGated && signedIn !== true) {
+    if (signedIn === null) return null;
+    return (
+      <div className="flex flex-col items-start gap-4">
+        <h2>Two versions, one panel.</h2>
+        <p className="text-ink-2">
+          Running a test costs money, so it asks who you are.
+        </p>
+        <button
+          type="button"
+          onClick={() => setSheetOpen(true)}
+          className="rounded-pill bg-ink px-6 py-3 font-medium text-surface"
+        >
+          Sign in to run a test
+        </button>
+        {sheetOpen && <SignInSheet onClose={() => setSheetOpen(false)} />}
+      </div>
+    );
+  }
+
+  // The step is the phase wearing its name: the audience is being read from
+  // the moment the form is sent until the gate is answered, and the votes are
+  // being bought from that answer until the report exists.
+  const step: StepName =
+    state.phase === "done"
+      ? "Verdict"
+      : state.phase === "gated" && state.resuming
+        ? "Voting"
+        : state.phase === "gated" || state.phase === "loading"
+          ? "Audience"
+          : "Copy";
+
   let main: ReactNode;
 
   // Once a report exists the page stops being a form: the reader wants the
@@ -186,7 +297,7 @@ export default function EvaluateForm({
       <>
         <button
           type="button"
-          onClick={reset}
+          onClick={startOver}
           className="self-start rounded border border-line px-3 py-1.5 text-sm"
         >
           Test again
@@ -388,13 +499,12 @@ export default function EvaluateForm({
 
   return (
     <div className="flex flex-col gap-6">
+      {state.phase === "idle" && <h2>Two versions, one panel.</h2>}
+      {state.phase === "gated" && !state.resuming && (
+        <h2>How your audience was read.</h2>
+      )}
+      <Stepper current={step} />
       {main}
-      {/* On the form and on the report, and deliberately not at the gate: the
-          gate is a decision about spending money, and a list of other tests
-          beside it is an invitation to leave it half-answered. Hidden there
-          rather than unmounted, so holding at the gate does not cost a refetch
-          on the way back. */}
-      <PastTests onOpen={show} hidden={state.phase === "gated"} />
     </div>
   );
 }
