@@ -16,7 +16,12 @@ from app.assembly import Embedder, assemble_pool
 from app.config import settings
 from app.llm import OpenRouterEmbedder, OpenRouterJudge
 from app.corpus import DOCUMENTS, seed_corpus
-from app.persistence import persist_persona, prepare_connection
+from app.persistence import (
+    missing_columns,
+    persist_persona,
+    prepare_connection,
+    schema_columns,
+)
 from app.plausibility import format_report, run_plausibility_qc
 from app.schemas import Locale
 
@@ -120,6 +125,33 @@ def _reseed_corpus() -> None:
         print(f"Corpus: {seed_corpus(conn, embedder)} passages.")
 
 
+def _check_schema() -> None:
+    """Fail the build when the deployed database is behind what this build writes.
+
+    Check only, never apply. Two reasons, and the second is the load-bearing
+    one: a credential that can apply a migration is a credential CI can get
+    wrong, and applying automatically is the thing 083/#173 deliberately
+    deferred to launch. So this opens a plain connection, reads the catalogue,
+    and exits — `deploy.md` records three deploys where a missing table meant a
+    500 on every request that touched it, and a red build is the alternative.
+    """
+    with psycopg.connect(settings.database_url) as conn:
+        stale = missing_columns(conn)
+    if stale:
+        raise SystemExit(
+            "the deployed schema is behind this build: "
+            + "; ".join(
+                f"{table} is missing {', '.join(columns)}"
+                for table, columns in sorted(stale.items())
+            )
+            + ". Apply app/schema.sql to the project (see docs/deploy.md) — by "
+            "hand, which is the standing decision until launch."
+        )
+    print(
+        f"Schema up to date: every column in {len(schema_columns())} tables is present."
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Seed the persona pool.")
     add_pool_args(parser)
@@ -132,6 +164,20 @@ def main() -> None:
         "document should not mean paying to regenerate the pool",
     )
     parser.add_argument(
+        "--schema-only",
+        action="store_true",
+        help="apply the schema and the row-level-security sweep, then exit. "
+        "Writes DDL and nothing else: no personas, no corpus, no embeddings, "
+        "no API key needed",
+    )
+    parser.add_argument(
+        "--check-schema",
+        action="store_true",
+        help="report whether the connected database has every table and column "
+        "this build writes, and exit non-zero if not. Reads only — never "
+        "applies, so a SELECT-privileged credential suffices",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="report what a run would generate and exit; needs no API key, "
@@ -139,6 +185,23 @@ def main() -> None:
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
+    # Both schema paths come before everything else, including the corpus:
+    # they are the two entry points that must not depend on a paid client, and
+    # `--corpus-only` builds one (115/#248).
+    if args.check_schema:
+        _check_schema()
+        return
+
+    if args.schema_only:
+        with psycopg.connect(settings.database_url, autocommit=True) as conn:
+            prepare_connection(conn)
+            tables = schema_columns()
+        print(
+            f"Schema applied: {len(tables)} tables "
+            f"({', '.join(sorted(tables))}), row-level security swept."
+        )
+        return
 
     if args.corpus_only:
         # The dry-run check has to happen here, not at its usual place further
