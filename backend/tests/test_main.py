@@ -2885,3 +2885,27 @@ def test_a_deletion_that_cannot_clear_the_reports_says_so(
     # Both facts, because either alone is misleading.
     assert "account" in detail and "test" in detail
     assert deleter.deleted == ["person-1"], "the account should already be gone"
+
+
+def test_the_stored_report_is_about_the_test_and_not_the_operators_wallet(
+    signed_in, conn, monkeypatch
+) -> None:
+    """`budget_notice` quotes the OpenRouter balance at one instant. Persisted,
+    a report reopened weeks later shows that figure as if it were current — and
+    it was never a fact about the test, it was a fact about the operator's
+    account (117/#252, review). The run's own notices are kept; that one is not.
+    """
+    seed_japanese(conn, 5)
+    # Thin enough to warn: the profile's votes cost more than this.
+    app.dependency_overrides[get_remaining_credit] = lambda: 0.0001
+
+    answered = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+
+    live = [notice["message"] for notice in answered.json()["notices"]]
+    assert any("OpenRouter credit" in message for message in live), live
+    kept = _stored(conn)[0][2]
+    assert not any(
+        "OpenRouter credit" in notice["message"] for notice in kept["notices"]
+    ), kept["notices"]
+    # The run's own notices survive — this is a shortfall run, so there is one.
+    assert kept["notices"]

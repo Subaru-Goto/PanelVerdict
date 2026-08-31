@@ -185,7 +185,11 @@ export default function EvaluateForm({
         >
           Test again
         </button>
-        <Report result={state.result} />
+        {/* Keyed, so a report replacing another *without* leaving this phase
+            gets its own analyst. Reopening from the rail below does exactly
+            that, and unkeyed it inherited the previous report's chat thread and
+            transcript — see the epoch's comment in use-evaluate. */}
+        <Report key={state.epoch} result={state.result} />
         <PastTests onOpen={show} />
       </div>
     );

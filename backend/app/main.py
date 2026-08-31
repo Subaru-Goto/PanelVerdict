@@ -847,6 +847,10 @@ async def forget_me(
     one.
     """
     if deleter is None:
+        # Refuses the whole operation, reports included. Deliberate: deleting a
+        # customer's stored tests while leaving the account that owns them is
+        # worse than doing neither, and they can still remove them one at a time
+        # through `DELETE /tests/{id}` (117/#252, review).
         raise HTTPException(
             status_code=503,
             detail="account deletion is not available on this deployment",
@@ -1046,13 +1050,21 @@ async def _kept(
     """
     if not isinstance(outcome, CompletedRun):
         return outcome
-    test_id = state["result"].test_id
+    result = state["result"]
+    test_id = result.test_id
     try:
         await store_report(
             conn,
             test_id=test_id,
             owner=caller,
-            report=outcome.model_dump(mode="json", exclude={"status"}),
+            # The run's own notices, not the response's: `_outcome` prepends
+            # `budget_notice`, which quotes the operator's OpenRouter balance at
+            # one instant. Stored, a report reopened weeks later would show that
+            # figure as if current — and it was never a fact about the test
+            # (117/#252, review).
+            report=outcome.model_copy(update={"notices": result.notices}).model_dump(
+                mode="json", exclude={"status"}
+            ),
         )
     except Exception:
         # Logged with the id so the loss is traceable to a run, and swallowed on

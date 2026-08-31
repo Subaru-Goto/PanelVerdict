@@ -35,14 +35,46 @@ export default function PastTests({
   const [query, setQuery] = useState("");
   const [failed, setFailed] = useState(false);
 
-  useEffect(() => onAuthChange(setSignedIn), []);
+  // Counts session notifications, so a refetch happens even when `signedIn`
+  // comes back the same value for a different account.
+  const [session, setSession] = useState(0);
+
+  useEffect(
+    () =>
+      onAuthChange((value) => {
+        setSignedIn(value);
+        // Cleared here rather than in an effect watching `signedIn`: this is
+        // the moment the session changed, and the boolean cannot represent it —
+        // two accounts both report `true`, and a sign-out and sign-in landing
+        // in one batch collapse to no change at all. Without this the new
+        // session shows the previous account's headlines until its own fetch
+        // resolves, and a click on one 404s (117/#252, review).
+        setTests(null);
+        setFailed(false);
+        setQuery("");
+        setSession((count) => count + 1);
+      }),
+    [],
+  );
 
   const load = useCallback(() => {
     if (signedIn !== true) return;
-    myTests().then(setTests, () => setFailed(true));
+    myTests().then(
+      (loaded) => {
+        setTests(loaded);
+        // Cleared on success, or one cold start leaves "could not be loaded"
+        // standing above the rows that then arrive — and permanently suppresses
+        // the empty state, which is gated on it (117/#252, review).
+        setFailed(false);
+      },
+      () => setFailed(true),
+    );
   }, [signedIn]);
 
-  useEffect(load, [load]);
+  // On mount, and again whenever the session is announced — `session` is in the
+  // dependencies for that second reason, since `signedIn` can come back the
+  // same value for a different account.
+  useEffect(load, [load, session]);
   // A finished run is a new row. `onRunsChanged` already fires exactly then —
   // it is what keeps the remaining-runs figure honest — so the rail reuses it
   // rather than polling.
@@ -53,9 +85,13 @@ export default function PastTests({
   async function open(testId: string): Promise<void> {
     try {
       onOpen(await myTest(testId));
-    } catch {
-      // The row is stale — most likely deleted in another tab. Reloading the
-      // rail is both the recovery and the explanation.
+    } catch (error) {
+      // A 404 means the row is stale — deleted in another tab — and reloading
+      // the rail is both the recovery and the explanation. Anything else and
+      // the row is still there, so a silent reload would look like the click
+      // did nothing (117/#252, review).
+      const stale = error instanceof Error && /404/.test(error.message);
+      if (!stale) setFailed(true);
       load();
     }
   }
@@ -130,9 +166,7 @@ export default function PastTests({
             ))}
           </ul>
           {shown.length === 0 && (
-            <p className="text-sm text-ink-2">
-              No test matches “{query}”.
-            </p>
+            <p className="text-sm text-ink-2">No test matches “{query}”.</p>
           )}
         </>
       )}

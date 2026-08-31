@@ -21,9 +21,14 @@ vi.mock("../app/lib/api", () => ({
   onRunsChanged: () => () => {},
 }));
 
+// A test that changes session mid-render needs the listener, not just its
+// first value — `onAuthChange` is live, so this is how the component learns.
+const listeners: ((listener: (value: boolean) => void) => void)[] = [];
+
 vi.mock("../app/lib/auth", () => ({
   onAuthChange: (listener: (value: boolean) => void) => {
     listener(signedIn);
+    listeners.forEach((take) => take(listener));
     return () => {};
   },
 }));
@@ -48,6 +53,7 @@ afterEach(() => {
   myTestMock.mockReset();
   forgetTestMock.mockReset();
   signedIn = true;
+  listeners.length = 0;
 });
 
 describe("the account's own tests", () => {
@@ -159,5 +165,50 @@ describe("the account's own tests", () => {
     // The distinction that matters to someone who paid for those reports: the
     // rail failed, the reports did not.
     expect(await screen.findByText(/not lost/)).toBeTruthy();
+  });
+});
+
+describe("the rail across a change of session", () => {
+  it("clears one account's rows before showing another's", async () => {
+    // `onAuthChange` is a live session listener, so this happens without a
+    // remount — and the previous account's headlines are not this account's to
+    // show, even for the moment before the fetch resolves (117/#252, review).
+    let announce: (value: boolean) => void = () => {};
+    listeners.push((listener) => {
+      announce = listener;
+    });
+    myTestsMock.mockResolvedValue([stored()]);
+
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/“Save 50% today”/);
+
+    myTestsMock.mockResolvedValue([]);
+    announce(false);
+    announce(true);
+
+    await waitFor(() =>
+      expect(screen.queryByText(/“Save 50% today”/)).toBeNull(),
+    );
+  });
+
+  it("stops saying the rail failed once it loads", async () => {
+    // A cold backend fails the first load; the run that follows fires
+    // `onRunsChanged` and the rows arrive. The warning must not still be
+    // standing above them.
+    myTestsMock.mockRejectedValueOnce(new Error("offline"));
+    myTestsMock.mockResolvedValue([stored()]);
+    let announce: (value: boolean) => void = () => {};
+    listeners.push((listener) => {
+      announce = listener;
+    });
+
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/not lost/);
+
+    announce(false);
+    announce(true);
+
+    expect(await screen.findByText(/“Save 50% today”/)).toBeTruthy();
+    expect(screen.queryByText(/not lost/)).toBeNull();
   });
 });
