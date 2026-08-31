@@ -37,7 +37,7 @@ its own uncertainty for exactly this reason.
    groceries online, so one model call turns your sentence into an instruction
    every panelist is asked to act out, and the report says which part of the
    audience was matched from survey data and which part was acted
-   ([094](docs/decisions/094-controls-replace-translation.md)). Copy that tries to
+   ([094](https://github.com/Subaru-Goto/PanelVerdict/issues/200)). Copy that tries to
    redirect the panel rather than be judged by it is refused before anything is
    bought.
 3. **Retrieve.** Every control *filters*, then a seeded uniform sample picks the
@@ -105,9 +105,9 @@ cd backend  && uv run fastapi dev app/main.py   # http://localhost:8000
 cd frontend && npm install && npm run dev       # http://localhost:3000
 ```
 
-**Deployed, dark.** The app runs on Vercel + Render + Supabase at $0/month, kept
-warm by a cron ping, and is deliberately unannounced until the safety spine is
-finished. [`docs/deploy.md`](docs/deploy.md) is the operator's checklist —
+**Deploying it.** The app runs on Vercel + Render + Supabase within their free
+tiers, kept warm by a scheduled ping.
+[`docs/deploy.md`](docs/deploy.md) is the operator's checklist, and
 `bash scripts/deploy-wizard.sh` walks it step by step.
 
 ## What a run costs
@@ -137,7 +137,7 @@ your credit. Add `PROFILE=demo` or `PROFILE=prod` to `.env` to change it.
 
 Repeat runs of the same headlines against the same panel reuse the cached votes,
 and since the controls replaced translation
-([094](docs/decisions/094-controls-replace-translation.md)) there is no targeting
+([094](https://github.com/Subaru-Goto/PanelVerdict/issues/200)) there is no targeting
 call left to pay for — so a re-run costs **nothing** unless you changed the
 audience sentence, which buys one rewrite (~$0.0012). Visiting the panel gate is
 free, and adjusting the reading there does not spend a run.
@@ -169,11 +169,14 @@ This is the most significant limitation in the project, and the numbers are in
   prediction about readers.** It is informative where the headlines say genuinely
   different things. `preference` remains the shipped framing because nothing in the
   run gives grounds to change it, not because it won.
+- **What is unsettled, and what would settle it.** That run's personas were not
+  matched to the 2013–15 readership the control was drawn from, so failing it does
+  not cleanly separate *"the panel does not reproduce copy effects"* from *"these
+  personas are not that audience."* A demographically-matched replication is what
+  would answer it, in either direction.
 
 **2. The explanation corpus is small, and evaluated on questions we wrote
-ourselves.** (Corrected 2026-08-26 — this read "there is no document-based retrieval
-corpus" until [018/#124](https://github.com/Subaru-Goto/PanelVerdict/issues/124)
-shipped one.) The analyst no longer answers "what does a credible interval mean"
+ourselves.** The analyst does not answer "what does a credible interval mean"
 from its own weights: it retrieves from committed documents and shows the source.
 What is honest to say about it:
 
@@ -193,65 +196,19 @@ What is honest to say about it:
   ([041](https://github.com/Subaru-Goto/PanelVerdict/issues/139),
   [043](https://github.com/Subaru-Goto/PanelVerdict/issues/141)).
 
-**3. The spend guard counts verified accounts, and one ceiling still rests on an
-estimate.** (Rewritten 2026-08-31. This section carried a correction saying
-sign-in had shipped on top of a paragraph that still said "with no accounts yet,
-caller means the network address" — the two halves contradicted each other for
-six days.)
+**3. Every run spends real money, so the app refuses before it buys.** Signing in
+is required to run a test: runs are counted against a verified account, analyst
+turns are capped, and a ledger refuses over a limit before anything is bought.
+Above those sits a global daily ceiling, and a hard spend cap on the model key
+behind it. What the ceilings are and why they were chosen that way lives in
+[`064`](docs/decisions/064-the-cost-ceilings.md) and
+[`docs/least-privilege.md`](docs/least-privilege.md) — not here, since the
+figures change and a README is the wrong place to read them from.
 
-- **Identity is real.** Runs are counted against the `sub` claim of a
-  signature-checked Google session, three a day, and analyst turns are capped per
-  thread and per caller — a Postgres-backed ledger refuses before anything is
-  bought ([045](https://github.com/Subaru-Goto/PanelVerdict/issues/143),
-  [063](https://github.com/Subaru-Goto/PanelVerdict/issues/158)). The paid
-  endpoints are not open: a shared secret admits only calls made through the
-  frontend's server-side proxy.
-- **An account is still free to make**, so a per-account limit raises the price of
-  a reset from "change a header" to "delete and re-create an account" rather than
-  making it infinite. What bounds a determined abuser is a global daily pool —
-  every paid request is priced at the gate and refused once the day's budget
-  ($1.00) is spent, whoever asks
-  ([064](docs/decisions/064-the-cost-ceilings.md),
-  [089](https://github.com/Subaru-Goto/PanelVerdict/issues/192)). A hard spend cap
-  on the OpenRouter key is the backstop.
-- **The pool is priced on an estimate, not a measurement.** A run is charged the
-  panel size times a measured per-vote figure, but an analyst *turn* is charged a
-  stand-in, because nobody has measured what a turn actually costs
-  ([091](https://github.com/Subaru-Goto/PanelVerdict/issues/195)). The ceiling
-  therefore holds against the shape of the spend rather than its size.
-- **A degraded mode worth naming.** With `SUPABASE_PROJECT_URL` unset — supported
-  for local development and documented as an interim deploy state — there is no
-  verifier, and "caller" falls back to an address-derived identity. In that state
-  people behind one NAT share both a budget and a rail of stored tests. It is why
-  every such endpoint sits behind the shared secret, and it is not the production
-  configuration: there, signing in is required to run at all.
-
-## Next steps
-
-Roughly in the order they would be done, each already specified:
-
-Two rows of the previous list had already shipped when it was last read — the
-corpus ([018](https://github.com/Subaru-Goto/PanelVerdict/issues/124), cited
-under limitation 2 as *done*) and sign-in
-([063](https://github.com/Subaru-Goto/PanelVerdict/issues/158)). What is actually
-open:
-
-| next | what it changes |
-|---|---|
-| [091](https://github.com/Subaru-Goto/PanelVerdict/issues/195) | measure what an analyst turn costs, so the day's ceiling stops resting on a stand-in figure |
-| [047](https://github.com/Subaru-Goto/PanelVerdict/issues/145) | structured logs with a correlation id, so a slow or costly run can be traced |
-| [087](https://github.com/Subaru-Goto/PanelVerdict/issues/165) | the Art. 50(2) machine-readable mark on AI-generated output — the disclosure is written, the marking is not |
-| [061](https://github.com/Subaru-Goto/PanelVerdict/issues/156) | an ungated demo: fixed input through the real graph with the panel model stubbed, so a visitor sees a real report and the meter never moves |
-| [041](https://github.com/Subaru-Goto/PanelVerdict/issues/139) | which kind of person preferred which variant — the question customers ask next |
-| [044](https://github.com/Subaru-Goto/PanelVerdict/issues/142) | a suggestion for the winning headline, framed as a hypothesis the app can then test |
-
-**And the one that would change what the app may claim:** a
-demographically-matched replication of the framing study. Limitation 1 rests on a
-run whose personas were not matched to Upworthy's 2013–15 readership, so failing
-the negative control there does not cleanly separate *"the panel does not
-reproduce copy effects"* from *"these personas are not that audience."*
-[`task-framing.md`](docs/research/task-framing.md) is explicit that this is
-unsettled — a matched replication is what would settle it, in either direction.
+One honest caveat about the ceiling: the price of a *run* is a measurement, and
+the price of an analyst *turn* is a stand-in, because nobody has measured a turn
+yet. The cap therefore holds against the shape of the spend more reliably than
+against its exact size.
 
 ## Tests
 
