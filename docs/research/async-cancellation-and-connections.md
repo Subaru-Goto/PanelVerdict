@@ -148,3 +148,31 @@ and the comment on that ticket carries what has been measured so far.
 - Nothing here says what a redeploy mid-run costs a paying caller. The in-flight
   chunk is lost, and the per-chunk ledger means earlier chunks are not — but the
   size of that loss in real votes has not been measured.
+
+## Addendum (2026-08-31, 113/#243): the dependency exit runs; the run's own shutdown did not
+
+The cleanup section above is about the *connection*, and it holds. Driving the
+same disconnect against `/chat`'s stream (the app as the ASGI callable, uvicorn's
+shapes: `spec_version` 2.3, `send` raising `OSError` once the client is gone)
+showed the *run* behind the stream was not shut down: not at unwind, not after
+ten loop ticks, not after an explicit `gc.collect()`. Two mechanisms, measured
+at unit level:
+
+```
+raw task.cancel() of a consumer mid-pull : model stream closed immediately
+anyio task-group cancel of the same     : model stream never closed
+```
+
+anyio re-delivers cancellation at every await until its scope closes, and
+Starlette's response plumbing cancels with anyio — so langgraph's own teardown,
+running on the cancelled task's await chain, was re-cancelled halfway. And when
+the reader stops reading before leaving, the generator is parked at a `yield`
+and the cancellation never enters it at all; nothing in Starlette 1.3.1
+`aclose()`s a streaming body it abandons, and the abandoned run's model task is
+a live asyncio task, which anchors the run against garbage collection forever.
+
+Fixes: `stream_analyst` pulls through a task behind `asyncio.shield` and
+finishes `abort()` in a shielded scope; `/chat` answers with a response that
+`aclose()`s its own generator on the way out. Tests drive both doors:
+`test_a_disconnect_landing_mid_pull_shuts_the_run_down` and
+`test_a_reader_who_stopped_reading_then_left_leaves_no_run_behind`.
