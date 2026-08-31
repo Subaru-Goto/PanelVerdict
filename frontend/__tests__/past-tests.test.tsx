@@ -211,6 +211,63 @@ describe("the rail reads in pages", () => {
 
     expect(screen.queryByRole("button", { name: "Show more" })).toBeNull();
   });
+
+  it("does not claim nothing matches while unsearched pages remain", async () => {
+    // The search reads the rows on hand, and older pages may hold the match —
+    // saying "no test matches" while a Show more could still find one would be
+    // a false sentence about the reader's own history.
+    myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
+
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/“Save 50% today”/);
+    fireEvent.change(screen.getByLabelText("Search your tests"), {
+      target: { value: "zzz" },
+    });
+
+    expect(screen.getByText(/No test loaded so far matches/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show more" })).toBeTruthy();
+  });
+
+  it("stops saying the rail failed once Show more succeeds", async () => {
+    // `load` clears the banner on success for exactly this reason (117/#252,
+    // review); the second reader must not drift from the first.
+    myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
+    myTestsMock.mockRejectedValueOnce(new Error("offline"));
+    myTestsMock.mockResolvedValueOnce({
+      tests: [
+        stored({
+          test_id: "t-2",
+          variants: { a: "Book in 30 seconds", b: "Reserve your slot now" },
+        }),
+      ],
+      next_cursor: null,
+    });
+
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/“Save 50% today”/);
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await screen.findByText(/not lost/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+
+    expect(await screen.findByText(/“Book in 30 seconds”/)).toBeTruthy();
+    expect(screen.queryByText(/not lost/)).toBeNull();
+  });
+
+  it("a second click while the page is away buys nothing", async () => {
+    // Show more appends, so a double-click that fetched twice would show the
+    // same rows twice. The button goes quiet until the page lands.
+    myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: "c1" });
+    render(<PastTests onOpen={() => {}} />);
+    await screen.findByText(/“Save 50% today”/);
+
+    myTestsMock.mockReturnValue(new Promise(() => {}));
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+
+    // One for the first page, one for the click — and nothing for the second.
+    expect(myTestsMock.mock.calls.length).toBe(2);
+  });
 });
 
 describe("the rail across a change of session", () => {

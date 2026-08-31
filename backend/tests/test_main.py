@@ -2917,9 +2917,7 @@ def test_a_cursor_cannot_widen_whose_tests_are_listed(signed_in, conn) -> None:
         created="2026-08-31T10:00:00Z",
         headline_a="the snoop's own",
     )
-    forged = base64.urlsafe_b64encode(
-        b"2026-08-31T12:00:00+00:00|t-victims"
-    ).decode()
+    forged = base64.urlsafe_b64encode(b"2026-08-31T12:00:00+00:00|t-victims").decode()
 
     page = signed_in.get(
         "/tests", params={"cursor": forged}, headers=_as("snoop")

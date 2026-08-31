@@ -925,8 +925,10 @@ TESTS_PAGE_ROWS = 14600 // 1625
 class StoredTestPage(BaseModel):
     """One page of the rail, newest first.
 
-    `next_cursor` is present exactly when following it would fetch something —
-    a "show more" that yields an empty page reads as broken. Opaque to clients:
+    `next_cursor` is present when the read that built this page saw a row
+    below it — near-always, following it fetches something, though a delete
+    landing between the two reads can still empty the next page. Opaque to
+    clients:
     it encodes a position (a row's instant and id), and a client that parsed it
     would inherit the encoding as API.
     """

@@ -40,6 +40,7 @@ export default function PastTests({
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [failed, setFailed] = useState(false);
+  const [fetchingMore, setFetchingMore] = useState(false);
 
   // Counts session notifications, so a refetch happens even when `signedIn`
   // comes back the same value for a different account. Mirrored in a ref so an
@@ -67,6 +68,10 @@ export default function PastTests({
     [],
   );
 
+  // Replaces, never appends — after a finished run or a session change the
+  // rail deliberately holds the newest page again: the event that fired it
+  // put the newest row there, and stitching old pages onto a list that just
+  // changed underneath them could repeat or skip a row.
   const load = useCallback(() => {
     if (signedIn !== true) return;
     myTests().then(
@@ -82,19 +87,26 @@ export default function PastTests({
     );
   }, [signedIn]);
 
-  // The page below the rows already shown. An append, so a page fetched under
-  // a session that ended while it was in flight must be dropped — the same
-  // not-this-account's-headlines rule the listener's clearing enforces for
-  // `load` (117/#252, review; 118/#253).
-  async function more(cursor: string): Promise<void> {
+  // The page below the rows already shown. An append, so two rules `load`
+  // does not need: a page fetched under a session that ended while it was in
+  // flight is dropped — the same not-this-account's-headlines rule the
+  // listener's clearing enforces for the first read (117/#252, review) — and
+  // only one fetch is ever away, or a double-click would append the same page
+  // twice. The banner clears on success for `load`'s own documented reason.
+  async function loadNextPage(cursor: string): Promise<void> {
+    if (fetchingMore) return;
+    setFetchingMore(true);
     const asked = sessionRef.current;
     try {
       const page = await myTests(cursor);
       if (sessionRef.current !== asked) return;
       setTests((current) => [...(current ?? []), ...page.tests]);
       setNextCursor(page.next_cursor);
+      setFailed(false);
     } catch {
       if (sessionRef.current === asked) setFailed(true);
+    } finally {
+      setFetchingMore(false);
     }
   }
 
@@ -193,12 +205,21 @@ export default function PastTests({
             ))}
           </ul>
           {shown.length === 0 && (
-            <p className="text-sm text-ink-2">No test matches “{query}”.</p>
+            <p className="text-sm text-ink-2">
+              {/* The search reads the rows on hand; a flat "no test matches"
+                  while unsearched pages remain would be a false sentence about
+                  the reader's own history. */}
+              {nextCursor === null
+                ? `No test matches “${query}”.`
+                : `No test loaded so far matches “${query}” — Show more reaches
+                   further back.`}
+            </p>
           )}
           {nextCursor !== null && (
             <button
               className="self-start text-sm text-ink-2 hover:text-ink hover:underline"
-              onClick={() => void more(nextCursor)}
+              disabled={fetchingMore}
+              onClick={() => void loadNextPage(nextCursor)}
               type="button"
             >
               Show more
