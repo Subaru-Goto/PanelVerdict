@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -269,19 +270,22 @@ describe("the rail across a change of session", () => {
     announce(true);
     await screen.findByText(/“The new account's”/);
 
-    settle({
-      tests: [
-        stored({
-          test_id: "t-old",
-          variants: { a: "The old account's", b: "stale page" },
-        }),
-      ],
-      next_cursor: null,
+    // Settled inside act, so the append (if the component wrongly performs
+    // one) has flushed before the assertion looks — a waitFor here would pass
+    // in the gap before the stale page landed.
+    await act(async () => {
+      settle({
+        tests: [
+          stored({
+            test_id: "t-old",
+            variants: { a: "The old account's", b: "stale page" },
+          }),
+        ],
+        next_cursor: null,
+      });
     });
 
-    await waitFor(() =>
-      expect(screen.queryByText(/“The old account's”/)).toBeNull(),
-    );
+    expect(screen.queryByText(/“The old account's”/)).toBeNull();
     expect(screen.getByText(/“The new account's”/)).toBeTruthy();
   });
 
