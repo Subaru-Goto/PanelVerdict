@@ -1,5 +1,7 @@
 import asyncio
 import base64
+
+import anyio
 import hmac
 import logging
 from collections.abc import AsyncIterator
@@ -1543,6 +1545,34 @@ async def resume_evaluate(
     )
 
 
+class ClosingStreamingResponse(StreamingResponse):
+    """A StreamingResponse that closes its generator when the reader is gone.
+
+    Neither Starlette layer does: on a disconnect the stream task is cancelled
+    or its send raises, and the body generator is abandoned suspended at its
+    yield — nothing ever calls `aclose()` on it (starlette 1.3.1,
+    `StreamingResponse.__call__` and `BaseHTTPMiddleware._StreamingResponse`).
+    "Collected eventually, at GC" never arrives either, because the abandoned
+    run's model task is a live asyncio task, and live tasks anchor the whole
+    graph against collection — measured in 113/#243: not at unwind, not after
+    an explicit gc.collect(). So the run kept calling the model with no reader,
+    which is exactly what `stream_analyst`'s `async with` was added to end.
+
+    The close is shielded because there are two doors out of a disconnect and
+    one of them is a cancellation: `BaseHTTPMiddleware` cancels the task
+    running this response when the outer send's failure propagates, and an
+    unshielded await here would be re-cancelled mid-cleanup, aborting the
+    run's shutdown halfway through.
+    """
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            with anyio.CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
+
 @app.post("/chat")
 async def chat(
     request: ChatRequest,
@@ -1563,7 +1593,7 @@ async def chat(
         analysis_facts(request.result)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return StreamingResponse(
+    return ClosingStreamingResponse(
         stream_analyst(
             model=analyst,
             result=request.result,

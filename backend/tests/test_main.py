@@ -1,4 +1,6 @@
+import asyncio
 import base64
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -49,8 +51,8 @@ from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, BaseMessage
-from langchain_core.outputs import ChatResult
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from openai import APIStatusError
@@ -1016,6 +1018,160 @@ async def test_the_chat_connection_can_bind_a_query_vector(
         assert found == []
     finally:
         await dependency.aclose()
+
+
+class HeldOpenChatModel(ScriptedChatModel):
+    """Streams a token, then one more per gate as the test releases them, and
+    records in its stream's `finally` whether anything ever closed it. What a
+    real provider stream looks like to a run whose reader left mid-answer."""
+
+    gates: list  # events guarding every token after the first
+    stream_closed: object  # set by the finally — closure is the subject
+
+    async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+        try:
+            yield ChatGenerationChunk(message=AIMessageChunk(content="first "))
+            for turn, gate in enumerate(self.gates):
+                await gate.wait()
+                yield ChatGenerationChunk(message=AIMessageChunk(content=f"t{turn} "))
+        finally:
+            self.stream_closed.set()
+
+
+async def _hang_up_mid_answer(model: HeldOpenChatModel, release) -> None:
+    """POST /chat and walk away mid-stream: read two chunks, stop, hang up.
+
+    TestClient cannot hang up mid-stream, so this drives the app as the ASGI
+    callable uvicorn calls, with uvicorn's own shapes: `spec_version` "2.3"
+    (h11_impl.py pins it), and a `send` that raises `OSError` once the client
+    is gone — uvicorn's ClientDisconnected is an OSError. `release` is the
+    model gate to open after the first chunk arrives, so where the run is
+    suspended when the hangup lands is the caller's choice of gates.
+    """
+    app.dependency_overrides[get_analyst] = lambda: model
+
+    body = json.dumps(
+        {"thread_id": "t-walkaway", "message": "why?", "result": make_report()}
+    ).encode()
+
+    first_chunk_read = asyncio.Event()
+    backpressured = asyncio.Event()
+    hung_up = asyncio.Event()
+    body_served = False
+
+    async def receive():
+        nonlocal body_served
+        if not body_served:
+            body_served = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        await hung_up.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if hung_up.is_set():
+            raise OSError("client went away")
+        if message["type"] == "http.response.body" and message.get("body"):
+            if first_chunk_read.is_set():
+                # TCP backpressure: the reader stopped reading, then closed.
+                backpressured.set()
+                await hung_up.wait()
+                raise OSError("client went away")
+            first_chunk_read.set()
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/chat",
+        "raw_path": b"/chat",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+            (b"host", b"testserver"),
+        ],
+        "client": ("127.0.0.1", 123),
+        "server": ("testserver", 80),
+    }
+
+    request = asyncio.create_task(app(scope, receive, send))
+    await asyncio.wait_for(first_chunk_read.wait(), 5)
+    release.set()
+    await asyncio.wait_for(backpressured.wait(), 5)
+    # Give the plumbing its loop turns: everything between the blocked send
+    # and the run's next suspension point is ready-to-run, so bare ticks are
+    # enough to park it there — no timer, nothing to wait out.
+    for _ in range(50):
+        await asyncio.sleep(0)
+    hung_up.set()
+
+    done, _ = await asyncio.wait([request], timeout=5)
+    assert done, "the request never unwound after the disconnect"
+    request.exception()  # the OSError is uvicorn's to swallow, not the subject
+
+
+@pytest.mark.anyio
+async def test_a_disconnect_landing_mid_pull_shuts_the_run_down(client) -> None:
+    """A disconnect while the run awaits its model must end the run there.
+
+    This is the cancellation door: Starlette's response plumbing cancels the
+    streaming task from an anyio task group, which re-delivers the cancel at
+    every await — measured tearing langgraph's own teardown apart halfway, so
+    the model task kept running with no reader, and as a live task it anchored
+    the whole run against garbage collection forever (113/#243: not closed at
+    unwind, not after ten loop ticks, not after an explicit gc.collect()).
+    """
+    release = asyncio.Event()
+    model = HeldOpenChatModel(
+        responses=[AIMessage(content="unused")],
+        # One gated token, then a gate that never opens: the hangup lands
+        # while the pull for the never-arriving token is in flight.
+        gates=[release, asyncio.Event()],
+        stream_closed=asyncio.Event(),
+    )
+
+    await _hang_up_mid_answer(model, release)
+
+    try:
+        await asyncio.wait_for(model.stream_closed.wait(), timeout=2)
+    except TimeoutError:
+        pytest.fail("the analyst run outlived its reader — nothing closed it")
+
+
+@pytest.mark.anyio
+async def test_a_reader_who_stopped_reading_then_left_leaves_no_run_behind(
+    client,
+) -> None:
+    """The abandonment door, the other way a disconnect arrives (113/#243).
+
+    Here a token is already on the wire behind the reader who stopped reading,
+    so the generator sits parked at its `yield` when the hangup lands — the
+    cancellation hits the blocked send and never enters the generator at all.
+    Nothing in Starlette closes a streaming body it abandons (1.3.1: neither
+    `StreamingResponse.__call__` nor the middleware's `_StreamingResponse`
+    calls `aclose()`), so unless the response closes its own generator, the
+    run is simply left suspended, holding its model task and its connection.
+    """
+    release = asyncio.Event()
+    ready = asyncio.Event()
+    ready.set()
+    model = HeldOpenChatModel(
+        responses=[AIMessage(content="unused")],
+        # After the gated token one more is ready at once, so the run yields
+        # it into the blocked send and parks; the last gate never opens.
+        gates=[release, ready, asyncio.Event()],
+        stream_closed=asyncio.Event(),
+    )
+
+    await _hang_up_mid_answer(model, release)
+
+    try:
+        await asyncio.wait_for(model.stream_closed.wait(), timeout=2)
+    except TimeoutError:
+        pytest.fail("the analyst run was abandoned mid-yield — nothing closed it")
 
 
 @pytest.fixture
