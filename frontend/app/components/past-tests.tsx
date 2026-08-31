@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   forgetTest,
@@ -32,12 +32,15 @@ export default function PastTests({
   // turns out to be signed in — the reason `sign-in.tsx` starts here too.
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [tests, setTests] = useState<StoredTest[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [failed, setFailed] = useState(false);
 
   // Counts session notifications, so a refetch happens even when `signedIn`
-  // comes back the same value for a different account.
+  // comes back the same value for a different account. Mirrored in a ref so an
+  // in-flight "Show more" can tell its session ended while it was away.
   const [session, setSession] = useState(0);
+  const sessionRef = useRef(0);
 
   useEffect(
     () =>
@@ -50,8 +53,10 @@ export default function PastTests({
         // session shows the previous account's headlines until its own fetch
         // resolves, and a click on one 404s (117/#252, review).
         setTests(null);
+        setNextCursor(null);
         setFailed(false);
         setQuery("");
+        sessionRef.current += 1;
         setSession((count) => count + 1);
       }),
     [],
@@ -60,8 +65,9 @@ export default function PastTests({
   const load = useCallback(() => {
     if (signedIn !== true) return;
     myTests().then(
-      (loaded) => {
-        setTests(loaded);
+      (page) => {
+        setTests(page.tests);
+        setNextCursor(page.next_cursor);
         // Cleared on success, or one cold start leaves "could not be loaded"
         // standing above the rows that then arrive — and permanently suppresses
         // the empty state, which is gated on it (117/#252, review).
@@ -70,6 +76,22 @@ export default function PastTests({
       () => setFailed(true),
     );
   }, [signedIn]);
+
+  // The page below the rows already shown. An append, so a page fetched under
+  // a session that ended while it was in flight must be dropped — the same
+  // not-this-account's-headlines rule the listener's clearing enforces for
+  // `load` (117/#252, review; 118/#253).
+  async function more(cursor: string): Promise<void> {
+    const asked = sessionRef.current;
+    try {
+      const page = await myTests(cursor);
+      if (sessionRef.current !== asked) return;
+      setTests((current) => [...(current ?? []), ...page.tests]);
+      setNextCursor(page.next_cursor);
+    } catch {
+      if (sessionRef.current === asked) setFailed(true);
+    }
+  }
 
   // On mount, and again whenever the session is announced — `session` is in the
   // dependencies for that second reason, since `signedIn` can come back the
@@ -167,6 +189,15 @@ export default function PastTests({
           </ul>
           {shown.length === 0 && (
             <p className="text-sm text-ink-2">No test matches “{query}”.</p>
+          )}
+          {nextCursor !== null && (
+            <button
+              className="self-start text-sm text-ink-2 hover:text-ink hover:underline"
+              onClick={() => void more(nextCursor)}
+              type="button"
+            >
+              Show more
+            </button>
           )}
         </>
       )}

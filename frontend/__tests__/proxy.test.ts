@@ -9,6 +9,7 @@ import {
   POST as evaluateProxy,
 } from "../app/api/evaluate/route";
 import { backendTracing } from "../app/api/proxy";
+import { GET as testsProxy } from "../app/api/tests/route";
 
 // 045/#143: the browser never holds the edge secret — these route handlers do,
 // server-side. The tests stub the backend fetch the way api.test.ts stubs it.
@@ -25,6 +26,44 @@ function proxyRequest(body: unknown): Request {
     body: JSON.stringify(body),
   });
 }
+
+describe("the tests proxy", () => {
+  it("forwards the two pagination parameters and nothing else a caller minted", async () => {
+    // The rail pages (118/#253), so `cursor` and `limit` must cross the edge —
+    // rebuilt, not passed through, so any other parameter stops here rather
+    // than becoming backend surface the proxy never chose to expose.
+    vi.stubEnv("API_URL", "http://backend.test");
+    vi.stubEnv("API_SHARED_SECRET", "edge-secret");
+    const backend = vi
+      .fn()
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", backend);
+
+    await testsProxy(
+      new Request(
+        "http://frontend.test/api/tests?cursor=c%7C1&limit=2&evil=1&x=y",
+      ),
+    );
+
+    const [url] = backend.mock.calls[0] as [string];
+    expect(url).toBe("http://backend.test/tests?cursor=c%7C1&limit=2");
+  });
+
+  it("sends a bare read when the rail asked for the newest page", async () => {
+    vi.stubEnv("API_URL", "http://backend.test");
+    vi.stubEnv("API_SHARED_SECRET", "edge-secret");
+    const backend = vi
+      .fn()
+      .mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", backend);
+
+    await testsProxy(new Request("http://frontend.test/api/tests"));
+
+    expect((backend.mock.calls[0] as [string])[0]).toBe(
+      "http://backend.test/tests",
+    );
+  });
+});
 
 describe("the evaluate proxy", () => {
   it("forwards to the backend with the edge secret and relays the answer", async () => {
