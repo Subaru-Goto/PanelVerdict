@@ -1593,6 +1593,19 @@ async def chat(
         analysis_facts(request.result)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    # Autocommit from here on: the stream's tools are this connection's only
+    # remaining users, every one of them reads, and langgraph runs a turn's
+    # tool calls concurrently on it (`ToolNode._afunc` gathers them).
+    # Non-autocommit, those reads shared one transaction nothing ever closed —
+    # the connection sat idle-in-transaction from the first tool to the end of
+    # the request (the state pooler reapers and
+    # `idle_in_transaction_session_timeout` kill, and the ACCESS SHARE holder
+    # a deploy's DDL queues behind), and one failing statement poisoned the
+    # transaction for any sibling in the same gather (113/#243). Autocommit
+    # makes the shared transaction not exist, rather than shorter-lived. The
+    # turn charge is unaffected: `_charge_ledger` committed before this line,
+    # inside `enforce_turn_limit`.
+    await conn.set_autocommit(True)
     return ClosingStreamingResponse(
         stream_analyst(
             model=analyst,

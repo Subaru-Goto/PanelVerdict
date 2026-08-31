@@ -47,6 +47,7 @@ from app.schemas import (
     EvaluateRequest,
     EvaluateResponse,
 )
+from app.corpus import seed_corpus
 from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit
 from fastapi import HTTPException
@@ -57,6 +58,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from openai import APIStatusError
 from pgvector.psycopg import register_vector_async
+from psycopg.pq import TransactionStatus
 from psycopg.types.json import Jsonb
 from pydantic import SecretStr
 from tests.factories import (
@@ -1311,6 +1313,117 @@ def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None
     tokens = [e["text"] for e in events if e["type"] == "token"]
     assert "".join(tokens) == "One panelist stands out."
     assert events[-1] == {"type": "done"}
+
+
+def test_no_transaction_outlives_a_chat_tools_read(client, conn, pg_url) -> None:
+    """The stream's tools share the request connection with nothing else, and
+    langgraph runs a turn's tool calls concurrently on it (`ToolNode._afunc`
+    gathers them). Non-autocommit, every tool's read opened a transaction
+    nothing closed: the connection sat idle-in-transaction from the first tool
+    to the end of the request — the state `idle_in_transaction_session_timeout`
+    and pooler reapers kill, and the ACCESS SHARE holder a deploy's DDL queues
+    behind — and one failing statement poisoned the shared transaction for any
+    sibling in the same gather (113/#243). /chat's connection is autocommit for
+    the stream, so a read stands alone and there is no transaction to poison
+    or to sit in. Probed between two tool turns, from inside the second one.
+    """
+    from tests.test_corpus_retrieval import FakeEmbedder
+
+    persist_pool(
+        conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
+    )
+    seed_corpus(conn, FakeEmbedder())
+
+    captured: list[psycopg.AsyncConnection] = []
+
+    async def capturing_connection():
+        async with await psycopg.AsyncConnection.connect(pg_url) as connection:
+            await register_vector_async(connection)
+            captured.append(connection)
+            yield connection
+
+    status_between_tools: list[TransactionStatus] = []
+
+    class ProbeEmbedder:
+        """Reads the connection's transaction state at the exact moment the
+        second tool starts work — after the first tool's read has finished,
+        while the stream is still the connection's owner."""
+
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            if any("practical tie" in text for text in texts):
+                status_between_tools.append(captured[0].info.transaction_status)
+            return FakeEmbedder().embed(texts)
+
+    app.dependency_overrides[get_conn] = capturing_connection
+    app.dependency_overrides[get_embedder] = lambda: ProbeEmbedder()
+    app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
+        responses=[
+            tool_call_message(name="search_personas", args={"query": "thrifty"}),
+            tool_call_message(
+                name="explain_the_report", args={"question": "what is a practical tie"}
+            ),
+            AIMessage(content="A tie means the interval spans zero."),
+        ]
+    )
+
+    response = client.post(
+        "/chat",
+        json={
+            "thread_id": "t-main-autocommit",
+            "message": "who is thrifty, and what is a tie?",
+            "result": make_report(votes=[make_panel_vote("US-00000")]),
+        },
+    )
+
+    assert response.status_code == 200
+    assert ndjson_events(response.text)[-1] == {"type": "done"}
+    assert status_between_tools == [TransactionStatus.IDLE]
+
+
+def test_a_tools_failure_ends_the_turn_with_the_error_in_band(client, conn) -> None:
+    """What a really-failing tool does to a turn, pinned as the record.
+
+    113/#243 was filed on the reading that ToolNode turns a tool's exception
+    into a ToolMessage, so the model answers around a wreck and the stream
+    ends `done` as though nothing happened. The installed langgraph does not:
+    its default converts only invocation errors (a hallucinated name, bad
+    arguments), and an exception from the tool's own body propagates — the
+    turn ends with the in-band `error` event and its fixed sentence, never
+    `done`. The failure here is the ticket's own scenario, a wrong-dimension
+    query vector reaching `embedding <=>`, the shape a model swap produces.
+    """
+    persist_pool(
+        conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
+    )
+
+    class WrongDimensionEmbedder:
+        def embed(self, texts: list[str]) -> list[list[float]]:
+            return [[1.0] for _ in texts]  # one dimension against 1536
+
+    app.dependency_overrides[get_embedder] = lambda: WrongDimensionEmbedder()
+    app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
+        responses=[
+            tool_call_message(name="search_personas", args={"query": "thrifty"}),
+            AIMessage(content="never reached"),
+        ]
+    )
+
+    response = client.post(
+        "/chat",
+        json={
+            "thread_id": "t-main-toolwreck",
+            "message": "who is thrifty?",
+            "result": make_report(votes=[make_panel_vote("US-00000")]),
+        },
+    )
+
+    assert response.status_code == 200
+    events = ndjson_events(response.text)
+    assert events[-1]["type"] == "error"
+    assert "analyst failed" in events[-1]["message"]
+    # The fixed sentence names the class and nothing else: no SQL, no model
+    # text, and no sibling's InFailedSqlTransaction standing in for the cause.
+    assert "InFailedSqlTransaction" not in events[-1]["message"]
 
 
 def test_chat_refuses_a_tally_naming_other_variants(client) -> None:
