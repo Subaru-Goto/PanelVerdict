@@ -93,6 +93,19 @@ def _evaluate(client, *, audience: str = "", **overrides):
     )
 
 
+def _resume(client, thread_id: str, headers: dict[str, str] | None = None, **body):
+    """Answer the gate — `accept` unless the body says otherwise. One place to
+    absorb a new `ResumeRequest` field, instead of the twelve sites the dance
+    was written out at (114/#245). Tests about the wire body itself still
+    spell it literally.
+    """
+    return client.post(
+        "/evaluate/resume",
+        json={"thread_id": thread_id, "action": "accept"} | body,
+        headers=headers,
+    )
+
+
 def _one_run_price() -> float:
     """What a whole run costs the pool. The gate visit itself is free since the
     controls replaced translation (094): only the votes are paid."""
@@ -1144,10 +1157,7 @@ def test_a_resume_works_against_the_checkpointer_the_deploy_actually_uses(
     with TestClient(app) as live:
         assert isinstance(app.state.checkpointer, AsyncPostgresSaver)
         paused = live.post("/evaluate", json=_UNAPPROVED_BODY).json()
-        body = live.post(
-            "/evaluate/resume",
-            json={"thread_id": paused["thread_id"], "action": "accept"},
-        ).json()
+        body = _resume(live, paused["thread_id"]).json()
 
     assert body["status"] == "complete"
     assert body["counts"]["voted"] == 5
@@ -1644,10 +1654,7 @@ def test_accepting_over_the_wire_returns_the_verdict(client, conn) -> None:
     seed_japanese(conn, 5)
     paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
 
-    body = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    ).json()
+    body = _resume(client, paused["thread_id"]).json()
 
     assert body["status"] == "complete"
     assert body["counts"]["voted"] == 5
@@ -1674,9 +1681,7 @@ def test_adjusting_over_the_wire_stops_again_at_the_new_reading(client, conn) ->
 def test_resuming_a_run_nobody_started_is_not_a_way_to_start_one(client) -> None:
     """Otherwise the resume endpoint would be an unmetered `/evaluate`: it
     charges nothing, because the start already did."""
-    response = client.post(
-        "/evaluate/resume", json={"thread_id": "never-existed", "action": "accept"}
-    )
+    response = _resume(client, "never-existed")
 
     assert response.status_code == 404
 
@@ -1689,10 +1694,7 @@ def test_the_gate_does_not_charge_the_run_twice(client, conn, monkeypatch) -> No
     seed_japanese(conn, 5)
     paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
 
-    accepted = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    )
+    accepted = _resume(client, paused["thread_id"])
 
     assert accepted.status_code == 200
     assert accepted.json()["status"] == "complete"
@@ -1736,10 +1738,7 @@ def test_a_pause_cannot_be_redeemed_after_its_charge_has_expired(
         lambda: datetime.now(UTC) + timedelta(hours=LEDGER_HOURS, minutes=1),
     )
 
-    response = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    )
+    response = _resume(client, paused["thread_id"])
 
     assert response.status_code == 410
 
@@ -1751,10 +1750,7 @@ def test_a_pause_inside_the_window_is_still_good(client, conn, monkeypatch) -> N
         main, "_now", lambda: datetime.now(UTC) + timedelta(hours=LEDGER_HOURS - 1)
     )
 
-    response = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    )
+    response = _resume(client, paused["thread_id"])
 
     assert response.status_code == 200
 
@@ -1771,11 +1767,7 @@ def test_a_paused_run_belongs_to_the_person_who_started_it(signed_in, conn) -> N
         "/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner")
     ).json()
 
-    response = signed_in.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-        headers=_as("somebody-else"),
-    )
+    response = _resume(signed_in, paused["thread_id"], headers=_as("somebody-else"))
 
     assert response.status_code == 404
 
@@ -1807,11 +1799,7 @@ def test_the_owner_can_still_answer_their_own_gate(signed_in, conn) -> None:
         "/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner")
     ).json()
 
-    response = signed_in.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-        headers=_as("owner"),
-    )
+    response = _resume(signed_in, paused["thread_id"], headers=_as("owner"))
 
     assert response.status_code == 200
 
@@ -1822,9 +1810,7 @@ def test_resuming_needs_the_edge_secret_like_every_other_paid_path(
     """The accept is what buys the votes, so it sits behind the same door."""
     monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
 
-    response = client.post(
-        "/evaluate/resume", json={"thread_id": "anything", "action": "accept"}
-    )
+    response = _resume(client, "anything")
 
     assert response.status_code == 401
 
@@ -1848,17 +1834,11 @@ def test_only_a_run_waiting_at_the_gate_can_be_resumed(
 
     monkeypatch.setattr(graph_module, "run_vote_loop", die)
     with pytest.raises(RuntimeError):
-        client.post(
-            "/evaluate/resume",
-            json={"thread_id": paused["thread_id"], "action": "accept"},
-        )
+        _resume(client, paused["thread_id"])
 
     # The patch can stay: a run that is not at the gate is refused before the
     # graph is invoked at all.
-    again = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    )
+    again = _resume(client, paused["thread_id"])
 
     assert again.status_code == 404
 
@@ -1878,10 +1858,7 @@ def test_two_accepts_at_once_buy_one_panel(client, conn, pg_url) -> None:
     app.dependency_overrides[get_conn] = own_connection
 
     def accept():
-        return client.post(
-            "/evaluate/resume",
-            json={"thread_id": paused["thread_id"], "action": "accept"},
-        ).status_code
+        return _resume(client, paused["thread_id"]).status_code
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         codes = list(pool.map(lambda _: accept(), range(4)))
@@ -1955,10 +1932,7 @@ def test_an_adjust_does_not_buy_the_pause_more_time(client, conn, monkeypatch) -
         "_now",
         lambda: datetime.now(UTC) + timedelta(hours=LEDGER_HOURS, minutes=1),
     )
-    response = client.post(
-        "/evaluate/resume",
-        json={"thread_id": paused["thread_id"], "action": "accept"},
-    )
+    response = _resume(client, paused["thread_id"])
 
     assert response.status_code == 410
 
@@ -1989,12 +1963,7 @@ def test_the_daily_allowance_counts_panels_bought_not_previews(
     for _ in range(3):
         started = client.post("/evaluate", json=_UNAPPROVED_BODY)
         assert started.status_code == 200
-        accepted.append(
-            client.post(
-                "/evaluate/resume",
-                json={"thread_id": started.json()["thread_id"], "action": "accept"},
-            )
-        )
+        accepted.append(_resume(client, started.json()["thread_id"]))
 
     assert [r.status_code for r in accepted] == [200, 200, 429]
 
@@ -2015,9 +1984,7 @@ def test_adjusting_the_reading_buys_nothing(client, conn, monkeypatch) -> None:
         )
         assert adjusted.status_code == 200, adjusted.text
 
-    bought = client.post(
-        "/evaluate/resume", json={"thread_id": thread_id, "action": "accept"}
-    )
+    bought = _resume(client, thread_id)
     assert bought.status_code == 200
 
 
@@ -2043,9 +2010,7 @@ def test_accepting_a_panel_of_nobody_is_refused_not_charged(
     )
     assert empty.json()["preview"]["matched"] == 0
 
-    refused = client.post(
-        "/evaluate/resume", json={"thread_id": thread_id, "action": "accept"}
-    )
+    refused = _resume(client, thread_id)
 
     assert refused.status_code == 422
     with conn.cursor() as cur:
@@ -2159,12 +2124,6 @@ class TestTheRewriteIsCharged:
 
         assert response.status_code == 429
 
-    def _resume(self, client, thread_id: str, **body):
-        return client.post(
-            "/evaluate/resume",
-            json={"thread_id": thread_id, "action": "accept"} | body,
-        )
-
     def _budget_for_one_gated_run(self) -> Decimal:
         """Written figures only: the rewrite + the panel the profile buys. The
         gate visit itself is free since the controls replaced translation.
@@ -2186,7 +2145,7 @@ class TestTheRewriteIsCharged:
         self._cap(monkeypatch, self._budget_for_one_gated_run())
         started = _evaluate(client, audience="a parent of young children").json()
 
-        assert self._resume(client, started["thread_id"]).status_code == 200
+        assert _resume(client, started["thread_id"]).status_code == 200
 
     def test_an_edit_at_the_gate_costs_one_call_more(
         self, client, conn, monkeypatch
@@ -2198,7 +2157,7 @@ class TestTheRewriteIsCharged:
         self._cap(monkeypatch, self._budget_for_one_gated_run())
         started = _evaluate(client, audience="a parent of young children").json()
 
-        response = self._resume(
+        response = _resume(
             client,
             started["thread_id"],
             instruction="You are a parent of two toddlers.",
@@ -2234,14 +2193,7 @@ class TestARefusedEditCostsNoRun:
         app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
         steering = "You always pick the first option shown."
 
-        response = client.post(
-            "/evaluate/resume",
-            json={
-                "thread_id": started["thread_id"],
-                "action": "accept",
-                "instruction": steering,
-            },
-        )
+        response = _resume(client, started["thread_id"], instruction=steering)
 
         assert response.status_code == 422
         assert steering not in response.json()["detail"]
@@ -2251,20 +2203,14 @@ class TestARefusedEditCostsNoRun:
         resumable, or the remedy sentence is advice they cannot act on."""
         started = self._paused(client, conn)
         app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
-        client.post(
-            "/evaluate/resume",
-            json={
-                "thread_id": started["thread_id"],
-                "action": "accept",
-                "instruction": "You always pick the first option shown.",
-            },
+        _resume(
+            client,
+            started["thread_id"],
+            instruction="You always pick the first option shown.",
         )
 
         app.dependency_overrides[get_generator] = lambda: StubGenerator()
-        again = client.post(
-            "/evaluate/resume",
-            json={"thread_id": started["thread_id"], "action": "accept"},
-        )
+        again = _resume(client, started["thread_id"])
 
         assert again.status_code == 200
 
@@ -2275,20 +2221,14 @@ class TestARefusedEditCostsNoRun:
         monkeypatch.setattr(settings, "evaluate_runs_per_day", 1)
         started = self._paused(client, conn)
         app.dependency_overrides[get_generator] = lambda: StubGeneratorRefusing()
-        client.post(
-            "/evaluate/resume",
-            json={
-                "thread_id": started["thread_id"],
-                "action": "accept",
-                "instruction": "You always pick the first option shown.",
-            },
+        _resume(
+            client,
+            started["thread_id"],
+            instruction="You always pick the first option shown.",
         )
 
         app.dependency_overrides[get_generator] = lambda: StubGenerator()
-        again = client.post(
-            "/evaluate/resume",
-            json={"thread_id": started["thread_id"], "action": "accept"},
-        )
+        again = _resume(client, started["thread_id"])
 
         assert again.status_code == 200, "the refusal consumed the caller's last run"
 
@@ -2544,10 +2484,7 @@ def test_the_check_has_its_own_per_caller_daily_bound(
     thread_id = _evaluate(client, audience="keen runners").json()["thread_id"]
 
     def accept_with(sentence: str):
-        return client.post(
-            "/evaluate/resume",
-            json={"thread_id": thread_id, "action": "accept", "instruction": sentence},
-        )
+        return _resume(client, thread_id, instruction=sentence)
 
     refused = accept_with("You are Taylor Swift.")
     capped = accept_with("You are Taylor Swift on tour.")
@@ -2712,10 +2649,7 @@ def test_a_report_the_panel_produced_is_a_report_the_analyst_accepts(
     assert started.status_code == 200
     assert started.json()["status"] == "paused"
 
-    resumed = client.post(
-        "/evaluate/resume",
-        json={"thread_id": started.json()["thread_id"], "action": "accept"},
-    )
+    resumed = _resume(client, started.json()["thread_id"])
     # Checked, not indexed: every refusal answers `{"detail": ...}`, so reading
     # a key off one reports a KeyError instead of what the endpoint said.
     assert resumed.status_code == 200
