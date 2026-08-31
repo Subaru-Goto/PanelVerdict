@@ -559,6 +559,27 @@ class ResumeRequest(BaseModel):
     # The edited reading, when adjusting. Re-selects with SQL only — never a
     # second translation, which is paid and could disagree with the edit.
     query: PanelEdit | None = None
+    # Corrected headlines, when the reader fixed one mid-gate (077, decided
+    # 2026-08-31): the paused thread keeps the text from the first submit, so a
+    # resume that could not update it would silently vote the old words. Both
+    # or neither — one alone would vote a pair nobody composed — and only
+    # `adjust` reads them: the gate never edits the text itself.
+    headline_a: str | None = Field(
+        default=None, min_length=1, max_length=MAX_HEADLINE_CHARS
+    )
+    headline_b: str | None = Field(
+        default=None, min_length=1, max_length=MAX_HEADLINE_CHARS
+    )
+
+    @model_validator(mode="after")
+    def _both_headlines_or_neither(self) -> "ResumeRequest":
+        if (self.headline_a is None) != (self.headline_b is None):
+            raise ValueError(
+                "one corrected headline alone would vote half the old submit "
+                "— send both headlines, or neither"
+            )
+        return self
+
     # The role-play sentence as the reader left it at the gate. None means they
     # did not touch the draft — the case that costs no check, since the draft was
     # already classified when it was written. "" is a real answer meaning

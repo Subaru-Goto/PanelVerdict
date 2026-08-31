@@ -1527,6 +1527,12 @@ async def resume_evaluate(
                 resume=GateDecision(
                     action=request.action,
                     query=_edited(request, values),
+                    variants=(
+                        {"a": request.headline_a, "b": request.headline_b}
+                        if request.headline_a is not None
+                        and request.headline_b is not None
+                        else None
+                    ),
                     instruction=approved or request.instruction,
                 ).model_dump()
             ),

@@ -1,4 +1,10 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import PanelGate from "../app/components/panel-gate";
@@ -47,7 +53,9 @@ describe("the panel gate", () => {
 
   it("only spends when a person says so", async () => {
     const onAccept = vi.fn();
-    render(<PanelGate preview={preview} onAccept={onAccept} onBack={vi.fn()} />);
+    render(
+      <PanelGate preview={preview} onAccept={onAccept} onBack={vi.fn()} />,
+    );
 
     expect(onAccept).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
@@ -59,7 +67,9 @@ describe("the panel gate", () => {
     // Two clicks can land before React swaps this view out, and each one would
     // buy the panel.
     const onAccept = vi.fn();
-    render(<PanelGate preview={preview} onAccept={onAccept} onBack={vi.fn()} />);
+    render(
+      <PanelGate preview={preview} onAccept={onAccept} onBack={vi.fn()} />,
+    );
 
     const run = screen.getByRole("button", { name: /run the panel/i });
     fireEvent.click(run);
@@ -86,7 +96,7 @@ describe("the panel gate", () => {
     render(
       <PanelGate
         preview={{ ...preview, matched: 0, composition: null }}
-       
+
         onAccept={vi.fn()}
         onBack={vi.fn()}
       />,
@@ -118,9 +128,11 @@ describe("the selected reading at the gate", () => {
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
-    render(<PanelGate preview={narrowed} onAccept={vi.fn()} onBack={vi.fn()} />);
+    render(
+      <PanelGate preview={narrowed} onAccept={vi.fn()} onBack={vi.fn()} />,
+    );
 
-    expect(screen.getByText(/JP, DE/)).toBeTruthy();
+    expect(screen.getByText(/Japan, Germany/)).toBeTruthy();
     expect(screen.getByText(/30–50/)).toBeTruthy();
     // getAllBy: the composition rows also say female — the fact row is one more
     expect(screen.getAllByText(/female/).length).toBeGreaterThan(1);
@@ -141,7 +153,9 @@ describe("the selected reading at the gate", () => {
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } as any;
-    render(<PanelGate preview={everyone} onAccept={vi.fn()} onBack={vi.fn()} />);
+    render(
+      <PanelGate preview={everyone} onAccept={vi.fn()} onBack={vi.fn()} />,
+    );
 
     expect(screen.getByText(/everyone in the pool/i)).toBeTruthy();
   });
@@ -157,7 +171,11 @@ describe("the instruction at the gate", () => {
 
   it("shows the sentence in an editable field", () => {
     render(
-      <PanelGate preview={withInstruction} onAccept={vi.fn()} onBack={vi.fn()} />,
+      <PanelGate
+        preview={withInstruction}
+        onAccept={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
 
     const field = screen.getByLabelText(
@@ -223,7 +241,11 @@ describe("the instruction at the gate", () => {
     // The honesty the field owes (094): panelists act this — no data picked
     // them by it. Without the framing, the sentence reads like a filter.
     render(
-      <PanelGate preview={withInstruction} onAccept={vi.fn()} onBack={vi.fn()} />,
+      <PanelGate
+        preview={withInstruction}
+        onAccept={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
 
     expect(screen.getByText(/not sampled/i)).toBeTruthy();
@@ -254,7 +276,11 @@ describe("the instruction at the gate", () => {
 
   it("offers no restore while the draft is untouched", () => {
     render(
-      <PanelGate preview={withInstruction} onAccept={vi.fn()} onBack={vi.fn()} />,
+      <PanelGate
+        preview={withInstruction}
+        onAccept={vi.fn()}
+        onBack={vi.fn()}
+      />,
     );
 
     expect(

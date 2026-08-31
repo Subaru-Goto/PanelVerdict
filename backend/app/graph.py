@@ -102,6 +102,11 @@ class GateDecision(BaseModel):
 
     action: Literal["accept", "adjust"]
     query: TargetQuery | None = None
+    # Corrected headlines, when the reader fixed one mid-gate (077, decided
+    # 2026-08-31). The paused thread keeps the variants from the first submit,
+    # so a resume that could not update them would silently vote the old text.
+    # None means untouched; only `adjust` reads it — the gate never edits text.
+    variants: dict[str, str] | None = None
     # The role-play sentence as the reader left it. None means they did not touch
     # the draft, which is the case that costs no check: its verdict was reached
     # when it was generated. An empty string is a real answer — "demographics
@@ -278,6 +283,7 @@ def build_evaluate_graph(
             return {
                 "decision": "adjust",
                 "edited": decision.query or state["query"],
+                "variants": decision.variants or state["variants"],
                 "refused": None,
             }
         return {"decision": "accept"} | _approved(state, decision.instruction)

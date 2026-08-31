@@ -1897,6 +1897,51 @@ def test_adjusting_over_the_wire_stops_again_at_the_new_reading(client, conn) ->
     assert body["status"] == "paused"
 
 
+def test_adjusting_carries_corrected_headlines_to_the_vote(client, conn) -> None:
+    """A typo fixed on the form while the run was paused must be what the
+    panel votes on — the resume updates graph state (077, 2026-08-31). The
+    report's variants are the proof: they come from state, not the request
+    that started the run."""
+    seed_japanese(conn, 5)
+    paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+
+    adjusted = client.post(
+        "/evaluate/resume",
+        json={
+            "thread_id": paused["thread_id"],
+            "action": "adjust",
+            "query": _edit(paused["preview"]["query"]),
+            "headline_a": "Save 50% this week",
+            "headline_b": "Members save half price this week",
+        },
+    ).json()
+    assert adjusted["status"] == "paused"
+
+    body = _resume(client, paused["thread_id"]).json()
+    assert body["status"] == "complete"
+    assert body["variants"] == {
+        "a": "Save 50% this week",
+        "b": "Members save half price this week",
+    }
+
+
+def test_an_adjust_cannot_carry_half_a_correction(client, conn) -> None:
+    """One headline without the other would vote a pair nobody composed:
+    half old submit, half new form. The contract refuses it above the graph."""
+    seed_japanese(conn, 5)
+    paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+
+    response = client.post(
+        "/evaluate/resume",
+        json={
+            "thread_id": paused["thread_id"],
+            "action": "adjust",
+            "headline_a": "Save 50% this week",
+        },
+    )
+    assert response.status_code == 422
+
+
 def test_resuming_a_run_nobody_started_is_not_a_way_to_start_one(client) -> None:
     """Otherwise the resume endpoint would be an unmetered `/evaluate`: it
     charges nothing, because the start already did."""
