@@ -105,3 +105,30 @@ CREATE INDEX IF NOT EXISTS corpus_chunks_embedding_idx
 
 CREATE INDEX IF NOT EXISTS corpus_chunks_search_idx
     ON corpus_chunks USING gin (search);
+
+
+-- ---------------------------------------------------------------------------
+-- Additive changes to tables that already exist (083/#173, 115/#248)
+--
+-- CREATE TABLE IF NOT EXISTS above accepts an out-of-date table without
+-- altering it, so a column added to a table already deployed goes here — at the
+-- bottom, in the order it was added, never by editing the CREATE above it. Two
+-- reasons it must be here rather than in a separate file: this file is what
+-- app.persistence.apply_schema runs, so the RLS sweep still fires afterwards;
+-- and apply_schema reads its completeness probe out of these statements, so a
+-- column added anywhere else is a column nothing checks for.
+--
+-- The form is required, and enforced by app.persistence._added_columns:
+--
+--     ALTER TABLE votes ADD COLUMN IF NOT EXISTS scored_at timestamptz;
+--
+-- IF NOT EXISTS because this file runs on every seed and every boot: a bare
+-- ADD COLUMN succeeds once and fails forever after, taking the RLS sweep that
+-- follows it down too.
+--
+-- Additive only. No DROP COLUMN, no type change, no rename — a reader of an
+-- older deploy is still serving requests during a rollout, and votes is paid
+-- model output that cannot be regenerated. A change that cannot be expressed
+-- additively is a new column plus a backfill, and the old one left alone.
+--
+-- Nothing is pending: no table has outgrown its CREATE yet.

@@ -5,7 +5,8 @@ a throwaway container without live credentials. Idempotent: re-running the seed
 skips personas already present.
 """
 
-from collections.abc import Iterable, Mapping, Sequence
+import re
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
@@ -44,37 +45,169 @@ _PERSONA_COLUMNS = ", ".join(PersonaRow.__annotations__)
 
 _SCHEMA_SQL = (Path(__file__).parent / "schema.sql").read_text()
 
-# Columns added after the first schema shipped. `CREATE TABLE IF NOT EXISTS` will
-# not add them to an existing table, so `apply_schema` probes for them; extend this
-# whenever a column is added rather than writing a second probe.
-_REQUIRED_COLUMNS = ("summary_embedding",)
+# Tables whose every row is a pure function of something in git or of the master
+# seed, so dropping one loses no information. `votes` is deliberately absent: it
+# is paid model output. The ledgers are absent too — their own comments call
+# expired rows dead weight, but an unexpired row is a spend nobody has been
+# charged for yet, so the remedy is additive DDL rather than a drop.
+_REGENERABLE = frozenset({"personas", "corpus_chunks"})
+
+
+def schema_columns(sql: str | None = None) -> dict[str, tuple[str, ...]]:
+    """Every table `schema.sql` builds, and the columns it gives each one.
+
+    Read out of the DDL the build actually applies, rather than kept by hand
+    beside it: the previous probe named one table of five and its own comment
+    asked the next person to extend it, which nothing enforced (115/#248). A
+    list parsed from the source cannot drift from the source.
+
+    Additive `ALTER TABLE … ADD COLUMN` statements are read too, and their form
+    is enforced rather than requested — see `_added_columns`.
+    """
+    # Comment lines go first, and the whole file is stripped rather than each
+    # statement: schema.sql documents the additive form by *showing* an ALTER,
+    # and an example read as DDL had the probe demanding a column no table has
+    # — measured, on this file's own documentation.
+    sql = "\n".join(
+        line
+        for line in (_SCHEMA_SQL if sql is None else sql).splitlines()
+        if not line.lstrip().startswith("--")
+    )
+    tables: dict[str, tuple[str, ...]] = {}
+    for table, body in re.findall(
+        r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*?)\n\);", sql, re.DOTALL
+    ):
+        tables[table] = tuple(_declared_columns(body))
+    for table, column in _added_columns(sql):
+        if table not in tables:
+            raise ValueError(
+                f"schema.sql adds {column} to {table}, which no CREATE TABLE in "
+                "it declares — a typo here makes the probe SELECT from a table "
+                "that does not exist and report a stale schema on a current "
+                "database."
+            )
+        tables[table] += (column,)
+    return tables
+
+
+def _declared_columns(body: str) -> Iterator[str]:
+    """The column names in one `CREATE TABLE` body."""
+    for line in body.splitlines():
+        # Strip the trailing comment before looking for a name, so a `--` note
+        # mentioning a word is never read as a column.
+        name = line.split("--")[0].strip().split(" ")[0].strip(",")
+        # Table-level constraints (`PRIMARY KEY (a, b)`, `UNIQUE (…)`) open with
+        # a keyword rather than a column name.
+        if name and name.isidentifier() and not name.isupper():
+            yield name
+
+
+def _added_columns(sql: str) -> Iterator[tuple[str, str]]:
+    """Every `(table, column)` an `ALTER TABLE … ADD COLUMN` statement adds.
+
+    `IF NOT EXISTS` is required, not preferred: `schema.sql` runs on every seed
+    and every boot, so a bare `ADD COLUMN` fails the second time and takes the
+    RLS sweep after it down with it. Refused here rather than asked for in a
+    comment — the convention this file used to carry as a comment went eight
+    months without being followed.
+    """
+    for table, guard, column in re.findall(
+        r"ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(IF NOT EXISTS\s+)?(\w+)",
+        sql,
+        re.IGNORECASE,
+    ):
+        if not guard:
+            raise ValueError(
+                f"schema.sql adds {table}.{column} without IF NOT EXISTS. The "
+                "file runs on every seed and every boot, so the second run "
+                "would fail and the RLS sweep after it would not run."
+            )
+        yield table, column
 
 
 def apply_schema(conn: psycopg.Connection) -> None:
-    """Create the pool schema if absent (idempotent), then refuse a stale one.
+    """Create the schema if absent (idempotent), then refuse a stale one.
 
     `CREATE … IF NOT EXISTS` silently accepts an out-of-date table, and the
     resulting failure is invisible rather than loud: a pool seeded before the
     embedding column existed makes every id a resume-skip, so no insert ever
     names the missing column and the run reports "0 written, 200 already
-    present" over a pool with no embeddings.
+    present" over a pool with no embeddings. On a ledger it is worse — the seed
+    never touches those, so the first notice is a 500 on a paying request.
+
+    Every table is probed, because every table can go stale the same way.
     """
+    # The index statements reference columns, so on some stale tables schema.sql
+    # itself fails before the probe — same cause, same remedy, so both paths
+    # land in the one curated error below.
     try:
-        # The index statement references summary_embedding, so on a stale table
-        # schema.sql itself now fails before the probe — same cause, same
-        # remedy, so both paths land in the one curated error below.
         conn.execute(_SCHEMA_SQL)
         conn.commit()
-        conn.execute(f"SELECT {', '.join(_REQUIRED_COLUMNS)} FROM personas LIMIT 0")
     except psycopg.errors.UndefinedColumn as error:
         conn.rollback()
-        raise RuntimeError(
-            "the personas table is missing a column this build writes "
-            f"({', '.join(_REQUIRED_COLUMNS)}). Drop the personas table and reseed: "
-            "its columns are a pure function of the master seed, so no information "
-            "is lost. Do not drop the whole database — the votes ledger is paid "
-            "model output and cannot be regenerated."
-        ) from error
+        raise RuntimeError(_stale_schema_message(conn)) from error
+
+    for table, columns in schema_columns().items():
+        try:
+            conn.execute(f"SELECT {', '.join(columns)} FROM {table} LIMIT 0")
+        except psycopg.errors.UndefinedColumn as error:
+            conn.rollback()
+            raise RuntimeError(_stale_schema_message(conn)) from error
+
+
+def missing_columns(conn: psycopg.Connection) -> dict[str, tuple[str, ...]]:
+    """Which columns `schema.sql` names that the connected database lacks.
+
+    Read from the catalogue in one query rather than by probing, so a caller
+    with SELECT and nothing else can ask — which is what the CI drift check
+    holds: it must be unable to apply a migration even if it wanted to.
+    """
+    wanted = schema_columns()
+    rows = conn.execute(
+        "SELECT table_name, column_name FROM information_schema.columns"
+        " WHERE table_schema = 'public' AND table_name = ANY(%s)",
+        (list(wanted),),
+    ).fetchall()
+    present: dict[str, set[str]] = {table: set() for table in wanted}
+    for table, column in rows:
+        present[table].add(column)
+    return {
+        table: tuple(column for column in columns if column not in present[table])
+        for table, columns in wanted.items()
+        if set(columns) - present[table]
+    }
+
+
+def _stale_schema_message(conn: psycopg.Connection) -> str:
+    """What to do about a database this build has outgrown.
+
+    Composed rather than written once, because the remedy is not the same for
+    every table: a regenerable table can be dropped and rebuilt, and `votes`
+    cannot — it is paid model output, so its only remedy is the additive DDL
+    `schema.sql` documents. The catalogue says which tables are actually short,
+    so the message names them rather than the one the probe happened to reach.
+    """
+    stale = missing_columns(conn)
+    named = ", ".join(
+        f"{table} ({', '.join(columns)})" for table, columns in sorted(stale.items())
+    )
+    remedy = ""
+    if droppable := sorted(set(stale) & _REGENERABLE):
+        remedy += (
+            f"Drop and reseed: {', '.join(droppable)} — every row there is a pure "
+            "function of the master seed or of a document in git, so nothing is "
+            "lost. "
+        )
+    if keep := sorted(set(stale) - _REGENERABLE):
+        remedy += (
+            f"Do not drop {', '.join(keep)} — add the column instead, with the "
+            "`ALTER TABLE … ADD COLUMN IF NOT EXISTS` form schema.sql documents. "
+        )
+    return (
+        f"the database is missing a column this build writes — {named}. {remedy}"
+        "Never drop the whole database: the votes ledger is paid model output "
+        "and cannot be regenerated."
+    )
 
 
 # A lock this sweep waits on is a mistake, not a wait. `ALTER TABLE ... ENABLE
