@@ -23,7 +23,7 @@ from testcontainers.postgres import PostgresContainer  # noqa: E402
 
 from pgvector.psycopg import register_vector_async  # noqa: E402
 
-from app.persistence import prepare_connection  # noqa: E402
+from app.persistence import prepare_connection, schema_columns  # noqa: E402
 from app.vote import VoteResponse  # noqa: E402
 from tests.factories import voted  # noqa: E402
 
@@ -119,10 +119,15 @@ def conn(pg_url):
         pg_url, autocommit=True, options=_LOCK_TIMEOUT_OPTION
     ) as connection:
         prepare_connection(connection)
-        # votes has no FK to personas (the ledger must survive a pool reseed), so
-        # CASCADE alone would leave cache rows leaking between tests.
-        connection.execute(
-            "TRUNCATE personas, votes, request_ledger, spend_ledger, corpus_chunks CASCADE"
-        )
+        # Every table the schema declares, read out of `schema.sql` rather than
+        # named here: the hand-kept list of five silently missed `tests` when it
+        # was added, so reports leaked between tests and one of them failed only
+        # when the whole file ran (117/#252). Same drift the completeness probe
+        # stopped being subject to in 115/#248.
+        #
+        # CASCADE is not enough on its own — `votes` has no FK to `personas`, so
+        # the ledger must survive a pool reseed — which is why this truncates
+        # every table rather than the roots.
+        connection.execute(f"TRUNCATE {', '.join(sorted(schema_columns()))} CASCADE")
         connection.commit()
         yield connection

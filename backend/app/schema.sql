@@ -133,3 +133,30 @@ CREATE INDEX IF NOT EXISTS corpus_chunks_search_idx
 -- additively is a new column plus a backfill, and the old one left alone.
 --
 -- Nothing is pending: no table has outgrown its CREATE yet.
+
+
+-- One row per finished test, stored for the account that ran it (117/#252).
+-- The whole EvaluateResponse travels as JSONB rather than a normalised shape:
+-- the sidebar reads two fields out of the document and the detail view reads it
+-- whole, so a normalised shape would only ever be reassembled to render, and
+-- every change to the response model would become a migration.
+--
+-- Deliberately unlike the other tables in one way: these rows are the
+-- customer's own content — their headline text, and the phrases their audience
+-- reading quoted — so DELETE /me deletes them. Every other table here holds
+-- either regenerable data or an opaque id and a timestamp.
+--
+-- schema_version, not a bare document: pydantic tolerates an added field on
+-- read but not a removed one, so without it an old row cannot be told apart
+-- from a corrupt one.
+CREATE TABLE IF NOT EXISTS tests (
+    test_id        text PRIMARY KEY,            -- the run's own id, from run_vote_loop
+    owner          text NOT NULL,               -- the verified subject id
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    schema_version int  NOT NULL,
+    report         jsonb NOT NULL               -- a dumped EvaluateResponse
+);
+
+-- The sidebar's only query: this owner's tests, newest first.
+CREATE INDEX IF NOT EXISTS tests_owner_created_idx
+    ON tests (owner, created_at DESC);

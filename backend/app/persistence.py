@@ -13,6 +13,7 @@ from typing import Literal, TypedDict, cast
 import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector
+from psycopg.types.json import Jsonb
 from psycopg.rows import dict_row
 
 from app.assembly import AssembledPersona
@@ -357,6 +358,112 @@ def prepare_connection(conn: psycopg.Connection) -> None:
     # table can exist there long before the app's own startup sweep runs.
     deny_data_api(conn)
     register_vector(conn)
+
+
+# The version stamped on a report as it is written. Bumped when a change to
+# `EvaluateResponse` makes an older row unreadable — pydantic fills an added
+# field's default on read but has nothing to do with a removed one, so without a
+# version an old row cannot be told from a corrupt one.
+REPORT_SCHEMA_VERSION = 1
+
+# Versions this build can render. A row outside it is invisible rather than
+# mis-rendered: showing a customer a report drawn from a document this code no
+# longer understands is worse than not listing it.
+_READABLE_VERSIONS = (REPORT_SCHEMA_VERSION,)
+
+
+async def store_report(
+    conn: psycopg.AsyncConnection, *, test_id: str, owner: str, report: dict
+) -> bool:
+    """Keep a finished test for the account that ran it; return whether it was new.
+
+    `ON CONFLICT DO NOTHING`, so a retried or resumed run never rewrites a report
+    the customer may already be reading. Weaker reason than the votes ledger's
+    append-only rule — a report is derived, not paid for — but a report that
+    changes under a reader is worse than one that is merely stale.
+    """
+    result = await conn.execute(
+        "INSERT INTO tests (test_id, owner, schema_version, report)"
+        " VALUES (%s, %s, %s, %s) ON CONFLICT (test_id) DO NOTHING",
+        (test_id, owner, REPORT_SCHEMA_VERSION, Jsonb(report)),
+    )
+    return result.rowcount == 1
+
+
+async def load_report(
+    conn: psycopg.AsyncConnection, *, test_id: str, owner: str
+) -> dict | None:
+    """One stored report, or None when it is missing or not this caller's.
+
+    Ownership is a clause in the query rather than a check after the read — the
+    rule `/evaluate/resume` already applies to a thread id, for the same reason:
+    a test id is not a credential, and there should be no path where the row is
+    in memory before ownership has been decided.
+    """
+    row = await (
+        await conn.execute(
+            "SELECT report FROM tests WHERE test_id = %s AND owner = %s"
+            " AND schema_version = ANY(%s)",
+            (test_id, owner, list(_READABLE_VERSIONS)),
+        )
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+async def list_reports(conn: psycopg.AsyncConnection, *, owner: str) -> list[dict]:
+    """This account's tests, newest first — what the sidebar renders.
+
+    Three fragments of each document rather than the document: the rail shows
+    the two headlines and a phrase derived from the verdict, and searches on the
+    headlines. Loading whole reports to draw a list of labels would fetch every
+    vote and every reason a customer has ever bought.
+    """
+    rows = await (
+        await conn.execute(
+            "SELECT test_id, created_at, report -> 'variants' AS variants,"
+            " report -> 'verdict' AS verdict, report -> 'tally' AS tally"
+            " FROM tests WHERE owner = %s AND schema_version = ANY(%s)"
+            " ORDER BY created_at DESC, test_id DESC",
+            (owner, list(_READABLE_VERSIONS)),
+        )
+    ).fetchall()
+    return [
+        {
+            "test_id": test_id,
+            "created_at": created_at,
+            "variants": variants,
+            "verdict": verdict,
+            "tally": tally,
+        }
+        for test_id, created_at, variants, verdict, tally in rows
+    ]
+
+
+async def delete_report(
+    conn: psycopg.AsyncConnection, *, test_id: str, owner: str
+) -> bool:
+    """Delete one of this account's tests; return whether a row went.
+
+    A real delete, not a flag: the prototype's rail says "delete must actually
+    delete", and a hidden row would leave the customer's headline text in a
+    table they asked to be rid of. Deleting what is not there is not an error,
+    so a double-click is not a 500.
+    """
+    result = await conn.execute(
+        "DELETE FROM tests WHERE test_id = %s AND owner = %s", (test_id, owner)
+    )
+    return result.rowcount == 1
+
+
+async def delete_reports_of(conn: psycopg.AsyncConnection, *, owner: str) -> int:
+    """Delete every test of one account; return how many went.
+
+    Called when the account itself is erased. No version clause, deliberately:
+    a row this build cannot render is still the customer's content, and "delete
+    my account" has to empty the table rather than the readable part of it.
+    """
+    result = await conn.execute("DELETE FROM tests WHERE owner = %s", (owner,))
+    return result.rowcount
 
 
 def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bool:

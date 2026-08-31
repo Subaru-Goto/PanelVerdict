@@ -5,12 +5,20 @@ from typing import get_args
 import numpy as np
 import psycopg
 import pytest
-from factories import DIM, big_five, make_assembled, make_persona, pointing
+from factories import (
+    DIM,
+    big_five,
+    make_assembled,
+    make_persona,
+    make_report,
+    pointing,
+)
 
 import app.persistence
 from app.assembly import AssembledPersona
 from app.persistence import (
     _PERSONA_COLUMNS,
+    REPORT_SCHEMA_VERSION,
     apply_schema,
     deny_data_api,
     missing_columns,
@@ -20,12 +28,18 @@ from app.persistence import (
     persist_persona,
     persist_pool,
     prepare_connection,
+    delete_report,
+    delete_reports_of,
+    list_reports,
+    load_report,
     retrieve_panel,
     schema_columns,
+    store_report,
     store_votes,
 )
 from app.schemas import (
     EducationLevel,
+    EvaluateResponse,
     Locale,
     TargetQuery,
     TargetRequest,
@@ -925,3 +939,126 @@ def test_the_sweep_works_on_the_autocommit_connection_startup_uses(pg_url) -> No
             " AND NOT c.relrowsecurity"
         ).fetchall()
     assert unprotected == []
+
+
+# --- The tests table (117/#252) ----------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_a_stored_report_loads_back_as_the_model_that_wrote_it(conn, aconn):
+    """The whole `EvaluateResponse` travels as JSONB, so what comes back has to
+    validate as one. A row read as a plain dict would let a field quietly change
+    type between write and read and only fail at render, in front of the
+    customer whose report it is."""
+    report = make_report()
+
+    await store_report(aconn, test_id="t-1", owner="person-1", report=report)
+
+    loaded = await load_report(aconn, test_id="t-1", owner="person-1")
+    assert loaded is not None
+    assert EvaluateResponse.model_validate(loaded).model_dump(mode="json") == report
+
+
+@pytest.mark.anyio
+async def test_a_report_is_not_readable_by_anyone_else(conn, aconn):
+    """A test id is not a credential — the rule `/evaluate/resume` already
+    applies to a thread id. Enforced in the query rather than by a check after
+    the read, so there is no path where the row is in memory before ownership
+    has been decided."""
+    await store_report(aconn, test_id="t-1", owner="person-1", report=make_report())
+
+    assert await load_report(aconn, test_id="t-1", owner="somebody-else") is None
+    assert await delete_report(aconn, test_id="t-1", owner="somebody-else") is False
+    assert await load_report(aconn, test_id="t-1", owner="person-1") is not None
+
+
+@pytest.mark.anyio
+async def test_the_listing_is_newest_first_and_one_owners_only(conn, aconn):
+    await store_report(aconn, test_id="t-1", owner="person-1", report=make_report())
+    await store_report(aconn, test_id="t-2", owner="person-1", report=make_report())
+    await store_report(aconn, test_id="t-3", owner="person-2", report=make_report())
+
+    listed = await list_reports(aconn, owner="person-1")
+
+    assert [row["test_id"] for row in listed] == ["t-2", "t-1"]
+    assert all(row["created_at"] is not None for row in listed)
+
+
+@pytest.mark.anyio
+async def test_the_listing_carries_the_headlines_and_never_the_whole_report(
+    conn, aconn
+):
+    """The sidebar renders `"A" vs "B"` and a verdict phrase, and searches on
+    the two headlines — so the listing needs them, and needs nothing else. A
+    listing that returned whole reports would load every one of a customer's
+    tests to draw a rail of labels."""
+    await store_report(aconn, test_id="t-1", owner="person-1", report=make_report())
+
+    row = (await list_reports(aconn, owner="person-1"))[0]
+
+    assert row["variants"] == {"a": "Save 50% today", "b": "Limited time: half price"}
+    assert "report" not in row, "the listing loaded the whole document"
+
+
+@pytest.mark.anyio
+async def test_a_deleted_report_is_gone_rather_than_hidden(conn, aconn):
+    """ "Delete must actually delete" — the prototype's own words about this
+    rail. A soft delete would leave the customer's headline text in a table
+    they asked to be rid of."""
+    await store_report(aconn, test_id="t-1", owner="person-1", report=make_report())
+
+    assert await delete_report(aconn, test_id="t-1", owner="person-1") is True
+
+    assert await load_report(aconn, test_id="t-1", owner="person-1") is None
+    remaining = await (await aconn.execute("SELECT count(*) FROM tests")).fetchone()
+    assert remaining is not None and remaining[0] == 0
+    # Deleting what is not there is not an error, so a double-click is not a 500.
+    assert await delete_report(aconn, test_id="t-1", owner="person-1") is False
+
+
+@pytest.mark.anyio
+async def test_deleting_an_account_takes_its_reports_with_it(conn, aconn):
+    """The finding that made this more than "add a table" (117/#252): a report
+    holds the customer's headline text and the phrases their audience reading
+    quoted, so `DELETE /me`'s reasoning — that what stays behind is "not
+    personal data once the account is gone" — stops being true here."""
+    await store_report(aconn, test_id="t-1", owner="person-1", report=make_report())
+    await store_report(aconn, test_id="t-2", owner="person-2", report=make_report())
+
+    assert await delete_reports_of(aconn, owner="person-1") == 1
+
+    assert await list_reports(aconn, owner="person-1") == []
+    assert len(await list_reports(aconn, owner="person-2")) == 1
+
+
+@pytest.mark.anyio
+async def test_storing_the_same_run_twice_leaves_the_first_report(conn, aconn):
+    """A resumed or retried run must not rewrite a report the customer may
+    already be reading. Same rule as the votes ledger, for a weaker reason: the
+    report is derived rather than paid for, but a report that changes under a
+    reader is worse than one that is merely stale."""
+    await store_report(aconn, test_id="t-1", owner="person-1", report=make_report())
+    second = make_report(variants={"a": "rewritten", "b": "also rewritten"})
+
+    await store_report(aconn, test_id="t-1", owner="person-1", report=second)
+
+    loaded = await load_report(aconn, test_id="t-1", owner="person-1")
+    assert loaded is not None and loaded["variants"]["a"] == "Save 50% today"
+
+
+@pytest.mark.anyio
+async def test_a_report_this_build_cannot_render_is_invisible(conn, aconn):
+    """Why `schema_version` is a column rather than a comment. A row written by
+    a future build is not listed and not loaded, because showing a customer a
+    report drawn from a document this code no longer understands is worse than
+    not showing it. Account deletion still takes it — see below."""
+    await store_report(aconn, test_id="t-1", owner="person-1", report=make_report())
+    await aconn.execute(
+        "UPDATE tests SET schema_version = %s", (REPORT_SCHEMA_VERSION + 1,)
+    )
+
+    assert await load_report(aconn, test_id="t-1", owner="person-1") is None
+    assert await list_reports(aconn, owner="person-1") == []
+    # Unrenderable is still the customer's content, so "delete my account" must
+    # empty the table rather than the readable part of it.
+    assert await delete_reports_of(aconn, owner="person-1") == 1
