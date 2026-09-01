@@ -129,6 +129,17 @@ describe("the sign-in control", () => {
     expect(remainingRunsMock).not.toHaveBeenCalled();
   });
 
+  it("shows no half-dressed pill while the name is still being read", async () => {
+    // A pill with a blank disc reads as broken, not loading — nothing, until
+    // the name is known.
+    withSession(true);
+    stubName(null);
+
+    await renderSettled();
+
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
   it("wears the reader's name and initials, the prototype's who pill", async () => {
     withSession(true);
     stubName("Sam O.");

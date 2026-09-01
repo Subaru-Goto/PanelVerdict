@@ -61,17 +61,19 @@ export default function SignIn() {
   // A build with no Supabase project — local development, CI — renders as it
   // did before this existed. A button that cannot work is worse than none.
   // Same for the moment before the session is known: nothing, rather than a
-  // guess that has to be taken back.
+  // guess that has to be taken back. And the same again for the moment before
+  // the name is known: a pill with a blank disc reads as broken, not loading.
   if (!available || signedIn === null) return null;
 
-  return (
-    <p className="flex items-center text-sm">
-      {signedIn ? (
+  if (signedIn) {
+    if (name === null) return null;
+    return (
+      <p className="flex items-center text-sm">
         <button
           type="button"
           // The pill is the sign-out, as the prototype has it — the label
           // names the action, the text names the person.
-          aria-label={`Sign out${name === null ? "" : ` (${name})`}`}
+          aria-label={`Sign out (${name})`}
           title="Sign out"
           onClick={() => {
             // Cleared here so the ended session's name cannot flash back on
@@ -86,13 +88,17 @@ export default function SignIn() {
             aria-hidden
             className="grid h-6 w-6 place-items-center rounded-full bg-ink text-[11px] font-semibold tracking-[0.02em] text-surface"
           >
-            {initials(name ?? "")}
+            {initials(name)}
           </span>
         </button>
-      ) : (
-        // The button alone: why sign-in exists is the landing's line to say.
-        <span ref={buttonSlot} />
-      )}
+      </p>
+    );
+  }
+
+  return (
+    <p className="flex items-center text-sm">
+      {/* The button alone: why sign-in exists is the landing's line to say. */}
+      <span ref={buttonSlot} />
     </p>
   );
 }
