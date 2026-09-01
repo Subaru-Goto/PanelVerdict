@@ -28,7 +28,12 @@ describe("the waiting screen", () => {
     expect(screen.getByText(/verdict computed/i)).toBeTruthy();
     expect(screen.getByText("200 readers")).toBeTruthy();
     expect(screen.getByText("200 readers, one line each.")).toBeTruthy();
-    expect(screen.getByText(/usually takes under a minute/i)).toBeTruthy();
+    // The early-stop framing is the ticket's carried constraint: a count
+    // that halts short of the size must read as an answer, and the screen
+    // says so before it happens.
+    expect(
+      screen.getByText(/usually takes under a minute — and stops early once/i),
+    ).toBeTruthy();
   });
 
   it("prints the polled count against the panel size", async () => {

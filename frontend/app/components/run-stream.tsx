@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { runProgress } from "../lib/api";
 import { KICKER } from "../lib/styles";
+import { StepLine } from "./step-line";
 
 /** The waiting screen for a paid run (021/#126): the prototype's step stream,
  *  with the vote line's number polled off the vote ledger — rows the pipeline
@@ -19,8 +20,10 @@ import { KICKER } from "../lib/styles";
  *  showed when this reading was approved — person for person.
  */
 
-/** ~13 asks over the ~40 s a prod run measures (010a) — enough to watch the
- *  count climb without turning the wait into load. */
+/** ~15 asks over the longest vote step yet measured — 45.3 s for a full
+ *  200-vote buy (the free-delivery capture's own step_seconds,
+ *  backend/app/data/demo, 2026-09-01) — enough to watch the count climb
+ *  without turning the wait into load. */
 const POLL_MS = 3000;
 
 export default function RunStream({
@@ -32,12 +35,6 @@ export default function RunStream({
   size: number;
 }) {
   const [voted, setVoted] = useState<number | null>(null);
-  const [seconds, setSeconds] = useState(0);
-
-  useEffect(() => {
-    const clock = setInterval(() => setSeconds((s) => s + 1), 1000);
-    return () => clearInterval(clock);
-  }, []);
 
   useEffect(() => {
     let live = true;
@@ -64,11 +61,11 @@ export default function RunStream({
     {
       label: "Votes returning",
       done: false,
-      // The clock until the first count lands, so the line is alive from the
-      // first second; a real number the moment there is one.
-      sub: voted === null ? `${seconds}s` : `${voted} of ${size}`,
+      // Nothing until the first count lands — an empty slot is honest, an
+      // invented clock or zero is not. A real number the moment there is one.
+      sub: voted === null ? undefined : `${voted} of ${size}`,
     },
-    { label: "Verdict computed", done: false, sub: "" },
+    { label: "Verdict computed", done: false, sub: undefined },
   ];
 
   return (
@@ -79,26 +76,19 @@ export default function RunStream({
       </div>
       <div className="mx-auto flex w-full max-w-xl flex-col">
         {lines.map(({ label, done, sub }) => (
-          <p
-            key={label}
-            className={`flex items-baseline justify-between gap-4 border-b border-line py-[13px] text-[13px] font-semibold uppercase tracking-[0.08em] ${
-              done ? "text-ink" : "text-ink-3"
-            }`}
-          >
-            <span>
-              {done ? "✓ " : ""}
-              {label}
-            </span>
-            {sub !== "" && (
-              <span className="text-[11px] font-normal normal-case tracking-[0.04em] text-ink-3">
-                {sub}
-              </span>
-            )}
-          </p>
+          <StepLine key={label} label={label} done={done} sub={sub} />
         ))}
       </div>
+      {/* Two claims, both measured (the captured fixtures' step_seconds,
+          backend/app/data/demo, 2026-09-01): the full 200-vote buy took
+          45.3 s, and decisive runs stopped inside 5 s having bought 50. The
+          second sentence is the ticket's carried constraint — an early stop
+          must read as an answer, not an interruption — said before it
+          happens, so a count that halts short of the size reads as the panel
+          being sure, not the run stalling. */}
       <p className="text-center text-sm font-light text-ink-2">
-        A run of this size usually takes under a minute.
+        A run of this size usually takes under a minute — and stops early once
+        the answer is clear, leaving the rest of its votes unasked.
       </p>
     </div>
   );

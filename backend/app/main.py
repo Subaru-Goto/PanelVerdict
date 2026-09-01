@@ -2,11 +2,11 @@ import asyncio
 import base64
 import hmac
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Literal, NamedTuple
+from typing import Any, Literal, NamedTuple
 from uuid import uuid4
 
 import anyio
@@ -1610,6 +1610,18 @@ async def resume_evaluate(
     )
 
 
+def _checkpoint_owner(checkpoint: Mapping[str, Any]) -> str | None:
+    """The `owner` a thread's state carries, straight off its checkpoint.
+
+    Every /evaluate thread sets it in its initial state; a /chat thread's
+    state has no such channel, so this returns None there — and None matches
+    no caller, which is exactly the refusal a chat id deserves from a run
+    endpoint."""
+    channels = checkpoint.get("channel_values", {})
+    owner = channels.get("owner")
+    return owner if isinstance(owner, str) else None
+
+
 class RunProgress(BaseModel):
     """How many votes the run has bought so far — the waiting screen's number."""
 
@@ -1638,8 +1650,7 @@ async def evaluate_progress(
       accepted when the poll was settled on the ticket (2026-09-01).
     """
     checkpoint = await checkpointer.aget({"configurable": {"thread_id": thread_id}})
-    owner = (checkpoint or {}).get("channel_values", {}).get("owner")
-    if checkpoint is None or owner != caller:
+    if checkpoint is None or _checkpoint_owner(checkpoint) != caller:
         raise HTTPException(
             status_code=404, detail="no run is waiting for you on that id"
         )

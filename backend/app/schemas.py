@@ -522,6 +522,7 @@ class EvaluateRequest(BaseModel):
     # The run's id, client-minted the way /chat's thread ids are (021/#126):
     # the gate-skip path never pauses, so without this the client finishes a
     # run it could never poll the progress of. Optional — minted when absent.
+    # 36 = the length of the uuid4 the client mints (ResumeRequest's bound).
     thread_id: str | None = Field(default=None, min_length=1, max_length=36)
     # The role-play sentence a human already approved. Only meaningful with
     # `reading_accepted`, and required there: see the validator below.

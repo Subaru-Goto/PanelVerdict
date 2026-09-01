@@ -6,6 +6,7 @@ import { runDemo, type DemoResult } from "../lib/api";
 import { AI_SYSTEM_DISCLOSURE, DEMO_REPLAY_NOTE } from "../lib/disclosure";
 import { KICKER } from "../lib/styles";
 import Report from "./report";
+import { StepLine, elapsed } from "./step-line";
 import Stepper from "./stepper";
 
 /** The demo (061/#156): a captured run replayed through the real graph,
@@ -32,14 +33,6 @@ const REPLAY_STEPS: { node: string; label: string }[] = [
  *  selection is on screen long enough to read. */
 function paced(seconds: number): number {
   return Math.min(Math.max(seconds * 1000, 600), 2600);
-}
-
-/** The captured seconds, printed at the precision they carry: "45.3 s", and
- *  "90 ms" rather than a rounded-to-nothing "0.0 s". */
-function elapsed(seconds: number): string {
-  return seconds >= 1
-    ? `${seconds.toFixed(1)} s`
-    : `${Math.round(seconds * 1000)} ms`;
 }
 
 type Playback =
@@ -132,24 +125,18 @@ export default function DemoReplay({ demoCase }: { demoCase: string }) {
       </div>
       <div className="mx-auto flex w-full max-w-xl flex-col">
         {REPLAY_STEPS.map(({ node, label }, i) => (
-          <p
+          <StepLine
             key={node}
-            className={`flex items-baseline justify-between gap-4 border-b border-line py-[13px] text-[13px] font-semibold uppercase tracking-[0.08em] ${
-              i < state.done ? "text-ink" : "text-ink-3"
-            }`}
-          >
-            <span>
-              {i < state.done ? "✓ " : ""}
-              {label}
-            </span>
-            {/* A node the fixture never timed shows nothing — a printed zero
-                would be an invented duration. */}
-            {result.step_seconds[node] !== undefined && (
-              <span className="text-[11px] font-normal normal-case tracking-[0.04em] text-ink-3">
-                {elapsed(result.step_seconds[node])}
-              </span>
-            )}
-          </p>
+            label={label}
+            done={i < state.done}
+            // A node the fixture never timed shows nothing — a printed zero
+            // would be an invented duration.
+            sub={
+              result.step_seconds[node] !== undefined
+                ? elapsed(result.step_seconds[node])
+                : undefined
+            }
+          />
         ))}
       </div>
     </div>

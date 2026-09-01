@@ -357,6 +357,10 @@ export default function EvaluateForm({
     const buying = state.resuming === "accept";
     main = (
       <div className="flex flex-col gap-4">
+        {/* `contents` keeps this wrapper out of the flex layout — but
+            display:contents and [hidden]'s display:none tie on specificity,
+            and the utility's later source order would win, so the class must
+            leave when the wrapper hides. */}
         <div hidden={buying} className={buying ? undefined : "contents"}>
           <PanelGate
             preview={state.preview}
