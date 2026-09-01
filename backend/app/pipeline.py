@@ -496,9 +496,11 @@ def assemble_result(
 
 
 # The one ungated caller's identity in the vote ledger (086/#177): experiment
-# scripts have no account, but their re-runs still resume each other. A name,
-# so a ledger row is never mistaken for a customer's.
-EXPERIMENT_OWNER = "experiment"
+# scripts have no account, but their re-runs still resume each other. The
+# prefix keeps it out of the namespace real identities live in — subjects are
+# UUIDs and the pre-auth fallback is address-shaped, but a ledger row should
+# never be one unset config away from being mistaken for a customer's.
+EXPERIMENT_OWNER = "internal:experiment"
 
 
 async def run_panel_test(
