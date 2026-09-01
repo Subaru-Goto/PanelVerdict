@@ -45,6 +45,7 @@ vi.mock("../app/lib/api", () => ({
 }));
 
 vi.mock("../app/lib/auth", () => ({
+  displayName: () => Promise.resolve("Sam O."),
   onAuthChange: (listener: (value: boolean) => void) => {
     listener(true);
     return () => {};
@@ -352,7 +353,6 @@ describe("the gate fires once per audience", () => {
     expect(screen.getByText(/too many previews today/i)).toBeDefined();
   });
 });
-
 
 describe("the waiting screen while votes are bought", () => {
   it("swaps the gate for the step stream on accept, and brings it back refused", async () => {

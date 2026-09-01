@@ -9,6 +9,8 @@ let signedIn: boolean | null = null;
 let available = true;
 
 vi.mock("../app/lib/api", () => ({
+  remainingRuns: () => Promise.resolve(3),
+  onRunsChanged: () => () => {},
   evaluate: () => Promise.reject(new Error("not used")),
   resumeEvaluate: () => Promise.reject(new Error("not used")),
   myTest: () => Promise.reject(new Error("not used")),
@@ -18,6 +20,7 @@ vi.mock("../app/lib/api", () => ({
 }));
 
 vi.mock("../app/lib/auth", () => ({
+  displayName: () => Promise.resolve("Sam O."),
   onAuthChange: (listener: (value: boolean) => void) => {
     if (signedIn !== null) listener(signedIn);
     return () => {};

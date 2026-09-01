@@ -33,6 +33,7 @@ import {
   seatedCount,
 } from "../lib/reading";
 import RunStream from "./run-stream";
+import Allowance from "./allowance";
 import { useGateSignal } from "./shell";
 import Stepper, { type StepName } from "./stepper";
 
@@ -536,13 +537,17 @@ export default function EvaluateForm({
             onChange={setHeadlineB}
             placeholder="Members save half price this week"
           />
-          <button
-            type="submit"
-            disabled={disabled}
-            className="rounded bg-ink px-4 py-2 text-surface disabled:bg-surface-2 disabled:text-ink-3"
-          >
-            {state.phase === "loading" ? "Asking the panel…" : "Evaluate"}
-          </button>
+          <div className="flex flex-wrap items-center gap-4">
+            <button
+              type="submit"
+              disabled={disabled}
+              className="rounded bg-ink px-4 py-2 text-surface disabled:bg-surface-2 disabled:text-ink-3"
+            >
+              {state.phase === "loading" ? "Asking the panel…" : "Evaluate"}
+            </button>
+            {/* Beside the button that spends one, as the prototype seats it. */}
+            <Allowance />
+          </div>
           {/* Submitting counts as interacting with an AI system, so the
             disclosure sits with the submit control rather than in a footer —
             told before the exchange, where the telling can still change it. */}

@@ -2,34 +2,50 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { onRunsChanged, remainingRuns } from "../lib/api";
 import {
+  displayName,
   mountGoogleButton,
   onAuthChange,
   signInAvailable,
   signOut,
 } from "../lib/auth";
 
-/** Signing in, and what it buys you today (063/#158, 092/#197).
- *
- * The smallest control that makes the flow reachable. Where this eventually
- * sits — and what it looks like — belongs to the redesign (093/#198); what it
- * must keep doing is here: never appear in a build that cannot sign anyone in,
- * and show the reader their own remaining runs rather than the shared pool's.
+/** Signing in and out, as the prototype's nav settles it (063/#158, 092/#197):
+ * signed out, Google's own button; signed in, the "who" pill — the reader's
+ * name with an initials disc — whose click is the sign-out. The remaining-runs
+ * count lives beside the run button (`Allowance`), where spending happens,
+ * not here. Never appears in a build that cannot sign anyone in.
  */
-const LINK_CLASS =
-  "underline underline-offset-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2";
+
+/** First letters of the first two words — "Sam O." wears "SO". */
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() ?? "")
+    .join("");
+}
 
 export default function SignIn() {
   // Three states, not two: until the client has looked for a stored session
   // nobody knows. Starting at `false` would flash "sign in" — and mount
   // Google's button — at a visitor who is already signed in.
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
-  const [runsLeft, setRunsLeft] = useState<number | null>(null);
+  const [name, setName] = useState<string | null>(null);
   const buttonSlot = useRef<HTMLSpanElement | null>(null);
   const available = signInAvailable();
 
-  useEffect(() => onAuthChange(setSignedIn), []);
+  useEffect(
+    () =>
+      onAuthChange((value) => {
+        setSignedIn(value);
+        // Cleared on the way out, not at the click: the pill must stay up as
+        // sign-out's feedback until the session event lands — and a cleared
+        // name here cannot flash into the next session's pill.
+        if (!value) setName(null);
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (signedIn !== false || !available || buttonSlot.current === null) return;
@@ -41,57 +57,63 @@ export default function SignIn() {
 
   useEffect(() => {
     if (signedIn !== true) return;
-    // Re-read whenever a run spends one, not only when the session changes.
-    // `live` guards the late answer: signing out while this is in flight would
-    // otherwise write a count belonging to a session that has ended. Clearing
-    // on the way *out* is the sign-out handler's job rather than this effect's
-    // — a synchronous setState here would cascade a render for no reason.
+    // `live` guards the late answer: signing out while this read is in
+    // flight must not stamp the ended session's name onto the next one.
     let live = true;
-    const read = () =>
-      void remainingRuns().then((left) => {
-        if (live) setRunsLeft(left);
-      });
-    read();
-    const stop = onRunsChanged(read);
+    displayName().then(
+      (reported) => {
+        // A session with no readable name still owns the header's only
+        // sign-out control, so the pill gets a plain label rather than
+        // vanishing (and a failed read is treated the same, below).
+        if (live) setName(reported ?? "Signed in");
+      },
+      () => {
+        if (live) setName("Signed in");
+      },
+    );
     return () => {
       live = false;
-      stop();
     };
   }, [signedIn]);
 
   // A build with no Supabase project — local development, CI — renders as it
   // did before this existed. A button that cannot work is worse than none.
   // Same for the moment before the session is known: nothing, rather than a
-  // guess that has to be taken back.
+  // guess that has to be taken back. And the same again for the moment before
+  // the name is known: a pill with a blank disc reads as broken, not loading.
   if (!available || signedIn === null) return null;
 
-  return (
-    <p className="flex items-center gap-3 text-sm text-ink-2">
-      {signedIn ? (
-        <>
-          {runsLeft !== null && (
-            <span>
-              {runsLeft} {runsLeft === 1 ? "run" : "runs"} left today
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              // Cleared here, not in an effect: the count belongs to the
-              // session being ended, and it must not flash back on the next
-              // sign-in before the fresh one arrives.
-              setRunsLeft(null);
-              void signOut();
-            }}
-            className={LINK_CLASS}
+  if (signedIn) {
+    if (name === null) return null;
+    return (
+      <p className="flex items-center text-sm">
+        <button
+          type="button"
+          // The pill is the sign-out, as the prototype has it — the label
+          // names the action, the text names the person.
+          aria-label={`Sign out (${name})`}
+          title="Sign out"
+          onClick={() => void signOut()}
+          // cursor-pointer because Tailwind's preflight defaults buttons to
+          // cursor:default, and the prototype's .who is pointer.
+          className="flex cursor-pointer items-center gap-[9px] rounded-pill border border-line py-[5px] pl-3.5 pr-1.5 text-[13px] font-medium"
+        >
+          {name}
+          <span
+            aria-hidden
+            className="grid h-6 w-6 place-items-center rounded-full bg-ink text-[11px] font-semibold tracking-[0.02em] text-surface"
           >
-            Sign out
-          </button>
-        </>
-      ) : (
-        // The button alone: why sign-in exists is the landing's line to say.
-        <span ref={buttonSlot} />
-      )}
+            {initials(name)}
+          </span>
+        </button>
+      </p>
+    );
+  }
+
+  return (
+    <p className="flex items-center text-sm">
+      {/* The button alone: why sign-in exists is the landing's line to say. */}
+      <span ref={buttonSlot} />
     </p>
   );
 }
