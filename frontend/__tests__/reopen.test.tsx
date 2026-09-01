@@ -29,6 +29,7 @@ const OTHER = {
 };
 
 vi.mock("../app/lib/api", () => ({
+  remainingRuns: () => Promise.resolve(3),
   evaluate: (input: unknown) => evaluateMock(input),
   resumeEvaluate: () => Promise.reject(new Error("not used")),
   LOCALES: ["US", "JP", "DE"],
@@ -53,6 +54,7 @@ vi.mock("../app/lib/api", () => ({
 }));
 
 vi.mock("../app/lib/auth", () => ({
+  displayName: () => Promise.resolve("Sam O."),
   onAuthChange: (listener: (value: boolean) => void) => {
     listener(true);
     return () => {};

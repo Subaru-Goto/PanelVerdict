@@ -29,6 +29,7 @@ vi.mock("../app/lib/api", () => ({
 }));
 
 vi.mock("../app/lib/auth", () => ({
+  displayName: () => Promise.resolve("Sam O."),
   onAuthChange: (listener: (value: boolean) => void) => {
     if (signedIn !== null) listener(signedIn);
     return () => {};

@@ -1,4 +1,10 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import SignIn from "../app/components/sign-in";
@@ -16,6 +22,7 @@ const {
   onAuthChangeMock,
   remainingRunsMock,
   onRunsChangedMock,
+  displayNameMock,
 } = vi.hoisted(() => ({
   mountButtonMock: vi.fn(),
   signOutMock: vi.fn(),
@@ -23,6 +30,7 @@ const {
   onAuthChangeMock: vi.fn(),
   remainingRunsMock: vi.fn(),
   onRunsChangedMock: vi.fn(),
+  displayNameMock: vi.fn(),
 }));
 
 vi.mock("../app/lib/auth", () => ({
@@ -30,6 +38,7 @@ vi.mock("../app/lib/auth", () => ({
   signOut: signOutMock,
   signInAvailable: availableMock,
   onAuthChange: onAuthChangeMock,
+  displayName: displayNameMock,
 }));
 
 vi.mock("../app/lib/api", () => ({
@@ -57,6 +66,10 @@ function withSession(signedIn: boolean) {
 function stubRuns(remaining: number | null) {
   // null is what the API layer reports when the count could not be read.
   remainingRunsMock.mockResolvedValue(remaining);
+}
+
+function stubName(name: string | null) {
+  displayNameMock.mockResolvedValue(name);
 }
 
 async function renderSettled() {
@@ -98,7 +111,7 @@ describe("the sign-in control", () => {
 
   it("does not offer to sign in someone who already is", async () => {
     withSession(true);
-    stubRuns(3);
+    stubName("Sam O.");
 
     await renderSettled();
 
@@ -116,20 +129,19 @@ describe("the sign-in control", () => {
     expect(remainingRunsMock).not.toHaveBeenCalled();
   });
 
-  it("tells a signed-in reader how many runs they have left today", async () => {
-    // Their own count, never the shared pool's — that one is withheld on
-    // purpose so nobody gets a progress bar for draining it.
+  it("wears the reader's name and initials, the prototype's who pill", async () => {
     withSession(true);
-    stubRuns(2);
+    stubName("Sam O.");
 
     await renderSettled();
 
-    expect(screen.getByText(/2 runs left today/i)).toBeTruthy();
+    expect(screen.getByText("Sam O.")).toBeTruthy();
+    expect(screen.getByText("SO")).toBeTruthy();
   });
 
-  it("lets a signed-in reader sign out again", async () => {
+  it("lets a signed-in reader sign out again — the pill is the control", async () => {
     withSession(true);
-    stubRuns(3);
+    stubName("Sam O.");
 
     await renderSettled();
     fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
@@ -137,34 +149,14 @@ describe("the sign-in control", () => {
     expect(signOutMock).toHaveBeenCalled();
   });
 
-  it("re-reads the count after a run spends one", async () => {
-    // The figure is a budget, so a stale one is a wrong one: it would still
-    // read "3 runs left" immediately after the run that made it 2.
+  it("says nothing about runs — the allowance lives beside the run button", async () => {
+    // Moved to the actions row (Allowance), where spending happens.
     withSession(true);
-    stubRuns(3);
-    let notify = () => {};
-    onRunsChangedMock.mockImplementation((listener: () => void) => {
-      notify = listener;
-      return () => {};
-    });
-
-    await renderSettled();
-    stubRuns(2);
-    await act(async () => {
-      notify();
-    });
-
-    expect(screen.getByText(/2 runs left today/i)).toBeTruthy();
-  });
-
-  it("says nothing about runs when the count cannot be read", async () => {
-    // A failed read is not a zero: claiming "0 runs left" would tell someone
-    // they are out when they are not.
-    withSession(true);
-    stubRuns(null);
+    stubName("Sam O.");
 
     await renderSettled();
 
     expect(screen.queryByText(/runs left/i)).toBeNull();
+    expect(remainingRunsMock).not.toHaveBeenCalled();
   });
 });

@@ -51,6 +51,7 @@ vi.mock("../app/lib/api", () => ({
 // and the rail together, and how that composition survives a phase change is
 // the form's own behavior (118/#253).
 vi.mock("../app/lib/auth", () => ({
+  displayName: () => Promise.resolve("Sam O."),
   onAuthChange: (listener: (value: boolean) => void) => {
     listener(true);
     return () => {};
