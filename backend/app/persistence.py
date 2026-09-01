@@ -728,7 +728,7 @@ class VoteRow(TypedDict):
 _VOTE_COLUMNS = ", ".join(VoteRow.__annotations__)
 
 
-def _live_owner(owner: str) -> str:
+def _require_owner(owner: str) -> None:
     """Refuse the one owner value that is not an identity.
 
     '' is the column DEFAULT — rows from before the scoping (086/#177), or an
@@ -738,7 +738,6 @@ def _live_owner(owner: str) -> str:
     """
     if owner == "":
         raise ValueError("the vote ledger needs an owner; '' is not one")
-    return owner
 
 
 async def store_votes(
@@ -752,10 +751,14 @@ async def store_votes(
     the same answer — regrettable, but not a reason to rewrite history. Since
     086/#177 that rule settles the cross-account collision too: byte-identical
     content from a second account keeps no row — its owner may not read the
-    first account's, and re-keying the ledger is what decision 036's pinned
-    tests exist to refuse — so only its own resume pays again.
+    first account's, and the composite key that would hold both rows means
+    dropping this primary key, which the additive-only migration rule
+    (083/#173, schema.sql) refuses and the ticket's own decision ("same hash,
+    same ON CONFLICT DO NOTHING") declined — so only its own resume pays
+    again. Rare by construction: it takes byte-identical headlines, audience
+    and panel across two accounts.
     """
-    _live_owner(owner)
+    _require_owner(owner)
     written = 0
     async with conn.transaction():
         for fingerprint, record in votes.items():
@@ -795,7 +798,7 @@ async def load_votes(
     `test_id` comes back as stored — the run that paid for the vote, not the run
     reading it — so a resumed run's records carry their true provenance.
     """
-    _live_owner(owner)
+    _require_owner(owner)
     if not fingerprints:
         return {}
     async with conn.cursor(row_factory=dict_row) as cur:

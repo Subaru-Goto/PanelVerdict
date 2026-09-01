@@ -590,6 +590,27 @@ class TestVoteCache:
             cur.execute("SELECT count(*) FROM votes")
             assert cur.fetchone() == (0,)
 
+    @pytest.mark.anyio
+    async def test_a_mid_run_402_still_resumes_for_its_owner(
+        self, conn, aconn
+    ) -> None:
+        """086/#177's done-when, verbatim: the votes a 402 stranded are still
+        their buyer's resume buffer — the owner re-buys only what has no row,
+        and another account re-buys everything, because the stranded rows were
+        never theirs to resume from."""
+        seed_japanese(conn, 5)
+        stranded = await self._loop(aconn, owner="acct-a", llm=OutOfCreditLLM(paid=2))
+        assert len(stranded.votes.records) == 2
+
+        resumed = SpyLLM()
+        result = await self._loop(aconn, owner="acct-a", llm=resumed)
+        stranger = SpyLLM()
+        await self._loop(aconn, owner="acct-b", llm=stranger)
+
+        assert resumed.calls == 3
+        assert len(result.votes.records) == 5
+        assert stranger.calls == 5
+
 
 class OutOfCreditLLM:
     """Answers the first `paid` votes, then every call is the provider's 402.

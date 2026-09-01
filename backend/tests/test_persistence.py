@@ -903,8 +903,9 @@ async def test_a_colliding_write_never_reassigns_the_owner(conn, aconn):
     primary key. Append-only already settles it: the first row stands, still
     its first owner's, and the second account simply has no row — it paid for
     its own votes and will pay again on a resume. Accepted with the scoping
-    (086/#177): the alternative re-keys the ledger, which decision 036's
-    pinned tests forbid."""
+    (086/#177): holding both rows means dropping the primary key for a
+    composite one, which the additive-only migration rule (083/#173) refuses
+    and the ticket's own "same ON CONFLICT DO NOTHING" declined."""
     await store_votes(aconn, {"fp1": _vote_record(reason="first")}, owner="acct-a")
 
     assert (

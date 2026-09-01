@@ -261,11 +261,13 @@ by schema rather than by policy. `''` — the column default — is not an
 identity: it marks rows from before the column existed, and the application
 refuses it on both read and write. The $0 demo replay touches no ledger at
 all. Two consequences are accepted and written down: byte-identical content
-from a second account keeps no row (the primary key is the fingerprint, and
-re-keying is refused — decision 036's pinned tests), so only its own resume
-pays again; and the sweep rule is that a row is sweepable once a `tests` row
-exists for its `test_id`, with `''` rows sweepable on sight — sweeping itself
-is a later ticket.
+from a second account keeps no row (the primary key stays the fingerprint —
+holding both rows would need a composite key, which the additive-only
+migration rule refuses and the ticket declined), so only its own resume pays
+again; and `DELETE /me` deliberately keeps the rows — clearing them at
+deletion would sell a still-valid token a fresh budget, and the account being
+gone is what makes them unreadable. The sweep rule lives with the column in
+`schema.sql`; sweeping itself is a later ticket.
 
 **Data access is defended by scoping, never by a classifier.** A classifier is a
 model guessing whether text looks like an attack, and its blind spots are ours; a
