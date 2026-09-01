@@ -89,10 +89,8 @@ export default function SignIn() {
           </button>
         </>
       ) : (
-        <>
-          <span>Running a test costs money, so it asks who you are.</span>
-          <span ref={buttonSlot} />
-        </>
+        // The button alone: why sign-in exists is the landing's line to say.
+        <span ref={buttonSlot} />
       )}
     </p>
   );
