@@ -32,6 +32,7 @@ export default function SignIn() {
   // Google's button — at a visitor who is already signed in.
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
   const [name, setName] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const buttonSlot = useRef<HTMLSpanElement | null>(null);
   const available = signInAvailable();
 
@@ -41,8 +42,12 @@ export default function SignIn() {
         setSignedIn(value);
         // Cleared on the way out, not at the click: the pill must stay up as
         // sign-out's feedback until the session event lands — and a cleared
-        // name here cannot flash into the next session's pill.
-        if (!value) setName(null);
+        // name here cannot flash into the next session's pill. The menu goes
+        // with it, or it would reopen itself on the next sign-in.
+        if (!value) {
+          setName(null);
+          setMenuOpen(false);
+        }
       }),
     [],
   );
@@ -86,14 +91,22 @@ export default function SignIn() {
   if (signedIn) {
     if (name === null) return null;
     return (
-      <p className="flex items-center text-sm">
+      // The pill opens a one-item menu rather than signing out itself
+      // (amended 2026-09-01): an accidental click on an unlabeled control
+      // must not end the session — the sign-out is the menu's deliberate
+      // second click.
+      <div
+        className="relative flex items-center text-sm"
+        onKeyDown={(event) => {
+          if (event.key === "Escape") setMenuOpen(false);
+        }}
+      >
         <button
           type="button"
-          // The pill is the sign-out, as the prototype has it — the label
-          // names the action, the text names the person.
-          aria-label={`Sign out (${name})`}
-          title="Sign out"
-          onClick={() => void signOut()}
+          aria-label={`Account: ${name}`}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((open) => !open)}
           // cursor-pointer because Tailwind's preflight defaults buttons to
           // cursor:default, and the prototype's .who is pointer.
           className="flex cursor-pointer items-center gap-[9px] rounded-pill border border-line py-[5px] pl-3.5 pr-1.5 text-[13px] font-medium"
@@ -106,7 +119,34 @@ export default function SignIn() {
             {initials(name)}
           </span>
         </button>
-      </p>
+        {menuOpen && (
+          <>
+            {/* A click anywhere else closes the menu — the scrim is
+                transparent and purely a click target. */}
+            <div
+              aria-hidden
+              className="fixed inset-0 z-40"
+              onClick={() => setMenuOpen(false)}
+            />
+            <div
+              role="menu"
+              className="absolute right-0 top-full z-50 mt-2 min-w-36 rounded border border-line bg-surface p-1"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  void signOut();
+                }}
+                className="w-full cursor-pointer rounded px-3 py-2 text-left text-[13px] hover:bg-surface-2"
+              >
+                Sign out
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     );
   }
 

@@ -1,5 +1,10 @@
 import { proxyToBackend } from "../proxy";
 
+/** Seconds this route may run: a cold Render start takes ~1 minute
+ * (docs/deploy.md), and the platform default 504s these reads first —
+ * the fuller rationale lives on /api/evaluate's copy of this number. */
+export const maxDuration = 60;
+
 /** The signed-in account's finished tests — what the rail lists (117/#252).
  *
  * Proxied like everything else so the backend URL and the edge secret stay

@@ -136,8 +136,17 @@ export default function PastTests() {
 
       {failed && (
         <p className="text-sm text-ink-2">
-          Your past tests could not be loaded. They are not lost — reload to try
-          again.
+          Your past tests could not be loaded. They are not lost —{" "}
+          {/* One click, not a reload: the likely failure on this deploy is a
+              cold backend (docs/deploy.md), and a reload loses the page. */}
+          <button
+            type="button"
+            onClick={load}
+            className="cursor-pointer underline underline-offset-2"
+          >
+            try again
+          </button>
+          .
         </p>
       )}
 

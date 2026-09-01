@@ -159,6 +159,23 @@ describe("the account's own tests", () => {
     // rail failed, the reports did not.
     expect(await screen.findByText(/not lost/)).toBeTruthy();
   });
+
+  it("the banner's Try again retries in place, without a reload", async () => {
+    // The likely failure on this deploy is a cold backend (docs/deploy.md:
+    // ~1 minute after idle), so the remedy must be one click, not a reload
+    // that loses the page.
+    myTestsMock.mockRejectedValueOnce(new Error("cold start"));
+    render(<PastTests />);
+    await screen.findByText(/not lost/);
+
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    });
+
+    expect(screen.queryByText(/not lost/)).toBeNull();
+    expect(screen.getByText(/Save 50% today/)).toBeTruthy();
+  });
 });
 
 describe("the rail reads in pages", () => {

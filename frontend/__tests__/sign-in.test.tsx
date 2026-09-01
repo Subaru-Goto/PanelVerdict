@@ -151,14 +151,38 @@ describe("the sign-in control", () => {
     expect(screen.getByText("SO")).toBeTruthy();
   });
 
-  it("lets a signed-in reader sign out again — the pill is the control", async () => {
+  it("an accidental click on the pill signs nobody out — it opens a menu", async () => {
     withSession(true);
     stubName("Sam O.");
 
     await renderSettled();
-    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+    fireEvent.click(screen.getByRole("button", { name: /account/i }));
+
+    expect(signOutMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("menu")).toBeTruthy();
+  });
+
+  it("lets a signed-in reader sign out — the menu's one item", async () => {
+    withSession(true);
+    stubName("Sam O.");
+
+    await renderSettled();
+    fireEvent.click(screen.getByRole("button", { name: /account/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /sign out/i }));
 
     expect(signOutMock).toHaveBeenCalled();
+  });
+
+  it("a second click on the pill just closes the menu again", async () => {
+    withSession(true);
+    stubName("Sam O.");
+
+    await renderSettled();
+    fireEvent.click(screen.getByRole("button", { name: /account/i }));
+    fireEvent.click(screen.getByRole("button", { name: /account/i }));
+
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(signOutMock).not.toHaveBeenCalled();
   });
 
   it("keeps the pill up until the sign-out actually lands", async () => {
@@ -178,7 +202,8 @@ describe("the sign-in control", () => {
     signOutMock.mockReturnValue(new Promise(() => {}));
 
     await renderSettled();
-    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+    fireEvent.click(screen.getByRole("button", { name: /account/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /sign out/i }));
     expect(screen.getByText("Sam O.")).toBeTruthy();
 
     await act(async () => {
