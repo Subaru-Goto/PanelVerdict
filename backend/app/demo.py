@@ -225,6 +225,11 @@ async def _capture(case: str, out_dir: Path) -> str | None:
                 "variants": DEMO_CASES[case],
                 "size": profile.size,
                 "reading_accepted": True,
+                # A capture buys real votes, so it wants the ledger: a crashed
+                # capture must resume, not re-pay. An internal label, not an
+                # account — and never "" here, which would skip the ledger and
+                # make every crash a full re-buy (086/#177).
+                "owner": "internal:demo-capture",
             },
             {"configurable": {"thread_id": f"demo-capture-{case}"}},
             stream_mode="updates",

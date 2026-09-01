@@ -253,6 +253,22 @@ stores analyst transcripts, and a tests table is on the map
 [085/#176](https://github.com/Subaru-Goto/PanelVerdict/issues/176)). The tripwire
 fired; what it prescribed is now the requirement.
 
+The vote ledger is the first table to meet that requirement structurally
+(086/#177): every `votes` row carries its buyer's subject id (`owner_id`, NOT
+NULL), and the read path matches within one owner or not at all — so no
+account's submitted headlines are readable through another account's request,
+by schema rather than by policy. `''` — the column default — is not an
+identity: it marks rows from before the column existed, and the application
+refuses it on both read and write. The $0 demo replay touches no ledger at
+all. Two consequences are accepted and written down: byte-identical content
+from a second account keeps no row (the primary key stays the fingerprint —
+holding both rows would need a composite key, which the additive-only
+migration rule refuses and the ticket declined), so only its own resume pays
+again; and `DELETE /me` deliberately keeps the rows — clearing them at
+deletion would sell a still-valid token a fresh budget, and the account being
+gone is what makes them unreadable. The sweep rule lives with the column in
+`schema.sql`; sweeping itself is a later ticket.
+
 **Data access is defended by scoping, never by a classifier.** A classifier is a
 model guessing whether text looks like an attack, and its blind spots are ours; a
 `WHERE` clause has none. The pattern is already here — `search_personas` scopes

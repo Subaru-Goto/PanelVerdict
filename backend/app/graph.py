@@ -341,6 +341,11 @@ def build_evaluate_graph(
                 llm=llm,
                 enacted=state.get("instruction", ""),
                 test_id=config["configurable"]["thread_id"],
+                # The verified subject scopes the ledger (086/#177). "" is the
+                # demo's mark — a replay owns nothing — and maps to None, the
+                # loop's skip-the-ledger mode; the paid path always has a real
+                # subject by the time anything votes.
+                owner=state["owner"] or None,
             )
         }
 

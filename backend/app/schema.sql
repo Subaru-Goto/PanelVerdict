@@ -107,34 +107,6 @@ CREATE INDEX IF NOT EXISTS corpus_chunks_search_idx
     ON corpus_chunks USING gin (search);
 
 
--- ---------------------------------------------------------------------------
--- Additive changes to tables that already exist (083/#173, 115/#248)
---
--- CREATE TABLE IF NOT EXISTS above accepts an out-of-date table without
--- altering it, so a column added to a table already deployed goes here — at the
--- bottom, in the order it was added, never by editing the CREATE above it. Two
--- reasons it must be here rather than in a separate file: this file is what
--- app.persistence.apply_schema runs, so the RLS sweep still fires afterwards;
--- and apply_schema reads its completeness probe out of these statements, so a
--- column added anywhere else is a column nothing checks for.
---
--- The form is required, and enforced by app.persistence._added_columns:
---
---     ALTER TABLE votes ADD COLUMN IF NOT EXISTS scored_at timestamptz;
---
--- IF NOT EXISTS because this file runs on every seed and on every --schema-only
--- apply: a bare ADD COLUMN succeeds once and fails forever after, mid-file, so
--- the RLS sweep prepare_connection runs after it does not run either. (Not at
--- boot: the request path deliberately does not apply DDL — app/main.py.)
---
--- Additive only. No DROP COLUMN, no type change, no rename — a reader of an
--- older deploy is still serving requests during a rollout, and votes is paid
--- model output that cannot be regenerated. A change that cannot be expressed
--- additively is a new column plus a backfill, and the old one left alone.
---
--- Nothing is pending: no table has outgrown its CREATE yet.
-
-
 -- One row per finished test, stored for the account that ran it (117/#252).
 -- The whole EvaluateResponse travels as JSONB rather than a normalised shape:
 -- the sidebar reads two fields out of the document and the detail view reads it
@@ -160,3 +132,44 @@ CREATE TABLE IF NOT EXISTS tests (
 -- The sidebar's only query: this owner's tests, newest first.
 CREATE INDEX IF NOT EXISTS tests_owner_created_idx
     ON tests (owner, created_at DESC);
+
+
+-- ---------------------------------------------------------------------------
+-- Additive changes to tables that already exist (083/#173, 115/#248)
+--
+-- CREATE TABLE IF NOT EXISTS above accepts an out-of-date table without
+-- altering it, so a column added to a table already deployed goes here — at the
+-- bottom, in the order it was added, never by editing the CREATE above it. Two
+-- reasons it must be here rather than in a separate file: this file is what
+-- app.persistence.apply_schema runs, so the RLS sweep still fires afterwards;
+-- and apply_schema reads its completeness probe out of these statements, so a
+-- column added anywhere else is a column nothing checks for.
+--
+-- The form is required, and enforced by app.persistence._added_columns:
+--
+--     ALTER TABLE votes ADD COLUMN IF NOT EXISTS scored_at timestamptz;
+--
+-- IF NOT EXISTS because this file runs on every seed and on every --schema-only
+-- apply: a bare ADD COLUMN succeeds once and fails forever after, mid-file, so
+-- the RLS sweep prepare_connection runs after it does not run either. (Not at
+-- boot: the request path deliberately does not apply DDL — app/main.py.)
+--
+-- Additive only. No DROP COLUMN, no type change, no rename — a reader of an
+-- older deploy is still serving requests during a rollout, and votes is paid
+-- model output that cannot be regenerated. A change that cannot be expressed
+-- additively is a new column plus a backfill, and the old one left alone.
+--
+-- 086/#177 — the ledger is owner-scoped: a row is its buyer's, and the read
+-- path matches within one owner or not at all. NOT NULL, because every paid
+-- request has a verified subject id by the time it votes (092/#197 put the
+-- form behind sign-in). The DEFAULT '' is not a live identity: it is what a
+-- row gets when it predates this column, or when an older deploy writes one
+-- mid-rollout — and the application refuses '' on both read and write, so
+-- those rows are readable by no account, ever. Sweep rule (written with the
+-- column, applied by a later ticket): a row is sweepable once a `tests` row
+-- exists for its `test_id` — the stored report outlives the buffer — or once
+-- its owner's account is gone, and a row under '' is sweepable on sight.
+-- DELETE /me deliberately keeps these rows (they are opaque, and clearing
+-- them would sell a still-valid token a fresh budget); the account being
+-- gone is what makes them unreadable, and the sweep is what clears them.
+ALTER TABLE votes ADD COLUMN IF NOT EXISTS owner_id text NOT NULL DEFAULT '';

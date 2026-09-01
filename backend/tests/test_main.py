@@ -1995,6 +1995,38 @@ def test_the_owner_can_still_answer_their_own_gate(signed_in, conn) -> None:
     assert response.status_code == 200
 
 
+def test_the_ledger_replays_for_its_owner_and_charges_a_stranger(
+    signed_in, conn
+) -> None:
+    """086/#177 end to end: the verified subject in the graph's state is the
+    owner the vote loop reads and writes under. The account that paid replays
+    free; a second account submitting the byte-identical test is asking for
+    the first time — it pays, and is never served rows quoting content another
+    account submitted."""
+    seed_japanese(conn, 5)
+    calls: list[str] = []
+
+    class CountingLLM:
+        configuration = "stub"
+
+        def vote(self, **kwargs):
+            calls.append("vote")
+            return voted()
+
+    app.dependency_overrides[get_panel_llm] = lambda: CountingLLM()
+
+    first = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("acct-a"))
+    paid = len(calls)
+    replay = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("acct-a"))
+    after_replay = len(calls)
+    stranger = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("acct-b"))
+
+    assert first.status_code == replay.status_code == stranger.status_code == 200
+    assert paid > 0
+    assert after_replay == paid, "the owner's byte-identical re-run must be free"
+    assert len(calls) == paid * 2, "another account's identical test is not a replay"
+
+
 def test_progress_counts_the_votes_the_run_has_bought(client, conn) -> None:
     """The waiting screen's number is read off the vote ledger (021/#126):
     paid votes are persisted per chunk, so counting the rows stamped with the

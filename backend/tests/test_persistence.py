@@ -856,17 +856,18 @@ def _vote_record(reason: str = "liked it") -> VoteRecord:
 @pytest.mark.anyio
 async def test_a_stored_vote_loads_back_whole(conn, aconn):
     record = _vote_record()
-    assert await store_votes(aconn, {"fp1": record}) == 1
+    assert await store_votes(aconn, {"fp1": record}, owner="acct-a") == 1
 
-    assert await load_votes(aconn, ["fp1"]) == {"fp1": record}
+    assert await load_votes(aconn, ["fp1"], owner="acct-a") == {"fp1": record}
 
 
 @pytest.mark.anyio
 async def test_load_returns_only_the_fingerprints_that_exist(conn, aconn):
-    await store_votes(aconn, {"fp1": _vote_record()})
+    await store_votes(aconn, {"fp1": _vote_record()}, owner="acct-a")
 
-    assert (await load_votes(aconn, ["fp1", "fp-unknown"])).keys() == {"fp1"}
-    assert await load_votes(aconn, []) == {}
+    loaded = await load_votes(aconn, ["fp1", "fp-unknown"], owner="acct-a")
+    assert loaded.keys() == {"fp1"}
+    assert await load_votes(aconn, [], owner="acct-a") == {}
 
 
 @pytest.mark.anyio
@@ -875,10 +876,78 @@ async def test_the_ledger_is_append_only(conn, aconn):
     by the ledger's append-only rule. A colliding write must leave the original
     untouched, never
     replace it: the first vote under a fingerprint is THE vote for that question."""
-    await store_votes(aconn, {"fp1": _vote_record(reason="first")})
+    await store_votes(aconn, {"fp1": _vote_record(reason="first")}, owner="acct-a")
 
-    assert await store_votes(aconn, {"fp1": _vote_record(reason="second")}) == 0
-    assert (await load_votes(aconn, ["fp1"]))["fp1"].reason == "first"
+    assert (
+        await store_votes(aconn, {"fp1": _vote_record(reason="second")}, owner="acct-a")
+        == 0
+    )
+    assert (await load_votes(aconn, ["fp1"], owner="acct-a"))["fp1"].reason == "first"
+
+
+@pytest.mark.anyio
+async def test_votes_load_only_for_their_owner(conn, aconn):
+    """086/#177: the ledger is a user-scoped resume buffer, not a shared cache.
+    A row's content is its owner's submitted headlines, so the read matches
+    within the owner or not at all — privacy by the WHERE clause, not by
+    policy."""
+    await store_votes(aconn, {"fp1": _vote_record()}, owner="acct-a")
+
+    assert await load_votes(aconn, ["fp1"], owner="acct-b") == {}
+    assert (await load_votes(aconn, ["fp1"], owner="acct-a")).keys() == {"fp1"}
+
+
+@pytest.mark.anyio
+async def test_a_colliding_write_never_reassigns_the_owner(conn, aconn):
+    """Two accounts submitting byte-identical content collide on the ledger's
+    primary key. Append-only already settles it: the first row stands, still
+    its first owner's, and the second account simply has no row — it paid for
+    its own votes and will pay again on a resume. Accepted with the scoping
+    (086/#177): holding both rows means dropping the primary key for a
+    composite one, which the additive-only migration rule (083/#173) refuses
+    and the ticket's own "same ON CONFLICT DO NOTHING" declined."""
+    await store_votes(aconn, {"fp1": _vote_record(reason="first")}, owner="acct-a")
+
+    assert (
+        await store_votes(aconn, {"fp1": _vote_record(reason="second")}, owner="acct-b")
+        == 0
+    )
+    assert await load_votes(aconn, ["fp1"], owner="acct-b") == {}
+    assert (await load_votes(aconn, ["fp1"], owner="acct-a"))["fp1"].reason == "first"
+
+
+@pytest.mark.anyio
+async def test_the_empty_owner_is_refused_loudly(conn, aconn):
+    """'' is the column DEFAULT — the mark of rows written before the column
+    existed, or by an older deploy mid-rollout. No live caller is ever that:
+    a request that lost its identity must fail before it writes rows nobody
+    can read back, or reads the pre-scoping pool."""
+    with pytest.raises(ValueError):
+        await store_votes(aconn, {"fp1": _vote_record()}, owner="")
+    with pytest.raises(ValueError):
+        await load_votes(aconn, ["fp1"], owner="")
+
+
+@pytest.mark.anyio
+async def test_rows_from_before_the_scoping_are_readable_by_no_account(conn, aconn):
+    """A pre-086 row lands on the DEFAULT '' when the column arrives. It stays
+    — paid model output is never dropped by a migration — but no signed-in
+    account matches it: the sharing the scoping kills is killed for the old
+    rows too, not only for new writes."""
+    await aconn.execute(
+        "INSERT INTO votes (request_fingerprint, persona_id, test_id,"
+        " chosen_variant_id, presentation_order, reason)"
+        " VALUES ('fp-old', 'JP-00001', 't0', 'a', ARRAY['a','b'], 'legacy')"
+    )
+    await aconn.commit()
+
+    assert await load_votes(aconn, ["fp-old"], owner="acct-a") == {}
+    owner = await (
+        await aconn.execute(
+            "SELECT owner_id FROM votes WHERE request_fingerprint = 'fp-old'"
+        )
+    ).fetchone()
+    assert owner == ("",)
 
 
 def test_every_table_denies_the_data_api_by_default(conn) -> None:
