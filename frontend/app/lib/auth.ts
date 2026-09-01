@@ -93,6 +93,7 @@ declare global {
             parent: HTMLElement,
             options: Record<string, unknown>,
           ): void;
+          disableAutoSelect(): void;
         };
       };
     };
@@ -178,6 +179,11 @@ export async function mountGoogleButton(container: HTMLElement): Promise<void> {
 }
 
 export async function signOut(): Promise<void> {
+  // Google must be told too: ending only the Supabase session leaves the
+  // browser's Google session free to re-personalize the button into
+  // one-click re-entry — a sign-out that signs you back in. Optional
+  // chaining, because sign-out must not depend on Google being reachable.
+  window.google?.accounts.id.disableAutoSelect();
   await authClient()?.auth.signOut();
 }
 

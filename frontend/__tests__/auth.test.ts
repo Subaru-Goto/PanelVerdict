@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { authHeaders, createNonce } from "../app/lib/auth";
+import { authHeaders, createNonce, signOut } from "../app/lib/auth";
 
 // 063/#158. The nonce is the one part of Google's pre-built sign-in that is
 // easy to get backwards, and getting it backwards fails at the provider rather
@@ -43,5 +43,29 @@ describe("the session as headers", () => {
     // malformed credential rather than an absent one, and the backend would
     // have to decide what to do with it.
     expect(await authHeaders()).toEqual({});
+  });
+});
+
+describe("signing out", () => {
+  it("tells Google too, so the button does not offer one-click re-entry", async () => {
+    // Two sessions exist: the app's (Supabase) and the browser's Google
+    // session. Ending only the first leaves Google free to re-personalize
+    // the button into "Continue as …" — a sign-out that signs you back in.
+    // Google's integration docs require disableAutoSelect on sign-out.
+    const disabled = vi.fn();
+    (window as unknown as Record<string, unknown>).google = {
+      accounts: { id: { disableAutoSelect: disabled } },
+    };
+
+    await signOut();
+
+    expect(disabled).toHaveBeenCalledTimes(1);
+    delete (window as unknown as Record<string, unknown>).google;
+  });
+
+  it("survives the Google script never having loaded", async () => {
+    // Sign-out must work even when the button's script failed or was blocked:
+    // ending the app session cannot depend on Google being reachable.
+    await expect(signOut()).resolves.toBeUndefined();
   });
 });
