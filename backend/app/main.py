@@ -55,6 +55,7 @@ from app.llm import (
 from app.panel import render_persona_prompt, votes_with_voters
 from app.persistence import (
     adeny_data_api,
+    count_reports,
     delete_report,
     delete_reports_of,
     list_reports,
@@ -1121,6 +1122,30 @@ async def _kept(
     result = state["result"]
     test_id = result.test_id
     try:
+        # The save cap (085/#176): at the cap the save is refused and the
+        # response says so — never an old test evicted, because deletion is
+        # the user's own act. Counted excluding this test's own id, so a
+        # re-completed run that is already kept is not scolded for a row it
+        # is not adding.
+        cap = settings.saved_tests_per_user
+        if await count_reports(conn, owner=caller, excluding=test_id) >= cap:
+            return outcome.model_copy(
+                update={
+                    "notices": outcome.notices
+                    + (
+                        Notice(
+                            severity="warning",
+                            message=(
+                                "This test was not saved: your rail already "
+                                f"holds {cap} test{'s' if cap != 1 else ''}, "
+                                "the most an account keeps. The full report "
+                                "below is still yours to read — delete a "
+                                "saved test to make room for the next one."
+                            ),
+                        ),
+                    )
+                }
+            )
         await store_report(
             conn,
             test_id=test_id,

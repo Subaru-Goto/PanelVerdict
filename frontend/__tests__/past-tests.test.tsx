@@ -119,6 +119,9 @@ describe("the account's own tests", () => {
     fireEvent.click(
       await screen.findByLabelText("Delete the test of “Save 50% today”"),
     );
+    fireEvent.click(
+      screen.getByLabelText("Really delete the test of “Save 50% today”?"),
+    );
 
     // Gone from the rail while the delete is still in flight: the call is
     // idempotent and a 404 is not an error, so the row never needs to return,
@@ -127,6 +130,57 @@ describe("the account's own tests", () => {
       expect(screen.queryByText(/“Save 50% today”/)).toBeNull(),
     );
     settle();
+  });
+
+  it("asks before deleting — one click never destroys a paid report", async () => {
+    // ChatGPT's and Gemini's rails both put a confirmation between the click
+    // and the delete; ours is the inline version (085/#176, decided
+    // 2026-09-01). The × becomes the question, on the row, no popup.
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
+
+    render(<PastTests />);
+    fireEvent.click(
+      await screen.findByLabelText("Delete the test of “Save 50% today”"),
+    );
+
+    expect(forgetTestMock).not.toHaveBeenCalled();
+    expect(screen.getByText(/“Save 50% today”/)).toBeDefined();
+    expect(screen.getByText("Delete?")).toBeDefined();
+  });
+
+  it("withdraws the question when the pointer leaves the row", async () => {
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
+
+    render(<PastTests />);
+    const arm = await screen.findByLabelText(
+      "Delete the test of “Save 50% today”",
+    );
+    fireEvent.click(arm);
+    fireEvent.mouseLeave(arm.closest("li")!);
+
+    // Back to the plain ×: a question left standing after the pointer moved
+    // on would make the next visit to the row a one-click delete after all.
+    expect(screen.queryByText("Delete?")).toBeNull();
+    expect(
+      screen.getByLabelText("Delete the test of “Save 50% today”"),
+    ).toBeDefined();
+    expect(forgetTestMock).not.toHaveBeenCalled();
+  });
+
+  it("withdraws the question on Escape", async () => {
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
+
+    render(<PastTests />);
+    fireEvent.click(
+      await screen.findByLabelText("Delete the test of “Save 50% today”"),
+    );
+    fireEvent.keyDown(
+      screen.getByLabelText("Really delete the test of “Save 50% today”?"),
+      { key: "Escape" },
+    );
+
+    expect(screen.queryByText("Delete?")).toBeNull();
+    expect(forgetTestMock).not.toHaveBeenCalled();
   });
 
   it("searches the headlines it shows, and says when nothing matches", async () => {

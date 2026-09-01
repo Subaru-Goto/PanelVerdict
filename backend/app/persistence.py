@@ -394,6 +394,24 @@ async def store_report(
     return result.rowcount == 1
 
 
+async def count_reports(
+    conn: psycopg.AsyncConnection, *, owner: str, excluding: str
+) -> int:
+    """How many tests this account holds, not counting `excluding`.
+
+    The exclusion keeps the save cap honest on a re-completed run: a test
+    already kept must never be told "history full" — its row exists, so
+    storing again is the idempotent no-op it always was (085/#176).
+    """
+    row = await (
+        await conn.execute(
+            "SELECT count(*) FROM tests WHERE owner = %s AND test_id <> %s",
+            (owner, excluding),
+        )
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
 async def load_report(
     conn: psycopg.AsyncConnection, *, test_id: str, owner: str
 ) -> dict | None:

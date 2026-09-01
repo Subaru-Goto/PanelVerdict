@@ -3146,6 +3146,62 @@ def test_a_customer_sees_their_own_tests_newest_first(signed_in, conn) -> None:
     assert set(rows[0]) == {"test_id", "created_at", "variants", "verdict", "tally"}
 
 
+def test_history_full_refuses_the_save_and_says_so(signed_in, conn, monkeypatch) -> None:
+    """085/#176: the cap bounds storage, and deletion is the user's act — so at
+    the cap the *save* is refused, never an old test silently evicted. The
+    response must say so: a customer who paid for a run and finds no new row in
+    the rail deserves the reason in the report they are holding."""
+    monkeypatch.setattr(settings, "saved_tests_per_user", 1)
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+
+    second = _REQUEST_BODY | {"headline_a": "Half price", "headline_b": "50% off"}
+    unsaved = signed_in.post("/evaluate", json=second, headers=_as("owner"))
+
+    assert unsaved.status_code == 200
+    rows = signed_in.get("/tests", headers=_as("owner")).json()["tests"]
+    assert [row["variants"]["a"] for row in rows] == ["Save 50% today"]
+    (notice,) = [
+        n for n in unsaved.json()["notices"] if "not saved" in n["message"]
+    ]
+    assert notice["severity"] == "warning"
+    # The number comes from the setting, and the remedy is the user's own act.
+    assert "1" in notice["message"] and "delete" in notice["message"].lower()
+
+
+def test_deleting_a_test_makes_room_for_the_next_save(
+    signed_in, conn, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "saved_tests_per_user", 1)
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+    kept = signed_in.get("/tests", headers=_as("owner")).json()["tests"][0]["test_id"]
+    assert (
+        signed_in.delete(f"/tests/{kept}", headers=_as("owner")).status_code == 204
+    )
+
+    second = _REQUEST_BODY | {"headline_a": "Half price", "headline_b": "50% off"}
+    saved = signed_in.post("/evaluate", json=second, headers=_as("owner"))
+
+    assert saved.status_code == 200
+    rows = signed_in.get("/tests", headers=_as("owner")).json()["tests"]
+    assert [row["variants"]["a"] for row in rows] == ["Half price"]
+    assert not any("not saved" in n["message"] for n in saved.json()["notices"])
+
+
+def test_the_cap_is_per_account_not_global(signed_in, conn, monkeypatch) -> None:
+    """One customer's full history must not refuse another customer's save."""
+    monkeypatch.setattr(settings, "saved_tests_per_user", 1)
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+
+    other = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("stranger"))
+
+    assert other.status_code == 200
+    assert len(signed_in.get("/tests", headers=_as("stranger")).json()["tests"]) == 1
+    assert not any("not saved" in n["message"] for n in other.json()["notices"])
+
+
 def test_one_customers_tests_are_invisible_to_another(signed_in, conn) -> None:
     seed_japanese(conn, 5)
     signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
