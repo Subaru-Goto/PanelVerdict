@@ -70,6 +70,22 @@ export function settledEdit(request: EvaluateInput): PanelEdit {
   };
 }
 
+/** Who is actually sitting: seats counted from the composition, and when a
+ *  preview seated nobody there is no composition — matched is the only number
+ *  there is. Shared by the gate and the waiting screen, so the size a reader
+ *  approves is the size the run then reports progress against (021/#126). */
+export function seatedCount(preview: {
+  matched: number;
+  composition: { countries: Record<string, number> } | null;
+}): number {
+  return preview.composition
+    ? Object.values(preview.composition.countries).reduce(
+        (sum, n) => sum + n,
+        0,
+      )
+    : preview.matched;
+}
+
 /** The audience as an identity (077/#167): every control plus the words.
  *
  * The gate fires once per audience, and "same audience" has to mean something

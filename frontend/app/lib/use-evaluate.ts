@@ -11,7 +11,7 @@ import {
   type PanelPreview,
   type PanelEdit,
 } from "./api";
-import { readingKey, settledEdit } from "./reading";
+import { readingKey, seatedCount, settledEdit } from "./reading";
 
 /** A reading a human accepted at the gate, remembered so the gate fires once
  *  per audience (077/#167): a later run whose key matches rides as
@@ -28,18 +28,23 @@ export type AcceptedReading = {
  *  represented, only replaced. */
 export type EvaluateState =
   | { phase: "idle" }
-  | { phase: "loading" }
+  /** `run` is set when the wait is a panel being bought — the gate-skip
+   *  path, which never pauses — so the page can show the run's stream and
+   *  poll the id this client minted for it (021/#126). Absent, the wait is a
+   *  preview being read. */
+  | { phase: "loading"; run?: { threadId: string; size: number } }
   /** Holding at the panel gate: nothing bought yet, waiting for a person to
    *  accept the reading or edit it. `notice` is the backend's fixed sentence
    *  when the last answer was refused — the run is still paused there, so the
-   *  gate stays up for the reader to act on it. `resuming` marks an answer in
-   *  flight, so the page can prove the run is alive. */
+   *  gate stays up for the reader to act on it. `resuming` names the answer
+   *  in flight: an accept is votes being bought, so the page swaps the gate
+   *  for the run's stream; an adjust is a re-seat measured in SQL. */
   | {
       phase: "gated";
       threadId: string;
       preview: PanelPreview;
       notice?: string;
-      resuming?: boolean;
+      resuming?: "accept" | "adjust";
     }
   | { phase: "error"; message: string }
   /** `epoch` counts arrivals at this phase, and exists to be a React `key` on
@@ -83,8 +88,11 @@ export function useEvaluate() {
     );
   }
 
-  async function attempt(work: () => Promise<EvaluateOutcome>): Promise<void> {
-    setState({ phase: "loading" });
+  async function attempt(
+    work: () => Promise<EvaluateOutcome>,
+    run?: { threadId: string; size: number },
+  ): Promise<void> {
+    setState(run === undefined ? { phase: "loading" } : { phase: "loading", run });
     try {
       land(await work());
     } catch (error) {
@@ -133,20 +141,26 @@ export function useEvaluate() {
     // The gate fires once per audience: a key match means this exact reading
     // — every control and the words — was approved, so the approval rides.
     if (accepted !== null && readingKey(request) === accepted.key) {
-      await attempt(() =>
-        evaluate(
-          accepted.instruction === ""
-            ? // A cleared instruction was the approval: demographics only
-              // after all. The skip contract requires an instruction whenever
-              // words ride, so the honest translation is no words at all —
-              // the run is exactly what was approved.
-              { ...request, audience: "", readingAccepted: true }
-            : {
-                ...request,
-                readingAccepted: true,
-                instruction: accepted.instruction,
-              },
-        ),
+      // Minted here because this run never pauses: without an id of its own
+      // the client could not poll the votes being bought (021/#126).
+      const threadId = crypto.randomUUID();
+      await attempt(
+        () =>
+          evaluate(
+            accepted.instruction === ""
+              ? // A cleared instruction was the approval: demographics only
+                // after all. The skip contract requires an instruction whenever
+                // words ride, so the honest translation is no words at all —
+                // the run is exactly what was approved.
+                { ...request, audience: "", readingAccepted: true, threadId }
+              : {
+                  ...request,
+                  readingAccepted: true,
+                  instruction: accepted.instruction,
+                  threadId,
+                },
+          ),
+        { threadId, size: seatedCount(accepted.preview) },
       );
       return;
     }
@@ -179,7 +193,7 @@ export function useEvaluate() {
   ): Promise<void> {
     if (state.phase !== "gated") return;
     const { threadId, preview } = state;
-    setState({ phase: "gated", threadId, preview, resuming: true });
+    setState({ phase: "gated", threadId, preview, resuming: action });
     try {
       const outcome = await resumeEvaluate({
         threadId,

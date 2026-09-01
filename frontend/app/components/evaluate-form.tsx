@@ -26,7 +26,13 @@ import { useEvaluate } from "../lib/use-evaluate";
 import DemoReplay from "./demo-replay";
 import PanelGate from "./panel-gate";
 import Report from "./report";
-import { COUNTRY_LABELS, readingKey, readingSummary } from "../lib/reading";
+import {
+  COUNTRY_LABELS,
+  readingKey,
+  readingSummary,
+  seatedCount,
+} from "../lib/reading";
+import RunStream from "./run-stream";
 import { useGateSignal } from "./shell";
 import Stepper, { type StepName } from "./stepper";
 
@@ -314,7 +320,8 @@ export default function EvaluateForm({
   const step: StepName =
     state.phase === "done"
       ? "Verdict"
-      : state.phase === "gated" && state.resuming
+      : (state.phase === "gated" && state.resuming) ||
+          (state.phase === "loading" && state.run !== undefined)
         ? "Voting"
         : state.phase === "gated" || state.phase === "loading"
           ? "Audience"
@@ -343,26 +350,47 @@ export default function EvaluateForm({
     );
   }
 
-  // Holding at the gate: the reader decides whether to buy the votes.
+  // Holding at the gate: the reader decides whether to buy the votes. An
+  // accept in flight swaps the gate for the run's stream (021/#126) — hidden,
+  // not unmounted, so a refusal hands back the reader's edit untouched.
   else if (state.phase === "gated") {
+    const buying = state.resuming === "accept";
     main = (
       <div className="flex flex-col gap-4">
-        <PanelGate
-          preview={state.preview}
-          // The words as submitted — while the gate is up the form is away,
-          // so this state still reads exactly what the run was asked with.
-          audience={audience}
-          notice={state.notice ?? null}
-          // Returned, not voided: the gate re-arms its button when this
-          // settles, and a swallowed promise would re-arm it mid-spend.
-          onAccept={(instruction) =>
-            answerGate("accept", undefined, instruction)
-          }
-          onBack={adjustAudience}
-        />
-        {state.resuming && <Waiting />}
+        {/* `contents` keeps this wrapper out of the flex layout — but
+            display:contents and [hidden]'s display:none tie on specificity,
+            and the utility's later source order would win, so the class must
+            leave when the wrapper hides. */}
+        <div hidden={buying} className={buying ? undefined : "contents"}>
+          <PanelGate
+            preview={state.preview}
+            // The words as submitted — while the gate is up the form is away,
+            // so this state still reads exactly what the run was asked with.
+            audience={audience}
+            notice={state.notice ?? null}
+            // Returned, not voided: the gate re-arms its button when this
+            // settles, and a swallowed promise would re-arm it mid-spend.
+            onAccept={(instruction) =>
+              answerGate("accept", undefined, instruction)
+            }
+            onBack={adjustAudience}
+          />
+          {state.resuming === "adjust" && <Waiting />}
+        </div>
+        {buying && (
+          <RunStream
+            threadId={state.threadId}
+            size={seatedCount(state.preview)}
+          />
+        )}
       </div>
     );
+  }
+
+  // The gate-skip run: an approved reading re-run never pauses, so the stream
+  // is the whole wait, polling the id this client minted for it.
+  else if (state.phase === "loading" && state.run !== undefined) {
+    main = <RunStream threadId={state.run.threadId} size={state.run.size} />;
   } else {
     main = (
       <>

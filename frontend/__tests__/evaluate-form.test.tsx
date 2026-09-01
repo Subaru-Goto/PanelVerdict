@@ -38,6 +38,9 @@ vi.mock("../app/lib/api", () => ({
   // where it is used. `myTests` resolving empty is the state these tests are
   // about: this file is the form's, and the rail has its own.
   myTests: myTestsMock,
+  // The waiting screen's poll (021/#126): never answers here — these tests
+  // are the form's, and the count has its own file.
+  runProgress: () => new Promise(() => {}),
   remainingRuns: () => Promise.resolve(3),
   myTest: () => Promise.resolve(RESPONSE),
   forgetTest: () => Promise.resolve(),
@@ -434,7 +437,12 @@ describe("the audience through the interface", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
     await act(async () => {});
-    fireEvent.click(screen.getByRole("button", { name: /asking the panel/i }));
+    // The stream replaced the gate (021/#126), so the button is out of reach
+    // entirely — but it is still mounted and disabled, and a click landing on
+    // it anyway (hidden ancestors do not stop fireEvent) must buy nothing.
+    fireEvent.click(
+      screen.getByRole("button", { name: /asking the panel/i, hidden: true }),
+    );
     expect(resumeMock).toHaveBeenCalledTimes(1);
 
     await act(async () => settle(RESPONSE));

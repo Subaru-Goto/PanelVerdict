@@ -519,6 +519,11 @@ class EvaluateRequest(BaseModel):
     # Who the readers are, beyond anything the pool can be filtered by. Blank
     # means demographics only, and costs no model call at all.
     audience: str = Field(default="", max_length=MAX_AUDIENCE_CHARS)
+    # The run's id, client-minted the way /chat's thread ids are (021/#126):
+    # the gate-skip path never pauses, so without this the client finishes a
+    # run it could never poll the progress of. Optional — minted when absent.
+    # 36 = the length of the uuid4 the client mints (ResumeRequest's bound).
+    thread_id: str | None = Field(default=None, min_length=1, max_length=36)
     # The role-play sentence a human already approved. Only meaningful with
     # `reading_accepted`, and required there: see the validator below.
     instruction: str | None = Field(default=None, max_length=MAX_INSTRUCTION_CHARS)

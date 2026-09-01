@@ -2,11 +2,11 @@ import asyncio
 import base64
 import hmac
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Literal, NamedTuple
+from typing import Any, Literal, NamedTuple
 from uuid import uuid4
 
 import anyio
@@ -1276,13 +1276,26 @@ async def evaluate(
     # keeps one rule: the cap is probed above, so a caller with no runs left
     # pays nothing to be told so; the panel is bought below, so a sentence that
     # will never run costs no run. The check itself is charged either way.
+    # A brought id is honoured only if nothing lives under it: reusing a live
+    # thread would run a new panel over its checkpoints. Refused above every
+    # charge, so the mistake costs nothing — and ids are unguessable, so the
+    # 409 confirms nothing a stranger could use.
+    if request.thread_id is not None:
+        taken = await checkpointer.aget(
+            {"configurable": {"thread_id": request.thread_id}}
+        )
+        if taken is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="that run id is already in use — mint a fresh one",
+            )
     if request.reading_accepted:
         await _refuse_if_run_capped(conn, caller)
     instruction = await _approved_on_entry(conn, request, generator, caller)
     if request.reading_accepted:
         await _buy_panel(conn, caller)
     variants = {"a": request.headline_a, "b": request.headline_b}
-    thread_id = str(uuid4())
+    thread_id = request.thread_id or str(uuid4())
     graph = build_evaluate_graph(
         conn=conn,
         llm=llm,
@@ -1595,6 +1608,58 @@ async def resume_evaluate(
         state=state,
         caller=caller,
     )
+
+
+def _checkpoint_owner(checkpoint: Mapping[str, Any]) -> str | None:
+    """The `owner` a thread's state carries, straight off its checkpoint.
+
+    Every /evaluate thread sets it in its initial state; a /chat thread's
+    state has no such channel, so this returns None there — and None matches
+    no caller, which is exactly the refusal a chat id deserves from a run
+    endpoint."""
+    channels = checkpoint.get("channel_values", {})
+    owner = channels.get("owner")
+    return owner if isinstance(owner, str) else None
+
+
+class RunProgress(BaseModel):
+    """How many votes the run has bought so far — the waiting screen's number."""
+
+    votes_recorded: int
+
+
+@app.get("/evaluate/{thread_id}/progress")
+async def evaluate_progress(
+    thread_id: str,
+    caller: str = Depends(caller_id),
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+    checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
+) -> RunProgress:
+    """The count behind the waiting screen (021/#126): votes are persisted per
+    chunk (010e's crash-safety), so this reads live progress off rows the vote
+    loop was already writing — no second channel, nothing streamed.
+
+    - **The owner's alone**, by the resume's own rule: the count would confirm
+      a guessed id, so anyone but the caller who started the run gets the same
+      404 an unknown id gets.
+    - **Read straight off the checkpoint**, not through the graph: ownership
+      needs one state value, and building the graph would drag the panel model
+      in as a dependency of a read that never votes.
+    - **May undercount, never invents**: a cached vote keeps the stamp of the
+      run that paid for it, so a repeat served from the ledger counts zero —
+      accepted when the poll was settled on the ticket (2026-09-01).
+    """
+    checkpoint = await checkpointer.aget({"configurable": {"thread_id": thread_id}})
+    if checkpoint is None or _checkpoint_owner(checkpoint) != caller:
+        raise HTTPException(
+            status_code=404, detail="no run is waiting for you on that id"
+        )
+    async with conn.cursor() as cur:
+        await cur.execute("SELECT count(*) FROM votes WHERE test_id = %s", (thread_id,))
+        row = await cur.fetchone()
+    # A poll every few seconds must not hold its read transaction open.
+    await conn.rollback()
+    return RunProgress(votes_recorded=int(row[0]) if row else 0)
 
 
 class ClosingStreamingResponse(StreamingResponse):

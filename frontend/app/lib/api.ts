@@ -157,6 +157,9 @@ export type EvaluateInput = {
   /** The sentence approved at the gate, riding a run that skips it. The
    *  backend refuses an approval that does not name what was approved. */
   instruction?: string;
+  /** The run's id, client-minted for the gate-skip path (021/#126): a run
+   *  that never pauses would otherwise finish without an id to poll. */
+  threadId?: string;
 };
 
 /** Who a run would seat and what it would cost, shown while the run holds at
@@ -271,6 +274,9 @@ export async function evaluate(
       ...(request.instruction !== undefined
         ? { instruction: request.instruction }
         : {}),
+      ...(request.threadId !== undefined
+        ? { thread_id: request.threadId }
+        : {}),
     }),
   });
   return outcomeOf(res);
@@ -384,6 +390,18 @@ export async function myTest(testId: string): Promise<EvaluateResponse> {
     headers: await authHeaders(),
   });
   return (await jsonOrThrow(res)) as EvaluateResponse;
+}
+
+/** How many votes a run has bought so far (021/#126) — the waiting screen's
+ * number, read off rows the vote loop was already writing. */
+export type RunProgress = { votes_recorded: number };
+
+export async function runProgress(threadId: string): Promise<RunProgress> {
+  const res = await fetch(
+    `/api/evaluate/${encodeURIComponent(threadId)}/progress`,
+    { headers: await authHeaders() },
+  );
+  return (await jsonOrThrow(res)) as RunProgress;
 }
 
 /** A demo case's replayed report (061/#156), plus what only a demo carries:

@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { type PanelPreview } from "../lib/api";
-import { countryGroups, selectedFacts } from "../lib/reading";
+import { countryGroups, seatedCount, selectedFacts } from "../lib/reading";
 import { CAPS, KICKER } from "../lib/styles";
 
 /** The panel gate, as the prototype settles it (077): panel size and matched
@@ -161,11 +161,7 @@ export default function PanelGate({
   // wholly onto demographics, and then there is no instruction below for the
   // row to point at — the paused thread's own draft is the source of truth.
   const rolePlayed = words !== "" && preview.instruction !== "";
-  // Seats are counted from who is actually sitting; a preview that seated
-  // nobody has no composition, and matched is the only number there is.
-  const seatedCount = composition
-    ? Object.values(composition.countries).reduce((sum, n) => sum + n, 0)
-    : preview.matched;
+  const seated = seatedCount(preview);
 
   function accept(): void {
     setSent(true);
@@ -197,7 +193,7 @@ export default function PanelGate({
         <div className="flex flex-col gap-9 self-start">
           <StatTile
             kicker="Panel size"
-            number={seatedCount}
+            number={seated}
             note="readers, each voting once and giving a reason"
           />
           <StatTile

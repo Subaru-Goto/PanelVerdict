@@ -738,6 +738,15 @@
 </section>
 
 <!-- ============================== STEP 3 ============================== -->
+<!-- Amended 2026-09-01 (021): in the app a live run's vote line prints a real
+     count — "87 of 200", polled every ~3s off the vote ledger, whose rows the
+     pipeline already writes per chunk. This prototype's fixed 1100 ms ticks
+     are mockup pacing the app never ships: steps may not animate invented
+     progress, the same rule the demo's timings follow. The app shows the
+     three steps that actually run (assemble / vote / verdict), as the 061
+     amendment settled for the demo. "Cancel this run" is deferred with 099:
+     the votes are bought when the run starts, so a cancel control cannot
+     honestly exist before the refund story does. -->
 <section id="step3" class="view">
   <div class="flow-head"><div class="stepper" id="stepper-3"></div></div>
   <div class="run-wrap">
