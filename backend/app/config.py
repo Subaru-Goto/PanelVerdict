@@ -141,6 +141,12 @@ class Settings(BaseSettings):
     # something once the caller is a verified subject id rather than a
     # forwarded address, since an address costs nothing to change.
     evaluate_runs_per_day: int = 3
+    # How many finished tests one account may keep in its rail. At the cap the
+    # *save* is refused (with a notice naming the remedy) — never an old test
+    # evicted, because deletion is the user's own act (085/#176, author
+    # 2026-08-23: "initial cap 10 per user, a starting value, explicitly
+    # changeable — config, not constant-in-code"). 0 keeps nothing.
+    saved_tests_per_user: int = 10
     # Previews are not purchases, so they get their own, looser cap. A
     # demographics-only preview costs the pool nothing since the controls
     # replaced translation (094), so the cap now bounds probing rather than

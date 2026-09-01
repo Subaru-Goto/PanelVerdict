@@ -23,6 +23,7 @@ from app.persistence import (
     deny_data_api,
     missing_columns,
     load_pool,
+    count_reports,
     load_votes,
     nearest_panelists,
     persist_persona,
@@ -948,6 +949,20 @@ async def test_rows_from_before_the_scoping_are_readable_by_no_account(conn, aco
         )
     ).fetchone()
     assert owner == ("",)
+
+
+@pytest.mark.anyio
+async def test_count_reports_excludes_the_test_being_kept(conn, aconn):
+    """The save cap must not scold a re-completed run for a row it is not
+    adding: counting excludes the test's own id, so an already-kept test
+    re-stores as the idempotent no-op it always was (085/#176)."""
+    await store_report(aconn, test_id="t-1", owner="acct-a", report={"x": 1})
+    await store_report(aconn, test_id="t-2", owner="acct-b", report={"x": 1})
+
+    assert await count_reports(aconn, owner="acct-a", excluding="t-1") == 0
+    assert await count_reports(aconn, owner="acct-a", excluding="t-other") == 1
+    # Another account's rows never count against this one.
+    assert await count_reports(aconn, owner="acct-b", excluding="t-other") == 1
 
 
 def test_every_table_denies_the_data_api_by_default(conn) -> None:

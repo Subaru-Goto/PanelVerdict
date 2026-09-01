@@ -31,6 +31,13 @@ export default function PastTests() {
   const [tests, setTests] = useState<StoredTest[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // The row whose × has been clicked once. Deleting asks first, inline —
+  // ChatGPT's and Gemini's rails both put a confirmation between the click
+  // and the delete (085/#176, decided 2026-09-01) — and the question is
+  // withdrawn when attention provably left it: pointer off the row, focus
+  // off the button, or Escape. React patches the same node across the swap,
+  // so the focus the × held is the focus the question holds.
+  const [confirming, setConfirming] = useState<string | null>(null);
   /** What failed, not just whether: the banner is shared between the first
    *  read and a page append, and their remedies differ — retrying a failed
    *  "Show more" with a full reload would throw away every page reached.
@@ -201,7 +208,15 @@ export default function PastTests() {
           />
           <ul className="flex flex-col gap-2">
             {shown.map((test) => (
-              <li className="flex items-start gap-2" key={test.test_id}>
+              <li
+                className="group flex items-start gap-2"
+                key={test.test_id}
+                onMouseLeave={() =>
+                  setConfirming((armed) =>
+                    armed === test.test_id ? null : armed,
+                  )
+                }
+              >
                 <Link
                   className="flex-1 text-left text-sm hover:underline"
                   href={`/test?open=${test.test_id}`}
@@ -213,14 +228,36 @@ export default function PastTests() {
                     {railSummary(test.verdict)}
                   </span>
                 </Link>
-                <button
-                  aria-label={`Delete the test of “${test.variants.a}”`}
-                  className="text-ink-2 hover:text-ink"
-                  onClick={() => void forget(test.test_id)}
-                  type="button"
-                >
-                  ×
-                </button>
+                {confirming === test.test_id ? (
+                  <button
+                    aria-label={`Really delete the test of “${test.variants.a}”?`}
+                    className="text-sm font-medium text-red"
+                    onBlur={() => setConfirming(null)}
+                    onClick={() => {
+                      setConfirming(null);
+                      void forget(test.test_id);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") setConfirming(null);
+                    }}
+                    type="button"
+                  >
+                    Delete?
+                  </button>
+                ) : (
+                  /* Hover-revealed, per the prototype — and focus-revealed,
+                     because a control keyboard users cannot find is not a
+                     control. Faded, never display:none: a hidden button
+                     could not take that focus in the first place. */
+                  <button
+                    aria-label={`Delete the test of “${test.variants.a}”`}
+                    className="text-ink-2 opacity-0 transition-opacity hover:text-red group-hover:opacity-100 group-focus-within:opacity-100"
+                    onClick={() => setConfirming(test.test_id)}
+                    type="button"
+                  >
+                    ×
+                  </button>
+                )}
               </li>
             ))}
           </ul>
