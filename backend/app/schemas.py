@@ -346,7 +346,9 @@ class Notice(BaseModel):
     vote produces one too.
 
     Two severities because they call for different treatment, not different styling:
-    `warning` means the panel is not the one asked for, `reading` means it is and
+    `warning` means something the customer asked for did not fully happen — a
+    panel other than the one asked for, a report the rail could not keep
+    (085/#176) — `reading` means it did and
     here is the interpretation it rests on. Collapsing them would bury the
     substitutions among the paraphrases.
     """

@@ -1126,24 +1126,26 @@ async def _kept(
         # response says so — never an old test evicted, because deletion is
         # the user's own act. Counted excluding this test's own id, so a
         # re-completed run that is already kept is not scolded for a row it
-        # is not adding.
+        # is not adding. Check-then-act, unguarded on purpose: two runs
+        # landing at count nine both save, and the cap reads eleven. That
+        # money-shaped hole is why _only_one_answer holds a row lock; a
+        # storage quota overshooting by a day's runs is not worth one.
         cap = settings.saved_tests_per_user
         if await count_reports(conn, owner=caller, excluding=test_id) >= cap:
+            # The sentence states the limit, never the count: rows can exceed
+            # a lowered cap, and a number nobody measured is not spoken. The
+            # remedy only exists while there is a cap to make room under.
+            message = (
+                "This test was not saved: an account keeps at most "
+                f"{cap} saved test{'s' if cap != 1 else ''}, and your rail "
+                "is full. The full report below is still yours to read now."
+            )
+            if cap > 0:
+                message += " Delete a saved test to make room for the next one."
             return outcome.model_copy(
                 update={
                     "notices": outcome.notices
-                    + (
-                        Notice(
-                            severity="warning",
-                            message=(
-                                "This test was not saved: your rail already "
-                                f"holds {cap} test{'s' if cap != 1 else ''}, "
-                                "the most an account keeps. The full report "
-                                "below is still yours to read — delete a "
-                                "saved test to make room for the next one."
-                            ),
-                        ),
-                    )
+                    + (Notice(severity="warning", message=message),)
                 }
             )
         await store_report(

@@ -34,8 +34,9 @@ export default function PastTests() {
   // The row whose × has been clicked once. Deleting asks first, inline —
   // ChatGPT's and Gemini's rails both put a confirmation between the click
   // and the delete (085/#176, decided 2026-09-01) — and the question is
-  // withdrawn when the pointer leaves the row or on Escape, so it can never
-  // sit armed under the next unsuspecting click.
+  // withdrawn when attention provably left it: pointer off the row, focus
+  // off the button, or Escape. React patches the same node across the swap,
+  // so the focus the × held is the focus the question holds.
   const [confirming, setConfirming] = useState<string | null>(null);
   /** What failed, not just whether: the banner is shared between the first
    *  read and a page append, and their remedies differ — retrying a failed
@@ -231,6 +232,7 @@ export default function PastTests() {
                   <button
                     aria-label={`Really delete the test of “${test.variants.a}”?`}
                     className="text-sm font-medium text-red"
+                    onBlur={() => setConfirming(null)}
                     onClick={() => {
                       setConfirming(null);
                       void forget(test.test_id);
@@ -249,7 +251,7 @@ export default function PastTests() {
                      could not take that focus in the first place. */
                   <button
                     aria-label={`Delete the test of “${test.variants.a}”`}
-                    className="text-ink-2 opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                    className="text-ink-2 opacity-0 transition-opacity hover:text-red group-hover:opacity-100 group-focus-within:opacity-100"
                     onClick={() => setConfirming(test.test_id)}
                     type="button"
                   >

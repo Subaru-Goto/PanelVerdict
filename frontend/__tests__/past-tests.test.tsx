@@ -148,6 +148,41 @@ describe("the account's own tests", () => {
     expect(screen.getByText("Delete?")).toBeDefined();
   });
 
+  it("keeps the keyboard user's focus on the question it just posed", async () => {
+    // React patches the same button node across the ×→Delete? swap, so the
+    // focus the × held is the focus the question holds — which is what makes
+    // Escape reachable for the user who just armed it (085/#176, review).
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
+
+    render(<PastTests />);
+    const arm = await screen.findByLabelText(
+      "Delete the test of “Save 50% today”",
+    );
+    arm.focus();
+    fireEvent.click(arm);
+
+    expect(document.activeElement).toBe(
+      screen.getByLabelText("Really delete the test of “Save 50% today”?"),
+    );
+  });
+
+  it("withdraws the question when focus leaves it", async () => {
+    // Tab away and an armed Delete? must not stay standing where a later
+    // click, from someone no longer thinking about it, would destroy a row.
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
+
+    render(<PastTests />);
+    fireEvent.click(
+      await screen.findByLabelText("Delete the test of “Save 50% today”"),
+    );
+    fireEvent.blur(
+      screen.getByLabelText("Really delete the test of “Save 50% today”?"),
+    );
+
+    expect(screen.queryByText("Delete?")).toBeNull();
+    expect(forgetTestMock).not.toHaveBeenCalled();
+  });
+
   it("withdraws the question when the pointer leaves the row", async () => {
     myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
 

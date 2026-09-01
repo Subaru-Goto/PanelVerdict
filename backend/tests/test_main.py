@@ -3146,7 +3146,9 @@ def test_a_customer_sees_their_own_tests_newest_first(signed_in, conn) -> None:
     assert set(rows[0]) == {"test_id", "created_at", "variants", "verdict", "tally"}
 
 
-def test_history_full_refuses_the_save_and_says_so(signed_in, conn, monkeypatch) -> None:
+def test_history_full_refuses_the_save_and_says_so(
+    signed_in, conn, monkeypatch
+) -> None:
     """085/#176: the cap bounds storage, and deletion is the user's act — so at
     the cap the *save* is refused, never an old test silently evicted. The
     response must say so: a customer who paid for a run and finds no new row in
@@ -3161,12 +3163,48 @@ def test_history_full_refuses_the_save_and_says_so(signed_in, conn, monkeypatch)
     assert unsaved.status_code == 200
     rows = signed_in.get("/tests", headers=_as("owner")).json()["tests"]
     assert [row["variants"]["a"] for row in rows] == ["Save 50% today"]
-    (notice,) = [
-        n for n in unsaved.json()["notices"] if "not saved" in n["message"]
-    ]
+    (notice,) = [n for n in unsaved.json()["notices"] if "not saved" in n["message"]]
     assert notice["severity"] == "warning"
     # The number comes from the setting, and the remedy is the user's own act.
     assert "1" in notice["message"] and "delete" in notice["message"].lower()
+
+
+def test_the_full_rail_sentence_speaks_the_limit_in_plural(
+    signed_in, conn, monkeypatch
+) -> None:
+    """The limit is quoted from config in both grammatical shapes — and it is
+    the *limit* the sentence states, never a count nobody measured: rows can
+    exceed a cap that was lowered after they were kept."""
+    monkeypatch.setattr(settings, "saved_tests_per_user", 2)
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+    second = _REQUEST_BODY | {"headline_a": "Half price", "headline_b": "50% off"}
+    signed_in.post("/evaluate", json=second, headers=_as("owner"))
+
+    third = _REQUEST_BODY | {
+        "headline_a": "Two for one",
+        "headline_b": "Buy one get one",
+    }
+    refused = signed_in.post("/evaluate", json=third, headers=_as("owner"))
+
+    (notice,) = [n for n in refused.json()["notices"] if "not saved" in n["message"]]
+    assert "2 saved tests" in notice["message"]
+
+
+def test_a_cap_of_zero_keeps_nothing_and_offers_no_false_remedy(
+    signed_in, conn, monkeypatch
+) -> None:
+    """0 keeps nothing (config.py). With no cap to make room under, telling
+    the customer to delete a saved test would be a remedy that cannot work."""
+    monkeypatch.setattr(settings, "saved_tests_per_user", 0)
+    seed_japanese(conn, 5)
+
+    refused = signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
+
+    assert refused.status_code == 200
+    assert signed_in.get("/tests", headers=_as("owner")).json()["tests"] == []
+    (notice,) = [n for n in refused.json()["notices"] if "not saved" in n["message"]]
+    assert "delete" not in notice["message"].lower()
 
 
 def test_deleting_a_test_makes_room_for_the_next_save(
@@ -3176,9 +3214,7 @@ def test_deleting_a_test_makes_room_for_the_next_save(
     seed_japanese(conn, 5)
     signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("owner"))
     kept = signed_in.get("/tests", headers=_as("owner")).json()["tests"][0]["test_id"]
-    assert (
-        signed_in.delete(f"/tests/{kept}", headers=_as("owner")).status_code == 204
-    )
+    assert signed_in.delete(f"/tests/{kept}", headers=_as("owner")).status_code == 204
 
     second = _REQUEST_BODY | {"headline_a": "Half price", "headline_b": "50% off"}
     saved = signed_in.post("/evaluate", json=second, headers=_as("owner"))

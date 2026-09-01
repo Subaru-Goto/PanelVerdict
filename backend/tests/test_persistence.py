@@ -23,6 +23,7 @@ from app.persistence import (
     deny_data_api,
     missing_columns,
     load_pool,
+    count_reports,
     load_votes,
     nearest_panelists,
     persist_persona,
@@ -955,8 +956,6 @@ async def test_count_reports_excludes_the_test_being_kept(conn, aconn):
     """The save cap must not scold a re-completed run for a row it is not
     adding: counting excludes the test's own id, so an already-kept test
     re-stores as the idempotent no-op it always was (085/#176)."""
-    from app.persistence import count_reports, store_report
-
     await store_report(aconn, test_id="t-1", owner="acct-a", report={"x": 1})
     await store_report(aconn, test_id="t-2", owner="acct-b", report={"x": 1})
 
