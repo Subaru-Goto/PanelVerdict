@@ -299,9 +299,6 @@ export default function EvaluateForm({
     return (
       <div className="flex flex-col items-start gap-4">
         <h2>Two versions, one panel.</h2>
-        <p className="text-ink-2">
-          Running a test costs money, so it asks who you are.
-        </p>
         <button
           type="button"
           onClick={() => setSheetOpen(true)}
