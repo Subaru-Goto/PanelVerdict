@@ -23,6 +23,7 @@ import { AI_SYSTEM_DISCLOSURE } from "../lib/disclosure";
 import { onAuthChange, signInAvailable } from "../lib/auth";
 import SignInSheet from "./sign-in-sheet";
 import { useEvaluate } from "../lib/use-evaluate";
+import DemoReplay from "./demo-replay";
 import PanelGate from "./panel-gate";
 import Report from "./report";
 import { COUNTRY_LABELS, readingKey, readingSummary } from "../lib/reading";
@@ -191,7 +192,12 @@ export default function EvaluateForm({
   // reopening works from any page the rail shows on. `live` guards the late
   // answer — a second link clicked before the first resolves must win.
   const router = useRouter();
-  const openId = useSearchParams().get("open");
+  const params = useSearchParams();
+  // A demo address wins outright: no rail link mints both params, but a
+  // hand-edited URL carrying both must not fire an authenticated fetch
+  // under a demo render whose failure would land in invisible state.
+  const demoCase = params.get("demo");
+  const openId = demoCase !== null ? null : params.get("open");
   // The rail's rows and "New test" are links into this same route, so Next
   // reuses the mounted page and only the params change. The previous id is
   // what tells "never had one" apart from "just lost one" — the second is
@@ -276,6 +282,12 @@ export default function EvaluateForm({
   // switch: its rows change when a run finishes or the session changes, not
   // when the page turns — rendered inside each branch it remounted on every
   // transition, and every mount refetched (118/#253).
+  if (demoCase !== null) {
+    // Keyed, so following one sample from another restarts the playback
+    // instead of continuing the old one's timers.
+    return <DemoReplay key={demoCase} demoCase={demoCase} />;
+  }
+
   if (authGated && signedIn !== true) {
     if (signedIn === null) return null;
     return (

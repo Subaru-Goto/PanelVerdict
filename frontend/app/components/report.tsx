@@ -185,9 +185,7 @@ function SummaryCard({ analyst }: { analyst: Analyst }) {
             <p className="text-sm italic text-ink-2">{reply.status}</p>
           )}
           {reply.error !== null && (
-            <p className="text-sm text-red">
-              {reply.error}
-            </p>
+            <p className="text-sm text-red">{reply.error}</p>
           )}
         </>
       )}
@@ -240,8 +238,21 @@ function Lead({
   );
 }
 
-export default function Report({ result }: { result: EvaluateResponse }) {
-  const analyst = useAnalyst(result, OPENING_REQUEST);
+export default function Report({
+  result,
+  analyst: analystMode = "live",
+}: {
+  result: EvaluateResponse;
+  /** "locked" on the demo (061): the analyst spends from a signed-in
+   *  account's budget, so a sample offers a line saying why, not a dead
+   *  control — and asks the backend nothing. */
+  analyst?: "live" | "locked";
+}) {
+  // The hook always runs (rules of hooks); an undefined opening asks nothing.
+  const analyst = useAnalyst(
+    result,
+    analystMode === "live" ? OPENING_REQUEST : undefined,
+  );
   const { verdict, tally, variants } = result;
   return (
     <section className="flex flex-col gap-4">
@@ -273,9 +284,18 @@ export default function Report({ result }: { result: EvaluateResponse }) {
         same thing differently.
       </p>
       <PanelCard result={result} />
-      <SummaryCard analyst={analyst} />
+      {analystMode === "live" && <SummaryCard analyst={analyst} />}
       <VoteList votes={result.votes} />
-      <AnalystDock analyst={analyst} />
+      {analystMode === "live" ? (
+        <AnalystDock analyst={analyst} />
+      ) : (
+        <p className="text-sm text-ink-2">
+          The analyst answers questions about your own tests, spending from a
+          signed-in account&rsquo;s daily budget — so the sample keeps it
+          closed. Run your own test to ask it; this report is complete as it
+          stands.
+        </p>
+      )}
     </section>
   );
 }

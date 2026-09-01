@@ -61,6 +61,8 @@ class TestTheDemoEndpoint:
         # The captured run's own seconds ride along: the frontend replays
         # them, and inventing durations is forbidden (061, 2026-08-24).
         assert body["step_seconds"] == {"select": 0.4, "vote": 9.2, "assemble": 0.1}
+        # The honesty line names the day the run was bought.
+        assert body["captured_at"] == "2026-08-31"
         # The report's numbers come from the replayed votes, not a literal.
         assert body["counts"]["voted"] == 5
         assert sorted(v["reason"] for v in body["votes"]) == sorted(
