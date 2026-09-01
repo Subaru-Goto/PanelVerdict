@@ -208,7 +208,7 @@ export default function PastTests() {
           <ul className="flex flex-col gap-2">
             {shown.map((test) => (
               <li
-                className="flex items-start gap-2"
+                className="group flex items-start gap-2"
                 key={test.test_id}
                 onMouseLeave={() =>
                   setConfirming((armed) =>
@@ -243,9 +243,13 @@ export default function PastTests() {
                     Delete?
                   </button>
                 ) : (
+                  /* Hover-revealed, per the prototype — and focus-revealed,
+                     because a control keyboard users cannot find is not a
+                     control. Faded, never display:none: a hidden button
+                     could not take that focus in the first place. */
                   <button
                     aria-label={`Delete the test of “${test.variants.a}”`}
-                    className="text-ink-2 hover:text-ink"
+                    className="text-ink-2 opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
                     onClick={() => setConfirming(test.test_id)}
                     type="button"
                   >
