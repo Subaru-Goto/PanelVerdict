@@ -16,7 +16,7 @@ from tests.factories import make_persona, seed_japanese
 
 
 def _fixture(
-    case: str = "book-in-30", votes: list[DemoVote] | None = None
+    case: str = "free-delivery", votes: list[DemoVote] | None = None
 ) -> DemoFixture:
     return DemoFixture(
         case=case,
@@ -53,7 +53,7 @@ class TestTheDemoEndpoint:
         seed_japanese(conn, 5)
         _served(monkeypatch, _fixture())
 
-        response = client.get("/demo/book-in-30")
+        response = client.get("/demo/free-delivery")
 
         assert response.status_code == 200, response.text
         body = response.json()
@@ -85,7 +85,7 @@ class TestTheDemoEndpoint:
         _served(monkeypatch, _fixture())
         monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge"))
 
-        assert client.get("/demo/book-in-30").status_code == 200
+        assert client.get("/demo/free-delivery").status_code == 200
 
     def test_an_unknown_case_is_refused_as_missing(self, client) -> None:
         assert client.get("/demo/summer-sale").status_code == 404
@@ -96,7 +96,7 @@ class TestTheDemoEndpoint:
         """Before the capture runs exist there is nothing honest to serve."""
         _served(monkeypatch, None)
 
-        response = client.get("/demo/book-in-30")
+        response = client.get("/demo/free-delivery")
 
         assert response.status_code == 503
         assert "not seeded" in response.json()["detail"]
@@ -114,7 +114,7 @@ class TestTheDemoEndpoint:
         ]
         _served(monkeypatch, _fixture(votes=short))
 
-        body = client.get("/demo/book-in-30").json()
+        body = client.get("/demo/free-delivery").json()
 
         assert body["counts"]["voted"] == 4
         # And the notice tells the truth about why: a capture shortfall is
@@ -194,8 +194,8 @@ class TestDemoFixture:
         different text is a different demo, not this one."""
         with pytest.raises(ValueError):
             DemoFixture(
-                case="book-in-30",
-                variants={"a": "Edited", "b": DEMO_CASES["book-in-30"]["b"]},
+                case="free-delivery",
+                variants={"a": "Edited", "b": DEMO_CASES["free-delivery"]["b"]},
                 captured_at="2026-08-31",
                 configuration="captured-model",
                 size=5,
@@ -211,3 +211,16 @@ class TestDemoFixture:
                     DemoVote(persona_id="JP-00000", variant="b", reason="r2"),
                 ]
             )
+
+
+class TestCommittedFixtures:
+    def test_every_committed_fixture_parses_and_names_a_real_case(self) -> None:
+        """The fixtures are deployment data: a hand-edit that breaks one should
+        fail here, not as a 500 on a visitor's first click."""
+        from app.demo import _FIXTURES, load_fixture
+
+        committed = sorted(_FIXTURES.glob("*.json")) if _FIXTURES.exists() else []
+        for path in committed:
+            fixture = load_fixture(path.stem)
+            assert fixture is not None
+            assert fixture.case == path.stem

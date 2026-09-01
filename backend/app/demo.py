@@ -37,19 +37,21 @@ from app.screening import OpenRouterScreener
 from app.targeting import CROSS_SECTION_NOTICE, settled_query
 from app.vote import VoteResponse
 
-# The three pairs the demo shows, from the ticket's 2026-08-31 comment: two
-# clear wins in opposite directions and the too-close-to-call pair — the case
-# a naive A/B tool cannot express, so the one worth showing. Slugs name the
-# copy, not the promised verdict: the verdict is whatever the captured run
-# actually found.
+# The three pairs the demo shows: two clear wins in opposite directions and a
+# genuine tradeoff the panel ran to exhaustion without calling — the case a
+# naive A/B tool cannot express, so the one worth showing. The tradeoff
+# replaced the ticket's too-close-to-call pair after the 2026-09-01 hunt:
+# same-meaning rewrites all split decisively (015's sensitivity, live), and
+# only a real tradeoff divided the cross-section. Slugs name the copy, not
+# the promised verdict: the verdict is whatever the captured run found.
 DEMO_CASES: dict[str, dict[str, str]] = {
     "save-half": {
         "a": "Save 50% this week",
         "b": "Members save half price this week",
     },
-    "book-in-30": {
-        "a": "Book in 30 seconds",
-        "b": "Reserve your slot now",
+    "free-delivery": {
+        "a": "Free delivery on orders over 50",
+        "b": "10% off your first order",
     },
     "built-for-teams": {
         "a": "Built for teams",
@@ -273,31 +275,12 @@ def main() -> None:
     )
     parser.add_argument("--case", choices=sorted(DEMO_CASES), action="append")
     parser.add_argument("--out", type=Path, default=_FIXTURES)
-    parser.add_argument(
-        "--until",
-        metavar="STOP_REASON",
-        help="recapture (paying each time) until this stop reason lands — "
-        "for hunting the practical tie, which is rare",
-    )
-    parser.add_argument(
-        "--retries",
-        type=int,
-        default=5,
-        help="the bound on --until: give up (keeping the last capture) after "
-        "this many paid runs, per the ship-two-and-say-so fallback",
-    )
     args = parser.parse_args()
+    # No retry flag, deliberately: within the ledger's read window a re-run of
+    # the same case replays the first run's votes byte-identically (010e), so
+    # "try again" cannot land a different verdict — hunting means new pairs.
     for case in args.case or sorted(DEMO_CASES):
-        attempts = args.retries if args.until else 1
-        for attempt in range(attempts):
-            stop = asyncio.run(_capture(case, args.out))
-            if not args.until or stop == args.until:
-                break
-        else:
-            print(
-                f"{case}: no {args.until!r} in {args.retries} runs — the last "
-                "capture is kept; ship what landed and say so."
-            )
+        asyncio.run(_capture(case, args.out))
 
 
 if __name__ == "__main__":
