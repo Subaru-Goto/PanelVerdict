@@ -1276,13 +1276,26 @@ async def evaluate(
     # keeps one rule: the cap is probed above, so a caller with no runs left
     # pays nothing to be told so; the panel is bought below, so a sentence that
     # will never run costs no run. The check itself is charged either way.
+    # A brought id is honoured only if nothing lives under it: reusing a live
+    # thread would run a new panel over its checkpoints. Refused above every
+    # charge, so the mistake costs nothing — and ids are unguessable, so the
+    # 409 confirms nothing a stranger could use.
+    if request.thread_id is not None:
+        taken = await checkpointer.aget(
+            {"configurable": {"thread_id": request.thread_id}}
+        )
+        if taken is not None:
+            raise HTTPException(
+                status_code=409,
+                detail="that run id is already in use — mint a fresh one",
+            )
     if request.reading_accepted:
         await _refuse_if_run_capped(conn, caller)
     instruction = await _approved_on_entry(conn, request, generator, caller)
     if request.reading_accepted:
         await _buy_panel(conn, caller)
     variants = {"a": request.headline_a, "b": request.headline_b}
-    thread_id = str(uuid4())
+    thread_id = request.thread_id or str(uuid4())
     graph = build_evaluate_graph(
         conn=conn,
         llm=llm,

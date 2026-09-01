@@ -2066,6 +2066,41 @@ def test_progress_sits_behind_the_edge_guard(client, conn, monkeypatch) -> None:
     assert response.status_code == 401
 
 
+def test_a_run_may_bring_its_own_thread_id(client, conn) -> None:
+    """The gate-skip path (an approved reading, re-run) never pauses, so the
+    client would otherwise finish the run without ever holding an id to poll —
+    and the waiting screen needs one before the response exists (021/#126).
+    Client-minted, the way /chat's thread ids already are."""
+    seed_japanese(conn, 5)
+    thread_id = str(uuid4())
+
+    report = client.post(
+        "/evaluate", json=_REQUEST_BODY | {"thread_id": thread_id}
+    ).json()
+    progress = client.get(f"/evaluate/{thread_id}/progress")
+
+    assert report["counts"]["voted"] > 0
+    assert progress.json() == {"votes_recorded": report["counts"]["voted"]}
+
+
+def test_a_taken_thread_id_is_refused_before_anything_is_bought(client, conn) -> None:
+    """Reusing a live id would run a new panel over an existing thread's
+    checkpoints. Refused above the charge, so the mistake costs nothing —
+    and ids are unguessable, so the 409 confirms nothing a stranger could
+    use."""
+    seed_japanese(conn, 5)
+    paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+
+    response = client.post(
+        "/evaluate", json=_REQUEST_BODY | {"thread_id": paused["thread_id"]}
+    )
+
+    assert response.status_code == 409
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM votes")
+        assert cur.fetchone()[0] == 0
+
+
 def test_one_subject_is_the_key_at_every_step_of_the_journey(
     signed_in, conn, monkeypatch
 ) -> None:
