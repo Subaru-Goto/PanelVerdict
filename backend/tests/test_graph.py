@@ -79,6 +79,9 @@ def _start(**overrides) -> dict:
         "query": _japan_query(),
         "variants": _VARIANTS,
         "size": 5,
+        # The paid path always has a verified subject by the time anything
+        # votes (086/#177); these tests are that path.
+        "owner": "acct-a",
     } | overrides
 
 

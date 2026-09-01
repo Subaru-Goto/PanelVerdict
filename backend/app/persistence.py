@@ -728,16 +728,34 @@ class VoteRow(TypedDict):
 _VOTE_COLUMNS = ", ".join(VoteRow.__annotations__)
 
 
+def _live_owner(owner: str) -> str:
+    """Refuse the one owner value that is not an identity.
+
+    '' is the column DEFAULT — rows from before the scoping (086/#177), or an
+    older deploy writing mid-rollout. A live caller passing it has lost its
+    identity, and the loud failure here is cheaper than rows nobody can read
+    back, or a read that resurrects the pre-scoping shared pool.
+    """
+    if owner == "":
+        raise ValueError("the vote ledger needs an owner; '' is not one")
+    return owner
+
+
 async def store_votes(
-    conn: psycopg.AsyncConnection, votes: Mapping[str, VoteRecord]
+    conn: psycopg.AsyncConnection, votes: Mapping[str, VoteRecord], *, owner: str
 ) -> int:
     """Append newly cast votes to the ledger; return how many were new.
 
     `ON CONFLICT DO NOTHING`, never update: votes are paid model output, and the
     first vote stored under a fingerprint is *the* vote for that question, by the
     ledger's append-only rule. A colliding write is a concurrent run that paid twice for
-    the same answer — regrettable, but not a reason to rewrite history.
+    the same answer — regrettable, but not a reason to rewrite history. Since
+    086/#177 that rule settles the cross-account collision too: byte-identical
+    content from a second account keeps no row — its owner may not read the
+    first account's, and re-keying the ledger is what decision 036's pinned
+    tests exist to refuse — so only its own resume pays again.
     """
+    _live_owner(owner)
     written = 0
     async with conn.transaction():
         for fingerprint, record in votes.items():
@@ -747,8 +765,8 @@ async def store_votes(
             result = await conn.execute(
                 """
                 INSERT INTO votes (request_fingerprint, persona_id, test_id,
-                    chosen_variant_id, presentation_order, reason)
-                VALUES (%s, %s, %s, %s, %s, %s)
+                    chosen_variant_id, presentation_order, reason, owner_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (request_fingerprint) DO NOTHING
                 """,
                 (
@@ -758,6 +776,7 @@ async def store_votes(
                     record.chosen_variant_id,
                     record.presentation_order,
                     record.reason,
+                    owner,
                 ),
             )
             written += result.rowcount
@@ -765,19 +784,25 @@ async def store_votes(
 
 
 async def load_votes(
-    conn: psycopg.AsyncConnection, fingerprints: Sequence[str]
+    conn: psycopg.AsyncConnection, fingerprints: Sequence[str], *, owner: str
 ) -> dict[str, VoteRecord]:
-    """The cached votes among `fingerprints`, keyed back on the fingerprint.
+    """The cached votes among `fingerprints` that belong to `owner`.
+
+    The owner is a clause in the query, not a check after the read — the rule
+    `load_report` states: there should be no path where another account's row
+    is in memory before ownership has been decided (086/#177).
 
     `test_id` comes back as stored — the run that paid for the vote, not the run
     reading it — so a resumed run's records carry their true provenance.
     """
+    _live_owner(owner)
     if not fingerprints:
         return {}
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
-            f"SELECT {_VOTE_COLUMNS} FROM votes WHERE request_fingerprint = ANY(%s)",
-            [list(fingerprints)],
+            f"SELECT {_VOTE_COLUMNS} FROM votes"
+            " WHERE request_fingerprint = ANY(%s) AND owner_id = %s",
+            [list(fingerprints), owner],
         )
         rows = await cur.fetchall()
     return {

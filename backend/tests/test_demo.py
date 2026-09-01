@@ -68,7 +68,9 @@ class TestTheDemoEndpoint:
         assert sorted(v["reason"] for v in body["votes"]) == sorted(
             f"reason {i}" for i in range(5)
         )
-        for table in ("request_ledger", "spend_ledger", "tests"):
+        # `votes` too (086/#177): the replay is nobody's — it must not seed a
+        # resume buffer no account could ever read back.
+        for table in ("request_ledger", "spend_ledger", "tests", "votes"):
             assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0, (
                 table
             )

@@ -416,6 +416,7 @@ class TestEnactedContextAndTheVoteCache:
             variants=_VARIANTS,
             llm=llm or SpyLLM(),
             enacted=enacted,
+            owner="acct-a",
         )
 
     @pytest.mark.anyio
@@ -540,6 +541,54 @@ class TestVoteCache:
         await _run(aconn, llm=spy)
 
         assert spy.calls == 0
+
+    async def _loop(self, aconn, *, owner, llm=None):
+        panel = (
+            await select_panel(
+                aconn,
+                "Japanese homeowners",
+                size=5,
+                translator=StubTranslator(JAPAN_REQUEST),
+            )
+        ).panel
+        return await run_vote_loop(
+            aconn, panel, variants=_VARIANTS, llm=llm or SpyLLM(), owner=owner
+        )
+
+    @pytest.mark.anyio
+    async def test_the_cache_is_scoped_to_the_owner(self, conn, aconn) -> None:
+        """086/#177: a re-run replays free *for the account that paid*. Another
+        account asking the byte-identical question is asking it for the first
+        time — it pays, and it is never handed rows that quote someone else's
+        submitted headlines."""
+        seed_japanese(conn, 5)
+        await self._loop(aconn, owner="acct-a")
+
+        again = SpyLLM()
+        await self._loop(aconn, owner="acct-a", llm=again)
+        stranger = SpyLLM()
+        await self._loop(aconn, owner="acct-b", llm=stranger)
+
+        assert again.calls == 0
+        assert stranger.calls == 5
+
+    @pytest.mark.anyio
+    async def test_an_ownerless_run_never_touches_the_ledger(self, conn, aconn) -> None:
+        """`owner=None` is the demo's mode (086/#177): a replay spends nothing,
+        so it has nothing to resume — it must not leave anonymous rows behind,
+        and it must not read anyone's. Distinct from '', which is refused: None
+        is a decision, '' is an accident."""
+        seed_japanese(conn, 5)
+        first = SpyLLM()
+        await self._loop(aconn, owner=None, llm=first)
+        second = SpyLLM()
+        await self._loop(aconn, owner=None, llm=second)
+
+        assert first.calls == 5
+        assert second.calls == 5
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM votes")
+            assert cur.fetchone() == (0,)
 
 
 class OutOfCreditLLM:
@@ -715,7 +764,9 @@ async def test_a_cancel_stops_the_loop_at_the_chunk_in_flight(conn, aconn) -> No
     assert len(panel) > VOTE_CONCURRENCY, "the panel must span more than one chunk"
 
     known = asyncio.all_tasks()
-    task = asyncio.create_task(run_vote_loop(aconn, panel, variants=_VARIANTS, llm=llm))
+    task = asyncio.create_task(
+        run_vote_loop(aconn, panel, variants=_VARIANTS, llm=llm, owner="acct-a")
+    )
     try:
         # Deadlined: `pytest-timeout` is not installed, so a chunk that never
         # gets a worker would otherwise hang CI with no failing test.

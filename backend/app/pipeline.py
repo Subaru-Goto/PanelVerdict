@@ -202,6 +202,7 @@ async def _chunk_votes(
     # nothing raises — so the ones nobody outside this module calls fail loudly
     # instead. The public seams keep their default, because most runs have none.
     enacted: str,
+    owner: str | None,
 ) -> PanelVotes:
     """One chunk's votes: the ledger first, the model only for what is missing.
 
@@ -223,7 +224,15 @@ async def _chunk_votes(
         )
         for persona, order in zip(panel, orders)
     }
-    cached = await load_votes(conn, list(fingerprints.values()))
+    # `owner=None` skips the ledger both ways (086/#177): the demo replays a
+    # captured run at $0, so it has nothing to resume, must leave no anonymous
+    # rows behind, and must never read an account's. An owned run reads only
+    # within its owner — the WHERE clause is the privacy boundary.
+    cached = (
+        {}
+        if owner is None
+        else await load_votes(conn, list(fingerprints.values()), owner=owner)
+    )
     # The read is over, so close its transaction before the wave: minutes of
     # model calls with the connection idle-in-transaction is the state
     # `idle_in_transaction_session_timeout` and pooler reapers kill — and a
@@ -252,9 +261,12 @@ async def _chunk_votes(
         enacted=enacted,
         orders=[order for _, order in misses],
     )
-    await store_votes(
-        conn, {fingerprints[record.persona_id]: record for record in fresh.records}
-    )
+    if owner is not None:
+        await store_votes(
+            conn,
+            {fingerprints[record.persona_id]: record for record in fresh.records},
+            owner=owner,
+        )
     # Committed per chunk, not per request: the endpoint's connection only commits
     # at a clean exit, so a store that waited for it would die with the run — and
     # the ledger exists precisely so a run that dies at vote 180 does not cost 180
@@ -300,6 +312,7 @@ async def run_vote_loop(
     llm: PanelLLM,
     enacted: str = "",
     test_id: str | None = None,
+    owner: str | None,
 ) -> CollectedVotes:
     """Vote in chunks, stop when the report would already make a call.
 
@@ -352,6 +365,7 @@ async def run_vote_loop(
             variants=variants,
             llm=llm,
             enacted=enacted,
+            owner=owner,
         )
         asked += len(chunk_panel)
         votes = PanelVotes(
@@ -481,6 +495,12 @@ def assemble_result(
     )
 
 
+# The one ungated caller's identity in the vote ledger (086/#177): experiment
+# scripts have no account, but their re-runs still resume each other. A name,
+# so a ledger row is never mistaken for a customer's.
+EXPERIMENT_OWNER = "experiment"
+
+
 async def run_panel_test(
     conn: psycopg.AsyncConnection,
     *,
@@ -501,5 +521,10 @@ async def run_panel_test(
     # target nobody matches, and nothing should be.
     if not selection.panel:
         raise EmptyPanel(f"no persona matches this target (size {size} requested)")
-    collected = await run_vote_loop(conn, selection.panel, variants=variants, llm=llm)
+    # A fixed label, not an account: this seam has no caller with an identity,
+    # and experiment re-runs must keep replaying each other for free — scoped
+    # under one shared owner rather than the pre-086 everyone (086/#177).
+    collected = await run_vote_loop(
+        conn, selection.panel, variants=variants, llm=llm, owner=EXPERIMENT_OWNER
+    )
     return assemble_result(selection, collected, variants=variants, size=size)

@@ -1235,6 +1235,10 @@ async def demo(
             # must ask for the panel the votes were bought for.
             "size": fixture.size,
             "reading_accepted": True,
+            # A replay is nobody's: "" tells the vote node to leave the ledger
+            # alone entirely — no anonymous rows written, no account's read
+            # (086/#177).
+            "owner": "",
             "started_at": _now().isoformat(),
         },
         thread_id,

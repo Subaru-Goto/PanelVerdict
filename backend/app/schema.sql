@@ -132,7 +132,17 @@ CREATE INDEX IF NOT EXISTS corpus_chunks_search_idx
 -- model output that cannot be regenerated. A change that cannot be expressed
 -- additively is a new column plus a backfill, and the old one left alone.
 --
--- Nothing is pending: no table has outgrown its CREATE yet.
+-- 086/#177 — the ledger is owner-scoped: a row is its buyer's, and the read
+-- path matches within one owner or not at all. NOT NULL, because every paid
+-- request has a verified subject id by the time it votes (092/#197 put the
+-- form behind sign-in). The DEFAULT '' is not a live identity: it is what a
+-- row gets when it predates this column, or when an older deploy writes one
+-- mid-rollout — and the application refuses '' on both read and write, so
+-- those rows are readable by no account, ever. Sweep rule (written with the
+-- column, applied by a later ticket): a row is sweepable once a `tests` row
+-- exists for its `test_id` — the stored report outlives the buffer — and a
+-- row under '' is sweepable on sight.
+ALTER TABLE votes ADD COLUMN IF NOT EXISTS owner_id text NOT NULL DEFAULT '';
 
 
 -- One row per finished test, stored for the account that ran it (117/#252).
