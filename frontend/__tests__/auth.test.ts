@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { authHeaders, createNonce } from "../app/lib/auth";
+import { authHeaders, createNonce, signOut } from "../app/lib/auth";
 
 // 063/#158. The nonce is the one part of Google's pre-built sign-in that is
 // easy to get backwards, and getting it backwards fails at the provider rather
@@ -43,5 +43,57 @@ describe("the session as headers", () => {
     // malformed credential rather than an absent one, and the backend would
     // have to decide what to do with it.
     expect(await authHeaders()).toEqual({});
+  });
+});
+
+describe("signing out", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("records the sign-out with Google, so nothing signs back in automatically", async () => {
+    // Claiming only what disableAutoSelect does: it blocks *automatic*
+    // re-sign-in (auto_select / FedCM auto flows). The personalized
+    // "Continue as \u2026" button is the browser's own Google session and no
+    // site call removes it.
+    const disabled = vi.fn();
+    vi.stubGlobal("google", {
+      accounts: { id: { disableAutoSelect: disabled } },
+    });
+
+    await signOut();
+
+    expect(disabled).toHaveBeenCalledTimes(1);
+  });
+
+  it("survives the Google script never having loaded", async () => {
+    // The common case, not an edge: the script loads only while signed out,
+    // so a restored session reaches sign-out with no GSI at all.
+    await expect(signOut()).resolves.toBeUndefined();
+  });
+
+  it("survives another script owning the google global", async () => {
+    // `window.google` is a shared namespace: Maps, Translate and extensions
+    // claim it with shapes GSI never promised. A partial global must not
+    // turn the app's sign-out into a TypeError that leaves the session live.
+    vi.stubGlobal("google", { maps: {} });
+
+    await expect(signOut()).resolves.toBeUndefined();
+  });
+
+  it("survives Google's own code throwing mid-call", async () => {
+    // Present-but-broken GSI (extension or policy interference) is Google's
+    // failure, not the sign-out's.
+    vi.stubGlobal("google", {
+      accounts: {
+        id: {
+          disableAutoSelect: () => {
+            throw new Error("credential manager unavailable");
+          },
+        },
+      },
+    });
+
+    await expect(signOut()).resolves.toBeUndefined();
   });
 });

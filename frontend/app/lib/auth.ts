@@ -83,20 +83,32 @@ export async function accessToken(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
+/** What GSI puts on the shared `google` global. Every level is optional on
+ *  purpose: `window.google` is a namespace other Google scripts (Maps,
+ *  Translate) and extensions also claim, so the type must not promise a
+ *  shape the runtime may not keep — optionality is what forces every call
+ *  site through the full chain. */
+type GoogleId = {
+  initialize(config: Record<string, unknown>): void;
+  renderButton(parent: HTMLElement, options: Record<string, unknown>): void;
+  disableAutoSelect(): void;
+};
+
 declare global {
   interface Window {
     google?: {
-      accounts: {
-        id: {
-          initialize(config: Record<string, unknown>): void;
-          renderButton(
-            parent: HTMLElement,
-            options: Record<string, unknown>,
-          ): void;
-        };
+      accounts?: {
+        id?: GoogleId;
       };
     };
   }
+}
+
+/** The one accessor for GSI: null until its script owns the global. Four
+ *  call sites once guarded this namespace at three different depths — the
+ *  shallow one threw when something else owned `window.google`. */
+function googleId(): GoogleId | null {
+  return window.google?.accounts?.id ?? null;
 }
 
 const GSI_SRC = "https://accounts.google.com/gsi/client";
@@ -109,7 +121,7 @@ function loadGoogleScript(): Promise<void> {
   // `load` listener to a script that had already fired, and wait forever — a
   // button that renders and then does nothing at all.
   scriptLoad ??= new Promise<void>((resolve, reject) => {
-    if (window.google?.accounts?.id) {
+    if (googleId() !== null) {
       resolve();
       return;
     }
@@ -150,8 +162,15 @@ export async function mountGoogleButton(container: HTMLElement): Promise<void> {
     throw new Error("sign-in is not configured for this build");
   }
   await loadGoogleScript();
+  // The load resolved, but the global is a shared namespace: verify GSI is
+  // actually the owner before dotting into it. Thrown, so the callers'
+  // existing catch leaves the slot empty — the pre-accessor behaviour.
+  const id = googleId();
+  if (id === null) {
+    throw new Error("the Google sign-in script did not take the global");
+  }
   const nonce = await createNonce();
-  window.google!.accounts.id.initialize({
+  id.initialize({
     client_id: GOOGLE_CLIENT_ID,
     // Chrome's third-party-cookie removal means this needs FedCM; Supabase's
     // guide calls setting it out explicitly.
@@ -171,14 +190,30 @@ export async function mountGoogleButton(container: HTMLElement): Promise<void> {
   // Google draws the button in its own iframe, so our classes cannot reach
   // it — `shape` is the official knob, and "pill" matches the site's own
   // `rounded-pill` controls (the demo button beside it on the landing).
-  window.google!.accounts.id.renderButton(container, {
+  id.renderButton(container, {
     type: "standard",
     shape: "pill",
   });
 }
 
 export async function signOut(): Promise<void> {
+  // The app's session first: ending it must never wait on, or be aborted
+  // by, Google's code. auth-js clears the local session and fires
+  // SIGNED_OUT even when its server call fails, so the UI flips regardless.
   await authClient()?.auth.signOut();
+  // Then the call Google's docs require on sign-out. Claim only what it
+  // does: it records the sign-out so no *automatic* re-sign-in (auto_select
+  // / FedCM auto flows) can hand the session back. It does not — and
+  // nothing a site can call does — de-personalize the button: "Continue
+  // as …" reflects the browser's own Google session. Best-effort by
+  // design: the script loads only while signed out, so a restored session
+  // usually has no GSI here at all, and GSI present-but-broken must not
+  // turn a completed sign-out into a thrown one.
+  try {
+    googleId()?.disableAutoSelect();
+  } catch {
+    // Google's failure is not the sign-out's.
+  }
 }
 
 /** Watch whether anyone is signed in. Returns an unsubscribe.
