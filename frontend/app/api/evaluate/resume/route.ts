@@ -1,10 +1,9 @@
 import { proxyToBackend } from "../../proxy";
 
-/** Answering the panel gate.
- *
- * Its own route because it hits a different backend path, and it reuses
- * `/api/evaluate`'s execution budget because accepting is what spends. */
-export { maxDuration } from "../route";
+/** Answering the panel gate — accepting is what spends. The execution budget
+ * every route shares lives in vercel.json (see proxyToBackend's note): a
+ * re-export of another route's `maxDuration` here looked right and was
+ * silently ignored by Next's static analysis. */
 
 export async function POST(request: Request): Promise<Response> {
   return proxyToBackend("/evaluate/resume", "POST", request);

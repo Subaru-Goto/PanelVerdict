@@ -1,13 +1,10 @@
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  maxDuration as chatMaxDuration,
-  POST as chatProxy,
-} from "../app/api/chat/route";
-import {
-  maxDuration as evaluateMaxDuration,
-  POST as evaluateProxy,
-} from "../app/api/evaluate/route";
+import { POST as chatProxy } from "../app/api/chat/route";
+import { POST as evaluateProxy } from "../app/api/evaluate/route";
 import { backendTracing } from "../app/api/proxy";
 import { GET as testsProxy } from "../app/api/tests/route";
 
@@ -183,16 +180,46 @@ describe("the evaluate proxy", () => {
 });
 
 describe("the proxy routes' execution budget", () => {
-  it("allows longer than a full panel run takes", () => {
+  it("covers every route there is — and every route to come", () => {
     // Routing through a function inserts a timeout the direct-to-backend path
     // never had. A prod run measures ~40s (010a: 4.65 s/vote, concurrency 25,
-    // 200 votes), and a platform default of a few seconds would 504 the
-    // visitor while the backend keeps working — and the ledger has already
-    // charged the run.
-    const measuredRunSeconds = 40;
+    // 200 votes), a cold Render start adds ~1 minute (docs/deploy.md), and
+    // the platform default 504s first — while the ledger has already charged
+    // the run. One platform rule instead of a per-file export, for two
+    // measured reasons: Next 16.2's static analysis silently ignores a
+    // re-exported segment config (the resume route shipped without its budget
+    // that way), and a hand-pasted literal is a hand-kept list a new route
+    // silently misses.
+    // process.cwd() is the frontend root under vitest, and import.meta.url
+    // is not a file: URL there.
+    const config = JSON.parse(
+      readFileSync(join(process.cwd(), "vercel.json"), "utf8"),
+    ) as { functions?: Record<string, { maxDuration?: number }> };
+    const budget = config.functions?.["app/api/**/route.ts"]?.maxDuration;
 
-    expect(evaluateMaxDuration).toBeGreaterThan(measuredRunSeconds);
-    expect(chatMaxDuration).toBeGreaterThan(measuredRunSeconds);
+    expect(budget).toBeGreaterThanOrEqual(60);
+  });
+
+  it("no route carries a private copy that could drift from the rule", () => {
+    const routes: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (entry.name === "route.ts") routes.push(path);
+      }
+    };
+    walk(join(process.cwd(), "app", "api"));
+
+    expect(routes.length).toBeGreaterThan(0);
+    for (const route of routes) {
+      // An export, not a mention — comments may name the config to say where
+      // it lives now.
+      expect(
+        /export\s+(const|\{)\s*maxDuration/.test(readFileSync(route, "utf8")),
+        `${route} sets its own maxDuration beside the vercel.json rule`,
+      ).toBe(false);
+    }
   });
 });
 

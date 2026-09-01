@@ -1,10 +1,5 @@
 import { proxyToBackend } from "../../proxy";
 
-/** Seconds this route may run: a cold Render start takes ~1 minute
- * (docs/deploy.md), and the platform default 504s these reads first —
- * the fuller rationale lives on /api/evaluate's copy of this number. */
-export const maxDuration = 60;
-
 /** One stored test: reopening it, and deleting it (117/#252).
  *
  * `testId` is a path segment that comes from a URL, so it is encoded before

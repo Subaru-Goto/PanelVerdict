@@ -151,7 +151,7 @@ describe("the sign-in control", () => {
     expect(screen.getByText("SO")).toBeTruthy();
   });
 
-  it("an accidental click on the pill signs nobody out — it opens a menu", async () => {
+  it("an accidental click on the pill signs nobody out — it opens the menu", async () => {
     withSession(true);
     stubName("Sam O.");
 
@@ -159,7 +159,7 @@ describe("the sign-in control", () => {
     fireEvent.click(screen.getByRole("button", { name: /account/i }));
 
     expect(signOutMock).not.toHaveBeenCalled();
-    expect(screen.getByRole("menu")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /sign out/i })).toBeTruthy();
   });
 
   it("lets a signed-in reader sign out — the menu's one item", async () => {
@@ -168,7 +168,7 @@ describe("the sign-in control", () => {
 
     await renderSettled();
     fireEvent.click(screen.getByRole("button", { name: /account/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /sign out/i }));
+    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
 
     expect(signOutMock).toHaveBeenCalled();
   });
@@ -181,8 +181,38 @@ describe("the sign-in control", () => {
     fireEvent.click(screen.getByRole("button", { name: /account/i }));
     fireEvent.click(screen.getByRole("button", { name: /account/i }));
 
-    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.queryByRole("button", { name: /sign out/i })).toBeNull();
     expect(signOutMock).not.toHaveBeenCalled();
+  });
+
+  it("a click anywhere else dismisses the menu without a scrim in the way", async () => {
+    // A scrim swallowed the first click on every other control — 'open menu,
+    // click New test, nothing happens'. Light dismiss listens instead of
+    // covering, so the other control's click still lands.
+    withSession(true);
+    stubName("Sam O.");
+
+    await renderSettled();
+    fireEvent.click(screen.getByRole("button", { name: /account/i }));
+    fireEvent.pointerDown(document.body);
+
+    expect(screen.queryByRole("button", { name: /sign out/i })).toBeNull();
+  });
+
+  it("Escape closes the menu from anywhere and hands focus back to the pill", async () => {
+    // The old handler lived on the wrapper, so once focus tabbed past the
+    // menu Escape went dead and a keyboard user was stuck behind the scrim.
+    withSession(true);
+    stubName("Sam O.");
+
+    await renderSettled();
+    fireEvent.click(screen.getByRole("button", { name: /account/i }));
+    fireEvent.keyDown(document.body, { key: "Escape" });
+
+    expect(screen.queryByRole("button", { name: /sign out/i })).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: /account/i }),
+    );
   });
 
   it("keeps the pill up until the sign-out actually lands", async () => {
@@ -203,7 +233,7 @@ describe("the sign-in control", () => {
 
     await renderSettled();
     fireEvent.click(screen.getByRole("button", { name: /account/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /sign out/i }));
+    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
     expect(screen.getByText("Sam O.")).toBeTruthy();
 
     await act(async () => {

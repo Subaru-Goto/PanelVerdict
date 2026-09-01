@@ -15,11 +15,16 @@ const myTestMock = vi.fn();
 const forgetTestMock = vi.fn();
 let signedIn = true;
 
+const runsListeners: (() => void)[] = [];
+
 vi.mock("../app/lib/api", () => ({
   myTests: (cursor?: string) => myTestsMock(cursor),
   myTest: (id: string) => myTestMock(id),
   forgetTest: (id: string) => forgetTestMock(id),
-  onRunsChanged: () => () => {},
+  onRunsChanged: (listener: () => void) => {
+    runsListeners.push(listener);
+    return () => {};
+  },
 }));
 
 // A test that changes session mid-render needs the listener, not just its
@@ -45,6 +50,7 @@ afterEach(() => {
   forgetTestMock.mockReset();
   signedIn = true;
   listeners.length = 0;
+  runsListeners.length = 0;
 });
 
 describe("the account's own tests", () => {
@@ -175,6 +181,116 @@ describe("the account's own tests", () => {
 
     expect(screen.queryByText(/not lost/)).toBeNull();
     expect(screen.getByText(/Save 50% today/)).toBeTruthy();
+  });
+
+  it("Try again goes quiet while its read is away — no stacking clicks", async () => {
+    // The button's own target case is a wait of up to a minute; a button that
+    // looks untouched after the click gets clicked again, and every extra
+    // click held another function open.
+    myTestsMock.mockRejectedValueOnce(new Error("cold start"));
+    render(<PastTests />);
+    await screen.findByText(/not lost/);
+
+    myTestsMock.mockReturnValue(new Promise(() => {}));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    });
+
+    expect(
+      (screen.getByRole("button", { name: /try again/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("a late failure from a superseded read cannot resurrect the banner", async () => {
+    // Two reads can be away at once (a retry racing the run-finished refresh);
+    // only the latest one started may speak, or 'could not be loaded' lands
+    // on top of rows that loaded fine.
+    let rejectFirst: (error: Error) => void = () => {};
+    myTestsMock.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        rejectFirst = reject;
+      }),
+    );
+    render(<PastTests />);
+
+    // The run-finished refresh supersedes the slow first read and succeeds.
+    myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: null });
+    await act(async () => {
+      runsListeners.forEach((notify) => notify());
+    });
+    await screen.findByText(/Save 50% today/);
+
+    await act(async () => {
+      rejectFirst(new Error("cold start, finally timing out"));
+    });
+
+    expect(screen.queryByText(/not lost/)).toBeNull();
+  });
+
+  it("a failed Show more retries the page it was fetching, not the whole list", async () => {
+    // The banner is shared, but the remedies differ: replacing the list with
+    // page one would throw away every page already reached.
+    myTestsMock.mockResolvedValueOnce({
+      tests: [stored()],
+      next_cursor: "after-t-1",
+    });
+    render(<PastTests />);
+    await screen.findByText(/Save 50% today/);
+
+    myTestsMock.mockRejectedValueOnce(new Error("cold start"));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /show more/i }));
+    });
+    await screen.findByText(/not lost/);
+
+    myTestsMock.mockResolvedValueOnce({
+      tests: [
+        stored({ test_id: "t-2", variants: { a: "Second page", b: "row" } }),
+      ],
+      next_cursor: null,
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    });
+
+    // The retry asked for the failed cursor, and both pages are on screen.
+    expect(myTestsMock).toHaveBeenLastCalledWith("after-t-1");
+    expect(screen.getByText(/Save 50% today/)).toBeTruthy();
+    expect(screen.getByText(/Second page/)).toBeTruthy();
+  });
+
+  it("a first read landing after the session changed says nothing", async () => {
+    // Supabase can collapse a sign-out and sign-in to true→true, so the rail
+    // never unmounts; a read started under the old account must not stamp
+    // that account's headlines into the new one's rail.
+    let resolveOld: (page: unknown) => void = () => {};
+    myTestsMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveOld = resolve;
+      }),
+    );
+    let announce: (value: boolean) => void = () => {};
+    listeners.push((listener) => {
+      announce = listener;
+    });
+    render(<PastTests />);
+
+    // The session changes; the new account's read finds nothing.
+    myTestsMock.mockResolvedValueOnce({ tests: [], next_cursor: null });
+    await act(async () => {
+      announce(true);
+    });
+    await screen.findByText(/Nothing yet/);
+
+    await act(async () => {
+      resolveOld({
+        tests: [stored({ variants: { a: "Not this account's", b: "test" } })],
+        next_cursor: null,
+      });
+    });
+
+    expect(screen.queryByText(/Not this account's/)).toBeNull();
   });
 });
 
