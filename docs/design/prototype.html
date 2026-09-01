@@ -385,6 +385,10 @@
       </svg>
       Sign in
     </button>
+    <!-- Amended 2026-09-01: in the app the pill opens a one-item menu and the
+         sign-out is the menu's deliberate second click — an accidental click on
+         an unlabeled control must not end the session. This prototype's direct
+         onclick is the mockup shortcut, not the settled interaction. -->
     <button class="who" id="who-btn" style="display:none" onclick="signOut()">
       Sam O. <span class="av">SO</span>
     </button>

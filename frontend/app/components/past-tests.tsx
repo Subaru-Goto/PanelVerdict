@@ -31,7 +31,12 @@ export default function PastTests() {
   const [tests, setTests] = useState<StoredTest[] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [failed, setFailed] = useState(false);
+  /** What failed, not just whether: the banner is shared between the first
+   *  read and a page append, and their remedies differ — retrying a failed
+   *  "Show more" with a full reload would throw away every page reached.
+   *  `cursor` is what the failed read was fetching; null means page one. */
+  const [failed, setFailed] = useState<{ cursor: string | null } | null>(null);
+  const [reading, setReading] = useState(false);
   const [fetchingMore, setFetchingMore] = useState(false);
 
   // Counts session notifications, so a refetch happens even when `signedIn`
@@ -52,7 +57,7 @@ export default function PastTests() {
         // resolves, and a click on one 404s (117/#252, review).
         setTests(null);
         setNextCursor(null);
-        setFailed(false);
+        setFailed(null);
         setQuery("");
         sessionRef.current += 1;
         setSession((count) => count + 1);
@@ -64,18 +69,38 @@ export default function PastTests() {
   // rail deliberately holds the newest page again: the event that fired it
   // put the newest row there, and stitching old pages onto a list that just
   // changed underneath them could repeat or skip a row.
+  // Counts reads the way `session` counts sessions: two firsts can be away at
+  // once (a retry racing the run-finished refresh), and only the latest one
+  // started may speak — a superseded success would stamp older rows over
+  // newer ones, and a superseded failure would raise "could not be loaded"
+  // over rows that loaded fine. The session is re-checked too: Supabase can
+  // collapse a sign-out and sign-in to true→true, so this component never
+  // unmounts, and a read begun under the old account must say nothing.
+  const readRef = useRef(0);
+
   const load = useCallback(() => {
     if (signedIn !== true) return;
+    const read = ++readRef.current;
+    const asked = sessionRef.current;
+    setReading(true);
+    const current = () =>
+      read === readRef.current && asked === sessionRef.current;
     myTests().then(
       (page) => {
+        if (!current()) return;
         setTests(page.tests);
         setNextCursor(page.next_cursor);
         // Cleared on success, or one cold start leaves "could not be loaded"
         // standing above the rows that then arrive — and permanently suppresses
         // the empty state, which is gated on it (117/#252, review).
-        setFailed(false);
+        setFailed(null);
+        setReading(false);
       },
-      () => setFailed(true),
+      () => {
+        if (!current()) return;
+        setFailed({ cursor: null });
+        setReading(false);
+      },
     );
   }, [signedIn]);
 
@@ -89,14 +114,18 @@ export default function PastTests() {
     if (fetchingMore) return;
     setFetchingMore(true);
     const asked = sessionRef.current;
+    // An append onto a list a fresh first read just replaced would gap or
+    // repeat rows — the read counter says the list it belongs to is gone.
+    const read = readRef.current;
     try {
       const page = await myTests(cursor);
-      if (sessionRef.current !== asked) return;
+      if (sessionRef.current !== asked || readRef.current !== read) return;
       setTests((current) => [...(current ?? []), ...page.tests]);
       setNextCursor(page.next_cursor);
-      setFailed(false);
+      setFailed(null);
     } catch {
-      if (sessionRef.current === asked) setFailed(true);
+      if (sessionRef.current === asked && readRef.current === read)
+        setFailed({ cursor });
     } finally {
       setFetchingMore(false);
     }
@@ -134,14 +163,28 @@ export default function PastTests() {
     <section aria-label="Your tests" className="flex flex-col gap-3">
       <h2 className="text-sm font-semibold text-ink-2">Your tests</h2>
 
-      {failed && (
+      {failed !== null && (
         <p className="text-sm text-ink-2">
-          Your past tests could not be loaded. They are not lost — reload to try
-          again.
+          Your past tests could not be loaded. They are not lost —{" "}
+          {/* One click, not a reload: the likely failure on this deploy is a
+              cold backend (docs/deploy.md), and a reload loses the page. It
+              retries the read that failed — a page append keeps its pages —
+              and goes quiet while the read is away, which can be a minute. */}
+          <button
+            type="button"
+            disabled={reading || fetchingMore}
+            onClick={() =>
+              failed.cursor === null ? load() : void loadNextPage(failed.cursor)
+            }
+            className="cursor-pointer underline underline-offset-2 disabled:cursor-default disabled:text-ink-3 disabled:no-underline"
+          >
+            try again
+          </button>
+          .
         </p>
       )}
 
-      {tests !== null && tests.length === 0 && !failed && (
+      {tests !== null && tests.length === 0 && failed === null && (
         <p className="text-sm text-ink-2">
           Nothing yet. A test you run is kept here.
         </p>
