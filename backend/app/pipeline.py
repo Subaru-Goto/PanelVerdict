@@ -299,6 +299,7 @@ async def run_vote_loop(
     variants: dict[str, str],
     llm: PanelLLM,
     enacted: str = "",
+    test_id: str | None = None,
 ) -> CollectedVotes:
     """Vote in chunks, stop when the report would already make a call.
 
@@ -311,8 +312,10 @@ async def run_vote_loop(
     """
     # Stamped on the votes this run pays for. A cached vote keeps the test_id of
     # the run that paid for it — the ledger records provenance, and identity across
-    # runs is the fingerprint's job, not this id's.
-    test_id = str(uuid4())
+    # runs is the fingerprint's job, not this id's. The graph passes its thread
+    # id, so the waiting screen can count this run's rows by an id the client
+    # already holds (021/#126); a caller with no thread gets a minted one.
+    test_id = test_id or str(uuid4())
     started = perf_counter()
 
     # Chunks are one concurrency-load each, so no worker idles mid-chunk and the

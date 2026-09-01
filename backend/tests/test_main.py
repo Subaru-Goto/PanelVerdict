@@ -1995,6 +1995,77 @@ def test_the_owner_can_still_answer_their_own_gate(signed_in, conn) -> None:
     assert response.status_code == 200
 
 
+def test_progress_counts_the_votes_the_run_has_bought(client, conn) -> None:
+    """The waiting screen's number is read off the vote ledger (021/#126):
+    paid votes are persisted per chunk, so counting the rows stamped with the
+    run's own thread id is live progress without touching the vote loop.
+    Nothing is bought while the run holds at the gate, so the count starts at
+    zero — and after the run it is exactly the votes the report says were cast,
+    which is what proves the stamp is the thread id all the way down."""
+    seed_japanese(conn, 5)
+    paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+    thread_id = paused["thread_id"]
+
+    nothing_yet = client.get(f"/evaluate/{thread_id}/progress")
+    report = _resume(client, thread_id).json()
+    after = client.get(f"/evaluate/{thread_id}/progress")
+
+    assert nothing_yet.status_code == 200
+    assert nothing_yet.json() == {"votes_recorded": 0}
+    assert report["counts"]["voted"] > 0
+    assert after.json() == {"votes_recorded": report["counts"]["voted"]}
+
+
+def test_progress_counts_only_what_this_run_paid_for(client, conn) -> None:
+    """Byte-identical replay (010e) serves a repeat run from the ledger, and a
+    cached vote keeps the stamp of the run that paid for it — so the repeat's
+    own count stays at zero. Accepted when the poll was settled (2026-09-01):
+    the number may undercount, and must never invent; a cache-served run is
+    near-instant anyway."""
+    seed_japanese(conn, 5)
+    first = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+    _resume(client, first["thread_id"])
+    repeat = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+    report = _resume(client, repeat["thread_id"]).json()
+
+    response = client.get(f"/evaluate/{repeat['thread_id']}/progress")
+
+    assert report["counts"]["voted"] > 0
+    assert response.json() == {"votes_recorded": 0}
+
+
+def test_progress_is_the_owners_alone(signed_in, conn) -> None:
+    """The count would confirm a guessed id and let a stranger watch a run
+    that is not theirs — same rule and same sentence as the resume: anything
+    but the owner gets the 404 an unknown id gets."""
+    seed_japanese(conn, 5)
+    paused = signed_in.post(
+        "/evaluate", json=_UNAPPROVED_BODY, headers=_as("owner")
+    ).json()
+
+    response = signed_in.get(
+        f"/evaluate/{paused['thread_id']}/progress", headers=_as("somebody-else")
+    )
+
+    assert response.status_code == 404
+
+
+def test_progress_on_an_unknown_thread_is_the_same_404(client) -> None:
+    response = client.get(f"/evaluate/{uuid4()}/progress")
+
+    assert response.status_code == 404
+
+
+def test_progress_sits_behind_the_edge_guard(client, conn, monkeypatch) -> None:
+    """`/evaluate/resume` once slipped past an exact-membership guard; the
+    prefix rule fixed that, and this pins the new path to it."""
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+
+    response = client.get(f"/evaluate/{uuid4()}/progress")
+
+    assert response.status_code == 401
+
+
 def test_one_subject_is_the_key_at_every_step_of_the_journey(
     signed_in, conn, monkeypatch
 ) -> None:

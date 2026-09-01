@@ -36,6 +36,7 @@ import asyncio
 from typing import Literal, TypedDict
 
 import psycopg
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
@@ -317,11 +318,15 @@ def build_evaluate_graph(
             return {"decision": "adjust", "refused": checked.refusal}
         return {"instruction": checked.instruction, "refused": None}
 
-    async def vote(state: EvaluateState) -> EvaluateState:
+    async def vote(state: EvaluateState, config: RunnableConfig) -> EvaluateState:
         """The one paid node. The vote loop itself is unchanged.
 
         The headlines are checked here because this is where they first reach a
         model, and before the panel is asked, so refused text costs no votes.
+
+        The votes are stamped with this run's thread id, so the waiting
+        screen's poll can count them by the one id the client already holds
+        (021/#126).
         """
         # A model call, so it goes to a thread: this node is async now, and a
         # blocking screen here would stall the loop before a single vote.
@@ -335,6 +340,7 @@ def build_evaluate_graph(
                 variants=state["variants"],
                 llm=llm,
                 enacted=state.get("instruction", ""),
+                test_id=config["configurable"]["thread_id"],
             )
         }
 

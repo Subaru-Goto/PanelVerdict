@@ -1597,6 +1597,47 @@ async def resume_evaluate(
     )
 
 
+class RunProgress(BaseModel):
+    """How many votes the run has bought so far — the waiting screen's number."""
+
+    votes_recorded: int
+
+
+@app.get("/evaluate/{thread_id}/progress")
+async def evaluate_progress(
+    thread_id: str,
+    caller: str = Depends(caller_id),
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+    checkpointer: BaseCheckpointSaver = Depends(get_checkpointer),
+) -> RunProgress:
+    """The count behind the waiting screen (021/#126): votes are persisted per
+    chunk (010e's crash-safety), so this reads live progress off rows the vote
+    loop was already writing — no second channel, nothing streamed.
+
+    - **The owner's alone**, by the resume's own rule: the count would confirm
+      a guessed id, so anyone but the caller who started the run gets the same
+      404 an unknown id gets.
+    - **Read straight off the checkpoint**, not through the graph: ownership
+      needs one state value, and building the graph would drag the panel model
+      in as a dependency of a read that never votes.
+    - **May undercount, never invents**: a cached vote keeps the stamp of the
+      run that paid for it, so a repeat served from the ledger counts zero —
+      accepted when the poll was settled on the ticket (2026-09-01).
+    """
+    checkpoint = await checkpointer.aget({"configurable": {"thread_id": thread_id}})
+    owner = (checkpoint or {}).get("channel_values", {}).get("owner")
+    if checkpoint is None or owner != caller:
+        raise HTTPException(
+            status_code=404, detail="no run is waiting for you on that id"
+        )
+    async with conn.cursor() as cur:
+        await cur.execute("SELECT count(*) FROM votes WHERE test_id = %s", (thread_id,))
+        row = await cur.fetchone()
+    # A poll every few seconds must not hold its read transaction open.
+    await conn.rollback()
+    return RunProgress(votes_recorded=int(row[0]) if row else 0)
+
+
 class ClosingStreamingResponse(StreamingResponse):
     """A StreamingResponse that closes its generator when the reader is gone.
 
