@@ -4,11 +4,11 @@ import { useEffect, useState } from "react";
 
 import { onRunsChanged, remainingRuns } from "../lib/api";
 
-/** The reader's own remaining runs, beside the button that spends one — the
- *  prototype seats the allowance in the actions row, not the header, because
- *  the number matters at the moment of spending. Their own count, never the
- *  shared pool's: that one is withheld so nobody gets a progress bar for
- *  draining it.
+/** The reader's own remaining runs (063/#158), beside the button that spends
+ *  one — the prototype seats the allowance in the actions row, not the
+ *  header, because the number matters at the moment of spending. Their own
+ *  count, never the shared pool's: that one is withheld so nobody gets a
+ *  progress bar for draining it.
  */
 export default function Allowance() {
   const [left, setLeft] = useState<number | null>(null);

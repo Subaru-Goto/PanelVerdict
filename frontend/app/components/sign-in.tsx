@@ -35,7 +35,17 @@ export default function SignIn() {
   const buttonSlot = useRef<HTMLSpanElement | null>(null);
   const available = signInAvailable();
 
-  useEffect(() => onAuthChange(setSignedIn), []);
+  useEffect(
+    () =>
+      onAuthChange((value) => {
+        setSignedIn(value);
+        // Cleared on the way out, not at the click: the pill must stay up as
+        // sign-out's feedback until the session event lands — and a cleared
+        // name here cannot flash into the next session's pill.
+        if (!value) setName(null);
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (signedIn !== false || !available || buttonSlot.current === null) return;
@@ -50,9 +60,17 @@ export default function SignIn() {
     // `live` guards the late answer: signing out while this read is in
     // flight must not stamp the ended session's name onto the next one.
     let live = true;
-    void displayName().then((reported) => {
-      if (live) setName(reported);
-    });
+    displayName().then(
+      (reported) => {
+        // A session with no readable name still owns the header's only
+        // sign-out control, so the pill gets a plain label rather than
+        // vanishing (and a failed read is treated the same, below).
+        if (live) setName(reported ?? "Signed in");
+      },
+      () => {
+        if (live) setName("Signed in");
+      },
+    );
     return () => {
       live = false;
     };
@@ -75,13 +93,10 @@ export default function SignIn() {
           // names the action, the text names the person.
           aria-label={`Sign out (${name})`}
           title="Sign out"
-          onClick={() => {
-            // Cleared here so the ended session's name cannot flash back on
-            // the next sign-in before the fresh read lands.
-            setName(null);
-            void signOut();
-          }}
-          className="flex items-center gap-[9px] rounded-pill border border-line py-[5px] pl-3.5 pr-1.5 text-[13px] font-medium"
+          onClick={() => void signOut()}
+          // cursor-pointer because Tailwind's preflight defaults buttons to
+          // cursor:default, and the prototype's .who is pointer.
+          className="flex cursor-pointer items-center gap-[9px] rounded-pill border border-line py-[5px] pl-3.5 pr-1.5 text-[13px] font-medium"
         >
           {name}
           <span

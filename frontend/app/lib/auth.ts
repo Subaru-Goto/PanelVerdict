@@ -197,18 +197,21 @@ export async function mountGoogleButton(container: HTMLElement): Promise<void> {
 }
 
 /** The signed-in person's name as the provider reported it, for the header's
- *  account pill — falling back to the email, which every Google account has.
- *  Null when nobody is signed in. */
+ *  account pill. Falls back to the email's local part — a full address is too
+ *  wide for a 56px nav — and null only when nobody is signed in: a session
+ *  with no readable name at all must still get a pill, because the pill is
+ *  the header's only sign-out control. */
 export async function displayName(): Promise<string | null> {
   const supabase = authClient();
   if (supabase === null) return null;
   const { data } = await supabase.auth.getSession();
   const user = data.session?.user;
   if (user === undefined) return null;
-  const meta = user.user_metadata as Record<string, unknown>;
+  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
   const name = meta.full_name ?? meta.name;
   if (typeof name === "string" && name.trim() !== "") return name.trim();
-  return user.email ?? null;
+  const local = user.email?.split("@")[0];
+  return local !== undefined && local !== "" ? local : "Signed in";
 }
 
 export async function signOut(): Promise<void> {

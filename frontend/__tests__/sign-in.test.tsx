@@ -131,9 +131,10 @@ describe("the sign-in control", () => {
 
   it("shows no half-dressed pill while the name is still being read", async () => {
     // A pill with a blank disc reads as broken, not loading — nothing, until
-    // the name is known.
+    // the name is known. (A session with no readable name is displayName's
+    // case, and it answers with a plain label rather than null.)
     withSession(true);
-    stubName(null);
+    displayNameMock.mockReturnValue(new Promise(() => {}));
 
     await renderSettled();
 
@@ -158,6 +159,32 @@ describe("the sign-in control", () => {
     fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
 
     expect(signOutMock).toHaveBeenCalled();
+  });
+
+  it("keeps the pill up until the sign-out actually lands", async () => {
+    // Clearing the header at the click would leave no pill, no button and no
+    // feedback for the whole server round-trip; the pill stays until the
+    // session event flips the state, and the name is cleared on the way out
+    // so it cannot flash into the next session.
+    let announce: (value: boolean) => void = () => {};
+    availableMock.mockReturnValue(true);
+    mountButtonMock.mockResolvedValue(undefined);
+    onAuthChangeMock.mockImplementation((listener: (v: boolean) => void) => {
+      announce = listener;
+      listener(true);
+      return () => {};
+    });
+    stubName("Sam O.");
+    signOutMock.mockReturnValue(new Promise(() => {}));
+
+    await renderSettled();
+    fireEvent.click(screen.getByRole("button", { name: /sign out/i }));
+    expect(screen.getByText("Sam O.")).toBeTruthy();
+
+    await act(async () => {
+      announce(false);
+    });
+    expect(screen.queryByText("Sam O.")).toBeNull();
   });
 
   it("says nothing about runs — the allowance lives beside the run button", async () => {
