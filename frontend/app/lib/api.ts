@@ -386,6 +386,19 @@ export async function myTest(testId: string): Promise<EvaluateResponse> {
   return (await jsonOrThrow(res)) as EvaluateResponse;
 }
 
+/** A demo case's replayed report (061/#156), plus what only a demo carries:
+ * the captured run's own per-step seconds, and the day it was bought. */
+export type DemoResult = EvaluateResponse & {
+  step_seconds: Record<string, number>;
+  captured_at: string;
+};
+
+/** Run one demo case. No auth: the demo is the signed-out product. */
+export async function runDemo(demoCase: string): Promise<DemoResult> {
+  const res = await fetch(`/api/demo/${encodeURIComponent(demoCase)}`);
+  return (await jsonOrThrow(res)) as DemoResult;
+}
+
 /** Delete one stored test, for good.
  *
  * A 404 is not raised: the row is already gone, which is what the caller

@@ -1183,6 +1183,8 @@ class DemoRun(CompletedRun):
     frontend replays those, because inventing durations is forbidden (061)."""
 
     step_seconds: dict[str, float]
+    # The day the run was bought — the honesty line names it.
+    captured_at: str
 
 
 @app.get("/demo/{case}")
@@ -1243,7 +1245,11 @@ async def demo(
     if not isinstance(outcome, CompletedRun):  # pragma: no cover
         # reading_accepted means no gate; a pause here is a broken premise.
         raise HTTPException(status_code=500, detail="the demo run did not finish")
-    return DemoRun(**outcome.model_dump(), step_seconds=fixture.step_seconds)
+    return DemoRun(
+        **outcome.model_dump(),
+        step_seconds=fixture.step_seconds,
+        captured_at=fixture.captured_at,
+    )
 
 
 @app.post("/evaluate")

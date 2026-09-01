@@ -447,10 +447,16 @@
     <!-- Amended 2026-08-31 (119): until the demo replay exists (061), the
          signed-out button reads "Sign in to run a test" and opens the sheet —
          no control promises a demo that does not exist. 061 restores this. -->
+    <!-- Amended 2026-09-01 (061): restored. The demo is a real prod run
+         captured once and replayed through the real graph — not a stored
+         verdict, so the note below stops promising storage: "A real panel's
+         run, replayed — nothing spent." The rail's samples are links to the
+         three cases, their verdict lines the captures' own numbers (84%/no
+         winner in 200/90%); this prototype's 71%/66% are mockups. -->
     <div class="hero-actions">
       <button class="btn btn-primary" id="hero-primary" onclick="showSample()">Run the demo test</button>
     </div>
-    <p class="hero-note" id="hero-note">Fixed headlines, a stored verdict, nothing spent — sign in to run your own test.</p>
+    <p class="hero-note" id="hero-note">Fixed headlines, a replayed panel, nothing spent — sign in to run your own test.</p>
   </div>
 
   <div class="principles">
@@ -1105,7 +1111,7 @@ function renderHero(){
   } else {
     p.textContent = 'Run the demo test';
     p.onclick = showSample;
-    n.textContent = 'Fixed headlines, a stored verdict, nothing spent — sign in to run your own test.';
+    n.textContent = 'Fixed headlines, a replayed panel, nothing spent — sign in to run your own test.';
   }
 }
 
@@ -1366,6 +1372,13 @@ const RUN_STEPS = [
 /* The sample is a replay of a stored run, so its steps play that run's own
    timings — a demo may not animate an invented duration. These four figures
    stand in for the per-step timings captured when the fixture is seeded. */
+// Amended 2026-09-01 (061): in the app the printed seconds are the captured
+// run's own (stored with the fixture), and the *wait* is presentation pacing
+// clamped to 0.6–1.8s per step — a 45-second vote is printed truthfully but
+// not sat through. These MS values are this prototype's mockups of that.
+// Also settled: the app shows the three steps that actually ran (select /
+// vote / assemble) in graph order — copy screening happens inside the vote
+// step at capture, so it is not a separate line.
 const REPLAY_MS = [900, 600, 2600, 700];
 
 function startRun(demo){

@@ -4,16 +4,13 @@ import { useState } from "react";
 
 import { type PanelPreview } from "../lib/api";
 import { countryGroups, selectedFacts } from "../lib/reading";
+import { CAPS, KICKER } from "../lib/styles";
 
 /** The panel gate, as the prototype settles it (077): panel size and matched
  * count as plain numbers, each control echoed as a `Selected` fact, the
  * audience words tagged `Role-played`, the seating as stacked strips, and one
  * boxed decision. Nothing has been bought when this renders.
  */
-
-/** The prototype's small caps label — kickers, tags and strip names share it. */
-const CAPS = "text-[10px] uppercase tracking-[0.14em]";
-const KICKER = "text-[11px] font-medium uppercase tracking-[0.18em] text-ink-2";
 
 function StatTile({
   kicker,

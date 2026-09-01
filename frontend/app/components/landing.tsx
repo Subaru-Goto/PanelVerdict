@@ -66,17 +66,28 @@ export default function Landing() {
             </Link>
             <p className="text-xs text-ink-3">Three runs a day.</p>
           </>
-        ) : signedIn === false && available ? (
+        ) : signedIn === false ? (
           <>
-            <button
-              type="button"
-              onClick={() => setSheetOpen(true)}
+            {/* 061: the demo is the one runnable thing signed out, so it is
+                the primary — a real captured run, replayed, needing no
+                account. Sign-in becomes the second line. */}
+            <Link
+              href="/test?demo=save-half"
               className="rounded-pill bg-ink px-6 py-3 font-medium text-surface"
             >
-              Sign in to run a test
-            </button>
+              Run the demo test
+            </Link>
             <p className="text-xs text-ink-3">
-              A signed-in account gets three runs a day.
+              A real panel&rsquo;s run, replayed — nothing spent.{" "}
+              {available && (
+                <button
+                  type="button"
+                  onClick={() => setSheetOpen(true)}
+                  className="underline underline-offset-2"
+                >
+                  Sign in to run your own — three runs a day.
+                </button>
+              )}
             </p>
           </>
         ) : null}

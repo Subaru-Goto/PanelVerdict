@@ -37,15 +37,19 @@ function withSession(signedIn: boolean) {
 }
 
 describe("landing", () => {
-  it("shows the hero and offers sign-in when signed out", () => {
+  it("shows the hero and offers the demo when signed out", () => {
+    // 061 restores the prototype's hero: the demo is the one runnable thing
+    // for a visitor, so it is the primary — sign-in becomes the second line.
     withSession(false);
     render(<Landing />);
 
     expect(
       screen.getByRole("heading", { name: "A verdict — and how sure it is." }),
     ).toBeDefined();
+    const demo = screen.getByRole("link", { name: "Run the demo test" });
+    expect(demo.getAttribute("href")).toBe("/test?demo=save-half");
     expect(
-      screen.getByRole("button", { name: "Sign in to run a test" }),
+      screen.getByRole("button", { name: /sign in to run your own/i }),
     ).toBeDefined();
     expect(
       screen.queryByRole("link", { name: "Run your own test" }),
@@ -64,12 +68,12 @@ describe("landing", () => {
     ).toBeNull();
   });
 
-  it("opens the sign-in sheet from the CTA, with Google's button mounted", () => {
+  it("opens the sign-in sheet from the second line, with Google's button mounted", () => {
     withSession(false);
     render(<Landing />);
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Sign in to run a test" }),
+      screen.getByRole("button", { name: /sign in to run your own/i }),
     );
 
     expect(screen.getByRole("dialog", { name: "Sign in" })).toBeDefined();

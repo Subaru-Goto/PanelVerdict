@@ -7,6 +7,9 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+
 import { makeStoredTest } from "./fixtures";
 
 // 119/#257. The frame every page sits in: a header carrying identity and
@@ -35,8 +38,11 @@ vi.mock("../app/lib/auth", () => ({
   signOut: vi.fn(),
 }));
 
-const { default: Shell, useGateSignal } =
-  await import("../app/components/shell");
+const {
+  default: Shell,
+  useGateSignal,
+  SAMPLES,
+} = await import("../app/components/shell");
 
 /** Stands in for the wizard: signals the gate the way the real page does. */
 function AtTheGate({ open }: { open: boolean }) {
@@ -62,11 +68,17 @@ describe("the shell", () => {
       screen.getByRole("link", { name: "Panelverdict" }).getAttribute("href"),
     ).toBe("/");
     expect(screen.getByText("Sample verdicts")).toBeDefined();
-    expect(
-      screen.getByText(
-        "“Save 50% this week” vs “Members save half price this week”",
-      ),
-    ).toBeDefined();
+    // A sample is a link into the replay now (061), and its verdict line is
+    // the captured run's own number, not the prototype's mockup.
+    const sample = screen.getByText(
+      "“Save 50% this week” vs “Members save half price this week”",
+    );
+    expect(sample.closest("a")?.getAttribute("href")).toBe(
+      "/test?demo=save-half",
+    );
+    expect(screen.getByText("83% preferred the first")).toBeDefined();
+    expect(screen.getByText("58% preferred the first")).toBeDefined();
+    expect(screen.getByText("88% preferred the second")).toBeDefined();
     expect(screen.queryByRole("link", { name: "New test" })).toBeNull();
     expect(screen.getByText("content")).toBeDefined();
   });
@@ -127,5 +139,29 @@ describe("the shell", () => {
     );
     expect(screen.getByRole("complementary")).toBeDefined();
     expect(myTestsMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The shelf's snapshots against the committed captures themselves: a
+// recapture that moves the votes must redden this, not silently let the rail
+// lie about the report it opens.
+describe("the sample shelf tells the captures' truth", () => {
+  const fixtures = path.resolve(__dirname, "../../backend/app/data/demo");
+
+  it("every sample matches its fixture's votes and headline pair", () => {
+    for (const { demoCase, pair, verdict } of SAMPLES) {
+      const fixture = JSON.parse(
+        readFileSync(path.join(fixtures, `${demoCase}.json`), "utf8"),
+      ) as {
+        variants: { a: string; b: string };
+        votes: { variant: "a" | "b" }[];
+      };
+      expect(pair).toBe(`“${fixture.variants.a}” vs “${fixture.variants.b}”`);
+      // The posterior mean railSummary's share comes from: flat Beta(1,1),
+      // so (b+1)/(n+2) — backend/app/verdict.py's own prior.
+      const b = fixture.votes.filter((vote) => vote.variant === "b").length;
+      const share = (b + 1) / (fixture.votes.length + 2);
+      expect(Math.abs(verdict.share_preferring_b - share)).toBeLessThan(0.001);
+    }
   });
 });

@@ -10,6 +10,8 @@ import {
 } from "react";
 
 import { onAuthChange } from "../lib/auth";
+import { type PanelVerdict } from "../lib/api";
+import { railSummary } from "../lib/verdict";
 import PastTests from "./past-tests";
 import SignIn from "./sign-in";
 
@@ -31,29 +33,57 @@ export function useGateSignal(open: boolean): void {
   }, [open, signal]);
 }
 
-/** The three demo pairs, verbatim from the prototype. Rows, not buttons: a
- *  control that runs the demo is #156's to add. */
-const SAMPLES: { pair: string; verdict: string }[] = [
+/** The three demo cases (061/#156). Each row's line is `railSummary` over the
+ *  committed capture's own verdict fields — the same function a stored test's
+ *  row uses, so a sample and the report it opens cannot disagree (117/#252).
+ *  The snapshots are what GET /demo/<case> served on 2026-09-01 (PR #262);
+ *  a recapture that moves them reddens the fixture guard in shell.test.tsx. */
+const SAMPLES: {
+  demoCase: string;
+  pair: string;
+  verdict: Pick<
+    PanelVerdict,
+    "share_preferring_b" | "probability_practical_tie" | "credible_mass"
+  >;
+}[] = [
   {
+    demoCase: "save-half",
     pair: "“Save 50% this week” vs “Members save half price this week”",
-    verdict: "71% preferred the first",
+    verdict: {
+      share_preferring_b: 0.1731,
+      probability_practical_tie: 0.0,
+      credible_mass: 0.95,
+    },
   },
   {
-    pair: "“Book in 30 seconds” vs “Reserve your slot now”",
-    verdict: "too close to call",
+    demoCase: "free-delivery",
+    pair: "“Free delivery on orders over 50” vs “10% off your first order”",
+    verdict: {
+      share_preferring_b: 0.4208,
+      probability_practical_tie: 0.3929,
+      credible_mass: 0.95,
+    },
   },
   {
+    demoCase: "built-for-teams",
     pair: "“Built for teams” vs “Built for teams like yours”",
-    verdict: "66% preferred the second",
+    verdict: {
+      share_preferring_b: 0.8846,
+      probability_practical_tie: 0.0,
+      credible_mass: 0.95,
+    },
   },
 ];
+
+/** For the fixture guard only — the rows above are the shelf's own. */
+export { SAMPLES };
 
 /** The frame every page sits in (119/#257): a header carrying identity and
  *  account — no tabs, the product has one function — and the rail.
  *
- *  Signed out the rail is a demo shelf: the same samples for everyone, static
- *  copy until #156 makes them run. Signed in it is yours: new test + saved
- *  tests, samples gone.
+ *  Signed out the rail is a demo shelf: the same three samples for everyone,
+ *  each a link into the replay (061/#156). Signed in it is yours: new test +
+ *  saved tests, samples gone.
  */
 export default function Shell({ children }: { children: ReactNode }) {
   // null until the session is known, so the demo shelf does not flash at a
@@ -118,11 +148,17 @@ export default function Shell({ children }: { children: ReactNode }) {
               <p className="text-xs font-medium uppercase tracking-[0.18em] text-ink-3">
                 Sample verdicts
               </p>
-              {SAMPLES.map(({ pair, verdict }) => (
-                <p key={pair} className="flex flex-col gap-0.5 text-sm">
+              {SAMPLES.map(({ demoCase, pair, verdict }) => (
+                <Link
+                  key={demoCase}
+                  href={`/test?demo=${demoCase}`}
+                  className="flex flex-col gap-0.5 text-sm"
+                >
                   <span>{pair}</span>
-                  <span className="text-xs text-ink-3">{verdict}</span>
-                </p>
+                  <span className="text-xs text-ink-3">
+                    {railSummary(verdict as PanelVerdict)}
+                  </span>
+                </Link>
               ))}
             </div>
           )}
