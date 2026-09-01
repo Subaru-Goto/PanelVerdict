@@ -61,7 +61,8 @@ export async function proxyToBackend(
     | "/tests"
     | `/tests?${string}`
     | `/tests/${string}`
-    | `/demo/${string}`,
+    | `/demo/${string}`
+    | `/evaluate/${string}/progress`,
   method: "GET" | "POST" | "DELETE",
   request: Request,
 ): Promise<Response> {

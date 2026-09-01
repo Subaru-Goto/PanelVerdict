@@ -19,9 +19,10 @@ import { makeResponse } from "./fixtures";
 // the approved instruction, so the fifth headline variation is not a repaint
 // of an approval already given.
 
-const { evaluateMock, resumeMock } = vi.hoisted(() => ({
+const { evaluateMock, resumeMock, progressMock } = vi.hoisted(() => ({
   evaluateMock: vi.fn(),
   resumeMock: vi.fn(),
+  progressMock: vi.fn(() => new Promise<never>(() => {})),
 }));
 
 vi.mock("next/navigation", () => ({
@@ -32,6 +33,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("../app/lib/api", () => ({
   evaluate: evaluateMock,
   resumeEvaluate: resumeMock,
+  runProgress: progressMock,
   LOCALES: ["US", "JP", "DE"],
   MIN_PANEL_AGE: 18,
   MAX_PANEL_AGE: 100,
@@ -211,6 +213,9 @@ describe("the gate fires once per audience", () => {
     const request = evaluateMock.mock.calls[1][0];
     expect(request.readingAccepted).toBe(true);
     expect(request.instruction).toBe("You are a keen long-distance runner.");
+    // The skip run never pauses, so the client mints the id it will poll
+    // progress under (021/#126).
+    expect(request.threadId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it("echoes the accepted reading under the form, and Change re-arms the gate", async () => {
@@ -345,5 +350,69 @@ describe("the gate fires once per audience", () => {
     // One /evaluate: the original. The failed resume did not buy a rewrite.
     expect(evaluateMock).toHaveBeenCalledTimes(1);
     expect(screen.getByText(/too many previews today/i)).toBeDefined();
+  });
+});
+
+
+describe("the waiting screen while votes are bought", () => {
+  it("swaps the gate for the step stream on accept, and brings it back refused", async () => {
+    evaluateMock.mockResolvedValue(PAUSED);
+    let refuse: (error: Error) => void = () => {};
+    resumeMock.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        refuse = reject;
+      }),
+    );
+    render(<EvaluateForm tracing={false} />);
+    await fillAndSubmit();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
+    });
+
+    // The decision has been made: the stream replaces the gate — which stays
+    // mounted under a [hidden] wrapper so a refusal keeps the reader's edit.
+    expect(screen.getByText(/votes returning/i)).toBeTruthy();
+    expect(
+      screen.getByText("Approve this reading?").closest("div[hidden]"),
+    ).not.toBeNull();
+
+    // A refusal re-arms the gate with its notice — the run is still paused.
+    await act(async () => {
+      refuse(new Error("that instruction cannot be run — reword it"));
+    });
+    expect(
+      screen.getByText("Approve this reading?").closest("div[hidden]"),
+    ).toBeNull();
+    expect(screen.getByRole("alert").textContent).toContain("reword it");
+    expect(screen.queryByText(/votes returning/i)).toBeNull();
+  });
+
+  it("shows the stream for a skip run too, polling the id it minted", async () => {
+    evaluateMock.mockResolvedValueOnce(PAUSED);
+    resumeMock.mockResolvedValue({ ...RESPONSE, status: "complete" });
+    render(<EvaluateForm tracing={false} />);
+    await fillAndSubmit();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
+    });
+    await screen.findByRole("button", { name: /test again/i });
+
+    // The re-run rides the approval and never pauses: the stream is the wait.
+    evaluateMock.mockReturnValueOnce(new Promise(() => {}));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /test again/i }));
+    });
+    fireEvent.change(screen.getByLabelText(/headline a/i), {
+      target: { value: "A brand new line" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /evaluate/i }));
+    });
+
+    expect(screen.getByText(/votes returning/i)).toBeTruthy();
+    expect(progressMock).toHaveBeenCalledWith(
+      evaluateMock.mock.calls[1][0].threadId,
+    );
   });
 });
