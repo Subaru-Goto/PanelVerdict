@@ -89,7 +89,10 @@ declare global {
       accounts: {
         id: {
           initialize(config: Record<string, unknown>): void;
-          renderButton(parent: HTMLElement, options: Record<string, unknown>): void;
+          renderButton(
+            parent: HTMLElement,
+            options: Record<string, unknown>,
+          ): void;
         };
       };
     };
@@ -165,7 +168,13 @@ export async function mountGoogleButton(container: HTMLElement): Promise<void> {
       });
     },
   });
-  window.google!.accounts.id.renderButton(container, { type: "standard" });
+  // Google draws the button in its own iframe, so our classes cannot reach
+  // it — `shape` is the official knob, and "pill" matches the site's own
+  // `rounded-pill` controls (the demo button beside it on the landing).
+  window.google!.accounts.id.renderButton(container, {
+    type: "standard",
+    shape: "pill",
+  });
 }
 
 export async function signOut(): Promise<void> {
