@@ -69,6 +69,18 @@ attack surface a stranger controls:
    prompt without passing the rewriter — the human's edit goes in as they left it,
    which is the point of the gate. So it is classified again on resume, by the
    same rules, before a single vote is bought.
+6. **The chat message** ([091 · #196](https://github.com/Subaru-Goto/PanelVerdict/issues/196),
+   decided 2026-09-02). The reader's question to the analyst — size-capped at
+   `MAX_CHAT_MESSAGE_CHARS`, **not screened**. Decided rather than inherited: a
+   screener call on every turn would double the turn's model calls and delay its
+   first token, for an injection nobody has observed on a channel where the
+   analyst's tools are read-only over the caller's own report and the turn's
+   model calls are a declared budget. What bounds the channel today is the
+   prompt's topic rule, measured at 47/48 on held-out questions
+   ([`research/topic-boundary-check.md`](research/topic-boundary-check.md)).
+   [120 · #279](https://github.com/Subaru-Goto/PanelVerdict/issues/279) holds the deferral; its trigger — a held-out rerun below that
+   baseline, or an off-topic answer or injection seen in production — promotes
+   the screener onto this message with a topic verdict added, one call for both.
 
 These divide into **two kinds with different trust levels**, and the division is
 the load-bearing distinction in this document:

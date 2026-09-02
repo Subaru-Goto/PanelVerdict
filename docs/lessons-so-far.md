@@ -372,6 +372,21 @@ credential before believing either. The same probe caught the sweep-style `GRANT
 having quietly included the checkpointer's transcript tables; least privilege had to
 be measured back on, with a `REVOKE`.
 
+**A fixed shape with free wording collapses to a fixed sentence unless the wording
+has a job.** The analyst's decline (091/#196) was specified as a shape, not a
+sentence, to deny a prober a fingerprint — and the first measured run produced nine
+openings across 32 declines, most copying the shape's example phrasing verbatim.
+Telling the model to name *what was asked* in its own words gave it a reason to
+vary and dissolved the fingerprint (28–32 openings since), at the cost of one
+tuning cycle when naming the request first pulled the answer in with it. Two
+smaller lessons from the same suite: a same-model judge's errors were product
+knowledge, not leniency — it did not know the report's own honesty ("the report
+does not record that") or its own sanctioned redirect (*Test again*) — so a
+rubric has to be told what the product's correct behaviours look like; and a
+held-out half earns its keep the moment you touch the wording, which is why the
+seen half was relabelled tune and a fresh held-out written before the baseline
+was recorded ([`research/topic-boundary-check.md`](research/topic-boundary-check.md)).
+
 ## What none of this covers
 
 Whether the panel predicts **real human behaviour**. Everything above is internal
