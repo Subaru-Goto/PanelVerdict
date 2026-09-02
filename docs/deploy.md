@@ -92,14 +92,32 @@ to do more than look:
 CREATE ROLE drift_check LOGIN PASSWORD '…';
 GRANT USAGE ON SCHEMA public TO drift_check;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO drift_check;
+-- Tables created by future schema applies inherit SELECT automatically —
+-- without this, every new table is invisible to the role and the check
+-- reports it "missing every column" on a current database (measured
+-- 2026-09-02: three tables created after the GRANT did exactly that).
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO drift_check;
+-- The sweep above also catches the checkpointer's tables, which hold
+-- customer analyst transcripts. The drift check never reads them, so the
+-- CI secret must not be able to: revoke, and re-revoke if a checkpointer
+-- migration ever adds a table (default privileges will have re-granted it).
+REVOKE SELECT ON checkpoints, checkpoint_blobs, checkpoint_writes,
+  checkpoint_migrations FROM drift_check;
 ```
+
+The default-privileges line is a deliberate trade: a future table holding
+something sensitive is readable by `drift_check` the moment it exists, until a
+`REVOKE` like the one above says otherwise. That beats the alternative — a
+check that silently goes blind on every table added after the GRANT — but it
+means a new sensitive table owes this file a revoke line.
 
 `SELECT` and not merely `CONNECT`, which looks like the tighter answer and is not:
 `information_schema.columns` shows a role only the columns it may read, so a
 connect-only role sees nothing and the check reports *every* table as missing on a
 current database. Measured — `test_the_drift_check_needs_select_and_not_only_connect`
-pins both halves. Re-run the second `GRANT` after adding a table; it covers existing
-tables only.
+pins both halves. The `ALTER DEFAULT PRIVILEGES` line is what covers tables
+added later — a bare `GRANT` covers existing tables only, and a table the role
+cannot see is reported missing, not denied.
 
 Then set the repository secrets — Settings → Secrets and variables → Actions →
 Secrets: `DEPLOY_POSTGRES_HOST`, `DEPLOY_POSTGRES_USER`, `DEPLOY_POSTGRES_PASSWORD`,
