@@ -1,4 +1,5 @@
 import json
+import math
 import secrets
 from time import perf_counter
 from typing import Literal, get_args
@@ -258,6 +259,11 @@ def _numeric(value: object) -> float | None:
     expected would otherwise total as 1.0 credit.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    # A non-finite float is JSON the provider should never emit — and one that
+    # reaches the response would fail the render of a run already paid for:
+    # Starlette's JSON encoder refuses NaN, and so does the report's Jsonb.
+    if not math.isfinite(value):
         return None
     return float(value)
 

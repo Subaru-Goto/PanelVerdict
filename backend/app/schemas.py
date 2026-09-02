@@ -636,15 +636,15 @@ ChatStreamEvent = ToolEvent | TokenEvent | ErrorEvent | DoneEvent
 class RunUsage(BaseModel):
     """What the run's votes cost, as `total_usage` sums it (070/#161).
 
-    A mirror of `vote.UsageTotals`, field for field, because the honesty
-    mechanism lives in the shape: every optional-per-vote figure travels with
-    the count of votes that reported it, so a partial sum can never read as a
-    total. A fully cached replay honestly reads votes=N, usage_reported=0.
+    A mirror of `vote.UsageTotals`, field for field (pinned by test): every
+    optional-per-vote figure travels with the count of votes that reported
+    it, so a partial sum can never read as a total. A replay of cached votes
+    honestly reads votes=N, usage_reported=0 — the demo serves exactly that.
 
-    On the wire and therefore in every kept test's stored report — the
-    operator view of the future gets history from day one. Deliberately not
-    rendered to the reader (decided 2026-09-02 on the ticket): the customer
-    does not pay per run, so cost is operator telemetry, not report content.
+    Stored with every kept test; deliberately not rendered to the reader
+    (decided 2026-09-02 on the ticket). No `extra="forbid"`, for
+    `EvaluateResponse`'s own documented reason: the client posts the stored
+    object back to `/chat`, and a deploy window must not 422 it.
     """
 
     votes: int

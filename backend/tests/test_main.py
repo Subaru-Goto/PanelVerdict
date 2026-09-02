@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import dataclasses
 import logging
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -44,13 +45,14 @@ from app.main import (
 )
 from app.persistence import REPORT_SCHEMA_VERSION, nearest_panelists, persist_pool
 from app.schemas import (
-    MAX_AUDIENCE_CHARS,
-    MAX_HEADLINE_CHARS,
     EvaluateRequest,
     EvaluateResponse,
+    MAX_AUDIENCE_CHARS,
+    MAX_HEADLINE_CHARS,
+    RunUsage,
 )
 from app.screening import ScreeningVerdict
-from app.vote import OutOfCredit, VoteResponse, VoteUsage
+from app.vote import OutOfCredit, UsageTotals, VoteResponse, VoteUsage
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
@@ -3653,6 +3655,16 @@ def test_the_stored_report_is_about_the_test_and_not_the_operators_wallet(
 # the operator view of the future has history from day one. No reader-facing
 # display, by decision (2026-09-02): cost is operator telemetry, and the
 # customer does not pay per run.
+
+
+def test_the_wire_mirror_cannot_drift_from_the_totals_it_mirrors() -> None:
+    """RunUsage mirrors vote.UsageTotals by construction (`asdict` unpack): a
+    field added to the dataclass raises at runtime, but a *renamed* pydantic
+    field would silently ship a default. Pinned the way TraitName is pinned
+    to BigFive's fields."""
+    assert tuple(RunUsage.model_fields) == tuple(
+        f.name for f in dataclasses.fields(UsageTotals)
+    )
 
 
 def test_a_completed_run_carries_its_usage_totals(client, conn) -> None:

@@ -10,9 +10,9 @@ survive restarts and are shared across workers; this module stays
 saver-agnostic and takes whatever `BaseCheckpointSaver` it is handed.
 """
 
-import logging
 import asyncio
 import json
+import logging
 from collections import Counter
 from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
@@ -471,6 +471,61 @@ def checkpointed_models(state: type) -> set[type[BaseModel]]:
     return found
 
 
+class _TurnUsage:
+    """One turn's spend, summed off the usage each model call reports —
+    `stream_usage=True` in `analyst_chat_model` is what makes the provider
+    say. Same reported-coverage discipline as `vote.total_usage`; a turn
+    whose model reported nothing logs nothing rather than invented zeros.
+
+    Tokens only, no cost: langchain's streaming path drops the provider's
+    `cost` field before it reaches a chunk's metadata (verified against the
+    installed package — `token_usage` is set only on the non-streamed path),
+    so a cost column here could only ever log zeros. Money is derived at
+    measurement time from these tokens and a dated list price (070/#161).
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cached_tokens = 0
+        self.cached_reported = 0
+        self.reasoning_tokens = 0
+        self.reasoning_reported = 0
+
+    def take(self, payload: AIMessage) -> None:
+        usage = payload.usage_metadata
+        if usage is None:
+            return
+        self.calls += 1
+        self.input_tokens += usage["input_tokens"]
+        self.output_tokens += usage["output_tokens"]
+        cached = usage.get("input_token_details", {}).get("cache_read")
+        if cached is not None:
+            self.cached_tokens += cached
+            self.cached_reported += 1
+        reasoning = usage.get("output_token_details", {}).get("reasoning")
+        if reasoning is not None:
+            self.reasoning_tokens += reasoning
+            self.reasoning_reported += 1
+
+    def log(self, thread_id: str) -> None:
+        if self.calls == 0:
+            return
+        logger.info(
+            "analyst usage thread_id=%s: calls=%d input_tokens=%d"
+            " cached_tokens=%d/%d output_tokens=%d reasoning_tokens=%d/%d",
+            thread_id,
+            self.calls,
+            self.input_tokens,
+            self.cached_tokens,
+            self.cached_reported,
+            self.output_tokens,
+            self.reasoning_tokens,
+            self.reasoning_reported,
+        )
+
+
 async def stream_analyst(
     *,
     model: BaseChatModel,
@@ -513,55 +568,7 @@ async def stream_analyst(
     def line(event: ChatStreamEvent) -> str:
         return event.model_dump_json() + "\n"
 
-    # 070/#161: the turn's spend, summed off the usage each model call reports
-    # (`stream_usage=True` in `analyst_chat_model` is what makes the provider
-    # say). One log line at the end, whatever way the turn ends — a failed
-    # turn spent money too. Reported-coverage discipline as in `total_usage`:
-    # reasoning and cost are optional per call, so each sum travels with the
-    # count of calls that reported it, and a turn whose model reported nothing
-    # logs nothing rather than a row of invented zeros.
-    usage_calls = 0
-    usage_input = usage_output = 0
-    usage_reasoning = 0
-    usage_reasoning_reported = 0
-    usage_cost = 0.0
-    usage_cost_reported = 0
-
-    def take_usage(payload: AIMessage) -> None:
-        nonlocal usage_calls, usage_input, usage_output
-        nonlocal usage_reasoning, usage_reasoning_reported
-        nonlocal usage_cost, usage_cost_reported
-        usage = payload.usage_metadata
-        if usage is None:
-            return
-        usage_calls += 1
-        usage_input += usage["input_tokens"]
-        usage_output += usage["output_tokens"]
-        reasoning = usage.get("output_token_details", {}).get("reasoning")
-        if reasoning is not None:
-            usage_reasoning += reasoning
-            usage_reasoning_reported += 1
-        token_usage = payload.response_metadata.get("token_usage")
-        cost = token_usage.get("cost") if isinstance(token_usage, dict) else None
-        if isinstance(cost, int | float) and not isinstance(cost, bool):
-            usage_cost += float(cost)
-            usage_cost_reported += 1
-
-    def log_usage() -> None:
-        if usage_calls == 0:
-            return
-        logger.info(
-            "analyst usage thread_id=%s: calls=%d input_tokens=%d"
-            " output_tokens=%d reasoning_tokens=%d/%d cost=%.6f/%d",
-            thread_id,
-            usage_calls,
-            usage_input,
-            usage_output,
-            usage_reasoning,
-            usage_reasoning_reported,
-            usage_cost,
-            usage_cost_reported,
-        )
+    usage = _TurnUsage()
 
     try:
         stream = await agent.astream_events(
@@ -605,7 +612,7 @@ async def stream_analyst(
                     payload = data[0] if isinstance(data, tuple) else data
 
                     if isinstance(payload, AIMessage):
-                        take_usage(payload)
+                        usage.take(payload)
                         if payload.text:
                             yield line(TokenEvent(text=payload.text))
                     elif (
@@ -629,13 +636,11 @@ async def stream_analyst(
                         pass
                 await stream.abort()
     except GraphRecursionError:
-        log_usage()
         yield line(
             ErrorEvent(message=f"analyst was still calling tools after {limit} steps")
         )
         return
     except APIStatusError as error:
-        log_usage()
         yield line(
             ErrorEvent(
                 message="OpenRouter credit exhausted (402)"
@@ -646,8 +651,11 @@ async def stream_analyst(
         return
     except Exception as error:
         # Broad on purpose — the stream is the only channel left.
-        log_usage()
         yield line(ErrorEvent(message=_failure_sentence(error)))
         return
-    log_usage()
+    finally:
+        # A `finally`, not per-exit calls: the likely early end of a turn is
+        # a reader disconnect, which arrives as GeneratorExit — no `except`
+        # sees it. Logging never awaits, so it is safe mid-cancellation.
+        usage.log(thread_id)
     yield line(DoneEvent())
