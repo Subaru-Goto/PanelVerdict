@@ -350,6 +350,17 @@ deleted field. The security review found it as an aside.
 
 ---
 
+**A permission gap reads as a data gap, so a red check names the wrong culprit.**
+The schema-drift job (2026-09-02) reported three tables "missing every column" on a
+database that had them all: `information_schema` hides tables a role may not read,
+and the read-only role's `GRANT` predated the tables. Two lessons in one incident:
+a monitoring role's grants are themselves a hand-kept list a new table must join —
+prefer deriving them (`ALTER DEFAULT PRIVILEGES`, now in `deploy.md`) — and when a
+check's report contradicts observed behaviour, probe with a *differently privileged*
+credential before believing either. The same probe caught the sweep-style `GRANT`
+having quietly included the checkpointer's transcript tables; least privilege had to
+be measured back on, with a `REVOKE`.
+
 ## What none of this covers
 
 Whether the panel predicts **real human behaviour**. Everything above is internal
