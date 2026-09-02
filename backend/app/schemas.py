@@ -1,3 +1,4 @@
+import unicodedata
 from enum import Enum
 from typing import Literal
 
@@ -429,6 +430,31 @@ class PanelCounts(BaseModel):
 # is deliberately absent: a headline is free text in any language, so any
 # allowlist narrow enough to be worth having would refuse real copy.
 MAX_HEADLINE_CHARS = 500
+
+# 097/#202. The form's own sentence (`docs/design/prototype.html`), reused
+# verbatim so the two surfaces cannot drift; the backend's refusal is the
+# authoritative twin of the form's disabled control.
+IDENTICAL_HEADLINES_SENTENCE = (
+    "The two versions are the same line. A panel cannot prefer one of two "
+    "identical options — edit either version until they differ. "
+    "Capitalisation and punctuation count as differences."
+)
+
+
+def same_line(first: str, second: str) -> bool:
+    """Whether two headlines are the same line to a panel.
+
+    Equal after trim, whitespace collapse and Unicode NFC — the form's
+    normalisation plus NFC, which the prototype forgot. Case and punctuation
+    are left alone: "SAVE 50%" against "save 50%" is a real test of casing.
+    """
+
+    def normalised(text: str) -> str:
+        return " ".join(unicodedata.normalize("NFC", text).split())
+
+    return normalised(first) == normalised(second)
+
+
 # Signed off 2026-08-26 as a launch value (094/#200); revisiting it with usage
 # evidence is 107/#228 — raising is a one-constant change, lowering after launch
 # breaks saved inputs, which is why it starts tight.
@@ -531,6 +557,14 @@ class EvaluateRequest(BaseModel):
     instruction: str | None = Field(default=None, max_length=MAX_INSTRUCTION_CHARS)
 
     @model_validator(mode="after")
+    def _two_different_lines(self) -> "EvaluateRequest":
+        """Identical headlines buy a coin flip presented as a verdict. Refused
+        in the contract, so no vote is bought (097/#202)."""
+        if same_line(self.headline_a, self.headline_b):
+            raise ValueError(IDENTICAL_HEADLINES_SENTENCE)
+        return self
+
+    @model_validator(mode="after")
     def _approval_says_what_was_approved(self) -> "EvaluateRequest":
         """A claim of approval has to name the thing approved.
 
@@ -585,6 +619,19 @@ class ResumeRequest(BaseModel):
                 "one corrected headline alone would vote half the old submit "
                 "— send both headlines, or neither"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _two_different_lines(self) -> "ResumeRequest":
+        """The edit path takes headlines too; the same pair is refused the
+        same way (097/#202). Guarded on both because a validator cannot lean
+        on the one above having run first."""
+        if (
+            self.headline_a is not None
+            and self.headline_b is not None
+            and same_line(self.headline_a, self.headline_b)
+        ):
+            raise ValueError(IDENTICAL_HEADLINES_SENTENCE)
         return self
 
     # The role-play sentence as the reader left it at the gate. None means they
