@@ -205,6 +205,13 @@ ticketed at low priority
 100/#209), and the escalation trigger is written here so the document does not
 rely on anyone remembering it — **if a real run ever shows vote failures
 clustering on one option or one position, that measurement promotes the ticket.**
+The vote's completion cap (090/#195) widened this shape's entry: forcing a
+failure no longer needs conditional *disobedience*, only enough induced
+verbosity to cross `VOTE_MAX_COMPLETION_TOKENS` — a quantitative lever where
+shape C needed a qualitative one. The bounds above are unchanged (discarded,
+never miscounted; the shortfall is printed on the report; the attacker authors
+one of the headlines and pays), but the cheaper trigger is more weight on
+105's detector, noted on that ticket.
 
 What the previous version got right about this asset stays: the panel is a poor
 thing to attack. A panel agent has no tools, no memory, no shared state; its
@@ -225,6 +232,23 @@ stops the analyst answering a general question that has nothing to do with the
 report, and [091/#196](https://github.com/Subaru-Goto/PanelVerdict/issues/196)
 now serves two assets, because the same transcript is also a credibility
 screenshot ("their AI does my homework").
+
+**The gap between the charge and the bill** (090/#195). The walls above bound
+*charges*, and every charge is a measured mean — so an admitted request can
+still bill a multiple of what the ledger recorded (a capped vote ~6×
+`USD_PER_VOTE`; a capped turn a larger multiple of `USD_PER_TURN`). What keeps
+that gap a small constant rather than unbounded is the per-call completion
+ceiling on every paid model call (`max_tokens`, `app/llm.py` and
+`app/screening.py`): a timeout bounds an idle connection, never a generating
+one, and before 090 four of the six paid constructions could generate without
+limit — one observed translator runaway billed a whole run's worth of tokens
+on a single call. The day's true dollar ceiling is therefore the global cap
+times the worst charge-to-bill ratio, and both factors are now written down
+beside the constants they depend on. One cap has a second face: a screener
+verdict cut at its ceiling narrows to `UnusableAnswer` — the loud "off"
+classification 072/#163 exists for — rather than a healing "outage", so
+talking the screener past its cap announces itself at ERROR instead of
+passing for a network blip.
 
 **A model with a spending tool.** The path was real: a crafted headline becomes a
 vote reason, `read_reasons` hands reasons to the analyst, and the analyst held

@@ -497,9 +497,10 @@ def test_the_vote_call_carries_a_bounded_completion() -> None:
     legitimate vote observed emitted 296 output tokens (gpt-5-mini at default
     effort, docs/research/panel-model-selection.md), and that is the *verbose*
     bound — the shipped Luna emits ~6.5 reasoning tokens/vote against mini's
-    ~160 (docs/research/manipulation-check-luna.md). 3 x 296 = 888, next power
-    of two up. A vote that hits it fails to parse, which the shortfall path
-    already reports as a failed vote — never a stack trace."""
+    ~160 (docs/research/manipulation-check-luna.md, 2026-08-23). 3 x 296 =
+    888, next power of two up. A vote that hits it surfaces as the SDK's
+    LengthFinishReasonError, renamed to fixed text and filed as a failed vote
+    — the length-cut test below pins that whole chain."""
     llm = OpenRouterPanelLLM(
         api_key="test",
         base_url="http://openrouter.invalid",
@@ -571,6 +572,56 @@ def test_every_paid_call_is_bounded_and_none_inherits_the_sdk_default() -> None:
     assert {name: client.max_retries for name, client in bound.items()} == {
         name: 2 for name in bound
     }
+
+
+def test_a_length_cut_vote_is_a_failed_vote_with_fixed_text(monkeypatch) -> None:
+    """The whole chain, not a hand-raised error (the screener's 404 probe test
+    is the precedent): a real 200 whose choice says finish_reason "length"
+    never reaches langchain's `parsing_error` — the SDK raises
+    LengthFinishReasonError before parsing, and its message drags a
+    CompletionUsage repr along. The adapter must rename it to the fixed
+    sentence the parse path already promised, so the type-only rule holds and
+    the vote lands in the shortfall accounting like any other failed vote."""
+
+    def cut_short(self, request, **kwargs):
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "x",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "m",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "length",
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"chosen_variant_id": "a", "reas',
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 1024,
+                    "total_tokens": 1034,
+                },
+            },
+        )
+
+    monkeypatch.setattr(httpx.Client, "send", cut_short)
+    llm = OpenRouterPanelLLM(
+        api_key="k", base_url="http://localhost:9/api/v1", model="m"
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        llm.vote(system_prompt="s", option_1="a", option_2="b")
+
+    assert (
+        str(caught.value)
+        == "panel model returned no structured vote: LengthFinishReasonError"
+    )
 
 
 def test_every_paid_completion_is_bounded() -> None:
@@ -668,8 +719,6 @@ def test_the_analyst_caps_each_completion() -> None:
     emitted 544 output tokens *summed over its calls* (default effort,
     docs/research/analyst-turn-cost.md, 2026-09-02), so no single legitimate
     completion observed exceeds that. 3 x 544 = 1632, next power of two up."""
-    from app.llm import ANALYST_MAX_COMPLETION_TOKENS, analyst_chat_model
-
     model = analyst_chat_model(api_key="k", base_url="http://x/api/v1", model="m")
 
     assert model.max_tokens == ANALYST_MAX_COMPLETION_TOKENS == 2048

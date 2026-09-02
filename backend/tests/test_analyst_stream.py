@@ -153,6 +153,39 @@ class TestStreamAnalyst:
         assert {"type": "done"} not in events
 
     @pytest.mark.anyio
+    async def test_a_recovered_turn_is_not_reported_cut(self, conn, aconn) -> None:
+        """The turn's LAST stated finish_reason decides: an early tool-call
+        completion cut at the cap, which the model then recovered from with a
+        whole answer, must end `done` — the cut sentence on a complete answer
+        would be as dishonest as `done` on a fragment."""
+        cut_tool_call = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "analyze_results",
+                    "args": {},
+                    "id": "c1",
+                    "type": "tool_call",
+                }
+            ],
+            response_metadata={"finish_reason": "length"},
+        )
+        model = ScriptedChatModel(
+            responses=[
+                cut_tool_call,
+                AIMessage(
+                    content="Recovered whole.",
+                    response_metadata={"finish_reason": "stop"},
+                ),
+            ]
+        )
+
+        events = ndjson_events(await _lines(model, conn=aconn, thread_id="cut-3"))
+
+        assert events[-1] == {"type": "done"}
+        assert all(e["type"] != "error" for e in events)
+
+    @pytest.mark.anyio
     async def test_error_events_never_carry_model_text(self, conn, aconn) -> None:
         """The discipline the whole error design exists for: the exception
         *type* reaches the wire, the exception *message* — where provider and

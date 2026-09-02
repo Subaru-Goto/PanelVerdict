@@ -568,10 +568,12 @@ async def stream_analyst(
         return event.model_dump_json() + "\n"
 
     usage = _TurnUsage()
-    # Set when any completion this turn ends with finish_reason "length" —
-    # ANALYST_MAX_COMPLETION_TOKENS was hit (090/#195). The cut text has
-    # already streamed by then, so the turn must not end as if it were whole:
-    # once the run winds down, the fixed sentence below replaces `done`.
+    # Whether the turn's LAST completion with a stated finish_reason ended
+    # "length" — ANALYST_MAX_COMPLETION_TOKENS was hit (090/#195). Last, not
+    # any: an early cut tool call the model recovered from must not end a
+    # whole answer with the cut sentence. The cut text has already streamed
+    # by the time this is known, so a truncated turn must not end as if it
+    # were whole: the fixed sentence below replaces `done`.
     truncated = False
 
     try:
@@ -617,9 +619,9 @@ async def stream_analyst(
 
                     if isinstance(payload, AIMessage):
                         usage.take(payload.usage_metadata)
-                        metadata = payload.response_metadata or {}
-                        if metadata.get("finish_reason") == "length":
-                            truncated = True
+                        reason = (payload.response_metadata or {}).get("finish_reason")
+                        if reason is not None:
+                            truncated = reason == "length"
                         if payload.text:
                             yield line(TokenEvent(text=payload.text))
                     elif (
@@ -642,11 +644,10 @@ async def stream_analyst(
                         # passes the chunks' response_metadata through as
                         # this event's `metadata`.
                         metadata = payload.get("metadata")
-                        if (
-                            isinstance(metadata, dict)
-                            and metadata.get("finish_reason") == "length"
-                        ):
-                            truncated = True
+                        if isinstance(metadata, dict):
+                            reason = metadata.get("finish_reason")
+                            if reason is not None:
+                                truncated = reason == "length"
         finally:
             with anyio.CancelScope(shield=True):
                 if pull is not None and not pull.done():

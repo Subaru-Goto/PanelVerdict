@@ -9,7 +9,7 @@ from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from openai import APIStatusError
+from openai import APIStatusError, LengthFinishReasonError
 from pydantic import ValidationError
 
 from app.config import LANGCHAIN_INTEGRATION
@@ -74,15 +74,17 @@ TARGET_MAX_COMPLETION_TOKENS = 4096
 # next power of two above 3× the largest legitimate vote observed — 296 output tokens,
 # measured on gpt-5-mini at default effort (docs/research/panel-model-selection.md,
 # 2026-07-28), which is the *verbose* bound: the shipped Luna emits ~6.5 reasoning
-# tokens/vote against mini's ~160 (docs/research/manipulation-check-luna.md). 3×296 =
-# 888 → 1024.
+# tokens/vote against mini's ~160 (docs/research/manipulation-check-luna.md,
+# 2026-08-23). 3×296 = 888 → 1024.
 #
 # A runaway guard, not a price guarantee. USD_PER_VOTE is a measured mean the pool
 # charges, and one capped vote can still bill ~6× it (1024 × $1.20/M ≈ $0.0012); what
 # the cap removes is the translator-scale runaway, whose 65,536 tokens would have
-# billed ~$0.079 — ~395× the charge — for one vote. A vote that hits the cap returns
-# JSON cut mid-sentence, fails to parse, and lands in the run's existing shortfall
-# accounting ("N of M panelists voted") as a failed vote.
+# billed ~$0.079 — ~395× the charge — for one vote. A vote that hits the cap
+# surfaces as the SDK's LengthFinishReasonError — raised before langchain's
+# parsing ever runs — which `vote` renames to the parse path's fixed sentence, so
+# the cut lands in the run's existing shortfall accounting ("N of M panelists
+# voted") as a failed vote.
 VOTE_MAX_COMPLETION_TOKENS = 1024
 
 # Same derivation, the analyst's own measurement (090/#195): the worst measured turn
@@ -480,6 +482,17 @@ class OpenRouterPanelLLM:
         started = perf_counter()
         try:
             result = self._model.invoke(messages)
+        except LengthFinishReasonError as error:
+            # A completion cut at VOTE_MAX_COMPLETION_TOKENS never reaches
+            # langchain's `parsing_error`: the SDK raises before parsing
+            # (openai/lib/_parsing/_completions.py, verified by execution),
+            # and its message drags a CompletionUsage repr along — while a
+            # VoteFailure records the message. Renamed to the fixed sentence
+            # the parse path already promised, type only, so a cut vote lands
+            # in the shortfall accounting like any other failed vote.
+            raise RuntimeError(
+                "panel model returned no structured vote: LengthFinishReasonError"
+            ) from error
         except APIStatusError as error:
             # The SDK retries 429/5xx itself; a 402 arrives here directly and is
             # terminal for the whole run, not just this vote. Fixed text only —
