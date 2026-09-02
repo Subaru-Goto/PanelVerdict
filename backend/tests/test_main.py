@@ -3908,3 +3908,31 @@ class TestIdenticalHeadlines:
             )
         # Neither headline is an edit that leaves the pair alone, not a pair.
         ResumeRequest(thread_id="t", action="adjust")
+
+
+def test_a_generator_that_cannot_produce_a_draft_is_a_502_with_a_fixed_sentence(
+    client, conn
+) -> None:
+    """081/#169. Retries exhausted is a typed fault the reader can act on,
+    not a 500 with a traceback."""
+    from app.roleplay import GeneratorFault
+
+    class BrokenGenerator:
+        def draft(self, *, words: str):
+            raise GeneratorFault("draft")
+
+        def check(self, *, instruction: str):
+            raise GeneratorFault("check")
+
+    app.dependency_overrides[get_generator] = lambda: BrokenGenerator()
+    seed_japanese(conn, 5)
+
+    # The gate path: an audience is drafted into an instruction before the pause.
+    response = client.post(
+        "/evaluate",
+        json={**_REQUEST_BODY, "audience": "sporty parents", "reading_accepted": False},
+    )
+
+    assert response.status_code == 502
+    assert "try again" in response.json()["detail"]
+    assert "sporty" not in response.text

@@ -264,6 +264,24 @@ class RolePlayRefused(Exception):
         return REFUSAL_SENTENCES[self.refusal]
 
 
+class GeneratorFault(RuntimeError):
+    """The generator answered twice and neither answer was a structured draft
+    or verdict (081/#169).
+
+    Carries the seam's name and nothing else: what came back was written from
+    text a customer typed, and this module's rule is that such text does not
+    travel onward. The reader gets one fixed sentence naming the remedy.
+    """
+
+    def __init__(self, seam: str) -> None:
+        super().__init__(f"generator returned no structured {seam} in two attempts")
+
+    sentence = (
+        "The audience could not be turned into a panel instruction this time — "
+        "try again, or run with the demographic controls alone."
+    )
+
+
 class BlankInstruction(Exception):
     """A check was asked about text that says nothing.
 

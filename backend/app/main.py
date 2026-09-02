@@ -67,7 +67,7 @@ from app.persistence import (
     store_report,
 )
 from app.pipeline import EmptyPanel, NoVotes
-from app.roleplay import RolePlayGenerator, RolePlayRefused
+from app.roleplay import GeneratorFault, RolePlayGenerator, RolePlayRefused
 from app.schemas import (
     ChatRequest,
     EvaluateRequest,
@@ -1260,6 +1260,9 @@ async def _run_graph(graph, payload, thread_id: str):
         # separate and looser allowance. (The skip path never reaches here: its
         # instruction was judged at the API boundary, above the purchase.)
         raise HTTPException(status_code=422, detail=error.sentence) from error
+    except GeneratorFault as error:
+        # Ours, not the reader's: the model missed our schema twice (081/#169).
+        raise HTTPException(status_code=502, detail=error.sentence) from error
     except NoVotes as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except OutOfCredit as error:
@@ -1529,7 +1532,10 @@ async def _checked_or_refused(
         _check_purchase(caller),
         spend=_Spend(_EVALUATE, _usd(USD_PER_ROLEPLAY)),
     )
-    checked = await asyncio.to_thread(generator.check, instruction=sentence)
+    try:
+        checked = await asyncio.to_thread(generator.check, instruction=sentence)
+    except GeneratorFault as error:
+        raise HTTPException(status_code=502, detail=error.sentence) from error
     if checked.refusal is not None:
         raise HTTPException(status_code=422, detail=checked.refusal_sentence)
     return checked.instruction

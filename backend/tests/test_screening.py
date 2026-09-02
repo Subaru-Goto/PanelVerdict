@@ -312,3 +312,53 @@ def test_a_verdict_cut_at_the_completion_cap_classifies_off(monkeypatch) -> None
     )
 
     assert probe_screener(screener) == "off"
+
+
+def test_a_verdict_that_misses_the_schema_is_off_not_an_outage(
+    monkeypatch, caplog
+) -> None:
+    """081/#169. A model that answers with something other than a verdict is
+    the schema-dishonoured case, like a completion cut at the cap: it will do
+    so on every call, so it classifies "off" and logs at ERROR — never as a
+    healing outage, and never as a clean pass."""
+    from app.screening import OpenRouterScreener
+
+    def malformed(self, request, **kwargs):
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "x",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "m",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"flagged": "maybe", "reason": 3}',
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                    "total_tokens": 2,
+                },
+            },
+        )
+
+    monkeypatch.setattr(httpx.Client, "send", malformed)
+    screener = OpenRouterScreener(
+        api_key="k", base_url="http://localhost:9/api/v1", model="m"
+    )
+
+    with pytest.raises(UnusableAnswer):
+        screener.screen("Save 50%")
+    with caplog.at_level(logging.WARNING, logger="app.screening"):
+        screen_inputs(screener, ["Save 50%"])
+
+    (record,) = [r for r in caplog.records if "did not run" in r.message]
+    assert record.levelno == logging.ERROR

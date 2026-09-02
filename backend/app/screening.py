@@ -30,6 +30,7 @@ from typing import Literal, Protocol
 
 from langchain.chat_models import init_chat_model
 from openai import APIStatusError, LengthFinishReasonError
+from pydantic import ValidationError
 from pydantic import BaseModel
 
 from app.config import LANGCHAIN_INTEGRATION
@@ -159,6 +160,14 @@ class OpenRouterScreener:
             # answers every call unusably. This is the schema-dishonoured
             # case wearing the SDK's coat, so it narrows the same way.
             raise UnusableAnswer("screener talked past its completion cap") from error
+        except ValidationError as error:
+            # The schema-dishonoured case itself: the SDK validated the answer
+            # and it was not a verdict (081/#169). Type only — the error's text
+            # quotes the model's output. No retry here, unlike the generator:
+            # this check is advisory and one attempt is its stated budget.
+            raise UnusableAnswer(
+                "screener returned no verdict: ValidationError"
+            ) from error
         if not isinstance(result, ScreeningVerdict):
             # `raise`, not `assert`: asserts are stripped under `python -O`, and
             # a screener whose narrowing silently vanished would fail open. The

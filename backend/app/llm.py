@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from app.config import LANGCHAIN_INTEGRATION
 from app.roleplay import (
+    GeneratorFault,
     RolePlayOutcome,
     RolePlayVerdict,
     build_check_messages,
@@ -334,6 +335,15 @@ def _vote_usage(raw: AIMessage, seconds: float) -> VoteUsage | None:
 def _vote_response(result: dict[str, object], *, seconds: float) -> VoteResponse:
     """Turn `include_raw`'s three-key dict into a vote, or raise.
 
+    Decided, not defaulted (081/#169): a vote that misses its schema is *not*
+    retried, informed or blind. A discarded vote is counted in the run's
+    shortfall and printed on the report (090/#195); the schema is two fields,
+    so a miss says more about the model than the prompt; and a retry that
+    appends feedback would send a second request under a new ledger key — the
+    first-attempt request must stay byte-identical (010e) — for one vote in a
+    panel of many. The generator, whose one answer every panelist acts, is
+    where an informed retry pays (`OpenRouterRolePlayGenerator._structured`).
+
     `include_raw` stops a parse failure raising on its own — it arrives as
     `parsing_error` beside a null `parsed`. A caller that read only `parsed` would file
     the empty result as a real vote, so the raise `vote` already promised is restored
@@ -638,20 +648,51 @@ class OpenRouterRolePlayGenerator:
         # has no text field, which is what stops a check from becoming a rewrite.
         self._checker = client.with_structured_output(RolePlayVerdict)
 
+    def _structured(self, bound, messages: list[BaseMessage], *, seam: str):
+        """Invoke, and on a schema miss tell the model what was wrong, once.
+
+        The SDK validates the answer before langchain sees it, so a miss
+        arrives as a pydantic error, not a value (verified by execution). The
+        retry is the same conversation plus one turn listing field and message
+        — never the value the model sent, which was written from customer
+        text. One retry (081/#169): the likely miss is the instruction-XOR-
+        refusal shape an unsure model produces, which one correction fixes;
+        and two calls at the measured maximum ($0.000184, roleplay-cost.md)
+        stay well under the $0.0012 the pool is already charged per call, so
+        the retry is paid for. The first request is untouched: the retry only
+        appends.
+        """
+        try:
+            return bound.invoke(messages)
+        except ValidationError as error:
+            feedback = "\n".join(
+                f"- {'.'.join(str(part) for part in item['loc']) or 'answer'}: "
+                f"{item['msg']}"
+                for item in error.errors()
+            )
+            retry = [
+                *messages,
+                HumanMessage(
+                    "Your previous answer did not fit the required shape:\n"
+                    f"{feedback}\nAnswer again, in the same shape."
+                ),
+            ]
+            try:
+                return bound.invoke(retry)
+            except ValidationError as again:
+                raise GeneratorFault(seam) from again
+
     def draft(self, *, words: str) -> RolePlayOutcome:
         # `RolePlayOutcome` carries a cross-field invariant — instruction XOR
         # refusal — which the model can break, and the break happens inside
         # `invoke` as a pydantic error rather than arriving as a value to check.
         # `{"instruction": "", "refusal": null}` is the shape an unsure model
         # produces, so this is the likely failure here, not the exotic one.
-        # Reported as a generator fault either way: it is our schema the model
-        # missed, never something the reader did.
-        try:
-            result = self._model.invoke(
-                build_roleplay_messages(words, nonce=self._nonce)
-            )
-        except ValidationError as error:
-            raise RuntimeError("generator returned a malformed draft") from error
+        # It is our schema the model missed, never something the reader did,
+        # so the model is told and asked once more (`_structured`).
+        result = self._structured(
+            self._model, build_roleplay_messages(words, nonce=self._nonce), seam="draft"
+        )
         if not isinstance(result, RolePlayOutcome):
             # The type, never the value. What came back is written from what a
             # customer typed, and this module's own rule is that such text does
@@ -675,8 +716,10 @@ class OpenRouterRolePlayGenerator:
         The returned instruction is the caller's own string. The model's only
         output is a class.
         """
-        result = self._checker.invoke(
-            build_check_messages(instruction, nonce=self._nonce)
+        result = self._structured(
+            self._checker,
+            build_check_messages(instruction, nonce=self._nonce),
+            seam="verdict",
         )
         if not isinstance(result, RolePlayVerdict):
             # The type, never the value, for `draft`'s reason: what came back was
