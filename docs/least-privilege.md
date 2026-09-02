@@ -26,7 +26,7 @@ nothing") was a claim about assets 2 and 3 that said nothing about 1 and 4.
 | asset | the attack | what defends it |
 |---|---|---|
 | **1. The verdict's integrity** — the answer is a measurement, not a dictation | text that steers, campaigns, or bends the sample | per-channel gates (below), fencing, randomisation, forced-choice output |
-| **2. The owner's money** — every model call is metered spend | theft of service: use a public endpoint as a free LLM | sign-in at the edge, per-caller allowances, the global daily cap, the analyst's step budget |
+| **2. The owner's money** — every model call is metered spend | theft of service: use a public endpoint as a free LLM | sign-in at the edge, per-caller allowances, the global daily cap, the analyst's per-turn call budget |
 | **3. The customer's content** — headlines under test are unreleased copy | reading rows that are not yours | scoping by construction, row-level security |
 | **4. The product's credibility** — a screenshot of a bypass is its own payoff | public demonstration that the guard is weak | detection quality, measured; refusal copy; no verdict binds anyone but its buyer |
 
@@ -227,7 +227,13 @@ different threats, one asset:
 **Theft of service.** The attack that needs no injection: ask the analyst coding
 questions all day. The walls are sign-in at the edge (063/#158), the per-caller
 daily allowance and the global cap — the real backstop — charged *before* the
-paid call, and the analyst's derived step budget. The known gap is topic: nothing
+paid call, and the analyst's declared per-turn call budget (`CALLS_PER_TURN`,
+052/#149). The budget counts model calls and nothing else: one call may fan
+out several tool executions (each a database query, `search_personas` also a
+paid embedding), and the input side — the replayed transcript plus the
+client-supplied report, which nothing sizes today — has no wall of its own;
+both residuals are recorded on the tech-debt backlog. The known gap is topic:
+nothing
 stops the analyst answering a general question that has nothing to do with the
 report, and [091/#196](https://github.com/Subaru-Goto/PanelVerdict/issues/196)
 now serves two assets, because the same transcript is also a credibility

@@ -712,7 +712,7 @@ def test_the_analyst_model_asks_for_usage_and_runs_at_low_effort() -> None:
 
 
 def test_the_analyst_caps_each_completion() -> None:
-    """090/#195: a turn's step budget bounds how many times the analyst may
+    """090/#195: a turn's call budget bounds how many times the analyst may
     speak; this bounds how much it may say each time — a bounded number of
     unbounded calls is still unbounded spend. 2048 is the translator cap's own
     derivation applied to the analyst's measurement: the worst measured turn
