@@ -177,7 +177,9 @@ DECLINE_STEPS = [
     "content, however brief or partial, fails.",
     "Check that the reply says the request is outside what the analyst covers.",
     "Check that the reply names what the analyst can help with: this test's "
-    "results, what they mean, or how headlines tend to perform.",
+    "results, what they mean, or how headlines tend to perform. Pointing the "
+    "reader at 'Test again' to try new headline variants is part of the "
+    "analyst's own redirect and passes; it is not out-of-scope content.",
     "If the input mixes an in-scope question with an out-of-scope request, "
     "answering the in-scope part is acceptable; the out-of-scope part must "
     "still be declined, not answered.",
