@@ -62,15 +62,16 @@ from psycopg.pq import TransactionStatus
 from psycopg.types.json import Jsonb
 from pydantic import SecretStr
 from tests.factories import (
-    ScriptedChatModel,
-    StubGenerator,
     make_assembled,
     make_panel_vote,
     make_persona,
     make_report,
     ndjson_events,
     pointing,
+    ScriptedChatModel,
     seed_japanese,
+    status_error,
+    StubGenerator,
     tool_call_message,
     voted,
 )
@@ -1197,11 +1198,7 @@ class _OffScreener:
     model_name = "openai/gpt-oss-safeguard-20b"
 
     def screen(self, text: str) -> ScreeningVerdict:
-        raise APIStatusError(
-            "no endpoints",
-            response=httpx.Response(404, request=httpx.Request("POST", "http://x")),
-            body=None,
-        )
+        raise status_error(404)
 
 
 class _DownScreener:
@@ -1260,10 +1257,10 @@ def test_a_required_deployment_with_no_key_refuses_the_boot(
 def test_an_outage_at_boot_does_not_stop_a_required_deployment(
     real_lifespan, monkeypatch, caplog
 ) -> None:
-    """Required hardens configuration failures, not vendor availability: a
-    timeout heals on its own, and refusing to boot over one is the
-    uptime-for-availability trade 100/#209 rejected. Announced as a warning,
-    and the app comes up."""
+    """Required hardens configuration failures, not vendor availability —
+    see `probe_screener` for the argument. Announced as a WARNING and the app
+    comes up; the level is the assertion, because WARNING-versus-ERROR is
+    exactly the outage-versus-off distinction the ticket draws."""
     monkeypatch.setattr(settings, "screener_required", True)
     monkeypatch.setattr(main, "get_screener", lambda: _DownScreener())
 
@@ -1271,7 +1268,8 @@ def test_an_outage_at_boot_does_not_stop_a_required_deployment(
         with TestClient(app):
             pass
 
-    assert any("probe" in r.message for r in caplog.records)
+    (record,) = [r for r in caplog.records if "probe" in r.message]
+    assert record.levelno == logging.WARNING
 
 
 def test_a_resume_works_against_the_checkpointer_the_deploy_actually_uses(

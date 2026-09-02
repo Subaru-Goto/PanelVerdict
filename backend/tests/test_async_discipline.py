@@ -45,6 +45,7 @@ BLOCKING = {
     "deleter.delete",  # AccountDeleter — synchronous httpx
     "check_connection",  # app.db — psycopg.connect with a 3s timeout
     "screen_inputs",  # app.screening, wraps Screener
+    "probe_screener",  # app.screening, wraps Screener — the boot probe
     "deny_data_api",  # DDL on a sync connection; the lifespan uses the async twin
     "collect_panel_votes",  # the ThreadPoolExecutor over model calls
     "psycopg.connect",  # a sync connection, TLS handshake and all

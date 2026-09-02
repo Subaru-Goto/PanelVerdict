@@ -218,13 +218,11 @@ class Settings(BaseSettings):
     screening_model: str = "openai/gpt-5.6-luna"
 
     # 072/#163: the environment split, explicit rather than an accident of
-    # which code path runs. A laptop fails open — a missing key already means
-    # "advisory checks do not run" — but the public deployment's screener is
-    # the only control on the sole untrusted-input path, so there a screening
-    # model this account cannot reach (the startup probe's "off") refuses the
-    # boot instead of announcing and serving without the control. Outages
-    # never refuse, required or not: they heal on their own, and 100/#209
-    # rejected trading uptime against vendor availability.
+    # which code path runs. False = a dead screening model is announced and
+    # the app serves without it (a laptop); True = the boot refuses when the
+    # startup probe says the control is off (the public deployment). The
+    # policy and its reasons live on `main._enforce_screener_policy` and
+    # `screening.probe_screener`.
     screener_required: bool = False
 
     # Declared here, not left to the SDK, because `/health` and the form's
