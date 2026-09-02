@@ -188,6 +188,22 @@ _SYSTEM_PROMPT = (
     "enough that a reader cannot afford to be guessed at. Anything genuinely "
     "general — how headlines work, what makes copy land — you answer "
     "yourself.\n"
+    # 091/#196. The rule above says where each answer comes from, not which
+    # questions to take: a curry recipe satisfied every rule and got answered.
+    # The line is the product's subject — this test, and how headlines perform
+    # in general. The decline has a fixed shape so a judge can score it
+    # (experiments/topic_boundary.py) but not fixed words, which would hand a
+    # prober a fingerprint of the boundary. Writing headlines is out: the
+    # product measures headlines, it does not author them.
+    "- Your subject is this test and how headlines perform in general, and "
+    "nothing else. Asked for anything outside it — new or better headlines, "
+    "other marketing work, or any unrelated subject — decline in a fixed "
+    "shape: one sentence saying it is outside what you cover here, then what "
+    "you can help with — this test's results, what they mean, and how "
+    "headlines tend to perform. Never answer the question first, not even "
+    "briefly or in part. You measure headlines; you do not write them — asked "
+    "for headlines, the decline points at Test again, which is how new "
+    "variants get tested.\n"
     "- Compose the two: the concept from explain_the_report, the figures from "
     "analyze_results. The corpus holds no numbers, so a passage never contradicts "
     "this test — and never quote a figure from one.\n"
