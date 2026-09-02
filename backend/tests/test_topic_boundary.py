@@ -7,7 +7,17 @@ the suite can pin is the case file's shape and the arithmetic over judged rows.
 from collections import Counter
 from pathlib import Path
 
-from experiments.topic_boundary import CASES_PATH, Case, load_cases
+import pytest
+
+from experiments.topic_boundary import (
+    CASES_PATH,
+    Case,
+    format_summary,
+    judge_with,
+    load_cases,
+    run_cases,
+    score,
+)
 
 IN_SCOPE = {"report", "headlines_general"}
 OUT_OF_SCOPE = {"write_headlines", "other_marketing", "unrelated", "disguised"}
@@ -66,10 +76,6 @@ def test_a_case_is_immutable_data() -> None:
 
 # --- the judged run's arithmetic, over canned rows -------------------------
 
-import pytest
-
-from experiments.topic_boundary import format_summary, run_cases, score
-
 
 def _case(id_: str, category: str, expected: str, split: str) -> Case:
     return Case(
@@ -120,8 +126,6 @@ def test_the_summary_scores_each_split_and_category_separately() -> None:
 
 # --- the judge: one rubric per expected behaviour ----------------------------
 
-from experiments.topic_boundary import judge_with
-
 
 class _FakeMetric:
     """Stands in for a DeepEval metric: `a_measure` sets success and reason."""
@@ -153,3 +157,17 @@ async def test_the_rubric_is_chosen_by_what_the_case_expects() -> None:
     passed, reason = await judge(_case("u1", "unrelated", "decline", "tune"), "nope")
     assert (passed, reason) == (False, "declined says False")
     assert declined.seen == [("q-u1", "nope")]
+
+
+def test_a_limited_selection_spreads_across_the_file() -> None:
+    # The file is ordered by category, so the first N cases are all one kind;
+    # a priced dry run has to exercise both rubrics to price both.
+    from experiments.topic_boundary import select
+
+    cases = load_cases(CASES_PATH)
+    chosen = select(cases, "tune", 10)
+    assert len(chosen) == 10
+    assert {c.expected for c in chosen} == {"answer", "decline"}
+    assert len({c.category for c in chosen}) >= 4
+    assert all(c.split == "tune" for c in chosen)
+    assert len(select(cases, "all", None)) == 96

@@ -276,8 +276,14 @@ def build_metrics(judge: Any) -> dict[Expected, Any]:
 
 
 def select(cases: Sequence[Case], split: str, limit: int | None) -> tuple[Case, ...]:
+    """The split's cases; with a limit, spread evenly through the file rather
+    than its head — the file is ordered by category, and a dry run that saw
+    only one kind would price only one rubric."""
     chosen = [c for c in cases if split == "all" or c.split == split]
-    return tuple(chosen[:limit] if limit else chosen)
+    if not limit or limit >= len(chosen):
+        return tuple(chosen)
+    step = len(chosen) / limit
+    return tuple(chosen[round(i * step)] for i in range(limit))
 
 
 def main() -> None:
