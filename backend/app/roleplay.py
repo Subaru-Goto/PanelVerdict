@@ -111,7 +111,13 @@ class RolePlayOutcome(BaseModel):
     @model_validator(mode="after")
     def _exactly_one(self) -> Self:
         if bool(self.instruction.strip()) == (self.refusal is not None):
-            raise ValueError("a draft carries an instruction or a refusal, never both")
+            # Names which way it went: this text is what the generator is told
+            # when it is asked again (081/#169), and "neither" is the likely miss.
+            which = "both" if self.instruction.strip() else "neither"
+            raise ValueError(
+                "a draft carries exactly one of an instruction or a refusal; "
+                f"this one carries {which}"
+            )
         return self
 
     @property
@@ -262,6 +268,28 @@ class RolePlayRefused(Exception):
     @property
     def sentence(self) -> str:
         return REFUSAL_SENTENCES[self.refusal]
+
+
+class GeneratorFault(RuntimeError):
+    """The generator answered twice and neither answer was a structured draft
+    or verdict (081/#169).
+
+    Carries the seam's name and nothing else: what came back was written from
+    text a customer typed, and this module's rule is that such text does not
+    travel onward. The reader gets one fixed sentence naming the remedy.
+    """
+
+    _SENTENCES = {
+        "draft": (
+            "The audience could not be turned into a panel instruction this "
+            "time — try again, or run with the demographic controls alone."
+        ),
+        "verdict": "The instruction could not be checked this time — try again.",
+    }
+
+    def __init__(self, seam: Literal["draft", "verdict"]) -> None:
+        super().__init__(f"generator returned no structured {seam} in two attempts")
+        self.sentence = self._SENTENCES[seam]
 
 
 class BlankInstruction(Exception):

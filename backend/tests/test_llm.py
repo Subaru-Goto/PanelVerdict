@@ -28,7 +28,8 @@ from app.llm import (
     analyst_chat_model,
     build_vote_messages,
 )
-from app.roleplay import ForgeableFence, render_enacted
+from tests.factories import chat_completion
+from app.roleplay import ForgeableFence, GeneratorFault, render_enacted
 from app.schemas import PanelVoteOutput
 from app.vote import OutOfCredit
 
@@ -722,3 +723,123 @@ def test_the_analyst_caps_each_completion() -> None:
     model = analyst_chat_model(api_key="k", base_url="http://x/api/v1", model="m")
 
     assert model.max_tokens == ANALYST_MAX_COMPLETION_TOKENS == 2048
+
+
+def _answers(*contents: str):
+    """A canned server answering each call with the next content, recording
+    what was sent — the whole real client stack, no network."""
+    sent: list[dict] = []
+    queue = list(contents)
+
+    def send(self, request, **kwargs):
+        sent.append(json.loads(request.content))
+        return chat_completion(request, queue.pop(0))
+
+    return send, sent
+
+
+_VALID_DRAFT = (
+    '{"instruction": "You are a parent who shops for the family.", "refusal": null}'
+)
+_XOR_MISS = '{"instruction": "", "refusal": null}'
+
+
+class TestGeneratorInformedRetry:
+    """081/#169. A structured output the model got wrong is told what was wrong
+    and asked once more; the second miss is a typed fault, never a blind loop."""
+
+    def _generator(self):
+        return OpenRouterRolePlayGenerator(
+            api_key="k", base_url="http://localhost:9/api/v1", model="m"
+        )
+
+    def test_a_malformed_draft_is_retried_with_the_errors_named(
+        self, monkeypatch
+    ) -> None:
+        send, sent = _answers(
+            '{"instruction": "", "refusal": "totally-made-up"}', _VALID_DRAFT
+        )
+        monkeypatch.setattr(httpx.Client, "send", send)
+
+        outcome = self._generator().draft(words="sporty parents")
+
+        assert outcome.instruction.startswith("You are a parent")
+        assert len(sent) == 2
+        first, second = (s["messages"] for s in sent)
+        # The retry is the same conversation plus one turn naming the errors.
+        assert second[: len(first)] == first
+        (feedback,) = second[len(first) :]
+        assert feedback["role"] == "user"
+        assert "refusal" in feedback["content"]
+        # Field and message, never the value the model sent.
+        assert "totally-made-up" not in feedback["content"]
+
+    def test_the_likely_miss_is_named_for_what_it_is(self, monkeypatch) -> None:
+        """`{"instruction": "", "refusal": null}` — neither — is the shape an
+        unsure model produces; the feedback must say so, not "never both"."""
+        send, sent = _answers(_XOR_MISS, _VALID_DRAFT)
+        monkeypatch.setattr(httpx.Client, "send", send)
+
+        self._generator().draft(words="sporty parents")
+
+        feedback = sent[1]["messages"][-1]["content"]
+        assert "exactly one" in feedback
+        assert "neither" in feedback
+
+    def test_a_second_miss_is_a_typed_fault_after_exactly_two_calls(
+        self, monkeypatch
+    ) -> None:
+        send, sent = _answers(_XOR_MISS, _XOR_MISS, _VALID_DRAFT)
+        monkeypatch.setattr(httpx.Client, "send", send)
+
+        with pytest.raises(GeneratorFault) as caught:
+            self._generator().draft(words="sporty parents")
+
+        assert len(sent) == 2
+        # Type only: nothing the model wrote, nothing the customer typed.
+        assert "sporty" not in str(caught.value)
+        assert "instruction" not in str(caught.value)
+
+    def test_the_first_attempt_is_byte_identical_whether_or_not_a_retry_follows(
+        self, monkeypatch
+    ) -> None:
+        """The retry appends; it never touches the first request."""
+        clean_send, clean = _answers(_VALID_DRAFT)
+        monkeypatch.setattr(httpx.Client, "send", clean_send)
+        generator = self._generator()
+        generator.draft(words="sporty parents")
+        retry_send, retried = _answers(_XOR_MISS, _VALID_DRAFT)
+        monkeypatch.setattr(httpx.Client, "send", retry_send)
+        generator.draft(words="sporty parents")
+
+        assert retried[0] == clean[0]
+
+    def test_the_checker_is_retried_the_same_way(self, monkeypatch) -> None:
+        send, sent = _answers('{"refusal": "nonsense-class"}', '{"refusal": null}')
+        monkeypatch.setattr(httpx.Client, "send", send)
+
+        outcome = self._generator().check(instruction="You are a parent.")
+
+        assert outcome.instruction == "You are a parent."
+        assert len(sent) == 2
+        first, second = (s["messages"] for s in sent)
+        assert second[: len(first)] == first
+        assert "nonsense-class" not in second[-1]["content"]
+
+    def test_a_draft_cut_at_the_cap_is_the_fault_at_once(self, monkeypatch) -> None:
+        """The SDK raises before parsing, so this never reaches the retry —
+        and a retry could not help, the cap does not move. One call, typed."""
+        sent: list[dict] = []
+
+        def cut(self, request, **kwargs):
+            sent.append(json.loads(request.content))
+            return chat_completion(
+                request, '{"instruction": "You are a pa', finish_reason="length"
+            )
+
+        monkeypatch.setattr(httpx.Client, "send", cut)
+
+        with pytest.raises(GeneratorFault):
+            self._generator().draft(words="sporty parents")
+
+        assert len(sent) == 1

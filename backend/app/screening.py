@@ -30,7 +30,7 @@ from typing import Literal, Protocol
 
 from langchain.chat_models import init_chat_model
 from openai import APIStatusError, LengthFinishReasonError
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.config import LANGCHAIN_INTEGRATION
 from app.llm import TARGET_MAX_COMPLETION_TOKENS
@@ -159,6 +159,16 @@ class OpenRouterScreener:
             # answers every call unusably. This is the schema-dishonoured
             # case wearing the SDK's coat, so it narrows the same way.
             raise UnusableAnswer("screener talked past its completion cap") from error
+        except ValidationError as error:
+            # The SDK validated the answer and it was not a verdict (081/#169).
+            # Its own class, and not `UnusableAnswer`: one miss on a two-field
+            # schema is a sample, not proof the model is off, so per request
+            # it lands on the outage arm — fail-open, WARNING, never a clean
+            # pass. The boot probe is where a repeat turns it into "off". Type
+            # only — the error's text quotes the model's output.
+            raise MalformedVerdict(
+                "screener returned no verdict: ValidationError"
+            ) from error
         if not isinstance(result, ScreeningVerdict):
             # `raise`, not `assert`: asserts are stripped under `python -O`, and
             # a screener whose narrowing silently vanished would fail open. The
@@ -173,6 +183,12 @@ class OpenRouterScreener:
 _PROBE_TEXT = "Save 50% today"
 
 ProbeOutcome = Literal["runs", "off", "outage"]
+
+
+class MalformedVerdict(RuntimeError):
+    """The model answered, reachably, with something the schema refused
+    (081/#169). Classified as an outage per request; "off" only when the
+    boot probe sees it twice on the same fixed text."""
 
 
 class UnusableAnswer(RuntimeError):
@@ -216,6 +232,18 @@ def probe_screener(screener: Screener) -> ProbeOutcome:
     """
     try:
         screener.screen(_PROBE_TEXT)
+    except MalformedVerdict:
+        # The probe's one exception to `_classify`'s line (081/#169): a
+        # malformed verdict is a sample, so one is not evidence — a boot
+        # refused on a flaky answer would hang availability on one draw. The
+        # same fixed text is asked once more; a second miss is the schema
+        # dishonoured, which is "off". One retry, the generator's bound.
+        try:
+            screener.screen(_PROBE_TEXT)
+        except MalformedVerdict:
+            return "off"
+        except Exception as error:
+            return _classify(error)
     except Exception as error:
         return _classify(error)
     return "runs"

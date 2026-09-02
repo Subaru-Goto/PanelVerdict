@@ -1,10 +1,13 @@
 import logging
 
 import httpx
+
+from tests.factories import chat_completion
 import pytest
 from openai import APIStatusError
 
 from app.screening import (
+    MalformedVerdict,
     OpenRouterScreener,
     ScreeningVerdict,
     UnsafeInput,
@@ -312,3 +315,57 @@ def test_a_verdict_cut_at_the_completion_cap_classifies_off(monkeypatch) -> None
     )
 
     assert probe_screener(screener) == "off"
+
+
+def test_a_malformed_verdict_is_an_outage_per_request_and_never_a_clean_pass(
+    monkeypatch, caplog
+) -> None:
+    """081/#169. The SDK refused the answer against the schema. One such
+    answer is a sample, not proof the model is off, so the request continues
+    unscreened on the documented fail-open arm with its WARNING — and the
+    type only, since the error's own text quotes the model's output."""
+
+    def malformed(self, request, **kwargs):
+        return chat_completion(request, '{"flagged": "maybe", "reason": 3}')
+
+    monkeypatch.setattr(httpx.Client, "send", malformed)
+    screener = OpenRouterScreener(
+        api_key="k", base_url="http://localhost:9/api/v1", model="m"
+    )
+
+    with pytest.raises(MalformedVerdict):
+        screener.screen("Save 50%")
+    with caplog.at_level(logging.WARNING, logger="app.screening"):
+        screen_inputs(screener, ["Save 50%"])
+
+    (record,) = [r for r in caplog.records if "did not run" in r.message]
+    assert record.levelno == logging.WARNING
+    assert "MalformedVerdict" in record.getMessage()
+    assert "maybe" not in record.getMessage()
+
+
+def test_the_boot_probe_asks_once_more_before_calling_a_malformed_verdict_off(
+    monkeypatch,
+) -> None:
+    """One miss on the fixed probe text is a draw; two is the schema
+    dishonoured, which is what 072 means by "off". A second, valid answer
+    means the screener runs."""
+    answers: list[str] = []
+
+    def send(self, request, **kwargs):
+        return chat_completion(request, answers.pop(0))
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    screener = OpenRouterScreener(
+        api_key="k", base_url="http://localhost:9/api/v1", model="m"
+    )
+
+    answers[:] = ['{"flagged": "maybe"}', '{"flagged": false, "reason": "plain copy"}']
+    assert probe_screener(screener) == "runs"
+    answers[:] = [
+        '{"flagged": "maybe"}',
+        '{"flagged": "maybe"}',
+        '{"flagged": false, "reason": "x"}',
+    ]
+    assert probe_screener(screener) == "off"
+    assert answers == ['{"flagged": false, "reason": "x"}']  # exactly two calls
