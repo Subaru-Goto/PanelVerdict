@@ -28,7 +28,8 @@ from app.llm import (
     analyst_chat_model,
     build_vote_messages,
 )
-from app.roleplay import ForgeableFence, render_enacted
+from tests.factories import chat_completion
+from app.roleplay import ForgeableFence, GeneratorFault, render_enacted
 from app.schemas import PanelVoteOutput
 from app.vote import OutOfCredit
 
@@ -726,35 +727,13 @@ def test_the_analyst_caps_each_completion() -> None:
 
 def _answers(*contents: str):
     """A canned server answering each call with the next content, recording
-    what was sent — the whole real client stack, no network (the screener's
-    404 probe test is the precedent)."""
+    what was sent — the whole real client stack, no network."""
     sent: list[dict] = []
     queue = list(contents)
 
     def send(self, request, **kwargs):
         sent.append(json.loads(request.content))
-        return httpx.Response(
-            200,
-            request=request,
-            json={
-                "id": "x",
-                "object": "chat.completion",
-                "created": 0,
-                "model": "m",
-                "choices": [
-                    {
-                        "index": 0,
-                        "finish_reason": "stop",
-                        "message": {"role": "assistant", "content": queue.pop(0)},
-                    }
-                ],
-                "usage": {
-                    "prompt_tokens": 10,
-                    "completion_tokens": 5,
-                    "total_tokens": 15,
-                },
-            },
-        )
+        return chat_completion(request, queue.pop(0))
 
     return send, sent
 
@@ -795,11 +774,21 @@ class TestGeneratorInformedRetry:
         # Field and message, never the value the model sent.
         assert "totally-made-up" not in feedback["content"]
 
+    def test_the_likely_miss_is_named_for_what_it_is(self, monkeypatch) -> None:
+        """`{"instruction": "", "refusal": null}` — neither — is the shape an
+        unsure model produces; the feedback must say so, not "never both"."""
+        send, sent = _answers(_XOR_MISS, _VALID_DRAFT)
+        monkeypatch.setattr(httpx.Client, "send", send)
+
+        self._generator().draft(words="sporty parents")
+
+        feedback = sent[1]["messages"][-1]["content"]
+        assert "exactly one" in feedback
+        assert "neither" in feedback
+
     def test_a_second_miss_is_a_typed_fault_after_exactly_two_calls(
         self, monkeypatch
     ) -> None:
-        from app.roleplay import GeneratorFault
-
         send, sent = _answers(_XOR_MISS, _XOR_MISS, _VALID_DRAFT)
         monkeypatch.setattr(httpx.Client, "send", send)
 
@@ -814,9 +803,7 @@ class TestGeneratorInformedRetry:
     def test_the_first_attempt_is_byte_identical_whether_or_not_a_retry_follows(
         self, monkeypatch
     ) -> None:
-        """The retry appends; it never touches the first request. (The vote's
-        ledger key hashes the request strings — the same discipline, stated here
-        for the generator so a future shared helper cannot forget it.)"""
+        """The retry appends; it never touches the first request."""
         clean_send, clean = _answers(_VALID_DRAFT)
         monkeypatch.setattr(httpx.Client, "send", clean_send)
         generator = self._generator()
@@ -835,4 +822,24 @@ class TestGeneratorInformedRetry:
 
         assert outcome.instruction == "You are a parent."
         assert len(sent) == 2
-        assert "nonsense-class" not in sent[1]["messages"][-1]["content"]
+        first, second = (s["messages"] for s in sent)
+        assert second[: len(first)] == first
+        assert "nonsense-class" not in second[-1]["content"]
+
+    def test_a_draft_cut_at_the_cap_is_the_fault_at_once(self, monkeypatch) -> None:
+        """The SDK raises before parsing, so this never reaches the retry —
+        and a retry could not help, the cap does not move. One call, typed."""
+        sent: list[dict] = []
+
+        def cut(self, request, **kwargs):
+            sent.append(json.loads(request.content))
+            return chat_completion(
+                request, '{"instruction": "You are a pa', finish_reason="length"
+            )
+
+        monkeypatch.setattr(httpx.Client, "send", cut)
+
+        with pytest.raises(GeneratorFault):
+            self._generator().draft(words="sporty parents")
+
+        assert len(sent) == 1

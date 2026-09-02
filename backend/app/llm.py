@@ -8,6 +8,7 @@ import httpx
 from langchain.chat_models import init_chat_model
 from langchain.embeddings import init_embeddings
 from langchain_core.language_models import BaseChatModel
+from langchain_core.runnables import Runnable
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from openai import APIStatusError, LengthFinishReasonError
 from pydantic import ValidationError
@@ -335,14 +336,9 @@ def _vote_usage(raw: AIMessage, seconds: float) -> VoteUsage | None:
 def _vote_response(result: dict[str, object], *, seconds: float) -> VoteResponse:
     """Turn `include_raw`'s three-key dict into a vote, or raise.
 
-    Decided, not defaulted (081/#169): a vote that misses its schema is *not*
-    retried, informed or blind. A discarded vote is counted in the run's
-    shortfall and printed on the report (090/#195); the schema is two fields,
-    so a miss says more about the model than the prompt; and a retry that
-    appends feedback would send a second request under a new ledger key — the
-    first-attempt request must stay byte-identical (010e) — for one vote in a
-    panel of many. The generator, whose one answer every panelist acts, is
-    where an informed retry pays (`OpenRouterRolePlayGenerator._structured`).
+    A vote that misses its schema is not retried, informed or blind — decided
+    on 081/#169: it is already counted in the shortfall, and a feedback retry
+    would re-key the ledger for one vote in a panel of many.
 
     `include_raw` stops a parse failure raising on its own — it arrives as
     `parsing_error` beside a null `parsed`. A caller that read only `parsed` would file
@@ -648,23 +644,33 @@ class OpenRouterRolePlayGenerator:
         # has no text field, which is what stops a check from becoming a rewrite.
         self._checker = client.with_structured_output(RolePlayVerdict)
 
-    def _structured(self, bound, messages: list[BaseMessage], *, seam: str):
+    def _structured(
+        self,
+        bound: Runnable[list[BaseMessage], object],
+        messages: list[BaseMessage],
+        *,
+        seam: Literal["draft", "verdict"],
+    ) -> object:
         """Invoke, and on a schema miss tell the model what was wrong, once.
 
         The SDK validates the answer before langchain sees it, so a miss
-        arrives as a pydantic error, not a value (verified by execution). The
-        retry is the same conversation plus one turn listing field and message
-        — never the value the model sent, which was written from customer
-        text. One retry (081/#169): the likely miss is the instruction-XOR-
-        refusal shape an unsure model produces, which one correction fixes;
-        and two calls at the measured maximum ($0.000184, roleplay-cost.md)
-        stay well under the $0.0012 the pool is already charged per call, so
-        the retry is paid for. The first request is untouched: the retry only
-        appends.
+        arrives as a pydantic error, not a value. The retry is the same
+        conversation plus one turn listing field and message — never the value
+        the model sent, which was written from customer text. One retry
+        (081/#169): two calls at the measured maximum ($0.000184,
+        roleplay-cost.md) stay under the $0.0012 the pool is already charged
+        per call, so the retry is paid for. The first request is untouched;
+        the retry only appends.
         """
         try:
             return bound.invoke(messages)
+        except LengthFinishReasonError as error:
+            # Cut at the completion cap: the SDK raises before any parsing,
+            # and asking again will not move the cap. The fault at once.
+            raise GeneratorFault(seam) from error
         except ValidationError as error:
+            # `loc` is a field name of ours only because the schemas ignore
+            # extra keys; with `extra="forbid"` it would be the model's own key.
             feedback = "\n".join(
                 f"- {'.'.join(str(part) for part in item['loc']) or 'answer'}: "
                 f"{item['msg']}"

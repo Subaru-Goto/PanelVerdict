@@ -45,6 +45,7 @@ from app.main import (
     tracing_enabled,
 )
 from app.persistence import REPORT_SCHEMA_VERSION, nearest_panelists, persist_pool
+from app.roleplay import GeneratorFault
 from app.schemas import (
     EvaluateRequest,
     EvaluateResponse,
@@ -3915,14 +3916,13 @@ def test_a_generator_that_cannot_produce_a_draft_is_a_502_with_a_fixed_sentence(
 ) -> None:
     """081/#169. Retries exhausted is a typed fault the reader can act on,
     not a 500 with a traceback."""
-    from app.roleplay import GeneratorFault
 
     class BrokenGenerator:
         def draft(self, *, words: str):
             raise GeneratorFault("draft")
 
         def check(self, *, instruction: str):
-            raise GeneratorFault("check")
+            raise GeneratorFault("verdict")
 
     app.dependency_overrides[get_generator] = lambda: BrokenGenerator()
     seed_japanese(conn, 5)
@@ -3934,5 +3934,37 @@ def test_a_generator_that_cannot_produce_a_draft_is_a_502_with_a_fixed_sentence(
     )
 
     assert response.status_code == 502
-    assert "try again" in response.json()["detail"]
+    assert response.json()["detail"] == GeneratorFault("draft").sentence
     assert "sporty" not in response.text
+
+
+def test_a_checker_that_cannot_judge_an_edited_sentence_is_a_502_too(
+    client, conn
+) -> None:
+    """The gate's edit path calls the checker outside the graph; the same
+    typed fault must not fall through as a 500 with the model's output in
+    the traceback."""
+
+    class BrokenChecker:
+        def draft(self, *, words: str):
+            raise AssertionError("no audience, so no draft")
+
+        def check(self, *, instruction: str):
+            raise GeneratorFault("verdict")
+
+    app.dependency_overrides[get_generator] = lambda: BrokenChecker()
+    seed_japanese(conn, 5)
+    paused = client.post("/evaluate", json=_UNAPPROVED_BODY).json()
+
+    response = client.post(
+        "/evaluate/resume",
+        json={
+            "thread_id": paused["thread_id"],
+            "action": "accept",
+            "instruction": "You are a parent who shops for the family.",
+        },
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == GeneratorFault("verdict").sentence
+    assert "shops for the family" not in response.text

@@ -466,6 +466,31 @@ class StubGenerator:
         return checked_instruction(instruction, refusal=self.refusals.get(instruction))
 
 
+def chat_completion(
+    request: httpx.Request, content: str, *, finish_reason: str = "stop"
+) -> httpx.Response:
+    """A canned 200 from a chat-completions endpoint, so a test can drive the
+    whole real client stack — SDK parsing included — without a network."""
+    return httpx.Response(
+        200,
+        request=request,
+        json={
+            "id": "x",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "m",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": finish_reason,
+                    "message": {"role": "assistant", "content": content},
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        },
+    )
+
+
 def status_error(status: int) -> APIStatusError:
     """A provider error with a real status, for probing the screening
     classification without a paid call (072/#163)."""
