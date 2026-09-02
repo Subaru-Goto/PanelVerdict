@@ -108,10 +108,13 @@ USD_PER_TRANSLATION = 0.0012
 # is likely the common case (094/#200).
 USD_PER_ROLEPLAY = USD_PER_TRANSLATION
 
-# What one chat turn charges the day's pool (064/#192). 064 calls a turn "a
-# fraction of a vote" but leaves the analyst's own cost unmeasured, so the pool
-# rounds up to the one price that is measured. Replace once a turn is measured.
-USD_PER_TURN = USD_PER_VOTE
+# What one chat turn charges the day's pool (064/#192). Measured 2026-09-02
+# (docs/research/analyst-turn-cost.md): six real turns through stream_analyst,
+# worst low-effort turn $0.00043 derived from reported tokens at dated list
+# prices — rounded up so the pool errs toward overcharging, as USD_PER_VOTE
+# does. The old stand-in (one vote, $0.0002) undercharged a default-effort
+# turn 3-5x, the one direction a ceiling must not err.
+USD_PER_TURN = 0.0005
 
 
 class Settings(BaseSettings):

@@ -196,6 +196,38 @@ async def test_a_turn_logs_its_usage(conn, aconn, caplog) -> None:
 
 
 @pytest.mark.anyio
+async def test_a_streamed_turn_logs_usage_from_the_finish_event(
+    conn, aconn, caplog
+) -> None:
+    """The dialect production actually speaks (070/#161, probed live): a
+    natively streaming model's usage arrives in the v3 `message-finish`
+    event's `usage` key — the whole-message branch never fires there. The
+    suite's non-streaming double kept this path invisible, which is 025's
+    tool-routing trap wearing a new hat."""
+    model = StreamingScriptedChatModel(
+        responses=[
+            AIMessage(
+                content="The interval cleared the band.",
+                usage_metadata={
+                    "input_tokens": 800,
+                    "output_tokens": 90,
+                    "total_tokens": 890,
+                    "output_token_details": {"reasoning": 250},
+                },
+            )
+        ]
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.analyst"):
+        await _lines(model, conn=aconn, thread_id="usage-4")
+
+    (record,) = [r for r in caplog.records if "analyst usage" in r.message]
+    message = record.getMessage()
+    assert "input_tokens=800" in message
+    assert "reasoning_tokens=250/1" in message
+
+
+@pytest.mark.anyio
 async def test_a_turn_with_no_usage_logs_nothing(conn, aconn, caplog) -> None:
     """Doubles report no usage; a line full of zeros would be an invented
     measurement, the exact thing the ticket exists to kill."""

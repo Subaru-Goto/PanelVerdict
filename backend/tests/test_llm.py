@@ -585,3 +585,16 @@ class TestOutOfCreditTranslation:
     def test_any_other_status_stays_what_it_was(self) -> None:
         with pytest.raises(APIStatusError):
             self._llm(500).vote(system_prompt="s", option_1="a", option_2="b")
+
+
+def test_the_analyst_model_asks_for_usage_and_runs_at_low_effort() -> None:
+    """070/#161's two knobs, pinned: without stream_usage a streamed turn
+    reports nothing and chat spend goes back to unknowable; the effort is a
+    measured, dated decision (docs/research/analyst-turn-cost.md), not a
+    scaffold default."""
+    from app.llm import analyst_chat_model
+
+    model = analyst_chat_model(api_key="k", base_url="http://x/api/v1", model="m")
+
+    assert model.stream_usage is True
+    assert model.reasoning_effort == "low"

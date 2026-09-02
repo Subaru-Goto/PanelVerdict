@@ -486,6 +486,14 @@ def analyst_chat_model(*, api_key: str, base_url: str, model: str) -> BaseChatMo
         # unless asked (070/#161: "no usage reaches the wire" was this flag's
         # absence). The vote path never needed it — votes do not stream.
         stream_usage=True,
+        # Adopted 2026-09-02 (docs/research/analyst-turn-cost.md): halves the
+        # turn bill, no published number was taken at analyst-default effort,
+        # and the live obedience check passed — figures questions still call
+        # analyze_results and cite its recomputation. The flat param, not the
+        # `reasoning={...}` object, for the vote path's documented reason:
+        # the object form switches langchain to the Responses API. Re-check
+        # obedience live if analyst_model ever changes.
+        reasoning_effort="low",
     )
 
 

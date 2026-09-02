@@ -14,7 +14,7 @@ import asyncio
 import json
 import logging
 from collections import Counter
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import median_low
 from typing import get_args, get_type_hints
@@ -493,8 +493,7 @@ class _TurnUsage:
         self.reasoning_tokens = 0
         self.reasoning_reported = 0
 
-    def take(self, payload: AIMessage) -> None:
-        usage = payload.usage_metadata
+    def take(self, usage: Mapping[str, object] | None) -> None:
         if usage is None:
             return
         self.calls += 1
@@ -612,7 +611,7 @@ async def stream_analyst(
                     payload = data[0] if isinstance(data, tuple) else data
 
                     if isinstance(payload, AIMessage):
-                        usage.take(payload)
+                        usage.take(payload.usage_metadata)
                         if payload.text:
                             yield line(TokenEvent(text=payload.text))
                     elif (
@@ -622,6 +621,15 @@ async def stream_analyst(
                         delta = payload.get("delta", {})
                         if delta.get("type") == "text-delta" and delta.get("text"):
                             yield line(TokenEvent(text=delta["text"]))
+                    elif (
+                        isinstance(payload, dict)
+                        and payload.get("event") == "message-finish"
+                    ):
+                        # Where a natively streaming model's usage actually
+                        # arrives (probed live, 070/#161): the v3 mux folds
+                        # the final chunk's usage_metadata into this event.
+                        raw = payload.get("usage")
+                        usage.take(raw if isinstance(raw, dict) else None)
         finally:
             with anyio.CancelScope(shield=True):
                 if pull is not None and not pull.done():
