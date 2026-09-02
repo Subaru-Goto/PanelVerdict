@@ -3824,3 +3824,61 @@ def test_the_browser_may_read_the_request_id(client) -> None:
 
     exposed = response.headers.get("access-control-expose-headers", "")
     assert "x-request-id" in exposed.lower()
+
+
+class TestIdenticalHeadlines:
+    """097/#202. Two identical headlines buy a coin flip presented as a verdict.
+    Refused in the contract, before anything is charged; case and punctuation
+    stay legal differences, because a test of casing is a real test."""
+
+    SENTENCE = (
+        "The two versions are the same line. A panel cannot prefer one of two "
+        "identical options — edit either version until they differ. "
+        "Capitalisation and punctuation count as differences."
+    )
+
+    def test_the_same_line_twice_is_refused_with_the_form_s_own_sentence(self) -> None:
+        with pytest.raises(ValueError, match=self.SENTENCE):
+            EvaluateRequest(headline_a="Save 50% today", headline_b="Save 50% today")
+
+    def test_whitespace_and_composition_do_not_make_two_lines(self) -> None:
+        # Trim, collapsed runs, and Unicode NFC: "é" composed vs. decomposed.
+        with pytest.raises(ValueError, match="same line"):
+            EvaluateRequest(
+                headline_a="Save  50% today ", headline_b=" Save 50%\ttoday"
+            )
+        with pytest.raises(ValueError, match="same line"):
+            EvaluateRequest(headline_a="Café deals", headline_b="Café deals")
+
+    def test_case_and_punctuation_are_real_differences(self) -> None:
+        EvaluateRequest(headline_a="SAVE 50% today", headline_b="save 50% today")
+        EvaluateRequest(headline_a="Save 50% today!", headline_b="Save 50% today")
+
+    def test_the_endpoint_refuses_before_any_vote_is_bought(self, client, conn) -> None:
+        from app.schemas import ResumeRequest
+
+        calls = {"vote": 0}
+
+        class CountingLLM:
+            configuration = "stub"
+
+            def vote(self, **kwargs):
+                calls["vote"] += 1
+                return voted()
+
+        app.dependency_overrides[get_panel_llm] = lambda: CountingLLM()
+        seed_japanese(conn, 5)
+
+        response = client.post(
+            "/evaluate",
+            json={**_REQUEST_BODY, "headline_a": "Same", "headline_b": " Same "},
+        )
+
+        assert response.status_code == 422
+        assert self.SENTENCE in response.text
+        assert calls == {"vote": 0}
+        # The gate's edit path takes headlines too, and the same pair is refused there.
+        with pytest.raises(ValueError, match="same line"):
+            ResumeRequest(
+                thread_id="t", action="adjust", headline_a="Same", headline_b="Same"
+            )
