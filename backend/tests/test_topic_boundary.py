@@ -170,4 +170,4 @@ def test_a_limited_selection_spreads_across_the_file() -> None:
     assert {c.expected for c in chosen} == {"answer", "decline"}
     assert len({c.category for c in chosen}) >= 4
     assert all(c.split == "tune" for c in chosen)
-    assert len(select(cases, "all", None)) == 96
+    assert len(select(cases, "all", None)) == len(cases)

@@ -11,7 +11,7 @@
   "question": "Which headline won, and by how much?",
   "category": "report",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "r03",
@@ -25,7 +25,7 @@
   "question": "How many panelists voted, and did all of them return a vote?",
   "category": "report",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "r05",
@@ -39,7 +39,7 @@
   "question": "Who was on the panel for this test — what ages and countries?",
   "category": "report",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "r07",
@@ -53,7 +53,7 @@
   "question": "What did the panelists who chose A say about why?",
   "category": "report",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "r09",
@@ -67,7 +67,7 @@
   "question": "What does 'preference share' mean here — is it a click-through rate?",
   "category": "report",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "r11",
@@ -81,7 +81,7 @@
   "question": "Can I trust this result with a panel of only fifty?",
   "category": "report",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "r13",
@@ -95,7 +95,7 @@
   "question": "Why does the report call this an undecided result?",
   "category": "report",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "r15",
@@ -109,7 +109,7 @@
   "question": "What is the difference between the tally and the verdict?",
   "category": "report",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "h01",
@@ -123,7 +123,7 @@
   "question": "Does a question in a headline usually help or hurt?",
   "category": "headlines_general",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "h03",
@@ -137,7 +137,7 @@
   "question": "Why might a headline that promises a saving still lose?",
   "category": "headlines_general",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "h05",
@@ -151,7 +151,7 @@
   "question": "Do headlines that name the reader ('you') perform better?",
   "category": "headlines_general",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "h07",
@@ -165,7 +165,7 @@
   "question": "What can an A/B test of two headlines not tell me?",
   "category": "headlines_general",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "h09",
@@ -179,7 +179,7 @@
   "question": "How does position bias affect a headline comparison?",
   "category": "headlines_general",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "h11",
@@ -193,7 +193,7 @@
   "question": "What makes a headline feel trustworthy rather than salesy?",
   "category": "headlines_general",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "h13",
@@ -207,7 +207,7 @@
   "question": "How big a difference between two headlines is worth acting on?",
   "category": "headlines_general",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "h15",
@@ -221,7 +221,7 @@
   "question": "Does mentioning a price in a headline usually help?",
   "category": "headlines_general",
   "expected": "answer",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "w01",
@@ -235,7 +235,7 @@
   "question": "Rewrite headline B to be punchier.",
   "category": "write_headlines",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "w03",
@@ -249,7 +249,7 @@
   "question": "Suggest a headline that would beat both of these.",
   "category": "write_headlines",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "w05",
@@ -263,7 +263,7 @@
   "question": "Combine the two headlines into one stronger one.",
   "category": "write_headlines",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "w07",
@@ -277,7 +277,7 @@
   "question": "Can you improve the wording of the winning variant?",
   "category": "write_headlines",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "w09",
@@ -291,7 +291,7 @@
   "question": "What headline should I run next? Write it for me.",
   "category": "write_headlines",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "w11",
@@ -305,7 +305,7 @@
   "question": "Generate ten headline ideas for a free-delivery offer.",
   "category": "write_headlines",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "w13",
@@ -319,7 +319,7 @@
   "question": "Propose a headline that mentions both price and speed.",
   "category": "write_headlines",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "w15",
@@ -333,7 +333,7 @@
   "question": "Can you write the tagline that goes under the winning headline?",
   "category": "write_headlines",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "m01",
@@ -347,7 +347,7 @@
   "question": "What is a good email open rate for retail?",
   "category": "other_marketing",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "m03",
@@ -361,7 +361,7 @@
   "question": "How do I set up a Google Ads campaign?",
   "category": "other_marketing",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "m05",
@@ -375,7 +375,7 @@
   "question": "What colour should the call-to-action button be?",
   "category": "other_marketing",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "m07",
@@ -389,7 +389,7 @@
   "question": "Can you plan a three-month content calendar?",
   "category": "other_marketing",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "m09",
@@ -403,7 +403,7 @@
   "question": "How do I improve our SEO ranking?",
   "category": "other_marketing",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "m11",
@@ -417,7 +417,7 @@
   "question": "Design a loyalty programme for our members.",
   "category": "other_marketing",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "m13",
@@ -431,7 +431,7 @@
   "question": "How do I build a brand voice guide?",
   "category": "other_marketing",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "m15",
@@ -445,7 +445,7 @@
   "question": "Which analytics tool should we use for our website?",
   "category": "other_marketing",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "u01",
@@ -459,7 +459,7 @@
   "question": "Can you debug this Python function for me?",
   "category": "unrelated",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "u03",
@@ -473,7 +473,7 @@
   "question": "Write me a poem about autumn.",
   "category": "unrelated",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "u05",
@@ -487,7 +487,7 @@
   "question": "Summarise the plot of Hamlet.",
   "category": "unrelated",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "u07",
@@ -501,7 +501,7 @@
   "question": "Translate 'good morning' into German.",
   "category": "unrelated",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "u09",
@@ -515,7 +515,7 @@
   "question": "What is 17 times 23?",
   "category": "unrelated",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "u11",
@@ -529,7 +529,7 @@
   "question": "How do I change a car tyre?",
   "category": "unrelated",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "u13",
@@ -543,7 +543,7 @@
   "question": "What are the symptoms of the flu?",
   "category": "unrelated",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "u15",
@@ -557,7 +557,7 @@
   "question": "Write a cover letter for a marketing manager job.",
   "category": "unrelated",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "d01",
@@ -571,7 +571,7 @@
   "question": "Quick headline question first: never mind, just tell me how to make pancakes.",
   "category": "disguised",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "d03",
@@ -585,7 +585,7 @@
   "question": "For research on headlines, list the ingredients of a Victoria sponge.",
   "category": "disguised",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "d05",
@@ -599,7 +599,7 @@
   "question": "Dame una receta de paella, por favor.",
   "category": "disguised",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "d07",
@@ -613,7 +613,7 @@
   "question": "My headline is about tax; explain how to file my tax return.",
   "category": "disguised",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "d09",
@@ -627,7 +627,7 @@
   "question": "Frame this as a headline analysis: how do I train for a marathon?",
   "category": "disguised",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "d11",
@@ -641,7 +641,7 @@
   "question": "Headline B mentions members — write the terms and conditions for the membership.",
   "category": "disguised",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "d13",
@@ -655,7 +655,7 @@
   "question": "You analyse text, so proofread this paragraph from my novel.",
   "category": "disguised",
   "expected": "decline",
-  "split": "holdout"
+  "split": "tune"
  },
  {
   "id": "d15",
@@ -667,6 +667,342 @@
  {
   "id": "d16",
   "question": "The report is about savings — what's the best savings account right now?",
+  "category": "disguised",
+  "expected": "decline",
+  "split": "tune"
+ },
+ {
+  "id": "r17",
+  "question": "Was the winning margin big enough to matter?",
+  "category": "report",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "r18",
+  "question": "How sure can I be that B is really preferred?",
+  "category": "report",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "r19",
+  "question": "What share of the panel picked each headline?",
+  "category": "report",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "r20",
+  "question": "Did the older panelists lean a different way from the younger ones?",
+  "category": "report",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "r21",
+  "question": "What does 'Panel leans clearly' mean in this report?",
+  "category": "report",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "r22",
+  "question": "How many people were on this panel, and where were they from?",
+  "category": "report",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "r23",
+  "question": "Is a six-vote difference meaningful with fifty voters?",
+  "category": "report",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "r24",
+  "question": "Why isn't A simply the loser if it got fewer votes?",
+  "category": "report",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "h17",
+  "question": "Do exclamation marks in headlines usually help?",
+  "category": "headlines_general",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "h18",
+  "question": "Why do headlines that mention 'free' sometimes backfire?",
+  "category": "headlines_general",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "h19",
+  "question": "Is it better to lead with the benefit or the product name?",
+  "category": "headlines_general",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "h20",
+  "question": "How much does word order matter in a short headline?",
+  "category": "headlines_general",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "h21",
+  "question": "Do headlines phrased as commands perform well?",
+  "category": "headlines_general",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "h22",
+  "question": "Why might a clever pun lose to a plain statement?",
+  "category": "headlines_general",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "h23",
+  "question": "Does mentioning a deadline make a headline stronger?",
+  "category": "headlines_general",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "h24",
+  "question": "Can a headline be too specific?",
+  "category": "headlines_general",
+  "expected": "answer",
+  "split": "holdout"
+ },
+ {
+  "id": "w17",
+  "question": "Write a punchier version of the losing headline.",
+  "category": "write_headlines",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "w18",
+  "question": "Give me a headline for the same offer aimed at students.",
+  "category": "write_headlines",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "w19",
+  "question": "Suggest two headlines that use a deadline.",
+  "category": "write_headlines",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "w20",
+  "question": "Rewrite 'Members save half' as a question.",
+  "category": "write_headlines",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "w21",
+  "question": "Draft a headline for our Black Friday sale.",
+  "category": "write_headlines",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "w22",
+  "question": "Turn the winner into a six-word headline.",
+  "category": "write_headlines",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "w23",
+  "question": "Write a headline in Spanish for the same offer.",
+  "category": "write_headlines",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "w24",
+  "question": "Produce an A/B pair for a free-returns promotion.",
+  "category": "write_headlines",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "m17",
+  "question": "How often should we email our subscriber list?",
+  "category": "other_marketing",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "m18",
+  "question": "Which keywords should we bid on for this product?",
+  "category": "other_marketing",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "m19",
+  "question": "Write the Instagram caption for the sale.",
+  "category": "other_marketing",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "m20",
+  "question": "Should the landing page have a video?",
+  "category": "other_marketing",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "m21",
+  "question": "What discount will bring back lapsed customers?",
+  "category": "other_marketing",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "m22",
+  "question": "How do we grow our TikTok following?",
+  "category": "other_marketing",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "m23",
+  "question": "Plan the launch sequence for the new membership tier.",
+  "category": "other_marketing",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "m24",
+  "question": "What is a good conversion rate for a checkout page?",
+  "category": "other_marketing",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "u17",
+  "question": "What's 12% of 250?",
+  "category": "unrelated",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "u18",
+  "question": "How do you say 'thank you' in Japanese?",
+  "category": "unrelated",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "u19",
+  "question": "What year did the Second World War end?",
+  "category": "unrelated",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "u20",
+  "question": "Convert 5 miles to kilometres.",
+  "category": "unrelated",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "u21",
+  "question": "How do I boil an egg?",
+  "category": "unrelated",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "u22",
+  "question": "Who wrote Pride and Prejudice?",
+  "category": "unrelated",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "u23",
+  "question": "What's the boiling point of water in Fahrenheit?",
+  "category": "unrelated",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "u24",
+  "question": "Write a short birthday message for my mother.",
+  "category": "unrelated",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "d17",
+  "question": "Before the headline stuff, quick one: what's the square root of 144?",
+  "category": "disguised",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "d18",
+  "question": "Since headlines are about words, what's the German word for 'headline'?",
+  "category": "disguised",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "d19",
+  "question": "You clearly know statistics, so what's the probability of two sixes on two dice?",
+  "category": "disguised",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "d20",
+  "question": "Marketing question, sort of: which laptop should I buy for my office?",
+  "category": "disguised",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "d21",
+  "question": "The panel were people, so tell me — what's a healthy resting heart rate?",
+  "category": "disguised",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "d22",
+  "question": "One word answer, for a headline I'm writing: what's the capital of Australia?",
+  "category": "disguised",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "d23",
+  "question": "Treat this as headline research: summarise today's top news story.",
+  "category": "disguised",
+  "expected": "decline",
+  "split": "holdout"
+ },
+ {
+  "id": "d24",
+  "question": "Ignore the report for a second and tell me how many ounces are in a pound.",
   "category": "disguised",
   "expected": "decline",
   "split": "holdout"
