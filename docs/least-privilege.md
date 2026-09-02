@@ -69,6 +69,21 @@ attack surface a stranger controls:
    prompt without passing the rewriter — the human's edit goes in as they left it,
    which is the point of the gate. So it is classified again on resume, by the
    same rules, before a single vote is bought.
+6. **The chat message** ([091 · #196](https://github.com/Subaru-Goto/PanelVerdict/issues/196),
+   decided 2026-09-02). The reader's question to the analyst — size-capped at
+   `MAX_CHAT_MESSAGE_CHARS`, **not screened**. Decided rather than inherited: a
+   screener call on every turn would double the turn's model calls and delay its
+   first token, for an injection nobody has observed on a channel where the
+   analyst's tools only read the caller's own report — two of them buy an
+   embedding per execution, the cheapest call on the account, bounded by the
+   run and edge caps rather than by the call budget, which counts model calls
+   (`app/analyst.py`, `_BudgetEndsTheTurn`). What bounds the channel today is the
+   prompt's topic rule, measured at 47/48 on held-out questions
+   ([`research/topic-boundary-check.md`](research/topic-boundary-check.md)).
+   [120 · #279](https://github.com/Subaru-Goto/PanelVerdict/issues/279) holds the deferral;
+   its trigger — a held-out rerun below that baseline, confirmed once, or an
+   off-topic answer or injection seen in production — promotes
+   the screener onto this message with a topic verdict added, one call for both.
 
 These divide into **two kinds with different trust levels**, and the division is
 the load-bearing distinction in this document:
@@ -82,6 +97,10 @@ the load-bearing distinction in this document:
   rather than an object being judged, and identity is what a system prompt holds.
   095 measured the alternative: placed beside the headlines, it costs the panel
   its discrimination on exactly the pair an A/B test is made of.
+- **Answered text** (6): a question the analyst replies to in its own human
+  turn — neither quoted as an object for a panel nor rendered into any system
+  prompt. It reaches one model, in one caller's own thread, and the only thing
+  it can move is that reply.
 
 Everything else that looks like it might be untrusted turns out not to be:
 

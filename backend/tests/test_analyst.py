@@ -511,6 +511,22 @@ class TestAnalystAgent:
         assert "an AI system" in _SYSTEM_PROMPT
         assert "never a person" in _SYSTEM_PROMPT
 
+    def test_the_prompt_bounds_its_subject_and_fixes_the_shape_of_a_decline(
+        self,
+    ) -> None:
+        # 091/#196: the general lane stays open (headlines in general), and
+        # everything outside it is declined in a fixed shape — outside what it
+        # covers, then what it can help with, and never a partial answer first.
+        # Obedience is measured live by experiments/topic_boundary.py; the
+        # sentence's presence is what the suite can pin.
+        assert "how headlines work, what makes copy land" in _SYSTEM_PROMPT
+        assert "outside what you cover" in _SYSTEM_PROMPT
+        assert "what you can help with" in _SYSTEM_PROMPT
+        assert "not even briefly" in _SYSTEM_PROMPT
+        # Writing headlines is the product's neighbour, not its job: the
+        # decline points at the real alternative, as the re-run refusal does.
+        assert "you do not write them" in _SYSTEM_PROMPT
+
     @pytest.mark.anyio
     async def test_a_thread_remembers_its_tool_results_across_turns(
         self, conn, aconn

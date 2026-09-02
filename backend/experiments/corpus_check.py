@@ -291,7 +291,7 @@ RUN_QUESTIONS: tuple[str, ...] = (
 )
 
 
-def _sample_result() -> EvaluateResponse:
+def sample_result() -> EvaluateResponse:
     """One finished test for the analyst to be asked about.
 
     Deliberately an undecided one with B ahead, because that is the situation the
@@ -414,7 +414,7 @@ def main() -> None:
                         (RUN_QUESTIONS, "analyze_results"),
                     ):
                         await run_routing(
-                            _sample_result(), deps, chat, saver, questions, expect, rows
+                            sample_result(), deps, chat, saver, questions, expect, rows
                         )
 
                 asyncio.run(_with_live(routing))

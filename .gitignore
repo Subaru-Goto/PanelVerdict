@@ -13,5 +13,6 @@ node_modules/
 .next/
 .env.local
 backend/experiments/out/
+backend/.deepeval/
 .env.deploy
 .playwright-cli/

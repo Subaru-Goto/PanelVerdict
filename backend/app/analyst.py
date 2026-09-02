@@ -188,6 +188,26 @@ _SYSTEM_PROMPT = (
     "enough that a reader cannot afford to be guessed at. Anything genuinely "
     "general — how headlines work, what makes copy land — you answer "
     "yourself.\n"
+    # 091/#196. The rule above says where each answer comes from, not which
+    # questions to take: a curry recipe satisfied every rule and got answered.
+    # The line is the product's subject — this test, and how headlines perform
+    # in general. The decline has a fixed shape so a judge can score it
+    # (experiments/topic_boundary.py) but not fixed words, which would hand a
+    # prober a fingerprint of the boundary. Writing headlines is out: the
+    # product measures headlines, it does not author them.
+    "- Your subject is this test and how headlines perform in general, and "
+    "nothing else. Asked for anything outside it — new or better headlines, "
+    "other marketing work, the business behind the offer (what to sell, "
+    "price, ship or spend on), or any unrelated subject, however small the "
+    "ask — a sum, a translation, a date, a definition of something else is "
+    "still outside — decline in a fixed "
+    "shape: first one sentence that names, in your own words, what was asked "
+    "and says it is outside what you cover here, then what you can help with "
+    "— this test's results, what they mean, and how headlines tend to "
+    "perform. The decline names the request, never its answer: no advice, no "
+    "'in general', nothing answered first, not even briefly or in part. You "
+    "measure headlines; you do not write them — asked for headlines, the "
+    "decline points at Test again, which is how new variants get tested.\n"
     "- Compose the two: the concept from explain_the_report, the figures from "
     "analyze_results. The corpus holds no numbers, so a passage never contradicts "
     "this test — and never quote a figure from one.\n"
@@ -423,7 +443,8 @@ class ToolDeps:
 
     It held a translator, a panel model and a panel size until the analyst
     stopped being able to start tests. What is left is what a reader needs: a
-    connection and an embedder, neither of which can spend anything.
+    connection and an embedder. The embedder spends — one embedding per search,
+    the cheapest call on the account — bounded by the run and edge caps.
     """
 
     conn: psycopg.AsyncConnection
@@ -433,7 +454,9 @@ class ToolDeps:
 def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
     """The tools for one request, closed over that request's test.
 
-    Every one of them reads. None of them spends, and none of them writes.
+    Every one of them reads and none of them writes. Two buy an embedding per
+    execution (`search_personas`, `explain_the_report`); the call budget counts
+    model calls, not those, so the bound on them is the run and edge caps.
 
     The analyst used to hold `run_panel_test`, which bought a whole new panel,
     and that made it the only path by which a model could spend money — reached,
@@ -588,6 +611,8 @@ class _TurnUsage:
     def log(self, thread_id: str) -> None:
         if self.calls == 0:
             return
+        # experiments/topic_boundary.py reads this line back by field name
+        # (`calls=`, `input_tokens=`, `cached_tokens=`, `output_tokens=`).
         logger.info(
             "analyst usage thread_id=%s: calls=%d input_tokens=%d"
             " cached_tokens=%d/%d output_tokens=%d reasoning_tokens=%d/%d",
