@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from starlette.datastructures import MutableHeaders
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 _thread_id: ContextVar[str | None] = ContextVar("thread_id", default=None)
@@ -97,7 +97,17 @@ class JsonFormatter(logging.Formatter):
             # The traceback stays inside the object: one line per event holds
             # even when the event is a crash.
             event["exception"] = self.formatException(record.exc_info)
-        return json.dumps(event, ensure_ascii=False, default=str)
+        if record.stack_info:
+            event["stack"] = self.formatStack(record.stack_info)
+        try:
+            return json.dumps(event, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            # A field json cannot walk (a self-referencing object, say) must
+            # not cost the event: the handler would drop the record and print
+            # a plain-text traceback into the JSON stream.
+            return json.dumps(
+                {key: repr(value) for key, value in event.items()}, ensure_ascii=False
+            )
 
 
 class RequestIdMiddleware:
@@ -121,7 +131,7 @@ class RequestIdMiddleware:
             return
         request_id = str(uuid4())
 
-        async def send_with_id(message) -> None:
+        async def send_with_id(message: Message) -> None:
             if message["type"] == "http.response.start":
                 MutableHeaders(scope=message).append("X-Request-ID", request_id)
             await send(message)
@@ -135,7 +145,7 @@ _HANDLER_NAME = "panelverdict-json"
 # Uvicorn installs its own plain-text handlers on these when it starts, before
 # it imports the app. Left alone, its access and lifecycle lines would be the
 # only lines on the server that are not JSON.
-_UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
+UVICORN_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
 
 
 def configure_logging() -> None:
@@ -143,7 +153,8 @@ def configure_logging() -> None:
 
     Not ``basicConfig``: that is a no-op when the root already has a handler,
     which under uvicorn and under pytest it does. The handler is found by name
-    so the server entry point and the seed script can both call this.
+    so the server entry point and the scripts can all call this. Uvicorn's own
+    handlers are dropped, so a ``--log-config`` given to it would be too.
     """
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -153,7 +164,7 @@ def configure_logging() -> None:
         handler.addFilter(ContextStamp())
         handler.setFormatter(JsonFormatter())
         root.addHandler(handler)
-    for name in _UVICORN_LOGGERS:
+    for name in UVICORN_LOGGERS:
         uvicorn_logger = logging.getLogger(name)
         uvicorn_logger.handlers.clear()
         uvicorn_logger.propagate = True

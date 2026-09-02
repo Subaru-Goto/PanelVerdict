@@ -1,9 +1,11 @@
+import logging
 import threading
 from typing import Literal
 
 import pytest
 
 from app.bigfive import bigfive_from_levels
+from app.logs import bind_thread
 from app.panel import render_persona_prompt
 from app.schemas import PanelVoteOutput, Persona, TraitLevel
 from app.vote import (
@@ -609,23 +611,23 @@ class AlwaysFirstShown:
         return voted("option_1")
 
 
-def test_a_line_logged_from_a_vote_worker_carries_the_bound_thread_id(caplog) -> None:
+def test_a_line_logged_from_a_vote_worker_carries_the_bound_thread_id(
+    stamped_caplog, stub_llm
+) -> None:
     """047/#145. `ThreadPoolExecutor.submit` starts each worker with an empty
     context, so a naive fan-out logs a blank id on exactly the lines a run is
     traced by — and nothing raises. The workers must inherit the caller's."""
-    import logging
 
-    from app.logs import ContextStamp, bind_thread
-    from tests.conftest import StubLLM
-
-    class LoggingLLM(StubLLM):
+    class LoggingLLM(stub_llm):
         def vote(self, **kwargs):
             logging.getLogger("app.vote").warning("retrying a vote")
             return super().vote(**kwargs)
 
-    caplog.handler.addFilter(ContextStamp())
     variants = {"vA": "Save 50% today", "vB": "Limited time: half price"}
-    with caplog.at_level(logging.WARNING, logger="app.vote"), bind_thread("run-9"):
+    with (
+        stamped_caplog.at_level(logging.WARNING, logger="app.vote"),
+        bind_thread("run-9"),
+    ):
         collect_panel_votes(
             test_id="run-9",
             variants=variants,
@@ -633,5 +635,7 @@ def test_a_line_logged_from_a_vote_worker_carries_the_bound_thread_id(caplog) ->
             llm=LoggingLLM(chosen="option_1"),
         )
 
-    stamped = [r.thread_id for r in caplog.records if r.message == "retrying a vote"]
+    stamped = [
+        r.thread_id for r in stamped_caplog.records if r.message == "retrying a vote"
+    ]
     assert stamped == ["run-9", "run-9"]

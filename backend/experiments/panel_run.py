@@ -24,7 +24,6 @@ a pair with a clear winner and lets the stop fire for real.
 import argparse
 import asyncio
 import json
-import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import mean
@@ -36,6 +35,7 @@ from app.config import PROFILES, ProfileName, settings
 from app.llm import OpenRouterPanelLLM, OpenRouterTargetTranslator
 from app.pipeline import PanelTestResult, run_panel_test
 from app.vote import PanelVotes, VoteUsage, total_usage
+from app.logs import configure_logging
 
 
 @dataclass(frozen=True)
@@ -179,7 +179,7 @@ def _read(path: Path) -> list[RunRow]:
 def main() -> None:
     # Before anything that could spend: the logged usage line is the receipt, and a
     # run without it is the exact failure 010c recorded.
-    logging.basicConfig(level=logging.INFO)
+    configure_logging()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path)
     parser.add_argument("--label")

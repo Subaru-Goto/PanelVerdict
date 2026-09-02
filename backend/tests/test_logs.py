@@ -3,10 +3,20 @@ that place it — the request it served and the run (thread) it belongs to."""
 
 import json
 import logging
-import pytest
+import sys
 from datetime import UTC, datetime
 
-from app.logs import JsonFormatter
+import pytest
+
+from app.logs import (
+    UVICORN_LOGGERS,
+    ContextStamp,
+    JsonFormatter,
+    RequestIdMiddleware,
+    bind_request,
+    bind_thread,
+    configure_logging,
+)
 
 
 def _record(
@@ -62,7 +72,7 @@ def test_an_exception_travels_on_the_same_line() -> None:
             1,
             "could not keep the report",
             (),
-            __import__("sys").exc_info(),
+            sys.exc_info(),
         )
 
     line = JsonFormatter().format(record)
@@ -75,8 +85,6 @@ def test_an_exception_travels_on_the_same_line() -> None:
 
 
 def test_bound_ids_are_stamped_on_every_record_and_unbound_after() -> None:
-    from app.logs import ContextStamp, bind_request, bind_thread
-
     stamp = ContextStamp()
     formatter = JsonFormatter()
 
@@ -106,10 +114,10 @@ def root_restored():
             list(logging.getLogger(name).handlers),
             logging.getLogger(name).propagate,
         )
-        for name in ("uvicorn", "uvicorn.error", "uvicorn.access")
+        for name in UVICORN_LOGGERS
     }
     yield root
-    root.handlers[:], root.level = before[0], before[1]
+    root.handlers[:] = before[0]
     root.setLevel(before[1])
     for name, (handlers, propagate) in uvicorn_before.items():
         logging.getLogger(name).handlers[:] = handlers
@@ -119,8 +127,6 @@ def root_restored():
 def test_configure_installs_one_json_handler_and_routes_uvicorn_through_it(
     root_restored,
 ) -> None:
-    from app.logs import ContextStamp, configure_logging
-
     # Uvicorn configures these before the app is imported, with its own
     # plain-text handlers; a line that bypasses ours is not JSON.
     logging.getLogger("uvicorn.access").addHandler(logging.NullHandler())
@@ -133,7 +139,7 @@ def test_configure_installs_one_json_handler_and_routes_uvicorn_through_it(
     assert len(ours) == 1
     assert any(isinstance(f, ContextStamp) for f in ours[0].filters)
     assert root_restored.level == logging.INFO
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    for name in UVICORN_LOGGERS:
         assert logging.getLogger(name).handlers == []
         assert logging.getLogger(name).propagate is True
 
@@ -142,8 +148,6 @@ def test_an_explicit_thread_id_field_wins_over_the_bound_one() -> None:
     """A line logged outside the bind — the analyst's usage line, written while
     the response is still streaming — names its own thread; the stamp must not
     null it."""
-    from app.logs import ContextStamp, bind_thread
-
     record = _record("analyst usage", thread_id="chat-7")
     with bind_thread("other"):
         ContextStamp().filter(record)
@@ -153,12 +157,11 @@ def test_an_explicit_thread_id_field_wins_over_the_bound_one() -> None:
 
 @pytest.mark.anyio
 async def test_the_bind_spans_the_response_send_so_the_access_line_has_the_id(
-    caplog,
+    stamped_caplog,
 ) -> None:
     """Uvicorn writes its access line from inside `send`, when the response
     starts — after an endpoint has returned. A bind that ends with the handler
     leaves exactly that line null."""
-    from app.logs import ContextStamp, RequestIdMiddleware
 
     async def endpoint(scope, receive, send):
         await send({"type": "http.response.start", "status": 200, "headers": []})
@@ -171,13 +174,12 @@ async def test_the_bind_spans_the_response_send_so_the_access_line_has_the_id(
             started.append(message)
             logging.getLogger("uvicorn.access").info("GET /health 200")
 
-    caplog.handler.addFilter(ContextStamp())
-    with caplog.at_level(logging.INFO, logger="uvicorn.access"):
+    with stamped_caplog.at_level(logging.INFO, logger="uvicorn.access"):
         await RequestIdMiddleware(endpoint)(
             {"type": "http", "headers": []}, None, server_send
         )
 
-    (record,) = caplog.records
+    (record,) = stamped_caplog.records
     header = dict(started[0]["headers"])[b"x-request-id"].decode()
     assert len(header) == 36
     assert record.request_id == header
@@ -192,3 +194,28 @@ def test_uvicorn_s_colour_copy_of_the_message_is_not_a_field() -> None:
 
     assert event["message"] == "Started server process [7]"
     assert "color_message" not in event
+
+
+def test_a_field_json_cannot_walk_does_not_cost_the_event() -> None:
+    """The handler's own fallback prints a plain-text traceback into the JSON
+    stream and drops the record; a blocked-input warning must not vanish that
+    way."""
+    loop: list = []
+    loop.append(loop)
+    record = _record("screening blocked input", payload=loop)
+
+    line = JsonFormatter().format(record)
+
+    assert "\n" not in line
+    event = json.loads(line)
+    assert event["message"] == "'screening blocked input'"
+    assert "[...]" in event["payload"]
+
+
+def test_a_requested_stack_travels_on_the_line() -> None:
+    record = _record("where am I")
+    record.stack_info = "Stack (most recent call last):\n  File x.py, line 1"
+
+    event = json.loads(JsonFormatter().format(record))
+
+    assert event["stack"].startswith("Stack (most recent call last)")

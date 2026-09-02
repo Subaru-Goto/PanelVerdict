@@ -43,6 +43,7 @@ from app.main import (  # noqa: E402
 
 from app.persistence import prepare_connection, schema_columns  # noqa: E402
 from app.vote import VoteResponse  # noqa: E402
+from app.logs import ContextStamp  # noqa: E402
 from tests.factories import (  # noqa: E402
     FixedEmbedder,
     ScriptedChatModel,
@@ -75,6 +76,14 @@ class StubLLM:
 @pytest.fixture
 def stub_llm() -> type[StubLLM]:
     return StubLLM
+
+
+@pytest.fixture
+def stamped_caplog(caplog):
+    """caplog whose records carry `request_id` and `thread_id` the way the
+    server's handler stamps them (047/#145)."""
+    caplog.handler.addFilter(ContextStamp())
+    return caplog
 
 
 # A lock this suite waits on is a mistake, not a wait: nothing here legitimately

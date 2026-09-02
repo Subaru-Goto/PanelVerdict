@@ -795,7 +795,10 @@ async def stream_analyst(
         )
         return
     except Exception as error:
-        # Broad on purpose — the stream is the only channel left.
+        # Broad on purpose — the stream is the only channel left. The reader
+        # gets the type name; the traceback goes to the log, under this
+        # thread's id, or the failure would leave no trace anywhere.
+        logger.exception("analyst failed")
         yield line(ErrorEvent(message=_failure_sentence(error)))
         return
     finally:

@@ -54,6 +54,7 @@ from app.llm import (
     analyst_chat_model,
     remaining_credit,
 )
+from app.logs import RequestIdMiddleware, bind_thread, configure_logging
 from app.panel import render_persona_prompt, votes_with_voters
 from app.persistence import (
     adeny_data_api,
@@ -87,7 +88,6 @@ from app.screening import (
     self_model_name,
 )
 from app.targeting import CROSS_SECTION_NOTICE, settled_query
-from app.logs import RequestIdMiddleware, bind_thread, configure_logging
 from app.tracing import configure_tracing
 from app.vote import OutOfCredit, PanelLLM, total_usage
 
@@ -1129,11 +1129,7 @@ def _outcome(
     # The same id the trace is labelled with, so a run in LangSmith and the
     # lines it wrote here can be paired. The vote node stamps its votes with
     # this id too, so the panel's usage line carries it as `test_id`.
-    logger.info(
-        "evaluate: %s",
-        "paused at the panel gate" if paused else "complete",
-        extra={"thread_id": thread_id},
-    )
+    logger.info("evaluate: %s", "paused at the panel gate" if paused else "complete")
     if paused:
         return PausedRun(
             thread_id=thread_id, preview=PanelPreview.model_validate(paused[0].value)
@@ -1229,7 +1225,7 @@ async def _kept(
     except Exception:
         # Logged with the id so the loss is traceable to a run, and swallowed on
         # purpose — see the docstring.
-        logger.exception("could not keep the report for test_id=%s", test_id)
+        logger.exception("could not keep the report", extra={"test_id": test_id})
     return outcome
 
 
@@ -1241,20 +1237,16 @@ async def _run_graph(graph, payload, thread_id: str):
     model text.
     """
     try:
-        # Everything the graph logs — a refused screen, a vote worker's retry,
-        # the panel's usage line — is this run's (047/#145).
-        with bind_thread(thread_id):
-            return await graph.ainvoke(
-                payload,
-                {
-                    "configurable": {"thread_id": thread_id},
-                    # Repeated as metadata because only `model` and
-                    # `checkpoint_ns` are copied out of `configurable` for a
-                    # trace. This is the one handle a LangSmith run and this
-                    # request's log lines share.
-                    "metadata": {"thread_id": thread_id},
-                },
-            )
+        return await graph.ainvoke(
+            payload,
+            {
+                "configurable": {"thread_id": thread_id},
+                # Repeated as metadata because only `model` and `checkpoint_ns`
+                # are copied out of `configurable` for a trace. This is the one
+                # handle a LangSmith run and this request's log lines share.
+                "metadata": {"thread_id": thread_id},
+            },
+        )
     except UnsafeInput as error:
         # 400, not 422: the text is well-formed; what it says was refused.
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -1319,37 +1311,40 @@ async def demo(
         generator=UnreachableGenerator(),
         checkpointer=InMemorySaver(),
     )
-    state = await _run_graph(
-        graph,
-        {
-            "query": settled_query(PanelEdit()),
-            "notices": [CROSS_SECTION_NOTICE],
-            "audience": "",
-            "instruction": "",
-            "variants": fixture.variants,
-            # The capture's size, not this deployment's profile: the replay
-            # must ask for the panel the votes were bought for.
-            "size": fixture.size,
-            "reading_accepted": True,
-            # A replay is nobody's: "" tells the vote node to leave the ledger
-            # alone entirely — no anonymous rows written, no account's read
-            # (086/#177).
-            "owner": "",
-            "started_at": _now().isoformat(),
-        },
-        thread_id,
-    )
-    outcome = _outcome(
-        state, thread_id=thread_id, variants=fixture.variants, credit=None
-    )
-    if not isinstance(outcome, CompletedRun):  # pragma: no cover
-        # reading_accepted means no gate; a pause here is a broken premise.
-        raise HTTPException(status_code=500, detail="the demo run did not finish")
-    return DemoRun(
-        **outcome.model_dump(),
-        step_seconds=fixture.step_seconds,
-        captured_at=fixture.captured_at,
-    )
+    # The run's lines — a refused screen, a vote worker's retry, the panel's
+    # usage line, the outcome — carry its thread id (047/#145).
+    with bind_thread(thread_id):
+        state = await _run_graph(
+            graph,
+            {
+                "query": settled_query(PanelEdit()),
+                "notices": [CROSS_SECTION_NOTICE],
+                "audience": "",
+                "instruction": "",
+                "variants": fixture.variants,
+                # The capture's size, not this deployment's profile: the replay
+                # must ask for the panel the votes were bought for.
+                "size": fixture.size,
+                "reading_accepted": True,
+                # A replay is nobody's: "" tells the vote node to leave the ledger
+                # alone entirely — no anonymous rows written, no account's read
+                # (086/#177).
+                "owner": "",
+                "started_at": _now().isoformat(),
+            },
+            thread_id,
+        )
+        outcome = _outcome(
+            state, thread_id=thread_id, variants=fixture.variants, credit=None
+        )
+        if not isinstance(outcome, CompletedRun):  # pragma: no cover
+            # reading_accepted means no gate; a pause here is a broken premise.
+            raise HTTPException(status_code=500, detail="the demo run did not finish")
+        return DemoRun(
+            **outcome.model_dump(),
+            step_seconds=fixture.step_seconds,
+            captured_at=fixture.captured_at,
+        )
 
 
 @app.post("/evaluate")
@@ -1407,27 +1402,30 @@ async def evaluate(
     # is identical to one that asked for JP-to-DE everyone — so the
     # cross-section reading is said here or nowhere.
     untargeted = request.target == PanelEdit()
-    state = await _run_graph(
-        graph,
-        {
-            "query": settled_query(request.target),
-            "notices": [CROSS_SECTION_NOTICE] if untargeted else [],
-            "audience": request.audience,
-            "instruction": instruction,
-            "variants": variants,
-            "size": settings.panel.size,
-            "reading_accepted": request.reading_accepted,
-            "owner": caller,
-            "started_at": _now().isoformat(),
-        },
-        thread_id,
-    )
-    return await _kept(
-        _outcome(state, thread_id=thread_id, variants=variants, credit=credit),
-        conn=conn,
-        state=state,
-        caller=caller,
-    )
+    # The run's lines — a refused screen, a vote worker's retry, the panel's
+    # usage line, the outcome — carry its thread id (047/#145).
+    with bind_thread(thread_id):
+        state = await _run_graph(
+            graph,
+            {
+                "query": settled_query(request.target),
+                "notices": [CROSS_SECTION_NOTICE] if untargeted else [],
+                "audience": request.audience,
+                "instruction": instruction,
+                "variants": variants,
+                "size": settings.panel.size,
+                "reading_accepted": request.reading_accepted,
+                "owner": caller,
+                "started_at": _now().isoformat(),
+            },
+            thread_id,
+        )
+        return await _kept(
+            _outcome(state, thread_id=thread_id, variants=variants, credit=credit),
+            conn=conn,
+            state=state,
+            caller=caller,
+        )
 
 
 @asynccontextmanager
@@ -1472,9 +1470,8 @@ async def _only_one_answer(
             # Giving up costs nothing the connection close does not already
             # cover, and the release is only ever early.
             logger.warning(
-                "could not release the resume lock for %s (%s); the connection"
-                " close will release it",
-                thread_id,
+                "could not release the resume lock (%s); the connection close"
+                " will release it",
                 failed.__class__.__name__,
             )
 
@@ -1645,69 +1642,74 @@ async def resume_evaluate(
         checkpointer=checkpointer,
     )
     config = {"configurable": {"thread_id": request.thread_id}}
-    async with _only_one_answer(conn, request.thread_id):
-        snapshot = await graph.aget_state(config)
-        values = snapshot.values or {}
-        # One sentence for "no such run" and "not yours": which it was is not
-        # the caller's business.
-        if snapshot.next != ("confirm",) or values.get("owner") != caller:
-            raise HTTPException(
-                status_code=404, detail="no run is waiting for you on that id"
-            )
-        if _expired(values.get("started_at")):
-            raise HTTPException(
-                status_code=410,
-                detail="this panel has expired — start the test again to see a fresh one",
-            )
-        if request.action == "accept" and not values.get("panel"):
-            # The graph would send this straight back to the gate: there is
-            # nobody to ask. Refused above the charge, so a reading that can
-            # never vote costs nothing. (Unsafe headline text is refused later,
-            # inside `vote`, and does spend a run — as it did before the gate
-            # existed.)
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "nobody in the pool matches that reading — widen it and look again"
-                ),
-            )
-        approved = ""
-        if request.action == "accept":
-            # Above the purchase: a sentence that will never be run costs no run.
-            approved = await _classify_edit(conn, request, values, generator, caller)
-        if request.action == "accept":
-            # After the free refusals above, so a run that was never resumable
-            # costs nothing, and inside the lock, so simultaneous accepts
-            # cannot each pass a cap neither has yet recorded.
-            await _buy_panel(conn, caller)
-        state = await _run_graph(
-            graph,
-            Command(
-                resume=GateDecision(
-                    action=request.action,
-                    query=_edited(request, values),
-                    variants=(
-                        {"a": request.headline_a, "b": request.headline_b}
-                        if request.headline_a is not None
-                        and request.headline_b is not None
-                        else None
+    # The run's lines — the lock, the graph, the outcome — carry its thread id
+    # (047/#145), the same one its first request logged under.
+    with bind_thread(request.thread_id):
+        async with _only_one_answer(conn, request.thread_id):
+            snapshot = await graph.aget_state(config)
+            values = snapshot.values or {}
+            # One sentence for "no such run" and "not yours": which it was is not
+            # the caller's business.
+            if snapshot.next != ("confirm",) or values.get("owner") != caller:
+                raise HTTPException(
+                    status_code=404, detail="no run is waiting for you on that id"
+                )
+            if _expired(values.get("started_at")):
+                raise HTTPException(
+                    status_code=410,
+                    detail="this panel has expired — start the test again to see a fresh one",
+                )
+            if request.action == "accept" and not values.get("panel"):
+                # The graph would send this straight back to the gate: there is
+                # nobody to ask. Refused above the charge, so a reading that can
+                # never vote costs nothing. (Unsafe headline text is refused later,
+                # inside `vote`, and does spend a run — as it did before the gate
+                # existed.)
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        "nobody in the pool matches that reading — widen it and look again"
                     ),
-                    instruction=approved or request.instruction,
-                ).model_dump()
+                )
+            approved = ""
+            if request.action == "accept":
+                # Above the purchase: a sentence that will never be run costs no run.
+                approved = await _classify_edit(
+                    conn, request, values, generator, caller
+                )
+            if request.action == "accept":
+                # After the free refusals above, so a run that was never resumable
+                # costs nothing, and inside the lock, so simultaneous accepts
+                # cannot each pass a cap neither has yet recorded.
+                await _buy_panel(conn, caller)
+            state = await _run_graph(
+                graph,
+                Command(
+                    resume=GateDecision(
+                        action=request.action,
+                        query=_edited(request, values),
+                        variants=(
+                            {"a": request.headline_a, "b": request.headline_b}
+                            if request.headline_a is not None
+                            and request.headline_b is not None
+                            else None
+                        ),
+                        instruction=approved or request.instruction,
+                    ).model_dump()
+                ),
+                request.thread_id,
+            )
+        return await _kept(
+            _outcome(
+                state,
+                thread_id=request.thread_id,
+                variants=values["variants"],
+                credit=credit,
             ),
-            request.thread_id,
+            conn=conn,
+            state=state,
+            caller=caller,
         )
-    return await _kept(
-        _outcome(
-            state,
-            thread_id=request.thread_id,
-            variants=values["variants"],
-            credit=credit,
-        ),
-        conn=conn,
-        state=state,
-        caller=caller,
-    )
 
 
 def _checkpoint_owner(checkpoint: Mapping[str, Any]) -> str | None:
@@ -1782,12 +1784,19 @@ class ClosingStreamingResponse(StreamingResponse):
     run's shutdown halfway through.
     """
 
+    def __init__(self, content, *, thread_id: str, **kwargs) -> None:
+        super().__init__(content, **kwargs)
+        self.thread_id = thread_id
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        try:
-            await super().__call__(scope, receive, send)
-        finally:
-            with anyio.CancelScope(shield=True):
-                await self.body_iterator.aclose()
+        # The bind lives here, not in the endpoint: the body is produced after
+        # the endpoint has returned, and this call is the whole of the send.
+        with bind_thread(self.thread_id):
+            try:
+                await super().__call__(scope, receive, send)
+            finally:
+                with anyio.CancelScope(shield=True):
+                    await self.body_iterator.aclose()
 
 
 @app.post("/chat")
@@ -1834,5 +1843,6 @@ async def chat(
             checkpointer=checkpointer,
             deps=ToolDeps(conn=conn, embedder=embedder),
         ),
+        thread_id=request.thread_id,
         media_type="application/x-ndjson",
     )
