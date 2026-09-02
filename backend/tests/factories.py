@@ -6,11 +6,13 @@ from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
 from typing import Literal, get_args
 
+import httpx
 import psycopg
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
+from openai import APIStatusError
 
 from app.assembly import AssembledPersona
 from app.config import settings
@@ -446,3 +448,13 @@ class StubGenerator:
     def check(self, *, instruction: str) -> RolePlayOutcome:
         self.checked.append(instruction)
         return checked_instruction(instruction, refusal=self.refusals.get(instruction))
+
+
+def status_error(status: int) -> APIStatusError:
+    """A provider error with a real status, for probing the screening
+    classification without a paid call (072/#163)."""
+    return APIStatusError(
+        "no endpoints",
+        response=httpx.Response(status, request=httpx.Request("POST", "http://x")),
+        body=None,
+    )

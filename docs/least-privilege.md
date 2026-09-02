@@ -416,13 +416,25 @@ self-harm, and the obeyed channel does not share the policy. The full argument
 is the per-channel section above; this line exists so a reader of this section
 alone does not mistake the gap for an oversight.
 
-**The screener has no live verification.** Every test doubles it, deliberately,
-because it is a paid model. So if the model ever stops satisfying
-`with_structured_output`, every call raises, the fail-open path swallows it, and
-the control is inert in production while the suite stays green
-([072/#163](https://github.com/Subaru-Goto/PanelVerdict/issues/163) carries the
-switched-off case). One manual run with an obvious injection, checking for the
-400, is what closes that — and nothing automated will.
+**The screener's live verification is one probe at boot.** Every test doubles
+it, deliberately, because it is a paid model — so for a while the control could
+be inert in production with the suite green, which is exactly what happened
+when both purpose-built safety models 404ed on this account
+([072/#163](https://github.com/Subaru-Goto/PanelVerdict/issues/163)). The
+lifespan now makes one real screening call at startup: a model that is off —
+unavailable to this account (401/403/404), or answering without honouring the
+verdict schema (`UnusableAnswer`) — is announced as *the control is off*, and
+where `SCREENER_REQUIRED` is set (the public deployment) it refuses the boot,
+which a deploy pipeline cannot miss. Outages never refuse: they heal, and
+100/#209 rejected trading uptime against vendor availability. Two deliberate
+absences: 402 classifies as an outage, because credit heals by top-up and while
+it persists no model call works at all — there is nothing for an unscreened
+injection to reach; and `/health` does not report screener state, because a
+public "the control is off" flag would be exactly the observation channel the
+asset-4 argument says an attacker lacks. What the probe does not cover is
+calibration between boots, or a mid-life revocation (fail-open per request
+until the next boot) — one manual run with an obvious injection, checking for
+the 400, is still the only end-to-end check of a real refusal.
 
 ## What is deliberately not done
 

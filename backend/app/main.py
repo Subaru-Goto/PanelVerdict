@@ -76,7 +76,13 @@ from app.schemas import (
     TargetQuery,
     VoteTally,
 )
-from app.screening import OpenRouterScreener, Screener, UnsafeInput
+from app.screening import (
+    OpenRouterScreener,
+    Screener,
+    UnsafeInput,
+    probe_screener,
+    self_model_name,
+)
 from app.targeting import CROSS_SECTION_NOTICE, settled_query
 from langgraph.checkpoint.memory import InMemorySaver
 from app.tracing import configure_tracing
@@ -112,9 +118,52 @@ elif settings.langsmith_tracing:
     )
 
 
+async def _enforce_screener_policy() -> None:
+    """Boot policy for the screener probe (072/#163): announce everywhere,
+    refuse where SCREENER_REQUIRED says this deployment must have its control.
+
+    Runs before the boot takes the pooler slot it may be about to refuse. One
+    real classifier call per process — the failure that actually happened here
+    was 404 on this account, which a free model-list check cannot see. The
+    off/outage classification is `probe_screener`'s; an outage never refuses,
+    required or not, and the WARNING-versus-ERROR level below is that same
+    distinction. This asserts the control at the boot instant only: a mid-life
+    revocation still fails open per request, one ERROR line each, until the
+    next boot.
+    """
+    screener = get_screener()
+    if screener is None:
+        if settings.screener_required:
+            raise RuntimeError(
+                "SCREENER_REQUIRED is set but OPENROUTER_API_KEY is not: the"
+                " screener cannot run, so this deployment refuses to start"
+            )
+        return
+    outcome = await asyncio.to_thread(probe_screener, screener)
+    if outcome == "off":
+        if settings.screener_required:
+            raise RuntimeError(
+                "SCREENER_REQUIRED is set and the screening model is not"
+                " available to this account (the control is off, not"
+                f" degraded): model={self_model_name(screener)}"
+            )
+        logger.error(
+            "the screening model is not available to this account — the"
+            " control is off, not degraded: model=%s",
+            self_model_name(screener),
+        )
+    elif outcome == "outage":
+        logger.warning(
+            "the screener did not answer the startup probe (outage, not"
+            " configuration): model=%s — requests fail open until it heals",
+            self_model_name(screener),
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """The app's only startup/shutdown lifecycle: the analyst's checkpointer.
+    """The app's only startup/shutdown lifecycle: the screener probe, then
+    the analyst's checkpointer.
 
     One saver for the process lifetime — threads must outlive requests, which
     is the whole point of a checkpointer. In Postgres (#144) so a restart or a
@@ -140,6 +189,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     the session pooler (port 5432) is fine — 006f's rule bans only the
     transaction pooler.
     """
+    await _enforce_screener_policy()
     async with AsyncConnectionPool(
         settings.database_url,
         min_size=1,

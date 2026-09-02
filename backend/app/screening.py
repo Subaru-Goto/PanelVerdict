@@ -26,7 +26,7 @@ somebody looks for a way past it was never a ceiling. See
 
 import logging
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Literal, Protocol
 
 from langchain.chat_models import init_chat_model
 
@@ -145,8 +145,62 @@ class OpenRouterScreener:
             # `raise`, not `assert`: asserts are stripped under `python -O`, and
             # a screener whose narrowing silently vanished would fail open. The
             # vote path narrows the same way for the same reason.
-            raise RuntimeError(f"screener returned {type(result).__name__}")
+            raise UnusableAnswer(f"screener returned {type(result).__name__}")
         return result
+
+
+# The startup probe's one input (072/#163). Quoted from _POLICY's own
+# do-not-flag examples, so the text itself can never be the interesting
+# variable: whatever comes back, either polarity, proves the call path answers.
+_PROBE_TEXT = "Save 50% today"
+
+ProbeOutcome = Literal["runs", "off", "outage"]
+
+
+class UnusableAnswer(RuntimeError):
+    """The model answered, reachably, but not with a `ScreeningVerdict`.
+
+    Its own class because the two consumers below must tell it apart from a
+    provider blip: a model that stops honouring the schema answers every call
+    unusably, so it classifies as "off" — the exact failure that used to be
+    inert in production while the suite stayed green (072/#163)."""
+
+
+def _classify(error: Exception) -> ProbeOutcome:
+    """The one place the off/outage line is drawn; the probe returns it and
+    `screen_inputs` maps it to a log level. "off" means nothing improves until
+    a person changes something: the model is not available to this account
+    (401/403/404 — 402 is deliberately absent, it heals by top-up and while it
+    persists no model call works at all), or it answers unusably. Everything
+    else heals on its own."""
+    if isinstance(error, UnusableAnswer):
+        return "off"
+    if (
+        isinstance(error, APIStatusError)
+        and error.status_code in _CONFIGURATION_STATUSES
+    ):
+        return "off"
+    return "outage"
+
+
+def probe_screener(screener: Screener) -> ProbeOutcome:
+    """One real screening call, so a switched-off screener is caught at boot
+    rather than discovered one ERROR log line per request (072/#163).
+
+    A real call and not a free model-list lookup, deliberately: the failure
+    that actually happened here was 404 on *this account* — both purpose-built
+    safety models — and a public list answers for every account. The cost is
+    one classifier call per process.
+
+    The off/outage line is `_classify`'s, shared with `screen_inputs`. The
+    caller must never turn an outage into a refused boot: availability would
+    hang on the vendor's worst minute, the trade 100/#209 rejected.
+    """
+    try:
+        screener.screen(_PROBE_TEXT)
+    except Exception as error:
+        return _classify(error)
+    return "runs"
 
 
 class UnsafeInput(Exception):
@@ -198,12 +252,7 @@ def screen_inputs(screener: Screener | None, texts: Sequence[str]) -> None:
             # every call raised, and the suite stayed green because every test
             # doubles the screener. It is logged as an error so the next reader
             # sees a control that is switched off rather than a blip.
-            level = (
-                logging.ERROR
-                if isinstance(error, APIStatusError)
-                and error.status_code in _CONFIGURATION_STATUSES
-                else logging.WARNING
-            )
+            level = logging.ERROR if _classify(error) == "off" else logging.WARNING
             logger.log(
                 level,
                 "screening did not run for one input (%s): model=%s",

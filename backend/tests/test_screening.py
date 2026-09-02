@@ -4,7 +4,16 @@ import httpx
 import pytest
 from openai import APIStatusError
 
-from app.screening import ScreeningVerdict, UnsafeInput, screen_inputs
+from tests.factories import status_error
+
+from app.screening import (
+    OpenRouterScreener,
+    ScreeningVerdict,
+    UnsafeInput,
+    UnusableAnswer,
+    probe_screener,
+    screen_inputs,
+)
 
 
 class RecordingScreener:
@@ -171,3 +180,95 @@ def test_one_field_failing_does_not_un_screen_the_rest() -> None:
 
     # All three were attempted, and the detection after the failure still fired.
     assert screener.seen == ["target", "clean", "attack"]
+
+
+# 072/#163: the startup probe. A dead screener used to be one ERROR line per
+# request, in a suite where every app test doubles the screener — so no test
+# could go red. The probe is one real call at boot, and these tests exercise
+# its classification with genuine provider errors, never the conftest double.
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+def test_the_probe_calls_a_configuration_error_off(status: int) -> None:
+    """401/403/404 mean the model is not available to this account and never
+    will be without a person changing something — the control is off, not
+    having a bad day. The same line `screen_inputs` draws per request."""
+
+    class Unavailable:
+        def screen(self, text: str) -> ScreeningVerdict:
+            raise status_error(status)
+
+    assert probe_screener(Unavailable()) == "off"
+
+
+def test_the_probe_calls_everything_else_an_outage() -> None:
+    """A timeout or a 5xx heals on its own — see `probe_screener` for why an
+    outage must never read as "off"."""
+
+    class Down:
+        def screen(self, text: str) -> ScreeningVerdict:
+            raise httpx.ConnectTimeout("no answer")
+
+    assert probe_screener(Down()) == "outage"
+
+
+@pytest.mark.parametrize("flagged", [False, True])
+def test_any_verdict_proves_the_screener_runs(flagged: bool) -> None:
+    """Either polarity is an answer: the probe claims the call path works, not
+    that the model is calibrated — calibration is 106/#226's subject."""
+    screener = RecordingScreener(ScreeningVerdict(flagged=flagged, reason="r"))
+
+    assert probe_screener(screener) == "runs"
+    # And it was a real screening call on benign text, not a no-op.
+    assert screener.seen and screener.seen[0].strip()
+
+
+def test_an_unusable_answer_is_off_not_an_outage() -> None:
+    """A model that stops honouring the schema answers every call unusably —
+    nothing heals that without a person acting, which is what "off" means.
+    This is the exact failure `docs/least-privilege.md` named as the reason no
+    live verification existed (072/#163, review)."""
+
+    class Unusable:
+        def screen(self, text: str) -> ScreeningVerdict:
+            raise UnusableAnswer("screener returned str")
+
+    assert probe_screener(Unusable()) == "off"
+
+
+def test_out_of_credit_stays_an_outage() -> None:
+    """402 is deliberately not "off", although it does not heal by redeploy.
+
+    Three reasons, pinned here so the next security pass does not re-argue
+    them: credit heals by top-up with no configuration change; the screener is
+    rebuilt per request, so the control returns the moment credit does; and
+    while a 402 persists no model call works at all — panel, generator and
+    analyst included — so there is nothing for an unscreened injection to
+    reach. Classifying it "off" would keep a SCREENER_REQUIRED deployment
+    refusing boots after the account is topped up."""
+
+    class Broke:
+        def screen(self, text: str) -> ScreeningVerdict:
+            raise status_error(402)
+
+    assert probe_screener(Broke()) == "outage"
+
+
+def test_a_real_404_reaches_the_probe_unwrapped(monkeypatch) -> None:
+    """The whole chain, not a hand-raised error: a transport-level 404 must
+    surface from `OpenRouterScreener.screen` as `APIStatusError` — if any
+    layer between httpx and the probe wrapped it, the probe would answer
+    "outage" and SCREENER_REQUIRED would silently stop refusing. No network:
+    the transport is patched below the SDK."""
+
+    def refuse(self, request, **kwargs):
+        return httpx.Response(
+            404, request=request, json={"error": {"message": "no endpoints"}}
+        )
+
+    monkeypatch.setattr(httpx.Client, "send", refuse)
+    screener = OpenRouterScreener(
+        api_key="k", base_url="http://localhost:9/api/v1", model="m"
+    )
+
+    assert probe_screener(screener) == "off"

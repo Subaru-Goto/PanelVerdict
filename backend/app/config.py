@@ -217,6 +217,14 @@ class Settings(BaseSettings):
     judge_model: str = "openai/gpt-5.6-luna"
     screening_model: str = "openai/gpt-5.6-luna"
 
+    # 072/#163: the environment split, explicit rather than an accident of
+    # which code path runs. False = a dead screening model is announced and
+    # the app serves without it (a laptop); True = the boot refuses when the
+    # startup probe says the control is off (the public deployment). The
+    # policy and its reasons live on `main._enforce_screener_policy` and
+    # `screening.probe_screener`.
+    screener_required: bool = False
+
     # Declared here, not left to the SDK, because `/health` and the form's
     # disclosure line need to know whether tracing is on. `app.tracing` exports
     # them.

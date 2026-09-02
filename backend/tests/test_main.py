@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import logging
 import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -18,6 +19,7 @@ from app.config import (
     USD_PER_ROLEPLAY,
     USD_PER_VOTE,
     PanelProfile,
+    Settings,
     settings,
 )
 from app.corpus import seed_corpus
@@ -60,15 +62,16 @@ from psycopg.pq import TransactionStatus
 from psycopg.types.json import Jsonb
 from pydantic import SecretStr
 from tests.factories import (
-    ScriptedChatModel,
-    StubGenerator,
     make_assembled,
     make_panel_vote,
     make_persona,
     make_report,
     ndjson_events,
     pointing,
+    ScriptedChatModel,
     seed_japanese,
+    status_error,
+    StubGenerator,
     tool_call_message,
     voted,
 )
@@ -1115,6 +1118,16 @@ def real_lifespan(pg_url, monkeypatch):
     """
     # database_url is a derived property, so the patch lands on the class.
     monkeypatch.setattr(type(settings), "database_url", pg_url)
+    # The lifespan now probes the screener with one real call (072/#163), and
+    # `Settings` reads the repo-root .env — so a developer's own key would make
+    # these tests buy a classifier call, and their own SCREENER_REQUIRED would
+    # refuse the boot outright. Pinned the way the `client` fixture pins caps.
+    monkeypatch.setattr(settings, "openrouter_api_key", None)
+    monkeypatch.setattr(
+        settings,
+        "screener_required",
+        Settings.model_fields["screener_required"].default,
+    )
     found = getattr(app.state, "checkpointer", None)
 
     yield
@@ -1174,6 +1187,89 @@ def test_the_lifespan_closes_every_table_to_the_data_api(real_lifespan, conn) ->
         ).fetchall()
     }
     assert "checkpoints" in closed, closed
+
+
+class _OffScreener:
+    """Raises the failure that actually happened: 404 on this account. A real
+    `APIStatusError` at the transport edge, so the probe's classification and
+    the lifespan's policy run for real — routing through the conftest double is
+    how a genuine outage kept the suite green (072/#163)."""
+
+    model_name = "openai/gpt-oss-safeguard-20b"
+
+    def screen(self, text: str) -> ScreeningVerdict:
+        raise status_error(404)
+
+
+class _DownScreener:
+    model_name = "openai/gpt-oss-safeguard-20b"
+
+    def screen(self, text: str) -> ScreeningVerdict:
+        raise httpx.ConnectTimeout("no answer")
+
+
+def test_a_dead_screener_is_announced_at_boot(
+    real_lifespan, monkeypatch, caplog
+) -> None:
+    """The only control on the untrusted-input path, quietly off, used to be
+    one ERROR line per request in logs nobody is obliged to read. The boot
+    announcement is the everywhere half of 072/#163; the module-global is
+    patched, not the dependency override, because the lifespan calls the
+    function itself — the doubles every route test installs never reach it."""
+    monkeypatch.setattr(main, "get_screener", lambda: _OffScreener())
+
+    with caplog.at_level(logging.ERROR, logger="app.main"):
+        with TestClient(app):
+            pass
+
+    (record,) = [r for r in caplog.records if "screening model" in r.message]
+    assert record.levelno == logging.ERROR
+    # Names what is switched off, so the reader can act on it.
+    assert "gpt-oss-safeguard" in record.getMessage()
+
+
+def test_a_required_screener_that_is_off_refuses_the_boot(
+    real_lifespan, monkeypatch
+) -> None:
+    """The hard-failure half: where configuration says this deployment must
+    have its control, a screener this account cannot reach is a failed boot —
+    visible from outside, not a log line."""
+    monkeypatch.setattr(settings, "screener_required", True)
+    monkeypatch.setattr(main, "get_screener", lambda: _OffScreener())
+
+    with pytest.raises(RuntimeError, match="SCREENER_REQUIRED"):
+        with TestClient(app):
+            pass
+
+
+def test_a_required_deployment_with_no_key_refuses_the_boot(
+    real_lifespan, monkeypatch
+) -> None:
+    """No key means no screener can ever be built, which on a deployment that
+    declared the control required is the same contradiction as a 404."""
+    monkeypatch.setattr(settings, "screener_required", True)
+
+    with pytest.raises(RuntimeError, match="SCREENER_REQUIRED"):
+        with TestClient(app):
+            pass
+
+
+def test_an_outage_at_boot_does_not_stop_a_required_deployment(
+    real_lifespan, monkeypatch, caplog
+) -> None:
+    """Required hardens configuration failures, not vendor availability —
+    see `probe_screener` for the argument. Announced as a WARNING and the app
+    comes up; the level is the assertion, because WARNING-versus-ERROR is
+    exactly the outage-versus-off distinction the ticket draws."""
+    monkeypatch.setattr(settings, "screener_required", True)
+    monkeypatch.setattr(main, "get_screener", lambda: _DownScreener())
+
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        with TestClient(app):
+            pass
+
+    (record,) = [r for r in caplog.records if "probe" in r.message]
+    assert record.levelno == logging.WARNING
 
 
 def test_a_resume_works_against_the_checkpointer_the_deploy_actually_uses(
