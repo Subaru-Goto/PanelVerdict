@@ -330,17 +330,16 @@ async def test_a_turn_logs_its_usage(conn, aconn, caplog) -> None:
     with caplog.at_level(logging.INFO, logger="app.analyst"):
         await _lines(model, conn=aconn, thread_id="usage-1")
 
-    (record,) = [r for r in caplog.records if "analyst usage" in r.message]
-    message = record.getMessage()
-    assert "thread_id=usage-1" in message
-    assert "calls=2" in message
-    assert "input_tokens=1500" in message
-    assert "output_tokens=160" in message
+    (record,) = [r for r in caplog.records if r.message == "analyst usage"]
+    assert record.thread_id == "usage-1"
+    assert record.calls == 2
+    assert record.input_tokens == 1500
+    assert record.output_tokens == 160
     # Reported-coverage discipline, as in `total_usage`: absent is not zero,
     # so each optional sum travels with how many calls reported it.
-    assert "cached_tokens=700/1" in message
-    assert "reasoning_tokens=300/1" in message
-    assert "cost" not in message
+    assert (record.cached_tokens, record.cached_reported) == (700, 1)
+    assert (record.reasoning_tokens, record.reasoning_reported) == (300, 1)
+    assert not hasattr(record, "cost")
 
 
 @pytest.mark.anyio
@@ -369,10 +368,13 @@ async def test_a_streamed_turn_logs_usage_from_the_finish_event(
     with caplog.at_level(logging.INFO, logger="app.analyst"):
         await _lines(model, conn=aconn, thread_id="usage-4")
 
-    (record,) = [r for r in caplog.records if "analyst usage" in r.message]
-    message = record.getMessage()
-    assert "input_tokens=800" in message
-    assert "reasoning_tokens=250/1" in message
+    (record,) = [r for r in caplog.records if r.message == "analyst usage"]
+    # 047/#145: fields, not text — and the thread named on the line itself,
+    # since it is written while the response is still streaming.
+    assert record.thread_id == "usage-4"
+    assert record.input_tokens == 800
+    assert record.reasoning_tokens == 250
+    assert record.reasoning_reported == 1
 
 
 @pytest.mark.anyio
@@ -422,5 +424,5 @@ async def test_a_disconnected_turn_still_logs_its_spend(conn, aconn, caplog) -> 
                 break
         await stream.aclose()
 
-    (record,) = [r for r in caplog.records if "analyst usage" in r.message]
-    assert "input_tokens=800" in record.getMessage()
+    (record,) = [r for r in caplog.records if r.message == "analyst usage"]
+    assert record.input_tokens == 800

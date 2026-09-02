@@ -3739,3 +3739,88 @@ def test_an_old_stored_report_without_usage_still_loads(signed_in, conn) -> None
 
     assert stored.status_code == 200
     assert stored.json()["usage"] is None
+
+
+def test_every_line_of_a_request_carries_its_request_id_and_the_run_s_thread_id(
+    client, conn, stamped_caplog
+) -> None:
+    """047/#145. The request id is minted at the edge and returned, so a reader
+    holding a response can find its lines; the run's lines carry the thread id
+    the client already holds."""
+    seed_japanese(conn, 5)
+
+    with stamped_caplog.at_level(logging.INFO, logger="app.main"):
+        response = client.post(
+            "/evaluate", json={**_REQUEST_BODY, "reading_accepted": False}
+        )
+
+    assert response.status_code == 200
+    request_id = response.headers["x-request-id"]
+    assert len(request_id) == 36  # a uuid4, minted here, never read from the client
+    (record,) = [r for r in stamped_caplog.records if r.message.startswith("evaluate")]
+    assert record.request_id == request_id
+    assert record.thread_id == response.json()["thread_id"]
+
+
+def test_a_line_logged_while_the_chat_streams_carries_the_thread_id(
+    client, stamped_caplog
+) -> None:
+    """The stream is produced after the endpoint has returned, so a bind that
+    ends with the handler would leave the analyst's lines null."""
+
+    class WarningModel(ScriptedChatModel):
+        def _generate(self, messages, *args, **kwargs):
+            logging.getLogger("app.analyst").warning("model retried")
+            return super()._generate(messages, *args, **kwargs)
+
+    app.dependency_overrides[get_analyst] = lambda: WarningModel(
+        responses=[AIMessage(content="ok")]
+    )
+
+    with stamped_caplog.at_level(logging.WARNING, logger="app.analyst"):
+        response = client.post(
+            "/chat",
+            json={
+                "thread_id": "t-main-log",
+                "message": "why?",
+                "result": make_report(),
+            },
+        )
+
+    assert response.status_code == 200
+    (record,) = [r for r in stamped_caplog.records if r.message == "model retried"]
+    assert record.thread_id == "t-main-log"
+    assert record.request_id == response.headers["x-request-id"]
+
+
+def test_a_chat_thread_id_longer_than_a_uuid_is_refused(client) -> None:
+    """The id is a log field now; unbounded, one turn could write anything
+    into the trail. 36 is the run id the client was handed."""
+    response = client.post(
+        "/chat",
+        json={"thread_id": "x" * 37, "message": "why?", "result": make_report()},
+    )
+
+    assert response.status_code == 422
+
+
+def test_a_request_that_never_reaches_a_run_still_gets_a_request_id(
+    client, monkeypatch
+) -> None:
+    unguarded = client.get("/health")
+    # The id wraps the secret check, not the other way round: a refused
+    # caller's lines are filed under an id too.
+    monkeypatch.setattr(settings, "api_shared_secret", SecretStr("edge-secret"))
+    refused = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert len(unguarded.headers["x-request-id"]) == 36
+    assert refused.status_code == 401
+    assert len(refused.headers["x-request-id"]) == 36
+    assert refused.headers["x-request-id"] != unguarded.headers["x-request-id"]
+
+
+def test_the_browser_may_read_the_request_id(client) -> None:
+    response = client.get("/health", headers={"Origin": settings.frontend_origin})
+
+    exposed = response.headers.get("access-control-expose-headers", "")
+    assert "x-request-id" in exposed.lower()

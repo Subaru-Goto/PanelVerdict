@@ -457,8 +457,10 @@ works:
 
 **A detection is logged and nobody reads it.** The refusal protects the run; the
 log line is the only record that an attempt happened at all, and today it goes
-to a server's stdout — nothing aggregates it, nothing alerts, nobody is
-assigned. Under owned content that stops being a nice-to-have: a detection would
+to the server's log stream — nothing aggregates it, nothing alerts, nobody is
+assigned. Since 047/#145 the line is a JSON object carrying the request id and
+the run's thread id, so *which run was refused* is answerable once someone
+reads it; that someone is still nobody. Under owned content that stops being a nice-to-have: a detection would
 then mean **someone is probing the isolation**, which is intelligence about an
 adversary and warrants correlated attempts and a human, not a `WARNING`.
 

@@ -710,6 +710,9 @@ class ChatRequest(BaseModel):
     as given, because nothing server-side remembers a finished panel.
     """
 
-    thread_id: str = Field(min_length=1)
+    # 36 = the uuid4 the run was started under (EvaluateRequest's bound). The
+    # id is a log field (047/#145); unbounded, one turn could write anything
+    # into the trail.
+    thread_id: str = Field(min_length=1, max_length=36)
     message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
     result: EvaluateResponse

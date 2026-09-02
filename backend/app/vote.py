@@ -3,6 +3,7 @@ import json
 import random
 from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
@@ -369,7 +370,12 @@ def collect_panel_votes(
 
     with ThreadPoolExecutor(max_workers=concurrency) as pool:
         futures: list[Future[tuple[VoteRecord, VoteUsage | None]]] = [
+            # `submit` starts a worker with an empty context, unlike an asyncio
+            # task; the bound ids a line is traced by (047/#145) would log as
+            # null from here and nothing would raise. One copy per submit — a
+            # context cannot be entered by two workers at once.
             pool.submit(
+                copy_context().run,
                 _cast_vote,
                 persona,
                 order,

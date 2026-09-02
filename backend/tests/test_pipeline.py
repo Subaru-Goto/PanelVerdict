@@ -375,7 +375,13 @@ async def test_usage_is_logged_even_when_no_verdict_comes_out(
     ):
         await _run(aconn, llm=FailingLLM())
 
-    assert any("usage" in record.message for record in caplog.records)
+    (record,) = [r for r in caplog.records if r.message == "panel usage"]
+    # 047/#145: the totals are fields a log query can filter on, not a repr
+    # interpolated into the text — and the wall time sits beside them.
+    assert record.votes == 0
+    assert record.input_tokens == 0
+    assert record.usage_reported == 0
+    assert record.wall_seconds >= 0
 
 
 @pytest.mark.anyio
@@ -388,11 +394,12 @@ async def test_the_run_records_its_own_wall_time(conn, aconn, caplog) -> None:
     seed_japanese(conn, 3)
 
     with caplog.at_level(logging.INFO, logger="app.pipeline"):
-        await _run(aconn)
+        result = await _run(aconn)
 
-    (line,) = [r.message for r in caplog.records if "panel usage" in r.message]
-    assert "wall=" in line
-    assert "seconds_slowest" in line
+    (record,) = [r for r in caplog.records if r.message == "panel usage"]
+    assert record.wall_seconds >= record.seconds_slowest
+    # The ledger's id, as a field beside the totals (047/#145).
+    assert record.test_id == result.test_id
 
 
 class TestEnactedContextAndTheVoteCache:
@@ -591,9 +598,7 @@ class TestVoteCache:
             assert cur.fetchone() == (0,)
 
     @pytest.mark.anyio
-    async def test_a_mid_run_402_still_resumes_for_its_owner(
-        self, conn, aconn
-    ) -> None:
+    async def test_a_mid_run_402_still_resumes_for_its_owner(self, conn, aconn) -> None:
         """086/#177's done-when, verbatim: the votes a 402 stranded are still
         their buyer's resume buffer — the owner re-buys only what has no row,
         and another account re-buys everything, because the stranded rows were
