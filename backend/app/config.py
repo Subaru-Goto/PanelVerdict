@@ -121,10 +121,11 @@ USD_PER_ROLEPLAY = USD_PER_TRANSLATION
 # thread-level bound is the per-thread daily turn cap, a count. A price the
 # pool charges, not an upper bound on what a turn can spend: what bounds a
 # turn's output spend is ANALYST_MAX_COMPLETION_TOKENS per call times the
-# declared per-turn call budget, `analyst.CALLS_PER_TURN` (input rides the
-# replayed transcript, mostly as cache reads),
-# and a worst-case capped turn still bills a multiple of this price — see the
-# global cap's note on what that gap means for the day.
+# declared per-turn call budget, `analyst.CALLS_PER_TURN`. The input side has
+# no such wall — it is the replayed transcript (mostly cache reads) plus the
+# client-supplied report, which nothing sizes today — so a worst-case turn
+# bills a multiple of this price; see the global cap's note on what that gap
+# means for the day.
 USD_PER_TURN = 0.0005
 
 

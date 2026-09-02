@@ -4,7 +4,6 @@ import threading
 
 import psycopg
 import pytest
-from langchain.agents import AgentState
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
@@ -14,6 +13,7 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from app.analyst import (
     _SYSTEM_PROMPT,
     ToolDeps,
+    _BudgetEndsTheTurn,
     analysis_facts,
     build_tools,
     checkpointed_models,
@@ -547,7 +547,11 @@ class TestAnalystAgent:
         covered the day it appears, or this test names the field pool it
         needs extending with."""
         serde = JsonPlusSerializer()
-        models = checkpointed_models(AgentState)
+        # The schema the checkpointer actually serializes is the middleware's
+        # widened one (052/#149 added ModelCallLimitState's two counters), so
+        # the walk starts from what `stream_analyst` wires, not from the base
+        # AgentState it happens to extend.
+        models = checkpointed_models(_BudgetEndsTheTurn.state_schema)
         assert models, "the walk found no models — the schema moved"
 
         # One valid instance per class, built from its own required fields; a

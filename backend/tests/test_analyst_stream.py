@@ -30,9 +30,12 @@ async def _lines(
     conn: psycopg.AsyncConnection,
     thread_id: str,
     deps: ToolDeps | None = None,
+    checkpointer: InMemorySaver | None = None,
 ) -> list[str]:
     """One streamed turn with the shared fixture result and question — every
-    test here varies only the model and what it asserts about the wire."""
+    test here varies only the model and what it asserts about the wire. Pass
+    a `checkpointer` to speak to the same thread twice; the default is a
+    fresh saver, i.e. a first turn."""
     return [
         line
         async for line in stream_analyst(
@@ -40,7 +43,7 @@ async def _lines(
             result=_result(),
             thread_id=thread_id,
             message="Why did it stop early?",
-            checkpointer=InMemorySaver(),
+            checkpointer=checkpointer or InMemorySaver(),
             deps=deps or _deps(conn),
         )
     ]
@@ -71,19 +74,25 @@ class TestStreamAnalyst:
 
     @pytest.mark.anyio
     async def test_a_never_answering_model_ends_at_the_declared_budget(
-        self, conn, aconn
+        self, conn, aconn, caplog
     ) -> None:
         """052/#149's stream face, replacing the derived tripwire's: a model
         still calling tools when the declared per-turn call budget runs out
         has the turn ended for it, and the reader gets this codebase's fixed
         sentence as the reply — then `done`. Not an error: the turn ended,
         the thread survives, the next question starts fresh. The library's
-        own injected English must never reach the wire."""
+        own injected English must never reach the wire — and the wall must
+        announce itself to the operator, because on the wire alone a
+        budget-ended turn is indistinguishable from a short answer."""
         # A one-message script repeats forever (see ScriptedChatModel).
         model = ScriptedChatModel(responses=[tool_call_message()])
 
-        lines = await _lines(model, conn=aconn, thread_id="s-2")
+        with caplog.at_level(logging.WARNING, logger="app.analyst"):
+            lines = await _lines(model, conn=aconn, thread_id="s-2")
         events = ndjson_events(lines)
+
+        (warning,) = [r for r in caplog.records if "model-call budget" in r.message]
+        assert warning.levelno == logging.WARNING
 
         # The budget's currency is model calls, pinned by counting what each
         # one bought: every allowed call was a tool round.
@@ -101,11 +110,12 @@ class TestStreamAnalyst:
     async def test_the_backstop_errors_when_the_budget_stops_counting(
         self, conn, aconn, monkeypatch
     ) -> None:
-        """The stated relationship between the two limits, exercised: the
-        declared budget ends a turn long before langgraph's recursion
-        backstop, so the backstop can only fire if the budget stops counting
-        — simulated here by raising it out of the way. What must survive that
-        day is an error event with fixed text, terminal, no `done`."""
+        """The stated relationship between the two limits, exercised: a
+        full-budget turn executes a measured 21 supersteps and the backstop
+        sits at 44 — a whole turn of margin — so it can only fire if the
+        budget stops counting, simulated here by raising it out of the way.
+        What must survive that day is an error event with fixed text,
+        terminal, no `done`."""
         from app import analyst
 
         monkeypatch.setattr(analyst, "CALLS_PER_TURN", 99)
@@ -115,7 +125,7 @@ class TestStreamAnalyst:
 
         assert events[-1] == {
             "type": "error",
-            "message": "analyst was still calling tools after 25 steps",
+            "message": "analyst was still calling tools after 44 steps",
         }
         assert {"type": "done"} not in events
 
@@ -130,9 +140,16 @@ class TestStreamAnalyst:
             responses=[tool_call_message()] * CALLS_PER_TURN
             + [AIMessage(content="Second turn answers.")]
         )
+        # One saver, one thread, two turns — a fresh saver per call would
+        # test nothing, since the count could only carry over through it.
+        saver = InMemorySaver()
 
-        first = ndjson_events(await _lines(model, conn=aconn, thread_id="b-2"))
-        second = ndjson_events(await _lines(model, conn=aconn, thread_id="b-2"))
+        first = ndjson_events(
+            await _lines(model, conn=aconn, thread_id="b-2", checkpointer=saver)
+        )
+        second = ndjson_events(
+            await _lines(model, conn=aconn, thread_id="b-2", checkpointer=saver)
+        )
 
         assert first[-1] == {"type": "done"}
         first_tokens = "".join(e["text"] for e in first if e["type"] == "token")

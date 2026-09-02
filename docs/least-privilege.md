@@ -228,7 +228,12 @@ different threats, one asset:
 questions all day. The walls are sign-in at the edge (063/#158), the per-caller
 daily allowance and the global cap — the real backstop — charged *before* the
 paid call, and the analyst's declared per-turn call budget (`CALLS_PER_TURN`,
-052/#149). The known gap is topic: nothing
+052/#149). The budget counts model calls and nothing else: one call may fan
+out several tool executions (each a database query, `search_personas` also a
+paid embedding), and the input side — the replayed transcript plus the
+client-supplied report, which nothing sizes today — has no wall of its own;
+both residuals are recorded on the tech-debt backlog. The known gap is topic:
+nothing
 stops the analyst answering a general question that has nothing to do with the
 report, and [091/#196](https://github.com/Subaru-Goto/PanelVerdict/issues/196)
 now serves two assets, because the same transcript is also a credibility

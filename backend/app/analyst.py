@@ -22,7 +22,7 @@ from typing import get_args, get_type_hints
 import anyio
 import psycopg
 from langchain.agents import create_agent
-from langchain.agents.middleware import ModelCallLimitMiddleware
+from langchain.agents.middleware import ModelCallLimitMiddleware, hook_config
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool, tool
@@ -68,14 +68,18 @@ logger = logging.getLogger(__name__)
 # how much a turn may spend.
 CALLS_PER_TURN = 5
 
-# The backstop behind the budget: langgraph's own default recursion limit,
-# stated rather than inherited (the vote path's `max_retries` precedent). The
-# budget above ends a turn at 5 model calls ≈ 11 supersteps, so this can only
-# fire if the middleware stops counting — it exists so a middleware bug degrades
-# into a visible error instead of an unbounded loop, and the two are in that
-# order on purpose: budget first (a sentence and `done`), backstop behind it
-# (an error event).
-_BACKSTOP_STEPS = 25
+# The backstop behind the budget, in langgraph's superstep currency: twice the
+# measured cost of a full-budget turn. A budget-ended turn executes 21
+# supersteps — the middleware's hooks compile as graph nodes, so a tool round
+# costs 4, not the pre-middleware 2 — measured by sweeping `recursion_limit`
+# against a never-answering model: errors through 21, first completes at 22
+# (three independent runs, 2026-09-02). 2×22 = 44 keeps the designed order —
+# budget first (a sentence and `done`), backstop behind it (an error event) —
+# with a whole turn's worth of margin, so adding a middleware or a tool cannot
+# quietly invert it; a counting bug still dies within ~10 extra model calls,
+# each completion-capped. NOT langgraph's default (10007 in the installed
+# version): that would let a broken counter buy thousands of calls first.
+_BACKSTOP_STEPS = 44
 
 # What the reader gets when the budget ends a turn. Reply text, not an error
 # event: the turn ended, the thread survives, and the next question starts
@@ -97,11 +101,36 @@ class _BudgetEndsTheTurn(ModelCallLimitMiddleware):
     fixed sentence this codebase wrote. So the jump is kept and the message
     replaced. The override rides `before_model` because the async wrapper
     (`abefore_model`) delegates to it — pinned by the stream test, which
-    would show the library's wording the day that stops being true."""
+    would show the library's wording the day that stops being true.
 
-    def before_model(self, state, runtime):  # type: ignore[override]
-        jump = super().before_model(state, runtime)
+    What the budget counts is model calls and nothing else: one call may fan
+    out several tool executions, and `search_personas` buys an embedding per
+    execution — spend the edge caps and the completion ceilings bound, not
+    this number."""
+
+    def __init__(self, *, run_limit: int) -> None:
+        # `exit_behavior` declared, not inherited: the library's default is
+        # 'end' today, and 'error' would hand the reader an error event for
+        # a turn the ticket says is not an error.
+        super().__init__(run_limit=run_limit, exit_behavior="end")
+
+    # Re-declared rather than inherited: the base marks its hooks with
+    # `can_jump_to=["end"]`, and a plain override sheds the marker — today the
+    # factory recovers it from the still-decorated `abefore_model`, but that
+    # is the library's fallback, not a contract.
+    @hook_config(can_jump_to=["end"])
+    def before_model(
+        self, state: Mapping[str, object], runtime: object
+    ) -> dict[str, object] | None:  # type: ignore[override]
+        jump = super().before_model(state, runtime)  # type: ignore[arg-type]
         if jump is not None:
+            # The one signal an operator gets that the wall was hit: the turn
+            # itself ends politely, and the usage log alone would read as an
+            # ordinary five-call turn.
+            logger.warning(
+                "analyst turn ended at its model-call budget (%d calls)",
+                self.run_limit,
+            )
             jump["messages"] = [AIMessage(content=_BUDGET_SENTENCE)]
         return jump
 
@@ -599,7 +628,11 @@ async def stream_analyst(
     # edge now (045's per-thread and per-caller daily turn caps, charged by
     # 089 before the stream exists), where it can refuse with a status code.
     # A second, middleware-kept thread count would double-gate the same thing
-    # and disagree with the ledger about when a day resets.
+    # and disagree with the ledger about when a day resets. Know before
+    # flipping that judgment: the middleware still checkpoints a lifetime
+    # `thread_model_call_count`, so a `thread_limit` added later would find
+    # every surviving thread already over it and lock them all to the budget
+    # sentence at their first turn.
     agent = create_agent(
         model=model,
         tools=tools,
