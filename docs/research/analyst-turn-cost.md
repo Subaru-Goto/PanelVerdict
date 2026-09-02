@@ -28,6 +28,13 @@ path), so derivation from tokens × dated price is the instrument here; the
 same session's OpenRouter activity view is the cross-check, as in the
 per-vote measurement.
 
+> **Correction (2026-09-02, [104/#223](https://github.com/Subaru-Goto/PanelVerdict/issues/223)):**
+> on the GPT-5.6 family, uncached prompt tokens ahead of the cache breakpoint are
+> *cache writes* billed at 1.25× input — $0.25/M, not $0.20/M (OpenRouter
+> catalogue, read 2026-09-02). Re-priced, the worst low-effort turn moves from
+> $0.000429 to ~$0.00045; `USD_PER_TURN` still holds. Derivation and sources in
+> [`thread-replay-cost.md`](thread-replay-cost.md) §3.
+
 ## Results
 
 | arm | turn | model calls | input (cached) | output (reasoning) | derived USD |
