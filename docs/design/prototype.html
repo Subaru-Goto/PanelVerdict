@@ -748,9 +748,17 @@
      are mockup pacing the app never ships: steps may not animate invented
      progress, the same rule the demo's timings follow. The app shows the
      three steps that actually run (assemble / vote / verdict), as the 061
-     amendment settled for the demo. "Cancel this run" is deferred with 099:
-     the votes are bought when the run starts, so a cancel control cannot
-     honestly exist before the refund story does. -->
+     amendment settled for the demo. "Cancel this run" was deferred with 099
+     and 099 has now answered (grilled 2026-09-02, #208): there is NO cancel in
+     v1 — the control below is gone. A client-side cancel stops nothing (the
+     vote loop has no reader to lose once the panel is bought) and the report
+     lands in the customer's tests either way, so closing the tab already
+     behaves like cancel without lying about money. A real cancel, if ever
+     wanted, rides on 032's AbortSignal work. The same grilling decided: no
+     refunds anywhere (a slot refund without pool reconciliation is the drain
+     loop 099 was filed about, via forced failures); the pool stays charged at
+     the sized estimate, unreconciled — the strict limit is demo-scoped, and
+     reconciliation is a serious-traffic problem for later. -->
 <section id="step3" class="view">
   <div class="flow-head"><div class="stepper" id="stepper-3"></div></div>
   <div class="run-wrap">
@@ -765,9 +773,6 @@
     </div>
 
     <p class="run-note" id="run-note">A run of this size usually takes under a minute.</p>
-    <div class="actions" style="justify-content:center" id="run-cancel">
-      <button class="btn-link" onclick="cancelRun()">Cancel this run</button>
-    </div>
   </div>
 </section>
 
@@ -907,10 +912,13 @@
 
   <div class="state-block">
     <h3>A run failed after the votes started</h3>
-    <p class="when">A failure names what survived, because partial votes are still evidence.</p>
+    <p class="when">A failure names what survived, because partial votes are still evidence — and it
+      does not promise money back: the run counted, and the copy says what is actually kept (099,
+      2026-09-02: no refunds; the vote ledger banks what was bought, so the retry is the cheap part).</p>
     <div class="notice stop" style="max-width:640px">
-      <b>The run stopped after 9 of 24 votes.</b> Too few to call a verdict. This run has not been counted
-      against your allowance; you can start it again.
+      <b>The run stopped after 9 of 24 votes.</b> Too few to call a verdict. The run counted against
+      today&rsquo;s allowance, but the nine votes are kept &mdash; running the same test again picks them up
+      and only buys the rest.
     </div>
   </div>
 
@@ -1419,11 +1427,6 @@ function startRun(demo){
     flow.runTimer = setTimeout(showReport, 500);
   };
   flow.runTimer = setTimeout(tick, demo ? REPLAY_MS[0] : 1100);
-}
-
-function cancelRun(){
-  if (flow.runTimer) { clearTimeout(flow.runTimer); flow.runTimer = null; }
-  go(flow.demo ? 'landing' : 'step2');
 }
 
 /* ------------------------------------------------------------------ step 4 */
