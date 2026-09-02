@@ -416,13 +416,18 @@ self-harm, and the obeyed channel does not share the policy. The full argument
 is the per-channel section above; this line exists so a reader of this section
 alone does not mistake the gap for an oversight.
 
-**The screener has no live verification.** Every test doubles it, deliberately,
-because it is a paid model. So if the model ever stops satisfying
-`with_structured_output`, every call raises, the fail-open path swallows it, and
-the control is inert in production while the suite stays green
-([072/#163](https://github.com/Subaru-Goto/PanelVerdict/issues/163) carries the
-switched-off case). One manual run with an obvious injection, checking for the
-400, is what closes that — and nothing automated will.
+**The screener's live verification is one probe at boot.** Every test doubles
+it, deliberately, because it is a paid model — so for a while the control could
+be inert in production with the suite green, which is exactly what happened
+when both purpose-built safety models 404ed on this account
+([072/#163](https://github.com/Subaru-Goto/PanelVerdict/issues/163)). The
+lifespan now makes one real screening call at startup: a configuration error
+(401/403/404) is announced as *the control is off*, and where
+`SCREENER_REQUIRED` is set — the public deployment — it refuses the boot, which
+a deploy pipeline cannot miss. Outages never refuse: they heal, and 100/#209
+rejected trading uptime against vendor availability. What the probe does not
+cover is calibration between boots — one manual run with an obvious injection,
+checking for the 400, is still the only end-to-end check of a real refusal.
 
 ## What is deliberately not done
 

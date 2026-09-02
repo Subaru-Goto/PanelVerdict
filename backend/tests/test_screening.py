@@ -4,7 +4,12 @@ import httpx
 import pytest
 from openai import APIStatusError
 
-from app.screening import ScreeningVerdict, UnsafeInput, screen_inputs
+from app.screening import (
+    ScreeningVerdict,
+    UnsafeInput,
+    probe_screener,
+    screen_inputs,
+)
 
 
 class RecordingScreener:
@@ -171,3 +176,52 @@ def test_one_field_failing_does_not_un_screen_the_rest() -> None:
 
     # All three were attempted, and the detection after the failure still fired.
     assert screener.seen == ["target", "clean", "attack"]
+
+
+# 072/#163: the startup probe. A dead screener used to be one ERROR line per
+# request, in a suite where every app test doubles the screener — so no test
+# could go red. The probe is one real call at boot, and these tests exercise
+# its classification with genuine provider errors, never the conftest double.
+
+
+def _status_error(status: int) -> APIStatusError:
+    return APIStatusError(
+        "no endpoints",
+        response=httpx.Response(status, request=httpx.Request("POST", "http://x")),
+        body=None,
+    )
+
+
+@pytest.mark.parametrize("status", [401, 403, 404])
+def test_the_probe_calls_a_configuration_error_off(status: int) -> None:
+    """401/403/404 mean the model is not available to this account and never
+    will be without a person changing something — the control is off, not
+    having a bad day. The same line `screen_inputs` draws per request."""
+
+    class Unavailable:
+        def screen(self, text: str) -> ScreeningVerdict:
+            raise _status_error(status)
+
+    assert probe_screener(Unavailable()) == "off"
+
+
+def test_the_probe_calls_everything_else_an_outage() -> None:
+    """A timeout or a 5xx heals on its own; refusing to boot over one would
+    trade uptime against vendor availability — the trade 100/#209 rejected."""
+
+    class Down:
+        def screen(self, text: str) -> ScreeningVerdict:
+            raise httpx.ConnectTimeout("no answer")
+
+    assert probe_screener(Down()) == "outage"
+
+
+@pytest.mark.parametrize("flagged", [False, True])
+def test_any_verdict_proves_the_screener_runs(flagged: bool) -> None:
+    """Either polarity is an answer: the probe claims the call path works, not
+    that the model is calibrated — calibration is 106/#226's subject."""
+    screener = RecordingScreener(ScreeningVerdict(flagged=flagged, reason="r"))
+
+    assert probe_screener(screener) == "runs"
+    # And it was a real screening call on benign text, not a no-op.
+    assert screener.seen and screener.seen[0].strip()

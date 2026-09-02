@@ -150,6 +150,11 @@ names the host exactly when the check goes red.
    - `POSTGRES_USER` (`postgres.<project-ref>`), `POSTGRES_PASSWORD`, `POSTGRES_DB`,
      `POSTGRES_HOST`, `POSTGRES_PORT` — the session-pooler values from step 1
    - `PROFILE` — leave unset for `dev` while dark; `prod` is a deliberate act
+   - `SCREENER_REQUIRED=true` — the screener is the only control on the
+     untrusted-input path, and this is the deployment it protects: a screening
+     model this account cannot reach fails the boot here instead of serving
+     without the control (072/#163). The startup probe is one paid classifier
+     call per boot; outages never fail the boot, only configuration does
    - `FRONTEND_ORIGIN` — the Vercel URL, once step 3 exists (CORS, now a second
      layer rather than load-bearing: the browser talks to the Vercel proxy)
 4. The service URL (`https://….onrender.com`) is the API URL. First responses after an

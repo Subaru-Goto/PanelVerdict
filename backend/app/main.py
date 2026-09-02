@@ -76,7 +76,13 @@ from app.schemas import (
     TargetQuery,
     VoteTally,
 )
-from app.screening import OpenRouterScreener, Screener, UnsafeInput
+from app.screening import (
+    OpenRouterScreener,
+    Screener,
+    UnsafeInput,
+    probe_screener,
+    self_model_name,
+)
 from app.targeting import CROSS_SECTION_NOTICE, settled_query
 from langgraph.checkpoint.memory import InMemorySaver
 from app.tracing import configure_tracing
@@ -114,7 +120,8 @@ elif settings.langsmith_tracing:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """The app's only startup/shutdown lifecycle: the analyst's checkpointer.
+    """The app's only startup/shutdown lifecycle: the screener probe, then
+    the analyst's checkpointer.
 
     One saver for the process lifetime — threads must outlive requests, which
     is the whole point of a checkpointer. In Postgres (#144) so a restart or a
@@ -140,6 +147,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     the session pooler (port 5432) is fine — 006f's rule bans only the
     transaction pooler.
     """
+    # The screener probe, first — before the boot takes a pooler slot it may
+    # be about to refuse (072/#163). One real classifier call per process: the
+    # failure that actually happened here was 404 on this account, which a free
+    # model-list check cannot see. Classification lives in `probe_screener`;
+    # this is only the policy — announce everywhere, refuse where
+    # SCREENER_REQUIRED says this deployment must have its control.
+    screener = get_screener()
+    if screener is None:
+        if settings.screener_required:
+            raise RuntimeError(
+                "SCREENER_REQUIRED is set but OPENROUTER_API_KEY is not: the"
+                " screener cannot run, so this deployment refuses to start"
+            )
+    else:
+        outcome = await asyncio.to_thread(probe_screener, screener)
+        if outcome == "off":
+            if settings.screener_required:
+                raise RuntimeError(
+                    "SCREENER_REQUIRED is set and the screening model is not"
+                    " available to this account (the control is off, not"
+                    f" degraded): model={self_model_name(screener)}"
+                )
+            logger.error(
+                "the screening model is not available to this account — the"
+                " control is off, not degraded: model=%s",
+                self_model_name(screener),
+            )
+        elif outcome == "outage":
+            logger.warning(
+                "the screener did not answer the startup probe (outage, not"
+                " configuration): model=%s — requests fail open until it heals",
+                self_model_name(screener),
+            )
     async with AsyncConnectionPool(
         settings.database_url,
         min_size=1,

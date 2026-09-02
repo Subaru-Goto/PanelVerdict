@@ -26,7 +26,7 @@ somebody looks for a way past it was never a ceiling. See
 
 import logging
 from collections.abc import Sequence
-from typing import Protocol
+from typing import Literal, Protocol
 
 from langchain.chat_models import init_chat_model
 
@@ -147,6 +147,38 @@ class OpenRouterScreener:
             # vote path narrows the same way for the same reason.
             raise RuntimeError(f"screener returned {type(result).__name__}")
         return result
+
+
+# The startup probe's one input (072/#163). Quoted from _POLICY's own
+# do-not-flag examples, so the text itself can never be the interesting
+# variable: whatever comes back, either polarity, proves the call path answers.
+_PROBE_TEXT = "Save 50% today"
+
+ProbeOutcome = Literal["runs", "off", "outage"]
+
+
+def probe_screener(screener: Screener) -> ProbeOutcome:
+    """One real screening call, so a switched-off screener is caught at boot
+    rather than discovered one ERROR log line per request (072/#163).
+
+    A real call and not a free model-list lookup, deliberately: the failure
+    that actually happened here was 404 on *this account* — both purpose-built
+    safety models — and a public list answers for every account. The cost is
+    one classifier call per process.
+
+    "off" draws the same line `screen_inputs` draws per request: 401/403/404
+    mean nothing improves until a person changes something. Everything else is
+    an outage, which heals on its own — the caller must not turn one into a
+    refused boot, or availability hangs on the vendor's worst minute
+    (100/#209 rejected exactly that trade for judged text).
+    """
+    try:
+        screener.screen(_PROBE_TEXT)
+    except APIStatusError as error:
+        return "off" if error.status_code in _CONFIGURATION_STATUSES else "outage"
+    except Exception:
+        return "outage"
+    return "runs"
 
 
 class UnsafeInput(Exception):
