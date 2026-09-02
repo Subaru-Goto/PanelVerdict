@@ -114,6 +114,13 @@ USD_PER_ROLEPLAY = USD_PER_TRANSLATION
 # prices — rounded up so the pool errs toward overcharging, as USD_PER_VOTE
 # does. The old stand-in (one vote, $0.0002) undercharged a default-effort
 # turn 3-5x, the one direction a ceiling must not err.
+#
+# Flat per turn, not scaled by thread length — decided with the measurement
+# (090/#195): a thread's replayed history is 80-96% cache reads at a tenth of
+# the input price, so turn cost grows far slower than the transcript, and the
+# thread-level bound is the per-thread daily turn cap, a count. A price the
+# pool charges, not an upper bound on what a turn can spend: the spend bound
+# is ANALYST_MAX_COMPLETION_TOKENS per call times the turn's step budget.
 USD_PER_TURN = 0.0005
 
 

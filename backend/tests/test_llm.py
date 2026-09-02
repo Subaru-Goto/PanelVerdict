@@ -2,25 +2,27 @@ import json
 
 import httpx
 import pytest
+from langchain_core.exceptions import OutputParserException
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.messages.ai import (
     InputTokenDetails,
     OutputTokenDetails,
     UsageMetadata,
 )
-
-from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers.pydantic import PydanticOutputParser
 from langchain_openai import ChatOpenAI
 from openai import APIStatusError
 
 from app.llm import (
+    ANALYST_MAX_COMPLETION_TOKENS,
     TARGET_MAX_COMPLETION_TOKENS,
     TARGET_REASONING_EFFORT,
+    VOTE_MAX_COMPLETION_TOKENS,
     VOTE_READ_TIMEOUT_SECONDS,
     OpenRouterEmbedder,
     OpenRouterJudge,
     OpenRouterPanelLLM,
+    OpenRouterRolePlayGenerator,
     OpenRouterTargetTranslator,
     _vote_response,
     analyst_chat_model,
@@ -487,6 +489,26 @@ def test_the_vote_call_carries_the_measured_read_timeout() -> None:
     assert _bound_model(llm).request_timeout == 60
 
 
+def test_the_vote_call_carries_a_bounded_completion() -> None:
+    """090/#195: the pool charges USD_PER_VOTE at the gate, but until this cap a
+    vote's completion was unbounded — a translator-scale 65,536-token runaway
+    would have billed ~$0.079, ~395x the charge. 1024 is TARGET_MAX_COMPLETION_
+    TOKENS' own derivation applied to the vote's measurements: the largest
+    legitimate vote observed emitted 296 output tokens (gpt-5-mini at default
+    effort, docs/research/panel-model-selection.md), and that is the *verbose*
+    bound — the shipped Luna emits ~6.5 reasoning tokens/vote against mini's
+    ~160 (docs/research/manipulation-check-luna.md). 3 x 296 = 888, next power
+    of two up. A vote that hits it fails to parse, which the shortfall path
+    already reports as a failed vote — never a stack trace."""
+    llm = OpenRouterPanelLLM(
+        api_key="test",
+        base_url="http://openrouter.invalid",
+        model="openai/gpt-5-mini",
+    )
+
+    assert _bound_model(llm).max_tokens == VOTE_MAX_COMPLETION_TOKENS == 1024
+
+
 def test_the_translator_caps_its_output_and_asks_for_little_reasoning() -> None:
     """One call generated 65,536 completion tokens and cost $0.13 — about a whole
     200-vote run — before failing to parse (docs/research/targeting-call-effort.md).
@@ -551,6 +573,44 @@ def test_every_paid_call_is_bounded_and_none_inherits_the_sdk_default() -> None:
     }
 
 
+def test_every_paid_completion_is_bounded() -> None:
+    """090/#195's own uniformity table, the timeout table's sibling above: the
+    defect there was two constructions bounded and three missed, and the same
+    held for completions — the translator and role-play caps existed while the
+    vote, the analyst, the screener and the judge generated without bound. A
+    new paid chat client added without a `max_tokens` should break this.
+
+    The screener and the judge reuse the translator's cap rather than minting
+    unsourced numbers (the judge's own precedent for its timeout): both answer
+    with a tiny structured verdict, so 4096 is a blast-radius bound with orders
+    of magnitude of headroom, not a fit."""
+    from app.screening import OpenRouterScreener
+
+    transport = {
+        "api_key": "test",
+        "base_url": "http://openrouter.invalid",
+    }
+    capped = {
+        "vote": _bound_model(OpenRouterPanelLLM(**transport, model="m")),
+        "analyst": analyst_chat_model(**transport, model="m"),
+        "translator": OpenRouterTargetTranslator(**transport, model="m")._model.steps[
+            0
+        ],
+        "roleplay": OpenRouterRolePlayGenerator(**transport, model="m")._model.steps[0],
+        "screener": OpenRouterScreener(**transport, model="m")._model.steps[0],
+        "judge": OpenRouterJudge(**transport, model="m")._model.steps[0],
+    }
+
+    assert {name: client.max_tokens for name, client in capped.items()} == {
+        "vote": VOTE_MAX_COMPLETION_TOKENS,
+        "analyst": ANALYST_MAX_COMPLETION_TOKENS,
+        "translator": TARGET_MAX_COMPLETION_TOKENS,
+        "roleplay": TARGET_MAX_COMPLETION_TOKENS,
+        "screener": TARGET_MAX_COMPLETION_TOKENS,
+        "judge": TARGET_MAX_COMPLETION_TOKENS,
+    }
+
+
 class TestOutOfCreditTranslation:
     """The SDK reports a 402 as its generic APIStatusError, whose type name is all a
     VoteFailure carries — so the adapter renames exactly that status, and no other."""
@@ -598,3 +658,18 @@ def test_the_analyst_model_asks_for_usage_and_runs_at_low_effort() -> None:
 
     assert model.stream_usage is True
     assert model.reasoning_effort == "low"
+
+
+def test_the_analyst_caps_each_completion() -> None:
+    """090/#195: a turn's step budget bounds how many times the analyst may
+    speak; this bounds how much it may say each time — a bounded number of
+    unbounded calls is still unbounded spend. 2048 is the translator cap's own
+    derivation applied to the analyst's measurement: the worst measured turn
+    emitted 544 output tokens *summed over its calls* (default effort,
+    docs/research/analyst-turn-cost.md, 2026-09-02), so no single legitimate
+    completion observed exceeds that. 3 x 544 = 1632, next power of two up."""
+    from app.llm import ANALYST_MAX_COMPLETION_TOKENS, analyst_chat_model
+
+    model = analyst_chat_model(api_key="k", base_url="http://x/api/v1", model="m")
+
+    assert model.max_tokens == ANALYST_MAX_COMPLETION_TOKENS == 2048

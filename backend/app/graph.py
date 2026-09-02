@@ -32,7 +32,6 @@ interface), 094/#200 (enacted context).
 """
 
 import asyncio
-
 from typing import Literal, TypedDict
 
 import psycopg
@@ -54,8 +53,8 @@ from app.pipeline import (
 )
 from app.roleplay import (
     REFUSAL_SENTENCES,
-    RolePlayOutcome,
     RolePlayGenerator,
+    RolePlayOutcome,
     RolePlayRefused,
     without_task_talk,
 )
@@ -86,7 +85,9 @@ class PanelPreview(BaseModel):
     # `EvaluateState["refused"]` beside it holds the *class*. Two words apart for
     # two different things is how a wrong one gets rendered.
     refusal_sentence: str | None
-    # size x USD_PER_VOTE. Accuracy is 070/#161's job.
+    # size x USD_PER_VOTE — an estimate at the measured mean price, shown to a
+    # human deciding whether to buy. The completion cap that keeps a real run
+    # near it is VOTE_MAX_COMPLETION_TOKENS (090/#195).
     estimated_usd: float
 
 

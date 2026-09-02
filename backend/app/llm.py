@@ -15,11 +15,11 @@ from pydantic import ValidationError
 from app.config import LANGCHAIN_INTEGRATION
 from app.roleplay import (
     RolePlayOutcome,
-    render_enacted,
     RolePlayVerdict,
     build_check_messages,
     build_roleplay_messages,
     checked_instruction,
+    render_enacted,
     without_task_talk,
 )
 from app.schemas import (
@@ -37,7 +37,6 @@ from app.schemas import (
     TraitName,
 )
 from app.vote import OutOfCredit, VoteResponse, VoteUsage
-
 
 VOTE_QUESTION = "Which do you prefer?"
 
@@ -70,6 +69,34 @@ VOTE_READ_TIMEOUT_SECONDS = 60
 # description having succeeded twice and blown the cap once, so no description is safe
 # by inspection.
 TARGET_MAX_COMPLETION_TOKENS = 4096
+
+# The translator's derivation applied to the vote path's own measurements (090/#195):
+# next power of two above 3× the largest legitimate vote observed — 296 output tokens,
+# measured on gpt-5-mini at default effort (docs/research/panel-model-selection.md,
+# 2026-07-28), which is the *verbose* bound: the shipped Luna emits ~6.5 reasoning
+# tokens/vote against mini's ~160 (docs/research/manipulation-check-luna.md). 3×296 =
+# 888 → 1024.
+#
+# A runaway guard, not a price guarantee. USD_PER_VOTE is a measured mean the pool
+# charges, and one capped vote can still bill ~6× it (1024 × $1.20/M ≈ $0.0012); what
+# the cap removes is the translator-scale runaway, whose 65,536 tokens would have
+# billed ~$0.079 — ~395× the charge — for one vote. A vote that hits the cap returns
+# JSON cut mid-sentence, fails to parse, and lands in the run's existing shortfall
+# accounting ("N of M panelists voted") as a failed vote.
+VOTE_MAX_COMPLETION_TOKENS = 1024
+
+# Same derivation, the analyst's own measurement (090/#195): the worst measured turn
+# emitted 544 output tokens summed over its model calls (default effort,
+# docs/research/analyst-turn-cost.md, 2026-09-02) — an upper bound on the largest
+# single legitimate completion observed, and the adopted low effort measured 250.
+# 3×544 = 1632 → 2048.
+#
+# A runaway guard, not a price guarantee: USD_PER_TURN is the measured price the pool
+# charges, and a turn of `run_limit` capped calls can still out-spend it — what the cap
+# removes is any one call generating without bound. A completion that hits it arrives
+# with finish_reason "length", and `stream_analyst` turns that into its fixed
+# truncation sentence instead of ending the turn as if the cut text were whole.
+ANALYST_MAX_COMPLETION_TOKENS = 2048
 
 # `low`, because reasoning was 40–85% of every response while the JSON it produces never
 # exceeded ~190 tokens: this call is extraction against a typed schema, not deliberation.
@@ -414,6 +441,7 @@ class OpenRouterPanelLLM:
             api_key=api_key,
             max_retries=2,
             timeout=VOTE_READ_TIMEOUT_SECONDS,
+            max_tokens=VOTE_MAX_COMPLETION_TOKENS,
             reasoning_effort=reasoning_effort,
         ).with_structured_output(PanelVoteOutput, include_raw=True)
 
@@ -494,6 +522,7 @@ def analyst_chat_model(*, api_key: str, base_url: str, model: str) -> BaseChatMo
         # the object form switches langchain to the Responses API. Re-check
         # obedience live if analyst_model ever changes.
         reasoning_effort="low",
+        max_tokens=ANALYST_MAX_COMPLETION_TOKENS,
     )
 
 
@@ -683,6 +712,10 @@ class OpenRouterJudge:
         # Same model and provider as a vote, so the same bound, per `analyst_chat_model`'s
         # precedent for reusing it rather than minting a second number. This one runs
         # inside the seed CLI, where an unbounded hang stalls a paid pool build.
+        #
+        # The completion cap reuses the translator's for the same reason (090/#195): the
+        # answer is a tiny structured score, so 4096 is a blast-radius bound with orders
+        # of magnitude of headroom — a runaway here burns the seed budget, not a run's.
         self._model = init_chat_model(
             model=model,
             model_provider=LANGCHAIN_INTEGRATION,
@@ -690,6 +723,7 @@ class OpenRouterJudge:
             api_key=api_key,
             max_retries=2,
             timeout=VOTE_READ_TIMEOUT_SECONDS,
+            max_tokens=TARGET_MAX_COMPLETION_TOKENS,
         ).with_structured_output(PlausibilityScore)
 
     def score(self, *, prompt: str) -> PlausibilityScore:

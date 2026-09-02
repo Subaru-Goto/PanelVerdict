@@ -17,6 +17,7 @@ from openai import APIStatusError
 from app.assembly import AssembledPersona
 from app.config import settings
 from app.persistence import persist_pool
+from app.roleplay import RolePlayOutcome, checked_instruction
 from app.schemas import (
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
@@ -43,7 +44,6 @@ from app.schemas import (
 )
 from app.verdict import panel_verdict
 from app.vote import VoteResponse
-from app.roleplay import RolePlayOutcome, checked_instruction
 
 DIM = 1536
 
@@ -429,11 +429,15 @@ class StreamingScriptedChatModel(ScriptedChatModel):
         # real model — langgraph's v3 mux turns it into the `message-finish`
         # event's `usage` key, which is where production usage actually
         # travels (070/#161, probed live: the whole-message dialect never
-        # fires there).
+        # fires there). `response_metadata` rides the same chunk the same way:
+        # the bridge folds it into the finish event's `metadata`, which is
+        # where a real model's finish_reason arrives (090/#195).
         if parts:
             yield ChatGenerationChunk(
                 message=AIMessageChunk(
-                    content=parts[-1], usage_metadata=message.usage_metadata
+                    content=parts[-1],
+                    usage_metadata=message.usage_metadata,
+                    response_metadata=message.response_metadata,
                 )
             )
 

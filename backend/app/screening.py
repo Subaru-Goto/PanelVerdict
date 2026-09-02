@@ -29,10 +29,11 @@ from collections.abc import Sequence
 from typing import Literal, Protocol
 
 from langchain.chat_models import init_chat_model
-
-from app.config import LANGCHAIN_INTEGRATION
 from openai import APIStatusError
 from pydantic import BaseModel
+
+from app.config import LANGCHAIN_INTEGRATION
+from app.llm import TARGET_MAX_COMPLETION_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,14 @@ class OpenRouterScreener:
             # whose answer is only ever written to a log.
             max_retries=0,
             timeout=SCREEN_TIMEOUT_SECONDS,
+            # The timeout bounds an idle connection, never a generating one
+            # (the translator's lesson, 090/#195); this bounds the generation.
+            # The translator's cap reused rather than a minted number: the
+            # verdict is two fields, so 4096 is a blast-radius bound with
+            # orders of magnitude of headroom. A verdict that somehow hits it
+            # fails the schema and is already classified: UnusableAnswer,
+            # "off" — loud, and honest about a screener that is not answering.
+            max_tokens=TARGET_MAX_COMPLETION_TOKENS,
         ).with_structured_output(ScreeningVerdict)
 
     def screen(self, text: str) -> ScreeningVerdict:
