@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hmac
 import logging
+from dataclasses import asdict
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -73,6 +74,7 @@ from app.schemas import (
     PanelEdit,
     PanelVerdict,
     ResumeRequest,
+    RunUsage,
     TargetQuery,
     VoteTally,
 )
@@ -86,7 +88,7 @@ from app.screening import (
 from app.targeting import CROSS_SECTION_NOTICE, settled_query
 from langgraph.checkpoint.memory import InMemorySaver
 from app.tracing import configure_tracing
-from app.vote import OutOfCredit, PanelLLM
+from app.vote import OutOfCredit, PanelLLM, total_usage
 
 # Uvicorn configures its own loggers and leaves the root one alone, so every
 # `logger.info` in this package propagated to a handler-less root and was
@@ -1126,6 +1128,7 @@ def _outcome(
         )
     result = state["result"]
     return CompletedRun(
+        usage=RunUsage(**asdict(total_usage(result.votes.usage))),
         verdict=result.verdict,
         tally=result.tally,
         counts=result.counts,

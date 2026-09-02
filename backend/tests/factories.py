@@ -422,8 +422,20 @@ class StreamingScriptedChatModel(ScriptedChatModel):
             return
         # Word-plus-trailing-space pieces, so the joined chunks reproduce the
         # scripted text byte for byte — the invariant the stream tests assert.
-        for part in re.findall(r"\S+\s*", message.text):
+        parts = re.findall(r"\S+\s*", message.text)
+        for part in parts[:-1]:
             yield ChatGenerationChunk(message=AIMessageChunk(content=part))
+        # Usage rides the final chunk, where `stream_usage=True` puts it on a
+        # real model — langgraph's v3 mux turns it into the `message-finish`
+        # event's `usage` key, which is where production usage actually
+        # travels (070/#161, probed live: the whole-message dialect never
+        # fires there).
+        if parts:
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content=parts[-1], usage_metadata=message.usage_metadata
+                )
+            )
 
 
 class StubGenerator:

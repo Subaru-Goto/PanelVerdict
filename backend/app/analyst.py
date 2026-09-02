@@ -12,8 +12,9 @@ saver-agnostic and takes whatever `BaseCheckpointSaver` it is handed.
 
 import asyncio
 import json
+import logging
 from collections import Counter
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import median_low
 from typing import get_args, get_type_hints
@@ -53,6 +54,8 @@ from app.schemas import (
     ToolEvent,
 )
 from app.verdict import panel_verdict
+
+logger = logging.getLogger(__name__)
 
 
 def _failure_sentence(error: Exception) -> str:
@@ -468,6 +471,60 @@ def checkpointed_models(state: type) -> set[type[BaseModel]]:
     return found
 
 
+class _TurnUsage:
+    """One turn's spend, summed off the usage each model call reports —
+    `stream_usage=True` in `analyst_chat_model` is what makes the provider
+    say. Same reported-coverage discipline as `vote.total_usage`; a turn
+    whose model reported nothing logs nothing rather than invented zeros.
+
+    Tokens only, no cost: langchain's streaming path drops the provider's
+    `cost` field before it reaches a chunk's metadata (verified against the
+    installed package — `token_usage` is set only on the non-streamed path),
+    so a cost column here could only ever log zeros. Money is derived at
+    measurement time from these tokens and a dated list price (070/#161).
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.cached_tokens = 0
+        self.cached_reported = 0
+        self.reasoning_tokens = 0
+        self.reasoning_reported = 0
+
+    def take(self, usage: Mapping[str, object] | None) -> None:
+        if usage is None:
+            return
+        self.calls += 1
+        self.input_tokens += usage["input_tokens"]
+        self.output_tokens += usage["output_tokens"]
+        cached = usage.get("input_token_details", {}).get("cache_read")
+        if cached is not None:
+            self.cached_tokens += cached
+            self.cached_reported += 1
+        reasoning = usage.get("output_token_details", {}).get("reasoning")
+        if reasoning is not None:
+            self.reasoning_tokens += reasoning
+            self.reasoning_reported += 1
+
+    def log(self, thread_id: str) -> None:
+        if self.calls == 0:
+            return
+        logger.info(
+            "analyst usage thread_id=%s: calls=%d input_tokens=%d"
+            " cached_tokens=%d/%d output_tokens=%d reasoning_tokens=%d/%d",
+            thread_id,
+            self.calls,
+            self.input_tokens,
+            self.cached_tokens,
+            self.cached_reported,
+            self.output_tokens,
+            self.reasoning_tokens,
+            self.reasoning_reported,
+        )
+
+
 async def stream_analyst(
     *,
     model: BaseChatModel,
@@ -509,6 +566,8 @@ async def stream_analyst(
 
     def line(event: ChatStreamEvent) -> str:
         return event.model_dump_json() + "\n"
+
+    usage = _TurnUsage()
 
     try:
         stream = await agent.astream_events(
@@ -552,6 +611,7 @@ async def stream_analyst(
                     payload = data[0] if isinstance(data, tuple) else data
 
                     if isinstance(payload, AIMessage):
+                        usage.take(payload.usage_metadata)
                         if payload.text:
                             yield line(TokenEvent(text=payload.text))
                     elif (
@@ -561,6 +621,15 @@ async def stream_analyst(
                         delta = payload.get("delta", {})
                         if delta.get("type") == "text-delta" and delta.get("text"):
                             yield line(TokenEvent(text=delta["text"]))
+                    elif (
+                        isinstance(payload, dict)
+                        and payload.get("event") == "message-finish"
+                    ):
+                        # Where a natively streaming model's usage actually
+                        # arrives (probed live, 070/#161): the v3 mux folds
+                        # the final chunk's usage_metadata into this event.
+                        raw = payload.get("usage")
+                        usage.take(raw if isinstance(raw, dict) else None)
         finally:
             with anyio.CancelScope(shield=True):
                 if pull is not None and not pull.done():
@@ -592,4 +661,9 @@ async def stream_analyst(
         # Broad on purpose — the stream is the only channel left.
         yield line(ErrorEvent(message=_failure_sentence(error)))
         return
+    finally:
+        # A `finally`, not per-exit calls: the likely early end of a turn is
+        # a reader disconnect, which arrives as GeneratorExit — no `except`
+        # sees it. Logging never awaits, so it is safe mid-cancellation.
+        usage.log(thread_id)
     yield line(DoneEvent())

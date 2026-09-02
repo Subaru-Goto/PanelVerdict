@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import dataclasses
 import logging
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -44,13 +45,14 @@ from app.main import (
 )
 from app.persistence import REPORT_SCHEMA_VERSION, nearest_panelists, persist_pool
 from app.schemas import (
-    MAX_AUDIENCE_CHARS,
-    MAX_HEADLINE_CHARS,
     EvaluateRequest,
     EvaluateResponse,
+    MAX_AUDIENCE_CHARS,
+    MAX_HEADLINE_CHARS,
+    RunUsage,
 )
 from app.screening import ScreeningVerdict
-from app.vote import OutOfCredit
+from app.vote import OutOfCredit, UsageTotals, VoteResponse, VoteUsage
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
@@ -3647,3 +3649,93 @@ def test_the_stored_report_is_about_the_test_and_not_the_operators_wallet(
     ), kept["notices"]
     # The run's own notices survive — this is a shortfall run, so there is one.
     assert kept["notices"]
+
+
+# 070/#161: a run's usage travels on the wire — stored with the kept test so
+# the operator view of the future has history from day one. No reader-facing
+# display, by decision (2026-09-02): cost is operator telemetry, and the
+# customer does not pay per run.
+
+
+def test_the_wire_mirror_cannot_drift_from_the_totals_it_mirrors() -> None:
+    """RunUsage mirrors vote.UsageTotals by construction (`asdict` unpack): a
+    field added to the dataclass raises at runtime, but a *renamed* pydantic
+    field would silently ship a default. Pinned the way TraitName is pinned
+    to BigFive's fields."""
+    assert tuple(RunUsage.model_fields) == tuple(
+        f.name for f in dataclasses.fields(UsageTotals)
+    )
+
+
+def test_a_completed_run_carries_its_usage_totals(client, conn) -> None:
+    """What the provider reported, summed the way `total_usage` sums it —
+    with the coverage counts, so a partial figure can never read as a total."""
+    seed_japanese(conn, 5)
+
+    class Reporting:
+        configuration = "stub"
+
+        def vote(self, **kwargs):
+            vote = voted()
+            return VoteResponse(
+                output=vote.output,
+                usage=VoteUsage(
+                    input_tokens=100,
+                    cached_tokens=None,
+                    output_tokens=50,
+                    reasoning_tokens=200,
+                    cost=0.001,
+                    seconds=1.5,
+                ),
+            )
+
+    app.dependency_overrides[get_panel_llm] = lambda: Reporting()
+
+    report = client.post("/evaluate", json=_REQUEST_BODY).json()
+
+    usage = report["usage"]
+    votes = usage["votes"]
+    assert votes == len(report["votes"]) and votes > 0
+    assert usage["usage_reported"] == votes
+    assert usage["input_tokens"] == 100 * votes
+    assert usage["output_tokens"] == 50 * votes
+    assert usage["reasoning_tokens"] == 200 * votes
+    assert usage["reasoning_reported"] == votes
+    assert usage["cost"] == pytest.approx(0.001 * votes)
+    assert usage["cost_reported"] == votes
+    # None per vote means absent, not zero — the count says the sum covers nothing.
+    assert usage["cached_tokens"] == 0 and usage["cached_reported"] == 0
+    assert usage["seconds_slowest"] == pytest.approx(1.5)
+    assert usage["seconds_total"] == pytest.approx(1.5 * votes)
+
+
+def test_a_run_of_doubles_reports_absent_usage_honestly(client, conn) -> None:
+    """The default stub reports no usage at all: the totals must say so with
+    zero coverage, never invent zeros that read as measurements."""
+    seed_japanese(conn, 5)
+
+    report = client.post("/evaluate", json=_REQUEST_BODY).json()
+
+    usage = report["usage"]
+    assert usage["votes"] == len(report["votes"]) > 0
+    assert usage["usage_reported"] == 0
+    assert usage["cost"] == 0.0 and usage["cost_reported"] == 0
+
+
+def test_an_old_stored_report_without_usage_still_loads(signed_in, conn) -> None:
+    """Reports kept before 070 have no usage key. Reading one back must not
+    422 — absent is a legal value, the same reading VoteUsage gives it."""
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("acct-a"))
+    (test_id,) = [
+        row[0] for row in conn.execute("SELECT test_id FROM tests").fetchall()
+    ]
+    conn.execute(
+        "UPDATE tests SET report = report - 'usage' WHERE test_id = %s", (test_id,)
+    )
+    conn.commit()
+
+    stored = signed_in.get(f"/tests/{test_id}", headers=_as("acct-a"))
+
+    assert stored.status_code == 200
+    assert stored.json()["usage"] is None

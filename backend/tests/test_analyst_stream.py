@@ -5,6 +5,8 @@ test_analyst.py; here it's the wire — event order, both token dialects, and
 the in-band error discipline.
 """
 
+import logging
+
 import pytest
 from collections.abc import Iterator
 
@@ -144,3 +146,133 @@ class TestStreamAnalyst:
         assert len(tokens) > 1
         assert "".join(tokens) == "The interval cleared the band."
         assert events[-1] == {"type": "done"}
+
+
+@pytest.mark.anyio
+async def test_a_turn_logs_its_usage(conn, aconn, caplog) -> None:
+    """070/#161: chat spend was unknowable because nothing captured it. Each
+    model call in a turn carries usage_metadata; the turn logs one summed
+    line, the way the vote loop logs "panel usage". Tokens only — langchain's
+    streaming path drops the provider's cost field (review, verified), so a
+    cost column here could only ever log invented zeros. Money is derived at
+    measurement time from these tokens and a dated price."""
+    model = ScriptedChatModel(
+        responses=[
+            tool_call_message(),
+            AIMessage(
+                content="The interval cleared the band.",
+                usage_metadata={
+                    "input_tokens": 900,
+                    "output_tokens": 120,
+                    "total_tokens": 1020,
+                    "input_token_details": {"cache_read": 700},
+                    "output_token_details": {"reasoning": 300},
+                },
+            ),
+        ]
+    )
+    # The tool-call message carries usage too — a turn is every model call in
+    # it, not just the one that produced the answer.
+    model.responses[0].usage_metadata = {
+        "input_tokens": 600,
+        "output_tokens": 40,
+        "total_tokens": 640,
+    }
+
+    with caplog.at_level(logging.INFO, logger="app.analyst"):
+        await _lines(model, conn=aconn, thread_id="usage-1")
+
+    (record,) = [r for r in caplog.records if "analyst usage" in r.message]
+    message = record.getMessage()
+    assert "thread_id=usage-1" in message
+    assert "calls=2" in message
+    assert "input_tokens=1500" in message
+    assert "output_tokens=160" in message
+    # Reported-coverage discipline, as in `total_usage`: absent is not zero,
+    # so each optional sum travels with how many calls reported it.
+    assert "cached_tokens=700/1" in message
+    assert "reasoning_tokens=300/1" in message
+    assert "cost" not in message
+
+
+@pytest.mark.anyio
+async def test_a_streamed_turn_logs_usage_from_the_finish_event(
+    conn, aconn, caplog
+) -> None:
+    """The dialect production actually speaks (070/#161, probed live): a
+    natively streaming model's usage arrives in the v3 `message-finish`
+    event's `usage` key — the whole-message branch never fires there. The
+    suite's non-streaming double kept this path invisible, which is 025's
+    tool-routing trap wearing a new hat."""
+    model = StreamingScriptedChatModel(
+        responses=[
+            AIMessage(
+                content="The interval cleared the band.",
+                usage_metadata={
+                    "input_tokens": 800,
+                    "output_tokens": 90,
+                    "total_tokens": 890,
+                    "output_token_details": {"reasoning": 250},
+                },
+            )
+        ]
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.analyst"):
+        await _lines(model, conn=aconn, thread_id="usage-4")
+
+    (record,) = [r for r in caplog.records if "analyst usage" in r.message]
+    message = record.getMessage()
+    assert "input_tokens=800" in message
+    assert "reasoning_tokens=250/1" in message
+
+
+@pytest.mark.anyio
+async def test_a_turn_with_no_usage_logs_nothing(conn, aconn, caplog) -> None:
+    """Doubles report no usage; a line full of zeros would be an invented
+    measurement, the exact thing the ticket exists to kill."""
+    model = ScriptedChatModel(
+        responses=[AIMessage(content="The interval cleared the band.")]
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.analyst"):
+        await _lines(model, conn=aconn, thread_id="usage-2")
+
+    assert not [r for r in caplog.records if "analyst usage" in r.message]
+
+
+@pytest.mark.anyio
+async def test_a_disconnected_turn_still_logs_its_spend(conn, aconn, caplog) -> None:
+    """The likely early end of a turn is a closed tab, which arrives here as
+    aclose(), not an exception — and money spent before the disconnect was
+    still spent (review: four per-exit log calls missed exactly this path)."""
+    model = ScriptedChatModel(
+        responses=[
+            AIMessage(
+                content="The interval cleared the band.",
+                usage_metadata={
+                    "input_tokens": 800,
+                    "output_tokens": 90,
+                    "total_tokens": 890,
+                },
+            )
+        ]
+    )
+    deps = _deps(aconn)
+    stream = stream_analyst(
+        model=model,
+        result=_result(),
+        thread_id="usage-3",
+        message="how close was it?",
+        checkpointer=InMemorySaver(),
+        deps=deps,
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.analyst"):
+        async for line in stream:
+            if '"token"' in line:
+                break
+        await stream.aclose()
+
+    (record,) = [r for r in caplog.records if "analyst usage" in r.message]
+    assert "input_tokens=800" in record.getMessage()
