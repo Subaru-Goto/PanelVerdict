@@ -31,9 +31,13 @@ per-vote measurement.
 > **Correction (2026-09-02, [104/#223](https://github.com/Subaru-Goto/PanelVerdict/issues/223)):**
 > on the GPT-5.6 family, uncached prompt tokens ahead of the cache breakpoint are
 > *cache writes* billed at 1.25× input — $0.25/M, not $0.20/M (OpenRouter
-> catalogue, read 2026-09-02). Re-priced, the worst low-effort turn moves from
-> $0.000429 to ~$0.00045; `USD_PER_TURN` still holds. Derivation and sources in
-> [`thread-replay-cost.md`](thread-replay-cost.md) §3.
+> catalogue, read 2026-09-02). The $0.000429 in the table and the $0.00043 under
+> *Decisions taken* are at the $0.20/M rate. Re-priced under the inference in
+> [`thread-replay-cost.md`](thread-replay-cost.md) §3 (each call writes what the
+> previous one did not send), the worst low-effort turn is ~$0.00045 and
+> `USD_PER_TURN` still holds **warm**. The same turn arriving cold — after the
+> 30-minute cache lifetime — bills ~$0.001, 2× the gate; that case is
+> `thread-replay-cost.md` §4.
 
 ## Results
 

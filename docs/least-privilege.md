@@ -243,12 +243,16 @@ screenshot ("their AI does my homework").
 *charges*, and every charge is a measured mean — so an admitted request can
 still bill a multiple of what the ledger recorded (a capped vote ~6×
 `USD_PER_VOTE`; a capped turn a larger multiple of `USD_PER_TURN`). What keeps
-that gap a small constant rather than unbounded is the per-call completion
+that gap a small constant *on the output side* is the per-call completion
 ceiling on every paid model call (`max_tokens`, `app/llm.py` and
 `app/screening.py`): a timeout bounds an idle connection, never a generating
 one, and before 090 four of the six paid constructions could generate without
 limit — one observed translator runaway billed a whole run's worth of tokens
-on a single call. The day's true dollar ceiling is therefore the global cap
+on a single call. The input side has no such ceiling: a chat thread's replayed
+history arriving cold bills up to ~41× what the gate charged for it in the worst
+declared-budget case (`docs/research/thread-replay-cost.md` §4C, 2026-09-02,
+arithmetic on measured token counts) — the residual tech-debt #171 records. The
+day's true dollar ceiling is therefore the global cap
 times the worst charge-to-bill ratio, and both factors are now written down
 beside the constants they depend on. One cap has a second face: a screener
 verdict cut at its ceiling narrows to `UnusableAnswer` — the loud "off"

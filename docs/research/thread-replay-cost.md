@@ -22,14 +22,14 @@ inputs, not a measurement. The installed packages under
 **Measured, and the ticket's premise is correct but its arithmetic is not.** The
 history is replayed in full on every call, and nothing prunes it. But within a
 cache lifetime the replay is read at $0.02/M — a tenth of the input price — so a
-30-turn thread of the measured shape costs about **$0.019 against the $0.015 the
+30-turn thread of the measured shape costs about **$0.018 against the $0.015 the
 gate charged for it** (*computed*, §4B). The number that matters is the **cold
 return**: a reader who comes back to a thread more than 30 minutes later pays the
 cache-*write* rate, $0.25/M, on the whole replayed history, and at turn 30 of a
 corpus-heavy thread that single turn costs **18× what the gate charged** (§4A).
 Whether that matters depends on one quantity nobody has measured: how often a real
 turn arrives cold. The `analyst usage` log line already records what would settle
-it (`cached_tokens` against `input_tokens`, `analyst.py:591-602`), so the honest
+it (`cached_tokens` against `input_tokens`, `analyst.py:588-602`), so the honest
 next step is to read that log, not to add middleware. Details and the one
 recommendation follow.
 
@@ -67,8 +67,11 @@ context instead of re-buying tool calls a text-only replay would drop"
 **The rewrite per superstep.** The saver's `_dump_blobs` serialises every channel
 whose version changed at that checkpoint (installed
 `langgraph/checkpoint/postgres/base.py:548-570`); the `messages` channel changes on
-every superstep, so the whole list is re-serialised each time. Confirmed, but it is
-bytes to Postgres, not dollars to OpenRouter, and this document does not cost it.
+every superstep, so the whole list is re-serialised each time. Confirmed. It is bytes to Postgres, not dollars to OpenRouter, so this document
+does not cost it; the half of the ticket's claim that matters — one connection
+shared by every concurrent stream — is a throughput ceiling, deferred here, and
+of a kind with the connection ceilings
+[112/#242](https://github.com/Subaru-Goto/PanelVerdict/issues/242) asks about.
 
 **What the RAG tool returns.** `explain_the_report` calls
 `search_corpus(deps.conn, question, deps.embedder)` and returns a JSON list of
@@ -83,8 +86,7 @@ input — the tools close over it (`analyst.py:433-517`) and only what a tool re
 reaches the transcript.
 
 **The caps and the price.** 30 turns per thread per day (`config.py:189`), 120 per
-caller (`config.py:194`), a $1.00 global daily pool (`config.py`,
-`global_daily_cap_usd`). `USD_PER_TURN = 0.0005` (`config.py:129`) is flat, and the
+caller (`config.py:194`), a $1.00 global daily pool (`config.py:207`). `USD_PER_TURN = 0.0005` (`config.py:129`) is flat, and the
 comment above it records why: "a thread's replayed history is 80-96% cache reads at
 a tenth of the input price, so turn cost grows far slower than the transcript, and
 the thread-level bound is the per-thread daily turn cap" (`config.py:118-121`).
@@ -93,8 +95,8 @@ That reasoning is what §4 tests.
 **The rules that bear on pruning.** The system prompt's second rule says of this
 test's figures: "comes from a tool every time: never from memory, never estimated,
 never inferred from what you were told earlier in the conversation"
-(`analyst.py:176-180`), and of concepts: "comes from explain_the_report … Call it
-even when you think you know the answer" (`analyst.py:181-186`). Both rules tell
+(`analyst.py:178-179`), and of concepts: "comes from explain_the_report … Call it
+even when you think you know the answer" (`analyst.py:183-185`). Both rules tell
 the model *not* to reuse earlier tool results, which cuts against the docstring's
 reason for keeping them; §5 returns to this.
 
@@ -133,7 +135,7 @@ tokens" by the sign-off there). Whether reasoning content is replayed into later
 calls was not measured; at `reasoning_effort="low"` (`llm.py:537`) the measured
 reasoning was 0–19 tokens a turn, so it cannot move the totals. `tiktoken` counts
 of JSON are an approximation of the provider's rendering; the calibration in §4
-puts the approximation at ~10% high on whole-turn input.
+puts the approximation at 2–17% high on whole-turn input.
 
 ## 3. Caching rules, read live 2026-09-02
 
@@ -194,6 +196,12 @@ Granularity of what is reported (this is the 128-token statement
 > Reported `cached_tokens` is calculated by subtracting the hidden system tokens
 > from the last matched breakpoint, then rounding down to the nearest multiple of
 > 128.
+
+The six measured turns do not show that rounding: their `cached_tokens` (2,412,
+5,688, 2,964, 2,412, 3,374, 2,363) are not multiples of 128. Those counts arrived
+through OpenRouter's normalised `usage`, so either OpenRouter reports the
+unrounded figure or the rule does not apply as quoted. The family inference below
+rests on the write price, not on this quote, and §4 ignores the rounding.
 
 The page names `gpt-5.6-sol` in an example and never `gpt-5.6-luna`. *Inferred:* the
 shipped `analyst_model` carries the family name, and OpenRouter's catalogue (below)
@@ -258,7 +266,8 @@ log can show a cold turn (near-zero `cached_tokens` on a large `input_tokens`) b
 cannot show how many tokens were billed at the write rate. **Consequence for
 [`analyst-turn-cost.md`](analyst-turn-cost.md):** its derivation priced every
 uncached token at $0.20/M; on a GPT-5.6-family model the uncached tokens ahead of
-the implicit breakpoint are writes at $0.25/M. *Computed:* the worst low-effort turn
+the implicit breakpoint are writes at $0.25/M (how many is *inferred* below, not
+logged). *Computed:* the worst low-effort turn
 had 405 uncached tokens; at $0.25/M instead of $0.20/M that is +$0.00002, taking
 $0.000429 to ~$0.00045 — still under `USD_PER_TURN`. The gate holds; the derivation
 should say "write rate" where it says "input".
@@ -280,7 +289,9 @@ everything.**
 
 This is not a live measurement. Inputs: prefix 1,247; question 8; tool-call
 message 65; four-passage result 869 (mean); `analyze_results` 285; visible answer
-117–231 tokens (the measured low-effort turns' `output − reasoning`: 231, 117, 49);
+per turn shape, from the measured low-effort turns' `output − reasoning`: figures
+231, corpus 117, follow-up 49 (scenario C, a figures-shaped answer, uses 231; D
+uses 117);
 prices from §3. Per turn *t* the history *H* is the sum of every earlier turn's
 question + tool calls + tool results + answer. "Warm" means every call in the
 thread arrived within the 30-minute lifetime of the previous one; "cold" means the
@@ -313,26 +324,28 @@ follow-up implies a history of ~1,216 tokens after two turns, against the model'
 | 30 | 2 | 30,711 | 0.00154 | 0.00168 | 0.00886 | 0.00900 | 18.0× |
 | **30 turns, cumulative** | | | | **0.0320** | | **0.1458** | gate charged **0.0150** |
 
-First turn whose cost exceeds the gate: warm turn 3, cold turn 1.
+First turn whose cost exceeds the gate: warm turn 3 (turn 2 prints as $0.00050
+but is $0.000495), cold turn 1.
 
 ### B. The measured mix — figures, corpus, follow-up, repeating
 
-| turn | model calls | history before turn (tokens) | warm: input $ | warm: turn $ | cold: input $ | cold: turn $ | cold turn ÷ gate |
-|---|---|---|---|---|---|---|---|
-| 1 | 2 | 0 | 0.00014 | 0.00032 | 0.00043 | 0.00061 | 1.2× |
-| 2 | 2 | 508 | 0.00034 | 0.00052 | 0.00071 | 0.00089 | 1.8× |
-| 5 | 2 | 2,266 | 0.00041 | 0.00059 | 0.00118 | 0.00136 | 2.7× |
-| 10 | 2 | 5,274 | 0.00038 | 0.00056 | 0.00185 | 0.00203 | 4.1× |
-| 20 | 2 | 11,056 | 0.00076 | 0.00094 | 0.00356 | 0.00374 | 7.5× |
-| 30 | 1 | 17,422 | 0.00041 | 0.00059 | 0.00467 | 0.00485 | 9.7× |
-| **30 turns, cumulative** | | | | **0.0194** | | **0.0864** | gate charged **0.0150** |
+| turn | shape | model calls | history before turn (tokens) | warm: input $ | warm: turn $ | cold: input $ | cold: turn $ | cold turn ÷ gate |
+|---|---|---|---|---|---|---|---|---|
+| 1 | figures | 2 | 0 | 0.00014 | 0.00042 | 0.00043 | 0.00070 | 1.4× |
+| 2 | corpus | 2 | 589 | 0.00036 | 0.00050 | 0.00073 | 0.00087 | 1.7× |
+| 5 | corpus | 2 | 2,294 | 0.00043 | 0.00057 | 0.00119 | 0.00133 | 2.7× |
+| 10 | figures | 2 | 5,115 | 0.00036 | 0.00063 | 0.00181 | 0.00208 | 4.2× |
+| 20 | corpus | 2 | 10,819 | 0.00077 | 0.00091 | 0.00349 | 0.00363 | 7.3× |
+| 30 | follow-up | 1 | 16,993 | 0.00039 | 0.00045 | 0.00456 | 0.00462 | 9.2× |
+| **30 turns, cumulative** | | | | | **0.0184** | | **0.0842** | gate charged **0.0150** |
 
 The warm column here is the model's version of the thread 070 measured; its turn 2
-($0.00052) sits 40% above the measured $0.000373, which is the conservatism noted
-above. Warm, a 30-turn thread costs ~1.3× what the gate charged; cold on every
-turn, ~5.8×.
+($0.00050) sits 34% above the measured $0.000373, which is the conservatism noted
+above. The warm column dips at turn 10 because that turn is figures-shaped — a
+285-token result and no passages. Warm, a 30-turn thread costs ~1.2× what the
+gate charged; cold on every turn, ~5.6×.
 
-### C. Every turn at the 5-call budget, four passage retrievals each (the ceiling)
+### C. Every turn at the 5-call budget, four passage retrievals each (the ceiling, given honest tool results)
 
 | turn | model calls | history before turn (tokens) | warm: input $ | warm: turn $ | cold: input $ | cold: turn $ | cold turn ÷ gate |
 |---|---|---|---|---|---|---|---|
@@ -359,7 +372,7 @@ tool-calling `AIMessage`s stay, so the transcript still shows a tool was used):
 | C as above | 115,275 | 0.01303 | 0.03978 (80×) | 0.2180 / 0.6227 |
 | C, tool results pruned | 14,471 | 0.00295 | 0.00651 (13×) | 0.0668 / 0.1238 |
 
-Pruning divides the cold-return cost by 3–5 and brings a warm corpus-only thread
+Pruning divides the cold-return cost by 4–6 and brings a warm corpus-only thread
 to within 13% of what the gate charged. It does not touch the intra-turn cost (the
 passages are still written and read within the turn that fetched them), which is
 why turn 1 is unchanged.
@@ -367,7 +380,7 @@ why turn 1 is unchanged.
 ### Reading the tables
 
 1. **Warm, the flat gate is nearly right.** For the measured mix a 30-turn thread
-   bills ~$0.019 against $0.015 charged; the per-turn cost drifts above $0.0005 from
+   bills ~$0.018 against $0.015 charged; the per-turn cost drifts above $0.0005 from
    about turn 2–3 in the model and, correcting for its conservatism, somewhat later
    in life. This is the case `config.py:118-121` reasoned from, and the reasoning
    holds.
@@ -377,12 +390,18 @@ why turn 1 is unchanged.
    turn 1, 4× at turn 10, 10–18× at turn 30.
 3. **The pool still bounds the day**, because the pool is a ceiling on *charges* and
    the caps are counts: the worst a single caller can do is 120 turns. But at
-   scenario-C-cold rates that is ~$2.50 billed against a $1.00 pool.
-   (*computed*: 4 × $0.6227.) The pool's protection is the model's observed
+   scenario-C-cold rates that is ~$2.50 billed per caller (*computed*: 4 ×
+   $0.6227) — and the pool admits 2,000 turns a day ($1.00 / $0.0005), ~67 such
+   threads across 17 callers, **~$41 billed against $1.00** (*computed*: 66.7 ×
+   $0.6227). That is the structural ceiling `docs/least-privilege.md` Asset 2
+   names — the global cap times the worst charge-to-bill ratio — with the ratio
+   now measured. The pool's protection is the model's observed
    behaviour (1–3 calls, mostly warm), not the arithmetic.
 4. **The corpus passages are not the largest thing replayed.** A `read_reasons`
    result on a 200-vote run is 4,739 tokens — five four-passage results — and it is
-   replayed on the same terms. Any pruning rule that names only `explain_the_report`
+   replayed on the same terms. Its text is the client-supplied `reason` strings,
+   which nothing sizes (tech-debt #171, item 1) — so scenario C is a ceiling only
+   for honest inputs. Any pruning rule that names only `explain_the_report`
    misses the bigger item.
 
 ## 5. What the installed libraries offer
@@ -434,8 +453,8 @@ Three shipped options, and the primitive under them:
 - *Pruning tool results* (`ClearToolUsesEdit`, or a `before_model` that drops
   `ToolMessage`s from earlier turns): the prompt already forbids reusing them for
   figures ("never inferred from what you were told earlier in the conversation",
-  `analyst.py:178-180`) and tells the model to call `explain_the_report` "even when
-  you think you know the answer" (`:186`) — so for the two-kinds rule pruning
+  `analyst.py:178-179`) and tells the model to call `explain_the_report` "even when
+  you think you know the answer" (`:185`) — so for the two-kinds rule pruning
   removes something the model was instructed not to lean on. What it does lose is
   the docstring's property (`analyst.py:5-7`): a follow-up like "say that passage
   more simply" would re-retrieve instead of re-reading, i.e. one more tool round
@@ -509,7 +528,7 @@ argued on numbers; it does not recommend it, and the choice is the author's.
    turn and does not breach `USD_PER_TURN`.
 5. Cache lifetime is 30 minutes after last use (GPT-5.6+). A reader returning
    later pays the write rate on the whole replayed history.
-6. Warm, a 30-turn thread of the measured shape bills ~$0.019 against $0.015
+6. Warm, a 30-turn thread of the measured shape bills ~$0.018 against $0.015
    charged (*computed*, conservative). The flat gate's reasoning holds while the
    thread stays warm.
 7. Cold, a turn late in a corpus-heavy thread bills 10–18× the gate; a cold
@@ -517,7 +536,7 @@ argued on numbers; it does not recommend it, and the choice is the author's.
    looks like the latter; nothing measured rules out the former.
 8. `read_reasons` on a full 200-vote run is 4,739 tokens a result — the largest
    replayed item, five times a passage result.
-9. Pruning earlier turns' tool results divides the cold cost by 3–5 and costs the
+9. Pruning earlier turns' tool results divides the cold cost by 4–6 and costs the
    design property `analyst.py:5-7` names; the two-kinds rule already forbids the
    reuse that property enables for figures.
 10. The installed `create_agent` has no `pre_model_hook`; the hooks are middleware
@@ -533,11 +552,10 @@ argued on numbers; it does not recommend it, and the choice is the author's.
 ## What this argues for
 
 **One recommendation: no code change now; read the log first, and adopt one
-numeric trigger.** The warm case, which is the only case measured, is within ~30%
+numeric trigger.** The warm case, which is the only case measured, is within ~25%
 of what the gate charges over a whole thread, and the day is bounded by count caps
 and a $1.00 pool. Adding middleware to fix a cost curve whose steep branch has never
-been observed would be a change without a measurement, which this repo's rules do
-not allow. What *is* warranted is cheap: over the next stretch of production use,
+been observed would be a control sized by no measurement. What *is* warranted is cheap: over the next stretch of production use,
 read the `analyst usage` lines and record, per turn, `cached_tokens / input_tokens`
 and the thread's turn index. If turns with a cache share under ~50% (a cold return
 under the model in §3, allowing for the 128-token rounding and a new thread's
@@ -545,13 +563,13 @@ first call) make up more than about **10% of turns past turn 5**, the cold branc
 is real and the cheapest fix is pruning earlier turns' `ToolMessage`s in a
 `before_model` hook — the shipped `ClearToolUsesEdit` with `trigger` set to a few
 thousand tokens and `keep` to the current turn's results, or a dozen lines of the
-repo's own — which §4 shows cuts the cold cost 3–5× while leaving warm turns
+repo's own — which §4 shows cuts the cold cost 4–6× while leaving warm turns
 essentially unchanged. If the cold share is below that, the thread is behaving as
 `config.py:118-121` assumed and the ticket closes as "measured, no change
 warranted."
 
 Why 10%: *computed* from §4B — at a 10% cold share the expected cost of a 30-turn
-mixed thread is 0.9 × $0.0194 + 0.1 × $0.0864 ≈ $0.026, 1.7× the gate; below it the
+mixed thread is 0.9 × $0.0184 + 0.1 × $0.0842 ≈ $0.025, 1.7× the gate; below it the
 gate's error is the same order as the model's own conservatism, above it the gate
 is measurably undercharging. It is a threshold for *acting*, not a measurement; the
 author may set it elsewhere.
@@ -566,14 +584,16 @@ What would change this recommendation:
 - **A measurement showing cold returns dominate** — the trigger above.
 - **A model change** to one outside the GPT-5.6 family — the minimum becomes 2,048
   (the prefix would no longer cache from the first call) and the lifetime 5–10
-  minutes, which makes nearly every return cold; re-run §4 before shipping it.
+  minutes (the `in_memory` default; a `24h` TTL is documented), which makes
+  nearly every return cold; re-run §4 before shipping it.
 - **Removing `read_reasons`'s full-text result** — it is the largest replayed
   item, and shrinking it would do more for scenario C than pruning passages.
 
-Independently of the decision, two small corrections are owed elsewhere and are
-not made by this document: [`analyst-turn-cost.md`](analyst-turn-cost.md) should
-price uncached tokens at the write rate ($0.25/M), and `_TurnUsage` should log
-`cache_creation` beside `cache_read` so the write count is observable.
+Independently of the decision, [`analyst-turn-cost.md`](analyst-turn-cost.md)
+and `docs/least-privilege.md` (Asset 2) carry dated corrections from this branch:
+the write rate, and the input-side charge-to-bill ratio. One correction is code
+and is not made here: `_TurnUsage` should log `cache_creation` beside
+`cache_read` so the write count is observable (recorded on tech-debt #171).
 
 Decision (author, date): —
 
