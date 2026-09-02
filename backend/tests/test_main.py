@@ -1,8 +1,9 @@
 import asyncio
 import base64
 import dataclasses
-import logging
 import json
+import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -3855,8 +3856,6 @@ class TestIdenticalHeadlines:
         EvaluateRequest(headline_a="Save 50% today!", headline_b="Save 50% today")
 
     def test_the_endpoint_refuses_before_any_vote_is_bought(self, client, conn) -> None:
-        from app.schemas import ResumeRequest
-
         calls = {"vote": 0}
 
         class CountingLLM:
@@ -3877,8 +3876,35 @@ class TestIdenticalHeadlines:
         assert response.status_code == 422
         assert self.SENTENCE in response.text
         assert calls == {"vote": 0}
-        # The gate's edit path takes headlines too, and the same pair is refused there.
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT count(*) FROM request_ledger WHERE endpoint = %s",
+                ("/evaluate",),
+            )
+            row = cur.fetchone()
+        assert row is not None and row[0] == 0, "nothing was bought, nothing charged"
+
+    def test_the_sentence_is_the_form_s_own_so_the_two_surfaces_cannot_drift(
+        self,
+    ) -> None:
+        from pathlib import Path
+
+        from app.schemas import IDENTICAL_HEADLINES_SENTENCE
+
+        prototype = (
+            Path(__file__).resolve().parents[2] / "docs" / "design" / "prototype.html"
+        ).read_text()
+        # The prototype wraps the sentence in a <b> and across lines.
+        flattened = " ".join(re.sub(r"<[^>]+>", "", prototype).split())
+        assert IDENTICAL_HEADLINES_SENTENCE in flattened
+        assert IDENTICAL_HEADLINES_SENTENCE == self.SENTENCE
+
+    def test_the_gate_s_edit_path_refuses_the_same_pair(self) -> None:
+        from app.schemas import ResumeRequest
+
         with pytest.raises(ValueError, match="same line"):
             ResumeRequest(
                 thread_id="t", action="adjust", headline_a="Same", headline_b="Same"
             )
+        # Neither headline is an edit that leaves the pair alone, not a pair.
+        ResumeRequest(thread_id="t", action="adjust")

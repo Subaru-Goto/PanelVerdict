@@ -442,9 +442,12 @@ IDENTICAL_HEADLINES_SENTENCE = (
 
 
 def same_line(first: str, second: str) -> bool:
-    """Equal after trim, whitespace collapse and Unicode NFC — the form's
+    """Whether two headlines are the same line to a panel.
+
+    Equal after trim, whitespace collapse and Unicode NFC — the form's
     normalisation plus NFC, which the prototype forgot. Case and punctuation
-    are left alone: "SAVE 50%" against "save 50%" is a real test of casing."""
+    are left alone: "SAVE 50%" against "save 50%" is a real test of casing.
+    """
 
     def normalised(text: str) -> str:
         return " ".join(unicodedata.normalize("NFC", text).split())
@@ -616,8 +619,13 @@ class ResumeRequest(BaseModel):
                 "one corrected headline alone would vote half the old submit "
                 "— send both headlines, or neither"
             )
-        # The edit path takes headlines too; the same pair is refused the same
-        # way (097/#202).
+        return self
+
+    @model_validator(mode="after")
+    def _two_different_lines(self) -> "ResumeRequest":
+        """The edit path takes headlines too; the same pair is refused the
+        same way (097/#202). Guarded on both because a validator cannot lean
+        on the one above having run first."""
         if (
             self.headline_a is not None
             and self.headline_b is not None
