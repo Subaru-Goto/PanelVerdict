@@ -611,19 +611,21 @@ class _TurnUsage:
     def log(self, thread_id: str) -> None:
         if self.calls == 0:
             return
-        # experiments/topic_boundary.py reads this line back by field name
-        # (`calls=`, `input_tokens=`, `cached_tokens=`, `output_tokens=`).
+        # Fields, not text (047/#145): experiments/topic_boundary.py reads
+        # them back off the record by name. `thread_id` is named here because
+        # this runs while the response streams, after the request's bind ended.
         logger.info(
-            "analyst usage thread_id=%s: calls=%d input_tokens=%d"
-            " cached_tokens=%d/%d output_tokens=%d reasoning_tokens=%d/%d",
-            thread_id,
-            self.calls,
-            self.input_tokens,
-            self.cached_tokens,
-            self.cached_reported,
-            self.output_tokens,
-            self.reasoning_tokens,
-            self.reasoning_reported,
+            "analyst usage",
+            extra={
+                "thread_id": thread_id,
+                "calls": self.calls,
+                "input_tokens": self.input_tokens,
+                "cached_tokens": self.cached_tokens,
+                "cached_reported": self.cached_reported,
+                "output_tokens": self.output_tokens,
+                "reasoning_tokens": self.reasoning_tokens,
+                "reasoning_reported": self.reasoning_reported,
+            },
         )
 
 

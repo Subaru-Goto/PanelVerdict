@@ -7,7 +7,7 @@ knows what a status code is.
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from time import perf_counter
 from uuid import uuid4
 
@@ -401,10 +401,12 @@ async def run_vote_loop(
     # run's, and only the two together say whether a slow run was one straggler
     # holding its wave or every vote being slow at once.
     logger.info(
-        "panel usage test_id=%s: wall=%.1fs %s",
-        test_id,
-        perf_counter() - started,
-        total_usage(votes.usage),
+        "panel usage",
+        extra={
+            "test_id": test_id,
+            "wall_seconds": round(perf_counter() - started, 3),
+            **asdict(total_usage(votes.usage)),
+        },
     )
     return CollectedVotes(
         votes=votes,

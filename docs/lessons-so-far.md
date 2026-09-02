@@ -309,6 +309,14 @@ gave 4.65 s/vote and ~7 hours. Then I sized 015 entirely in *wall-clock minutes*
 never in dollars, on a project with a hard budget — a run cost ~$4 against $10
 remaining. Wall-clock is not the cost that runs out.
 
+**A capture at the logger cannot see where a context ends.** The request id
+(047/#145) was bound in a Starlette `http` middleware and every test that read a
+record inside the request saw it. The server's own access line — written by
+uvicorn from inside `send`, after the handler had returned and the bind with it —
+logged `null`, and no test could have caught that, because a test's capture
+reads the record, not the moment it was emitted. Found by running the server and
+reading its stderr; fixed by binding at the ASGI layer, around the send.
+
 **Price a feature before optimising it.** Adaptive stopping saves ~$0.20 per test and
 inflates false `decisive` 25-fold. I spent a long time reasoning about the stopping
 *rule* without once asking what stopping *buys*. The trade was never close.

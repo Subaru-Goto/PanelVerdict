@@ -87,6 +87,7 @@ from app.screening import (
     self_model_name,
 )
 from app.targeting import CROSS_SECTION_NOTICE, settled_query
+from app.logs import RequestIdMiddleware, bind_thread, configure_logging
 from app.tracing import configure_tracing
 from app.vote import OutOfCredit, PanelLLM, total_usage
 
@@ -96,8 +97,9 @@ from app.vote import OutOfCredit, PanelLLM, total_usage
 # and how long it took — has never been readable from a running
 # server, only from tests, which capture at the logger and so could not see the
 # gap. Configured here because this module is the server's entry point; the
-# seed script does the same for the same reason.
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+# seed script does the same for the same reason. JSON lines with the request
+# and thread ids since 047/#145 (`app/logs.py`).
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -286,11 +288,18 @@ async def require_shared_secret(request: Request, call_next):
     return await call_next(request)
 
 
+# Added after the secret check so it wraps it: a 401 is logged under a request
+# id too (047/#145).
+app.add_middleware(RequestIdMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.frontend_origin],
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
+    # Readable from the browser, so a page can show the id an error's lines
+    # are filed under.
+    expose_headers=["X-Request-ID"],
 )
 
 
@@ -1118,12 +1127,12 @@ def _outcome(
     """
     paused = state.get("__interrupt__")
     # The same id the trace is labelled with, so a run in LangSmith and the
-    # lines it wrote here can be paired. The vote loop logs a different id
-    # (`panel usage test_id=...`); unifying the two is a separate job.
+    # lines it wrote here can be paired. The vote node stamps its votes with
+    # this id too, so the panel's usage line carries it as `test_id`.
     logger.info(
-        "evaluate thread_id=%s: %s",
-        thread_id,
+        "evaluate: %s",
         "paused at the panel gate" if paused else "complete",
+        extra={"thread_id": thread_id},
     )
     if paused:
         return PausedRun(
@@ -1232,16 +1241,20 @@ async def _run_graph(graph, payload, thread_id: str):
     model text.
     """
     try:
-        return await graph.ainvoke(
-            payload,
-            {
-                "configurable": {"thread_id": thread_id},
-                # Repeated as metadata because only `model` and `checkpoint_ns`
-                # are copied out of `configurable` for a trace. This is the one
-                # handle a LangSmith run and this request's log lines share.
-                "metadata": {"thread_id": thread_id},
-            },
-        )
+        # Everything the graph logs — a refused screen, a vote worker's retry,
+        # the panel's usage line — is this run's (047/#145).
+        with bind_thread(thread_id):
+            return await graph.ainvoke(
+                payload,
+                {
+                    "configurable": {"thread_id": thread_id},
+                    # Repeated as metadata because only `model` and
+                    # `checkpoint_ns` are copied out of `configurable` for a
+                    # trace. This is the one handle a LangSmith run and this
+                    # request's log lines share.
+                    "metadata": {"thread_id": thread_id},
+                },
+            )
     except UnsafeInput as error:
         # 400, not 422: the text is well-formed; what it says was refused.
         raise HTTPException(status_code=400, detail=str(error)) from error

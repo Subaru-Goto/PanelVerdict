@@ -607,3 +607,31 @@ class AlwaysFirstShown:
         enacted: str = "",
     ) -> VoteResponse:
         return voted("option_1")
+
+
+def test_a_line_logged_from_a_vote_worker_carries_the_bound_thread_id(caplog) -> None:
+    """047/#145. `ThreadPoolExecutor.submit` starts each worker with an empty
+    context, so a naive fan-out logs a blank id on exactly the lines a run is
+    traced by — and nothing raises. The workers must inherit the caller's."""
+    import logging
+
+    from app.logs import ContextStamp, bind_thread
+    from tests.conftest import StubLLM
+
+    class LoggingLLM(StubLLM):
+        def vote(self, **kwargs):
+            logging.getLogger("app.vote").warning("retrying a vote")
+            return super().vote(**kwargs)
+
+    caplog.handler.addFilter(ContextStamp())
+    variants = {"vA": "Save 50% today", "vB": "Limited time: half price"}
+    with caplog.at_level(logging.WARNING, logger="app.vote"), bind_thread("run-9"):
+        collect_panel_votes(
+            test_id="run-9",
+            variants=variants,
+            panel=[_persona("p1"), _persona("p2")],
+            llm=LoggingLLM(chosen="option_1"),
+        )
+
+    stamped = [r.thread_id for r in caplog.records if r.message == "retrying a vote"]
+    assert stamped == ["run-9", "run-9"]

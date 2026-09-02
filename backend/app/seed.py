@@ -7,7 +7,6 @@ never re-pays the LLM/embedding cost for what it already has.
 """
 
 import argparse
-import logging
 from dataclasses import dataclass
 
 import psycopg
@@ -15,6 +14,7 @@ import psycopg
 from app.assembly import Embedder, assemble_pool
 from app.config import settings
 from app.llm import OpenRouterEmbedder, OpenRouterJudge
+from app.logs import configure_logging
 from app.corpus import DOCUMENTS, seed_corpus
 from app.persistence import (
     missing_columns,
@@ -187,7 +187,7 @@ def main() -> None:
         "writes nothing, and calls nothing paid",
     )
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    configure_logging()
 
     # Both schema paths come before everything else, including the corpus:
     # they are the two entry points that must not depend on a paid client, and

@@ -23,7 +23,6 @@ split before the full set is spent; `--dry-run` spends nothing.
 
 import json
 import os
-import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -371,13 +370,11 @@ def main() -> None:
     class _UsageTap(logging.Handler):
         """Sums the analyst's own usage line (070's instrument) over the run.
 
-        Read by field name from the rendered line, not by argument position:
-        a reordered log call must fail here loudly, not record zeros.
+        Read off the record by field name (047/#145 made them fields): a
+        renamed field must fail here loudly, not record zeros.
         """
 
-        _FIELDS = re.compile(
-            r"calls=(\d+) input_tokens=(\d+) cached_tokens=(\d+)/\d+ output_tokens=(\d+)"
-        )
+        _FIELDS = ("calls", "input_tokens", "cached_tokens", "output_tokens")
 
         def __init__(self) -> None:
             super().__init__()
@@ -385,18 +382,15 @@ def main() -> None:
             self.unparsed: list[str] = []
 
         def emit(self, record: logging.LogRecord) -> None:
-            message = record.getMessage()
-            if not message.startswith("analyst usage"):
+            if record.getMessage() != "analyst usage":
                 return
-            found = self._FIELDS.search(message)
-            if found is None:
-                self.unparsed.append(message)
+            if not all(hasattr(record, field) for field in self._FIELDS):
+                self.unparsed.append(repr(record.__dict__))
                 return
-            calls, input_tokens, cached, output = (int(g) for g in found.groups())
-            self.calls += calls
-            self.input += input_tokens
-            self.cached += cached
-            self.output += output
+            self.calls += record.calls
+            self.input += record.input_tokens
+            self.cached += record.cached_tokens
+            self.output += record.output_tokens
 
     tap = _UsageTap()
     analyst_log = logging.getLogger("app.analyst")

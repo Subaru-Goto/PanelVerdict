@@ -3739,3 +3739,33 @@ def test_an_old_stored_report_without_usage_still_loads(signed_in, conn) -> None
 
     assert stored.status_code == 200
     assert stored.json()["usage"] is None
+
+
+def test_every_line_of_a_request_carries_its_request_id_and_the_run_s_thread_id(
+    client, conn, caplog
+) -> None:
+    """047/#145. The request id is minted at the edge and returned, so a reader
+    holding a response can find its lines; the run's lines carry the thread id
+    the client already holds."""
+    from app.logs import ContextStamp
+
+    seed_japanese(conn, 5)
+    caplog.handler.addFilter(ContextStamp())
+
+    with caplog.at_level(logging.INFO, logger="app.main"):
+        response = client.post(
+            "/evaluate", json={**_REQUEST_BODY, "reading_accepted": False}
+        )
+
+    assert response.status_code == 200
+    request_id = response.headers["x-request-id"]
+    assert len(request_id) == 36  # a uuid4, minted here, never read from the client
+    (record,) = [r for r in caplog.records if r.message.startswith("evaluate")]
+    assert record.request_id == request_id
+    assert record.thread_id == response.json()["thread_id"]
+
+
+def test_a_request_that_never_reaches_a_run_still_gets_a_request_id(client) -> None:
+    response = client.get("/health")
+
+    assert len(response.headers["x-request-id"]) == 36
