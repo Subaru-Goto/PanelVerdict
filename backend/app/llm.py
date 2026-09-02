@@ -476,6 +476,10 @@ def analyst_chat_model(*, api_key: str, base_url: str, model: str) -> BaseChatMo
         api_key=api_key,
         max_retries=2,
         timeout=VOTE_READ_TIMEOUT_SECONDS,
+        # The analyst streams, and a streamed response carries no usage block
+        # unless asked (070/#161: "no usage reaches the wire" was this flag's
+        # absence). The vote path never needed it — votes do not stream.
+        stream_usage=True,
     )
 
 

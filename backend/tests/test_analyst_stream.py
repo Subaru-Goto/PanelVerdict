@@ -144,3 +144,64 @@ class TestStreamAnalyst:
         assert len(tokens) > 1
         assert "".join(tokens) == "The interval cleared the band."
         assert events[-1] == {"type": "done"}
+
+
+@pytest.mark.anyio
+async def test_a_turn_logs_its_usage(conn, aconn, caplog) -> None:
+    """070/#161: the analyst's cost was unknowable because nothing captured
+    it. A turn's model calls each carry usage_metadata; the turn logs the sum
+    the way the vote loop logs "panel usage" — server-side, one line, so chat
+    spend is measurable without a UI to display it."""
+    import logging
+
+    model = ScriptedChatModel(
+        responses=[
+            tool_call_message(),
+            AIMessage(
+                content="The interval cleared the band.",
+                usage_metadata={
+                    "input_tokens": 900,
+                    "output_tokens": 120,
+                    "total_tokens": 1020,
+                    "output_token_details": {"reasoning": 300},
+                },
+            ),
+        ]
+    )
+    # The tool-call message carries usage too — a turn is every model call in
+    # it, not just the one that produced the answer.
+    model.responses[0].usage_metadata = {
+        "input_tokens": 600,
+        "output_tokens": 40,
+        "total_tokens": 640,
+    }
+
+    with caplog.at_level(logging.INFO, logger="app.analyst"):
+        await _lines(model, conn=aconn, thread_id="usage-1")
+
+    (record,) = [r for r in caplog.records if "analyst usage" in r.message]
+    message = record.getMessage()
+    assert "thread_id=usage-1" in message
+    assert "input_tokens=1500" in message
+    assert "output_tokens=160" in message
+    # Reported-coverage discipline, same as the vote totals: reasoning was
+    # reported by one call of two, and the line says so instead of letting a
+    # partial sum read as a total.
+    assert "reasoning_tokens=300/1" in message
+    assert "calls=2" in message
+
+
+@pytest.mark.anyio
+async def test_a_turn_with_no_usage_logs_nothing(conn, aconn, caplog) -> None:
+    """Doubles report no usage; a line full of zeros would be an invented
+    measurement, the exact thing the ticket exists to kill."""
+    import logging
+
+    model = ScriptedChatModel(
+        responses=[AIMessage(content="The interval cleared the band.")]
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.analyst"):
+        await _lines(model, conn=aconn, thread_id="usage-2")
+
+    assert not [r for r in caplog.records if "analyst usage" in r.message]
