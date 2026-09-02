@@ -443,7 +443,8 @@ class ToolDeps:
 
     It held a translator, a panel model and a panel size until the analyst
     stopped being able to start tests. What is left is what a reader needs: a
-    connection and an embedder, neither of which can spend anything.
+    connection and an embedder. The embedder spends — one embedding per search,
+    the cheapest call on the account — bounded by the run and edge caps.
     """
 
     conn: psycopg.AsyncConnection
@@ -453,7 +454,9 @@ class ToolDeps:
 def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
     """The tools for one request, closed over that request's test.
 
-    Every one of them reads. None of them spends, and none of them writes.
+    Every one of them reads and none of them writes. Two buy an embedding per
+    execution (`search_personas`, `explain_the_report`); the call budget counts
+    model calls, not those, so the bound on them is the run and edge caps.
 
     The analyst used to hold `run_panel_test`, which bought a whole new panel,
     and that made it the only path by which a model could spend money — reached,
@@ -608,6 +611,8 @@ class _TurnUsage:
     def log(self, thread_id: str) -> None:
         if self.calls == 0:
             return
+        # experiments/topic_boundary.py reads this line back by field name
+        # (`calls=`, `input_tokens=`, `cached_tokens=`, `output_tokens=`).
         logger.info(
             "analyst usage thread_id=%s: calls=%d input_tokens=%d"
             " cached_tokens=%d/%d output_tokens=%d reasoning_tokens=%d/%d",

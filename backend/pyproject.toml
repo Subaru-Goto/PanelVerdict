@@ -40,7 +40,6 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
-    "deepeval>=4.2.0",
     "pytest>=9.1.1",
     "ruff>=0.15.22",
     "testcontainers[postgres]>=4.14.2",

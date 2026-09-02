@@ -11,13 +11,19 @@ wording may be adjusted against; the `holdout` half is scored once the wording
 is fixed and is the number that goes in the research note. Tuning against the
 half you report on measures the fit to those questions, not the boundary.
 
-    python -m experiments.topic_boundary --split holdout \\
-        --out experiments/out/topic-boundary-holdout.jsonl
+    uv run --with deepeval==4.2.0 python -m experiments.topic_boundary \\
+        --split holdout --out experiments/out/topic-boundary-holdout.jsonl
 
-`--limit 10` is the dry run that prices a case before the full set is spent.
+DeepEval is layered onto the run, never added to the project: it pins `click`
+and `rich` below what the production image resolves, and a single lock would
+have carried that downgrade into the image. This module and its tests import
+it only when a run is paid for. `--limit 10` prices a sample spread across the
+split before the full set is spent; `--dry-run` spends nothing.
 """
 
 import json
+import os
+import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +41,10 @@ Expected = Literal["answer", "decline"]
 Split = Literal["tune", "holdout"]
 
 CASES_PATH = Path(__file__).with_name("topic_boundary_cases.json")
+
+# DeepEval phones home unless told not to. Set before any import of it, at
+# module scope, so no path — a run, a test, a REPL — reaches it unset.
+os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "1")
 
 
 @dataclass(frozen=True)
@@ -144,19 +154,24 @@ class Measures(Protocol):
     async def a_measure(self, test_case: Any) -> float: ...
 
 
-def judge_with(metrics: Mapping[Expected, Measures]) -> Judge:
+MakeCase = Callable[[str, str], Any]
+
+
+def judge_with(metrics: Mapping[Expected, Measures], make_case: MakeCase) -> Judge:
     """One rubric per expected behaviour: the case says which one applies.
 
     A declined case is judged on the shape the ticket settled (outside what it
     covers, then what it can help with, no partial answer first); an answered
     case on having been taken as in scope. Scoring both against one rubric
     would let "declined everything" pass the whole file.
+
+    `make_case(question, reply)` builds what the metric measures — DeepEval's
+    `LLMTestCase` in a paid run. Injected so DeepEval is imported only there.
     """
-    from deepeval.test_case import LLMTestCase
 
     async def judge(case: Case, reply: str) -> tuple[bool, str]:
         metric = metrics[case.expected]
-        await metric.a_measure(LLMTestCase(input=case.question, actual_output=reply))
+        await metric.a_measure(make_case(case.question, reply))
         return bool(metric.success), metric.reason or ""
 
     return judge
@@ -253,7 +268,7 @@ def _judge_model(chat: Any, name: str) -> Any:
     return OpenRouterJudge()
 
 
-def build_metrics(judge: Any) -> dict[Expected, Any]:
+def build_metrics(judge: Any) -> dict[Expected, Measures]:
     """Two strict G-Eval rubrics: strict mode makes each verdict pass or fail,
     which is what a boundary is."""
     from deepeval.metrics import GEval
@@ -295,11 +310,7 @@ def main() -> None:
     import argparse
     import asyncio
     import logging
-    import os
     from uuid import uuid4
-
-    # DeepEval phones home unless told not to; nothing from a run leaves here.
-    os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "1")
 
     import psycopg
     from langgraph.checkpoint.memory import InMemorySaver
@@ -308,14 +319,19 @@ def main() -> None:
     from app.analyst import ToolDeps, stream_analyst
     from app.config import settings
     from app.llm import OpenRouterEmbedder, analyst_chat_model
-    from experiments.corpus_check import _sample_result
+    from experiments.corpus_check import sample_result
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument(
         "--split", choices=("tune", "holdout", "all"), default="holdout"
     )
-    parser.add_argument("--limit", type=int, default=None, help="first N cases only")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="N cases, spread evenly through the split",
+    )
     parser.add_argument("--model", default=settings.analyst_model)
     parser.add_argument("--judge-model", default=settings.judge_model)
     parser.add_argument("--dry-run", action="store_true")
@@ -329,6 +345,9 @@ def main() -> None:
         return
     if settings.openrouter_api_key is None:
         raise SystemExit("openrouter_api_key is not set; cannot run the analyst.")
+
+    # The one DeepEval import a run needs, past the free exits above.
+    from deepeval.test_case import LLMTestCase
 
     key = settings.openrouter_api_key.get_secret_value()
     chat = analyst_chat_model(
@@ -346,23 +365,38 @@ def main() -> None:
         model=settings.embedding_model,
     )
     metrics = build_metrics(judge)
-    payload = _sample_result()
+    payload = sample_result()
     saver = InMemorySaver()
 
     class _UsageTap(logging.Handler):
-        """Sums the analyst's own usage line (070's instrument) over the run."""
+        """Sums the analyst's own usage line (070's instrument) over the run.
+
+        Read by field name from the rendered line, not by argument position:
+        a reordered log call must fail here loudly, not record zeros.
+        """
+
+        _FIELDS = re.compile(
+            r"calls=(\d+) input_tokens=(\d+) cached_tokens=(\d+)/\d+ output_tokens=(\d+)"
+        )
 
         def __init__(self) -> None:
             super().__init__()
             self.calls = self.input = self.cached = self.output = 0
+            self.unparsed: list[str] = []
 
         def emit(self, record: logging.LogRecord) -> None:
-            if record.getMessage().startswith("analyst usage"):
-                _, calls, input_tokens, cached, _, output, *_ = record.args  # type: ignore[misc]
-                self.calls += calls
-                self.input += input_tokens
-                self.cached += cached
-                self.output += output
+            message = record.getMessage()
+            if not message.startswith("analyst usage"):
+                return
+            found = self._FIELDS.search(message)
+            if found is None:
+                self.unparsed.append(message)
+                return
+            calls, input_tokens, cached, output = (int(g) for g in found.groups())
+            self.calls += calls
+            self.input += input_tokens
+            self.cached += cached
+            self.output += output
 
     tap = _UsageTap()
     analyst_log = logging.getLogger("app.analyst")
@@ -395,7 +429,10 @@ def main() -> None:
                         text.append(f"[error: {event['message']}]")
                 return "".join(text)
 
-            await run_cases(cases, ask, judge_with(metrics), rows)
+            def make_case(question: str, reply: str) -> LLMTestCase:
+                return LLMTestCase(input=question, actual_output=reply)
+
+            await run_cases(cases, ask, judge_with(metrics, make_case), rows)
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
@@ -423,9 +460,17 @@ def main() -> None:
                     "output_tokens": judge.output_tokens,
                 },
             }
-            args.out.with_suffix(".usage.json").write_text(json.dumps(usage, indent=1))
             print(format_summary(rows))
-            print(f"usage: {json.dumps(usage)}")
+            if tap.unparsed:
+                print(
+                    f"usage NOT written: {len(tap.unparsed)} usage line(s) changed shape"
+                )
+                print(tap.unparsed[0])
+            else:
+                args.out.with_suffix(".usage.json").write_text(
+                    json.dumps(usage, indent=1)
+                )
+                print(f"usage: {json.dumps(usage)}")
 
 
 if __name__ == "__main__":

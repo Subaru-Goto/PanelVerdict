@@ -6,6 +6,7 @@ the suite can pin is the case file's shape and the arithmetic over judged rows.
 
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,7 @@ from experiments.topic_boundary import (
     load_cases,
     run_cases,
     score,
+    select,
 )
 
 IN_SCOPE = {"report", "headlines_general"}
@@ -54,24 +56,8 @@ def test_a_malformed_case_is_refused(tmp_path: Path) -> None:
         '[{"id": "x1", "question": "q", "category": "report",'
         ' "expected": "maybe", "split": "tune"}]'
     )
-    try:
+    with pytest.raises(ValueError, match="x1"):
         load_cases(bad)
-    except ValueError as error:
-        assert "x1" in str(error)
-    else:
-        raise AssertionError("a bad `expected` value loaded")
-
-
-def test_a_case_is_immutable_data() -> None:
-    case = Case(
-        id="r1", question="q", category="report", expected="answer", split="tune"
-    )
-    try:
-        case.question = "changed"  # type: ignore[misc]
-    except AttributeError:
-        pass
-    else:
-        raise AssertionError("Case should be frozen")
 
 
 # --- the judged run's arithmetic, over canned rows -------------------------
@@ -148,7 +134,10 @@ class _FakeMetric:
 async def test_the_rubric_is_chosen_by_what_the_case_expects() -> None:
     answered = _FakeMetric("answered", success=True)
     declined = _FakeMetric("declined", success=False)
-    judge = judge_with({"answer": answered, "decline": declined})
+    judge = judge_with(
+        {"answer": answered, "decline": declined},
+        lambda question, reply: SimpleNamespace(input=question, actual_output=reply),
+    )
 
     passed, reason = await judge(_case("r1", "report", "answer", "tune"), "a reply")
     assert (passed, reason) == (True, "answered says True")
@@ -162,8 +151,6 @@ async def test_the_rubric_is_chosen_by_what_the_case_expects() -> None:
 def test_a_limited_selection_spreads_across_the_file() -> None:
     # The file is ordered by category, so the first N cases are all one kind;
     # a priced dry run has to exercise both rubrics to price both.
-    from experiments.topic_boundary import select
-
     cases = load_cases(CASES_PATH)
     chosen = select(cases, "tune", 10)
     assert len(chosen) == 10

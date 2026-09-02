@@ -24,7 +24,7 @@ Settled in the ticket's grilling, one question at a time:
    would fingerprint the boundary for a prober.
 4. **The chat message stays outside the injection screener for now**, recorded as
    its own ticket ([120/#279](https://github.com/Subaru-Goto/PanelVerdict/issues/279)) and in `docs/least-privilege.md`, with the trigger below.
-5. **Verification: DeepEval, on demand, dev-only.** Hand-written questions, a tune
+5. **Verification: DeepEval, on demand, outside the project.** Hand-written questions, a tune
    half the wording may be adjusted against and a held-out half it may not, the
    configured `judge_model` as judge with a hand review of failures and a sample
    of passes, and the score of the held-out half recorded here as the baseline.
@@ -41,6 +41,12 @@ Settled in the ticket's grilling, one question at a time:
   `corpus_check._sample_result()`: a finished 50-vote test, B ahead 28–22 in the
   tie zone, **with no vote reasons**; questions about what panelists said are
   therefore answered as "the report does not record that", which is in scope.
+- **DeepEval is not a project dependency.** First added to the `dev` group, it
+  pinned `click<8.4` and `rich<15` and — uv resolving one lock across all
+  groups — downgraded both in the production export (click 8.4.2→8.3.3, rich
+  15.0.0→14.3.4). Found in review, reverted: it is layered onto the run with
+  `uv run --with deepeval==4.2.0 …`, the lock is untouched, and the module
+  imports it only inside a paid run, so the test suite never loads it.
 - **Judge:** DeepEval 4.2.0 `GEval` in strict mode (pass or fail), two rubrics
   chosen by what the case expects — one for *declined in shape*, one for *taken
   as in scope*. DeepEval's own OpenAI class cannot construct a model outside its
@@ -115,7 +121,7 @@ judge. "Failures" are as judged; the hand-review column says what they were.
 
 | run | prompt | rubric | split | score | by category (fails only) | failures | hand review | cost |
 |---|---|---|---|---|---|---|---|---|
-| dry | v1 | r1 | tune, first 10 | 10/10 | — | — | all in-scope cases; the limit sampled the file's head (fixed: `--limit` now spreads) | $0.0054 |
+| sample-10 | v1 | r1 | tune, first 10 | 10/10 | — | — | all in-scope cases; `--limit` took the file's head (fixed: it now spreads across the split) | $0.0054 |
 | tune-1 | v1 | r1 | tune, 48 | 47/48 | other_marketing 7/8 | m11 | real: "20% off or free shipping?" read as about this test's offer, answered about the variants, no decline. Declines used **9 distinct openings** — the shape's example phrasing copied near-verbatim | $0.0144 |
 | tune-2 | v2 | r1 | tune, 48 | 45/48 | headlines_general 7/8, other_marketing 6/8 | h09, m09, m13 | h09 judge error (engaged, then "the report's guidance does not cover…"); m09, m13 real: a one-sentence answer *before* the decline. Openings: **31** | $0.0160 |
 | tune-3 | v3 | r2 | tune, 48 | 47/48 | other_marketing 7/8 | m09 | real: "no universal benchmark" before the decline, the same case. Plateau: 47, 45, 47. Wording frozen | $0.0159 |
@@ -153,13 +159,20 @@ What the hand review found beyond the scores:
 Promote a pre-flight check on the chat message — the existing screener, extended
 with a topic verdict, so injection and topic are one call — if either:
 
-1. a rerun of `--split holdout` at the shipped wording scores **below 47/48**, or
+1. a rerun of `--split holdout` at the shipped wording scores **below 47/48
+   after hand review of its failures** (the score counted is the reviewed one,
+   as in the table), **confirmed by one further rerun** — a single 48-case run
+   cannot tell 46 from noise; or
 2. production shows an off-topic answer or an injection through the chat message.
+
+**Trigger 2 has no automatic observer.** Replies are not logged and nothing
+samples them; it is observed by the author's standing manual probe of
+production and by readers. That is a gap this document records, not closes.
 
 Rerun (paid, ~$0.015):
 
-    cd backend && uv run python -m experiments.topic_boundary --split holdout \
-        --out experiments/out/topic-boundary-holdout.jsonl
+    cd backend && uv run --with deepeval==4.2.0 python -m experiments.topic_boundary \
+        --split holdout --out experiments/out/topic-boundary-holdout.jsonl
 
 ## What this does not measure
 
