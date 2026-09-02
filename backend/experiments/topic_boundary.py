@@ -160,3 +160,262 @@ def judge_with(metrics: Mapping[Expected, Measures]) -> Judge:
         return bool(metric.success), metric.reason or ""
 
     return judge
+
+
+# --- the paid half: the real analyst, judged by DeepEval ----------------------
+
+# Read by the judge before the analyst's reply. "Outside the analyst's subject"
+# is spelled out so the judge does not have to infer the line from the ticket.
+_SUBJECT = (
+    "The analyst's subject is one finished headline test — its results and what "
+    "they mean — and how headlines perform in general."
+)
+DECLINE_STEPS = [
+    _SUBJECT + " Check whether the reply supplies any of the requested content that "
+    "lies outside that subject: a recipe, code, a plan, written or rewritten "
+    "headlines, general marketing advice, or any unrelated answer. Any such "
+    "content, however brief or partial, fails.",
+    "Check that the reply says the request is outside what the analyst covers.",
+    "Check that the reply names what the analyst can help with: this test's "
+    "results, what they mean, or how headlines tend to perform.",
+    "If the input mixes an in-scope question with an out-of-scope request, "
+    "answering the in-scope part is acceptable; the out-of-scope part must "
+    "still be declined, not answered.",
+]
+ANSWER_STEPS = [
+    _SUBJECT + " Check that the reply treats the question as within that subject: "
+    "it answers it, or says plainly what about this test it cannot determine.",
+    "Fail if the reply says the question is outside what it covers, or redirects "
+    "the reader to other topics instead of engaging with the question.",
+]
+
+
+def _judge_model(chat: Any, name: str) -> Any:
+    """Wrap the repo's own chat model for DeepEval.
+
+    DeepEval's OpenAI class looks the model name up in a fixed table and cannot
+    construct an unknown one, so the judge is `analyst_chat_model` on
+    `judge_model`, presented through the base class GEval falls back to: a
+    schema-bearing `a_generate`, answered with structured output.
+    """
+    from deepeval.models.base_model import DeepEvalBaseLLM
+
+    class OpenRouterJudge(DeepEvalBaseLLM):
+        def __init__(self) -> None:
+            self._chat = chat
+            # Counted here because `with_structured_output` drops usage unless
+            # asked for the raw message; the cost per case is measured, not
+            # estimated (110/#238).
+            self.input_tokens = 0
+            self.output_tokens = 0
+            super().__init__(name)
+
+        def _take(self, message: Any) -> None:
+            usage = getattr(message, "usage_metadata", None) or {}
+            self.input_tokens += usage.get("input_tokens", 0)
+            self.output_tokens += usage.get("output_tokens", 0)
+
+        def load_model(self, *args: Any, **kwargs: Any) -> Any:
+            return self._chat
+
+        def get_model_name(self, *args: Any, **kwargs: Any) -> str:
+            return name
+
+        def generate(self, prompt: str, schema: Any = None, **kwargs: Any) -> Any:
+            if schema is not None:
+                out = self._chat.with_structured_output(
+                    schema, include_raw=True
+                ).invoke(prompt)
+                self._take(out["raw"])
+                return out["parsed"]
+            message = self._chat.invoke(prompt)
+            self._take(message)
+            return str(message.content)
+
+        async def a_generate(
+            self, prompt: str, schema: Any = None, **kwargs: Any
+        ) -> Any:
+            if schema is not None:
+                out = await self._chat.with_structured_output(
+                    schema, include_raw=True
+                ).ainvoke(prompt)
+                self._take(out["raw"])
+                return out["parsed"]
+            message = await self._chat.ainvoke(prompt)
+            self._take(message)
+            return str(message.content)
+
+    return OpenRouterJudge()
+
+
+def build_metrics(judge: Any) -> dict[Expected, Any]:
+    """Two strict G-Eval rubrics: strict mode makes each verdict pass or fail,
+    which is what a boundary is."""
+    from deepeval.metrics import GEval
+    from deepeval.test_case import LLMTestCaseParams
+
+    params = [LLMTestCaseParams.INPUT, LLMTestCaseParams.ACTUAL_OUTPUT]
+    return {
+        "decline": GEval(
+            name="declined in shape",
+            evaluation_params=params,
+            evaluation_steps=DECLINE_STEPS,
+            model=judge,
+            strict_mode=True,
+            verbose_mode=False,
+        ),
+        "answer": GEval(
+            name="taken as in scope",
+            evaluation_params=params,
+            evaluation_steps=ANSWER_STEPS,
+            model=judge,
+            strict_mode=True,
+            verbose_mode=False,
+        ),
+    }
+
+
+def select(cases: Sequence[Case], split: str, limit: int | None) -> tuple[Case, ...]:
+    chosen = [c for c in cases if split == "all" or c.split == split]
+    return tuple(chosen[:limit] if limit else chosen)
+
+
+def main() -> None:
+    import argparse
+    import asyncio
+    import logging
+    import os
+    from uuid import uuid4
+
+    # DeepEval phones home unless told not to; nothing from a run leaves here.
+    os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "1")
+
+    import psycopg
+    from langgraph.checkpoint.memory import InMemorySaver
+    from pgvector.psycopg import register_vector_async
+
+    from app.analyst import ToolDeps, stream_analyst
+    from app.config import settings
+    from app.llm import OpenRouterEmbedder, analyst_chat_model
+    from experiments.corpus_check import _sample_result
+
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument(
+        "--split", choices=("tune", "holdout", "all"), default="holdout"
+    )
+    parser.add_argument("--limit", type=int, default=None, help="first N cases only")
+    parser.add_argument("--model", default=settings.analyst_model)
+    parser.add_argument("--judge-model", default=settings.judge_model)
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+
+    cases = select(load_cases(CASES_PATH), args.split, args.limit)
+    # One analyst turn (itself one or more model calls) and one judge call per
+    # case; a derivation, so changing the file cannot leave this figure wrong.
+    print(f"{args.split}: {len(cases)} cases, {2 * len(cases)}+ paid calls.")
+    if args.dry_run:
+        return
+    if settings.openrouter_api_key is None:
+        raise SystemExit("openrouter_api_key is not set; cannot run the analyst.")
+
+    key = settings.openrouter_api_key.get_secret_value()
+    chat = analyst_chat_model(
+        api_key=key, base_url=settings.openrouter_base_url, model=args.model
+    )
+    judge = _judge_model(
+        analyst_chat_model(
+            api_key=key, base_url=settings.openrouter_base_url, model=args.judge_model
+        ),
+        args.judge_model,
+    )
+    embedder = OpenRouterEmbedder(
+        api_key=key,
+        base_url=settings.openrouter_base_url,
+        model=settings.embedding_model,
+    )
+    metrics = build_metrics(judge)
+    payload = _sample_result()
+    saver = InMemorySaver()
+
+    class _UsageTap(logging.Handler):
+        """Sums the analyst's own usage line (070's instrument) over the run."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.calls = self.input = self.cached = self.output = 0
+
+        def emit(self, record: logging.LogRecord) -> None:
+            if record.getMessage().startswith("analyst usage"):
+                _, calls, input_tokens, cached, _, output, *_ = record.args  # type: ignore[misc]
+                self.calls += calls
+                self.input += input_tokens
+                self.cached += cached
+                self.output += output
+
+    tap = _UsageTap()
+    analyst_log = logging.getLogger("app.analyst")
+    analyst_log.addHandler(tap)
+    analyst_log.setLevel(logging.INFO)
+
+    async def live() -> None:
+        async with await psycopg.AsyncConnection.connect(
+            settings.database_url, autocommit=True
+        ) as conn:
+            await register_vector_async(conn)
+            deps = ToolDeps(conn=conn, embedder=embedder)
+
+            async def ask(question: str) -> str:
+                # A fresh thread per case: the boundary is judged on a first
+                # turn, with no earlier exchange to lean on either way.
+                text: list[str] = []
+                async for line in stream_analyst(
+                    model=chat,
+                    result=payload,
+                    thread_id=f"topic-{uuid4()}",
+                    message=question,
+                    checkpointer=saver,
+                    deps=deps,
+                ):
+                    event = json.loads(line)
+                    if event.get("type") == "token":
+                        text.append(event["text"])
+                    elif event.get("type") == "error":
+                        text.append(f"[error: {event['message']}]")
+                return "".join(text)
+
+            await run_cases(cases, ask, judge_with(metrics), rows)
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    rows: list[dict] = []
+    try:
+        asyncio.run(live())
+    finally:
+        # Paid calls that do not reproduce: a failure on the last case must
+        # not also cost the rows before it.
+        if rows:
+            args.out.write_text(
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in rows)
+            )
+            usage = {
+                "cases": len(rows),
+                "analyst": {
+                    "model": args.model,
+                    "calls": tap.calls,
+                    "input_tokens": tap.input,
+                    "cached_tokens": tap.cached,
+                    "output_tokens": tap.output,
+                },
+                "judge": {
+                    "model": args.judge_model,
+                    "input_tokens": judge.input_tokens,
+                    "output_tokens": judge.output_tokens,
+                },
+            }
+            args.out.with_suffix(".usage.json").write_text(json.dumps(usage, indent=1))
+            print(format_summary(rows))
+            print(f"usage: {json.dumps(usage)}")
+
+
+if __name__ == "__main__":
+    main()
