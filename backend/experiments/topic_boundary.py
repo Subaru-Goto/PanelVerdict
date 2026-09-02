@@ -18,9 +18,10 @@ half you report on measures the fit to those questions, not the boundary.
 """
 
 import json
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Any, Literal, Protocol, get_args
 
 Category = Literal[
     "report",
@@ -76,3 +77,86 @@ def load_cases(path: Path) -> tuple[Case, ...]:
             )
         )
     return tuple(cases)
+
+
+Ask = Callable[[str], Awaitable[str]]
+Judge = Callable[[Case, str], Awaitable[tuple[bool, str]]]
+
+
+async def run_cases(
+    cases: Sequence[Case], ask: Ask, judge: Judge, rows: list[dict]
+) -> None:
+    """Ask every case of the analyst, judge the reply, append one row per case.
+
+    Appends into the caller's list, as `corpus_check` does: every case is two
+    paid calls, and a 429 on the last one must not cost the rows before it.
+    """
+    for case in cases:
+        reply = await ask(case.question)
+        passed, reason = await judge(case, reply)
+        rows.append(
+            {
+                "id": case.id,
+                "category": case.category,
+                "expected": case.expected,
+                "split": case.split,
+                "question": case.question,
+                "reply": reply,
+                "passed": passed,
+                "reason": reason,
+            }
+        )
+
+
+def score(rows: Sequence[dict]) -> dict[str, dict[str, dict[str, int]]]:
+    """Passed-over-n by split and by category; the split figure is the one reported."""
+    summary: dict[str, dict[str, dict[str, int]]] = {"split": {}, "category": {}}
+    for row in rows:
+        for axis in ("split", "category"):
+            bucket = summary[axis].setdefault(row[axis], {"n": 0, "passed": 0})
+            bucket["n"] += 1
+            bucket["passed"] += int(bool(row["passed"]))
+    return summary
+
+
+def format_summary(rows: Sequence[dict]) -> str:
+    summary = score(rows)
+    lines = [
+        f"{split}: {b['passed']}/{b['n']} passed"
+        for split, b in sorted(summary["split"].items())
+    ]
+    lines.append(
+        "by category: "
+        + ", ".join(
+            f"{category} {b['passed']}/{b['n']}"
+            for category, b in sorted(summary["category"].items())
+        )
+    )
+    return "\n".join(lines)
+
+
+class Measures(Protocol):
+    """The slice of a DeepEval metric this runner uses — so a test can fake it."""
+
+    success: bool | None
+    reason: str | None
+
+    async def a_measure(self, test_case: Any) -> float: ...
+
+
+def judge_with(metrics: Mapping[Expected, Measures]) -> Judge:
+    """One rubric per expected behaviour: the case says which one applies.
+
+    A declined case is judged on the shape the ticket settled (outside what it
+    covers, then what it can help with, no partial answer first); an answered
+    case on having been taken as in scope. Scoring both against one rubric
+    would let "declined everything" pass the whole file.
+    """
+    from deepeval.test_case import LLMTestCase
+
+    async def judge(case: Case, reply: str) -> tuple[bool, str]:
+        metric = metrics[case.expected]
+        await metric.a_measure(LLMTestCase(input=case.question, actual_output=reply))
+        return bool(metric.success), metric.reason or ""
+
+    return judge

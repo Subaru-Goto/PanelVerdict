@@ -62,3 +62,94 @@ def test_a_case_is_immutable_data() -> None:
         pass
     else:
         raise AssertionError("Case should be frozen")
+
+
+# --- the judged run's arithmetic, over canned rows -------------------------
+
+import pytest
+
+from experiments.topic_boundary import format_summary, run_cases, score
+
+
+def _case(id_: str, category: str, expected: str, split: str) -> Case:
+    return Case(
+        id=id_, question=f"q-{id_}", category=category, expected=expected, split=split
+    )
+
+
+@pytest.mark.anyio
+async def test_a_run_records_the_reply_and_the_verdict_per_case() -> None:
+    cases = (
+        _case("r1", "report", "answer", "tune"),
+        _case("u1", "unrelated", "decline", "holdout"),
+    )
+
+    async def ask(question: str) -> str:
+        return f"reply to {question}"
+
+    async def judge(case: Case, reply: str) -> tuple[bool, str]:
+        return (case.id == "r1", f"judged {case.id}")
+
+    rows: list[dict] = []
+    await run_cases(cases, ask, judge, rows)
+
+    assert [r["id"] for r in rows] == ["r1", "u1"]
+    assert rows[0]["reply"] == "reply to q-r1"
+    assert rows[0]["passed"] is True and rows[1]["passed"] is False
+    assert rows[1]["reason"] == "judged u1"
+    assert rows[1]["split"] == "holdout" and rows[1]["expected"] == "decline"
+
+
+def test_the_summary_scores_each_split_and_category_separately() -> None:
+    rows = [
+        {"id": "r1", "category": "report", "split": "tune", "passed": True},
+        {"id": "u1", "category": "unrelated", "split": "tune", "passed": False},
+        {"id": "u2", "category": "unrelated", "split": "holdout", "passed": True},
+        {"id": "d1", "category": "disguised", "split": "holdout", "passed": True},
+    ]
+    summary = score(rows)
+    assert summary["split"]["tune"] == {"n": 2, "passed": 1}
+    assert summary["split"]["holdout"] == {"n": 2, "passed": 2}
+    assert summary["category"]["unrelated"] == {"n": 2, "passed": 1}
+
+    text = format_summary(rows)
+    assert "tune: 1/2" in text
+    assert "holdout: 2/2" in text
+    assert "unrelated 1/2" in text
+
+
+# --- the judge: one rubric per expected behaviour ----------------------------
+
+from experiments.topic_boundary import judge_with
+
+
+class _FakeMetric:
+    """Stands in for a DeepEval metric: `a_measure` sets success and reason."""
+
+    def __init__(self, name: str, success: bool) -> None:
+        self.name = name
+        self._success = success
+        self.success: bool | None = None
+        self.reason: str | None = None
+        self.seen: list[tuple[str, str]] = []
+
+    async def a_measure(self, test_case) -> float:
+        self.seen.append((test_case.input, test_case.actual_output))
+        self.success = self._success
+        self.reason = f"{self.name} says {self._success}"
+        return 1.0 if self._success else 0.0
+
+
+@pytest.mark.anyio
+async def test_the_rubric_is_chosen_by_what_the_case_expects() -> None:
+    answered = _FakeMetric("answered", success=True)
+    declined = _FakeMetric("declined", success=False)
+    judge = judge_with({"answer": answered, "decline": declined})
+
+    passed, reason = await judge(_case("r1", "report", "answer", "tune"), "a reply")
+    assert (passed, reason) == (True, "answered says True")
+    assert answered.seen == [("q-r1", "a reply")]
+
+    passed, reason = await judge(_case("u1", "unrelated", "decline", "tune"), "nope")
+    assert (passed, reason) == (False, "declined says False")
+    assert declined.seen == [("q-u1", "nope")]
