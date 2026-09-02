@@ -22,6 +22,7 @@ from typing import get_args, get_type_hints
 import anyio
 import psycopg
 from langchain.agents import create_agent
+from langchain.agents.middleware import ModelCallLimitMiddleware
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import BaseTool, tool
@@ -56,6 +57,53 @@ from app.schemas import (
 from app.verdict import panel_verdict
 
 logger = logging.getLogger(__name__)
+
+# How many model calls one turn may make — the quantity a reader wants, declared
+# instead of computed (052/#149). 5 is what the retired `2 * len(tools) + 2`
+# superstep arithmetic allowed at four tools (one model-then-tools round per held
+# tool, plus the closing answer), so it ships the same budget in the honest
+# currency; 070/#161's measurement says the worst real turn used 3 calls, so the
+# headroom is real work, not slack. Deliberately NOT derived from the tool count:
+# #175 removes a tool and #124 adds one, and neither event is a decision about
+# how much a turn may spend.
+CALLS_PER_TURN = 5
+
+# The backstop behind the budget: langgraph's own default recursion limit,
+# stated rather than inherited (the vote path's `max_retries` precedent). The
+# budget above ends a turn at 5 model calls ≈ 11 supersteps, so this can only
+# fire if the middleware stops counting — it exists so a middleware bug degrades
+# into a visible error instead of an unbounded loop, and the two are in that
+# order on purpose: budget first (a sentence and `done`), backstop behind it
+# (an error event).
+_BACKSTOP_STEPS = 25
+
+# What the reader gets when the budget ends a turn. Reply text, not an error
+# event: the turn ended, the thread survives, and the next question starts
+# fresh — an `error` here would read as a failure the reader should retry
+# verbatim, which is exactly the wrong advice.
+_BUDGET_SENTENCE = (
+    "This turn ran out of its model-call budget before finishing an "
+    "answer. Ask again with a narrower question."
+)
+
+
+class _BudgetEndsTheTurn(ModelCallLimitMiddleware):
+    """`exit_behavior='end'`, but the injected reply is this codebase's own.
+
+    The library ends an over-budget turn by writing its own English into the
+    transcript ("Model call limits exceeded: run limit (5/5)") — library
+    text, not model text, but the channel discipline here is stricter than
+    that: everything on the wire is either the model's streamed answer or a
+    fixed sentence this codebase wrote. So the jump is kept and the message
+    replaced. The override rides `before_model` because the async wrapper
+    (`abefore_model`) delegates to it — pinned by the stream test, which
+    would show the library's wording the day that stops being true."""
+
+    def before_model(self, state, runtime):  # type: ignore[override]
+        jump = super().before_model(state, runtime)
+        if jump is not None:
+            jump["messages"] = [AIMessage(content=_BUDGET_SENTENCE)]
+        return jump
 
 
 def _failure_sentence(error: Exception) -> str:
@@ -546,22 +594,18 @@ async def stream_analyst(
     """
     tools = build_tools(result, deps)
 
-    # The step budget, per turn, derived not tuned: one model-then-tools round
-    # per available tool (two supersteps each, in langgraph's currency) plus
-    # the closing model step, plus one — the limit must strictly exceed the
-    # steps executed, measured: a one-tool round errors at 3 and passes at 4.
-    # A model still calling tools past the budget is looping, and the budget
-    # converts a runaway turn into a visible failure. It is a tripwire and
-    # nothing more: it used to be described as one half of a spend gate, back
-    # when a tool could buy a panel. None can now, so what the budget bounds is
-    # tokens and patience.
-    limit = 2 * len(tools) + 2
-
+    # The budget is per run, deliberately without a `thread_limit`: the
+    # conversation ceiling this ticket once named a gap is owned at the HTTP
+    # edge now (045's per-thread and per-caller daily turn caps, charged by
+    # 089 before the stream exists), where it can refuse with a status code.
+    # A second, middleware-kept thread count would double-gate the same thing
+    # and disagree with the ledger about when a day resets.
     agent = create_agent(
         model=model,
         tools=tools,
         system_prompt=_SYSTEM_PROMPT,
         checkpointer=checkpointer,
+        middleware=[_BudgetEndsTheTurn(run_limit=CALLS_PER_TURN)],
     )
 
     def line(event: ChatStreamEvent) -> str:
@@ -579,7 +623,10 @@ async def stream_analyst(
     try:
         stream = await agent.astream_events(
             {"messages": [HumanMessage(content=message)]},
-            {"configurable": {"thread_id": thread_id}, "recursion_limit": limit},
+            {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": _BACKSTOP_STEPS,
+            },
             version="v3",
         )
         # Pulled through a task behind `asyncio.shield`, not a plain
@@ -673,7 +720,9 @@ async def stream_analyst(
             return
     except GraphRecursionError:
         yield line(
-            ErrorEvent(message=f"analyst was still calling tools after {limit} steps")
+            ErrorEvent(
+                message=f"analyst was still calling tools after {_BACKSTOP_STEPS} steps"
+            )
         )
         return
     except APIStatusError as error:

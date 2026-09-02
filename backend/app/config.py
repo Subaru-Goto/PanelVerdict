@@ -121,7 +121,8 @@ USD_PER_ROLEPLAY = USD_PER_TRANSLATION
 # thread-level bound is the per-thread daily turn cap, a count. A price the
 # pool charges, not an upper bound on what a turn can spend: what bounds a
 # turn's output spend is ANALYST_MAX_COMPLETION_TOKENS per call times the
-# step budget (input rides the replayed transcript, mostly as cache reads),
+# declared per-turn call budget, `analyst.CALLS_PER_TURN` (input rides the
+# replayed transcript, mostly as cache reads),
 # and a worst-case capped turn still bills a multiple of this price — see the
 # global cap's note on what that gap means for the day.
 USD_PER_TURN = 0.0005
@@ -178,9 +179,9 @@ class Settings(BaseSettings):
     # A turn's cost is measured now (USD_PER_TURN, 2026-09-02), and the count
     # kept its size anyway: 30 × $0.0005 = $0.015/thread/day — under half a
     # dev run — needs no tightening, and a turn's model calls are bounded by
-    # `analyst.py`'s recursion budget, which is derived from the tool count
-    # and therefore moves when the tool surface does (018 added a fourth tool
-    # and it moved). A thread is one report's conversation, and 30 turns/day
+    # `analyst.py`'s declared `CALLS_PER_TURN` (052/#149 replaced the
+    # tool-count arithmetic that used to move when the tool surface did).
+    # A thread is one report's conversation, and 30 turns/day
     # is far above an honest conversation while still bounding a loop. This
     # count is also the thread-length bound the flat per-turn price leans on
     # (090/#195): history replay grows a turn, the cap ends the thread's day.

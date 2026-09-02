@@ -345,7 +345,7 @@ class ScriptedChatModel(BaseChatModel):
     in order and records every prompt it was shown.
 
     The last response repeats forever, so a script ending in a tool call models
-    an agent that never answers — which is how the step budget gets tested.
+    an agent that never answers — which is how the call budget gets tested.
     """
 
     responses: list[AIMessage]

@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langgraph.checkpoint.memory import InMemorySaver
 
-from app.analyst import ToolDeps, build_tools, stream_analyst
+from app.analyst import CALLS_PER_TURN, ToolDeps, stream_analyst
 from tests.factories import (
     ScriptedChatModel,
     StreamingScriptedChatModel,
@@ -70,32 +70,76 @@ class TestStreamAnalyst:
         assert all(e != {"type": "token", "text": ""} for e in events)
 
     @pytest.mark.anyio
-    async def test_a_never_answering_model_streams_one_error_event(
+    async def test_a_never_answering_model_ends_at_the_declared_budget(
         self, conn, aconn
     ) -> None:
-        """The step budget's stream face: the same fixed sentence a 502 used
-        to carry, in-band and terminal — nothing follows it, least of all a
-        `done` that would let the client mistake the turn for a clean finish."""
+        """052/#149's stream face, replacing the derived tripwire's: a model
+        still calling tools when the declared per-turn call budget runs out
+        has the turn ended for it, and the reader gets this codebase's fixed
+        sentence as the reply — then `done`. Not an error: the turn ended,
+        the thread survives, the next question starts fresh. The library's
+        own injected English must never reach the wire."""
         # A one-message script repeats forever (see ScriptedChatModel).
         model = ScriptedChatModel(responses=[tool_call_message()])
 
-        events = ndjson_events(await _lines(model, conn=aconn, thread_id="s-2"))
+        lines = await _lines(model, conn=aconn, thread_id="s-2")
+        events = ndjson_events(lines)
 
-        errors = [e for e in events if e["type"] == "error"]
-        # Derived here the way it is derived there, rather than written down: the
-        # budget is `2 * len(tools) + 2`, so it moves whenever the tool surface
-        # does — which is the formula doing exactly what it is for, and a
-        # hardcoded copy here would just turn that into a broken test. The
-        # message is the assertion; the number is arithmetic both sides agree on.
-        steps = 2 * len(build_tools(_result(), _deps(conn))) + 2
-        assert errors == [
-            {
-                "type": "error",
-                "message": f"analyst was still calling tools after {steps} steps",
-            }
-        ]
-        assert events[-1]["type"] == "error"
+        # The budget's currency is model calls, pinned by counting what each
+        # one bought: every allowed call was a tool round.
+        assert len([e for e in events if e["type"] == "tool"]) == CALLS_PER_TURN
+        tokens = "".join(e["text"] for e in events if e["type"] == "token")
+        assert tokens == (
+            "This turn ran out of its model-call budget before finishing an "
+            "answer. Ask again with a narrower question."
+        )
+        assert events[-1] == {"type": "done"}
+        assert all(e["type"] != "error" for e in events)
+        assert all("Model call limits exceeded" not in line for line in lines)
+
+    @pytest.mark.anyio
+    async def test_the_backstop_errors_when_the_budget_stops_counting(
+        self, conn, aconn, monkeypatch
+    ) -> None:
+        """The stated relationship between the two limits, exercised: the
+        declared budget ends a turn long before langgraph's recursion
+        backstop, so the backstop can only fire if the budget stops counting
+        — simulated here by raising it out of the way. What must survive that
+        day is an error event with fixed text, terminal, no `done`."""
+        from app import analyst
+
+        monkeypatch.setattr(analyst, "CALLS_PER_TURN", 99)
+        model = ScriptedChatModel(responses=[tool_call_message()])
+
+        events = ndjson_events(await _lines(model, conn=aconn, thread_id="b-1"))
+
+        assert events[-1] == {
+            "type": "error",
+            "message": "analyst was still calling tools after 25 steps",
+        }
         assert {"type": "done"} not in events
+
+    @pytest.mark.anyio
+    async def test_the_budget_is_per_turn_not_per_thread(self, conn, aconn) -> None:
+        """The amendment's re-judgment, pinned: the conversation ceiling lives
+        at the HTTP edge (045's daily turn caps, charged by 089), so a turn
+        that burned its whole budget must not eat into the next one's. A
+        thread whose first turn ended over budget answers the second turn
+        normally."""
+        model = ScriptedChatModel(
+            responses=[tool_call_message()] * CALLS_PER_TURN
+            + [AIMessage(content="Second turn answers.")]
+        )
+
+        first = ndjson_events(await _lines(model, conn=aconn, thread_id="b-2"))
+        second = ndjson_events(await _lines(model, conn=aconn, thread_id="b-2"))
+
+        assert first[-1] == {"type": "done"}
+        first_tokens = "".join(e["text"] for e in first if e["type"] == "token")
+        assert first_tokens.startswith("This turn ran out of its model-call budget")
+        tokens = [e["text"] for e in second if e["type"] == "token"]
+        assert "".join(tokens) == "Second turn answers."
+        assert second[-1] == {"type": "done"}
 
     @pytest.mark.anyio
     async def test_a_length_cut_streamed_turn_says_so(self, conn, aconn) -> None:

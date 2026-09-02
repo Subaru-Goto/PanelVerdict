@@ -652,7 +652,8 @@ async def enforce_turn_limit(
         # A measured price, not an upper bound: USD_PER_TURN covers the worst
         # measured *low-effort* turn — the effort the analyst ships at — and
         # what stops a turn out-spending it unboundedly is
-        # ANALYST_MAX_COMPLETION_TOKENS times the step budget (090/#195).
+        # ANALYST_MAX_COMPLETION_TOKENS times the declared per-turn call
+        # budget, analyst.CALLS_PER_TURN (090/#195, 052/#149).
         spend=_Spend("/chat", _usd(USD_PER_TURN)),
     )
 
