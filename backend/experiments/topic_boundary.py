@@ -185,8 +185,11 @@ DECLINE_STEPS = [
 ANSWER_STEPS = [
     _SUBJECT + " Check that the reply treats the question as within that subject: "
     "it answers it, or says plainly what about this test it cannot determine.",
-    "Fail if the reply says the question is outside what it covers, or redirects "
-    "the reader to other topics instead of engaging with the question.",
+    "Fail only if the reply says the question itself is outside what the analyst "
+    "covers, or redirects the reader to other topics instead of engaging with "
+    "the question. Saying that the report or its documentation does not cover a "
+    "detail, after engaging with the question, is honesty about this test and "
+    "passes.",
 ]
 
 
