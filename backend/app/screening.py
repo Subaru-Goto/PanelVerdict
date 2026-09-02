@@ -29,10 +29,11 @@ from collections.abc import Sequence
 from typing import Literal, Protocol
 
 from langchain.chat_models import init_chat_model
+from openai import APIStatusError, LengthFinishReasonError
+from pydantic import BaseModel
 
 from app.config import LANGCHAIN_INTEGRATION
-from openai import APIStatusError
-from pydantic import BaseModel
+from app.llm import TARGET_MAX_COMPLETION_TOKENS
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +121,15 @@ class OpenRouterScreener:
             # whose answer is only ever written to a log.
             max_retries=0,
             timeout=SCREEN_TIMEOUT_SECONDS,
+            # The timeout bounds an idle connection, never a generating one
+            # (the translator's lesson, 090/#195); this bounds the generation.
+            # The translator's cap reused rather than a minted number: the
+            # verdict is two fields, so 4096 is a blast-radius bound with
+            # orders of magnitude of headroom. A verdict that somehow hits it
+            # surfaces as the SDK's LengthFinishReasonError, which `screen`
+            # narrows to UnusableAnswer → "off" — loud, and honest about a
+            # screener that is not answering.
+            max_tokens=TARGET_MAX_COMPLETION_TOKENS,
         ).with_structured_output(ScreeningVerdict)
 
     def screen(self, text: str) -> ScreeningVerdict:
@@ -140,7 +150,15 @@ class OpenRouterScreener:
         # should touch. The rule is honoured everywhere it is about a judged
         # object, which is everywhere else, including the call below and the
         # role-play generator's own two prompts.
-        result = self._model.invoke([("system", _POLICY), ("human", text)])
+        try:
+            result = self._model.invoke([("system", _POLICY), ("human", text)])
+        except LengthFinishReasonError as error:
+            # A verdict cut at the completion cap never reaches the schema —
+            # the SDK raises before parsing (verified by execution). Left
+            # bare it classifies "outage": a healing WARNING, while the model
+            # answers every call unusably. This is the schema-dishonoured
+            # case wearing the SDK's coat, so it narrows the same way.
+            raise UnusableAnswer("screener talked past its completion cap") from error
         if not isinstance(result, ScreeningVerdict):
             # `raise`, not `assert`: asserts are stripped under `python -O`, and
             # a screener whose narrowing silently vanished would fail open. The

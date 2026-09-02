@@ -114,6 +114,16 @@ USD_PER_ROLEPLAY = USD_PER_TRANSLATION
 # prices — rounded up so the pool errs toward overcharging, as USD_PER_VOTE
 # does. The old stand-in (one vote, $0.0002) undercharged a default-effort
 # turn 3-5x, the one direction a ceiling must not err.
+#
+# Flat per turn, not scaled by thread length — decided with the measurement
+# (090/#195): a thread's replayed history is 80-96% cache reads at a tenth of
+# the input price, so turn cost grows far slower than the transcript, and the
+# thread-level bound is the per-thread daily turn cap, a count. A price the
+# pool charges, not an upper bound on what a turn can spend: what bounds a
+# turn's output spend is ANALYST_MAX_COMPLETION_TOKENS per call times the
+# step budget (input rides the replayed transcript, mostly as cache reads),
+# and a worst-case capped turn still bills a multiple of this price — see the
+# global cap's note on what that gap means for the day.
 USD_PER_TURN = 0.0005
 
 
@@ -165,14 +175,15 @@ class Settings(BaseSettings):
     # 2026-08-26), so the worst case is 50 x $0.000156 ≈ $0.008 — a fifth of
     # one panel. 0 disables.
     evaluate_checks_per_caller_per_day: int = 50
-    # Bounded by structure, not price — honestly flagged: no per-turn dollar
-    # measurement exists yet (unlike USD_PER_VOTE). A turn's model calls are
-    # bounded by `analyst.py`'s recursion budget, which is derived from the tool
-    # count and therefore moves when the tool surface does — 018 added a fourth
-    # tool and it moved. A thread is one report's
-    # conversation, and 30 turns/day is far above an honest conversation while
-    # still bounding a loop. Replace with a derived ceiling once a turn's cost
-    # is measured from the usage logs.
+    # A turn's cost is measured now (USD_PER_TURN, 2026-09-02), and the count
+    # kept its size anyway: 30 × $0.0005 = $0.015/thread/day — under half a
+    # dev run — needs no tightening, and a turn's model calls are bounded by
+    # `analyst.py`'s recursion budget, which is derived from the tool count
+    # and therefore moves when the tool surface does (018 added a fourth tool
+    # and it moved). A thread is one report's conversation, and 30 turns/day
+    # is far above an honest conversation while still bounding a loop. This
+    # count is also the thread-length bound the flat per-turn price leans on
+    # (090/#195): history replay grows a turn, the cap ends the thread's day.
     chat_turns_per_thread_per_day: int = 30
     # The thread cap bounds one runaway conversation; this one bounds the
     # caller, because the client mints thread ids and could otherwise reset the
@@ -184,6 +195,13 @@ class Settings(BaseSettings):
     # signed-off ceiling ("no more than 1 euro a day"), left unconverted —
     # 064 records why a hardcoded FX rate is worse than a cent of drift.
     # 0 disables, as above.
+    #
+    # A ceiling on *charges*, and charges are measured means (090/#195): a
+    # request the pool admitted can still bill a multiple of what it was
+    # charged — a capped vote up to ~6× USD_PER_VOTE, a capped turn a larger
+    # multiple of USD_PER_TURN — so the day's real dollar exposure is this
+    # figure times that gap. The per-call completion caps in app/llm.py are
+    # what keep the gap a small constant instead of unbounded.
     global_daily_cap_usd: float = 1.00
     # The Supabase project sign-in runs against, e.g. https://<ref>.supabase.co
     # (063/#158). None = sign-in not configured, and `caller_id` then falls back

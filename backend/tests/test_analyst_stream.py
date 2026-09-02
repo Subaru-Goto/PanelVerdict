@@ -6,11 +6,10 @@ the in-band error discipline.
 """
 
 import logging
-
-import pytest
 from collections.abc import Iterator
 
 import psycopg
+import pytest
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langgraph.checkpoint.memory import InMemorySaver
@@ -97,6 +96,94 @@ class TestStreamAnalyst:
         ]
         assert events[-1]["type"] == "error"
         assert {"type": "done"} not in events
+
+    @pytest.mark.anyio
+    async def test_a_length_cut_streamed_turn_says_so(self, conn, aconn) -> None:
+        """090/#195: a completion that hits ANALYST_MAX_COMPLETION_TOKENS
+        arrives with finish_reason "length" — in the streamed dialect, inside
+        the `message-finish` event's metadata. The cut text has already been
+        delivered, so the turn must not end as if it were whole: the fixed
+        sentence follows the tokens, terminal like every other error."""
+        model = StreamingScriptedChatModel(
+            responses=[
+                AIMessage(
+                    content="The interval cleared the",
+                    response_metadata={"finish_reason": "length"},
+                )
+            ]
+        )
+
+        events = ndjson_events(await _lines(model, conn=aconn, thread_id="cut-1"))
+
+        tokens = [e["text"] for e in events if e["type"] == "token"]
+        assert "".join(tokens) == "The interval cleared the"
+        assert events[-1] == {
+            "type": "error",
+            "message": (
+                "the answer hit the analyst's length ceiling and was cut off"
+                " — ask a narrower question"
+            ),
+        }
+        assert {"type": "done"} not in events
+
+    @pytest.mark.anyio
+    async def test_a_length_cut_whole_message_turn_says_so(self, conn, aconn) -> None:
+        """The same cut in the other wire dialect (whole messages from a
+        non-streaming model), where finish_reason rides the AIMessage's own
+        response_metadata — 025's trap says the two branches must both be
+        exercised or one of them is fiction."""
+        model = ScriptedChatModel(
+            responses=[
+                AIMessage(
+                    content="The interval cleared the",
+                    response_metadata={"finish_reason": "length"},
+                )
+            ]
+        )
+
+        events = ndjson_events(await _lines(model, conn=aconn, thread_id="cut-2"))
+
+        assert events[-1] == {
+            "type": "error",
+            "message": (
+                "the answer hit the analyst's length ceiling and was cut off"
+                " — ask a narrower question"
+            ),
+        }
+        assert {"type": "done"} not in events
+
+    @pytest.mark.anyio
+    async def test_a_recovered_turn_is_not_reported_cut(self, conn, aconn) -> None:
+        """The turn's LAST stated finish_reason decides: an early tool-call
+        completion cut at the cap, which the model then recovered from with a
+        whole answer, must end `done` — the cut sentence on a complete answer
+        would be as dishonest as `done` on a fragment."""
+        cut_tool_call = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "name": "analyze_results",
+                    "args": {},
+                    "id": "c1",
+                    "type": "tool_call",
+                }
+            ],
+            response_metadata={"finish_reason": "length"},
+        )
+        model = ScriptedChatModel(
+            responses=[
+                cut_tool_call,
+                AIMessage(
+                    content="Recovered whole.",
+                    response_metadata={"finish_reason": "stop"},
+                ),
+            ]
+        )
+
+        events = ndjson_events(await _lines(model, conn=aconn, thread_id="cut-3"))
+
+        assert events[-1] == {"type": "done"}
+        assert all(e["type"] != "error" for e in events)
 
     @pytest.mark.anyio
     async def test_error_events_never_carry_model_text(self, conn, aconn) -> None:

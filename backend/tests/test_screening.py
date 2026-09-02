@@ -4,8 +4,6 @@ import httpx
 import pytest
 from openai import APIStatusError
 
-from tests.factories import status_error
-
 from app.screening import (
     OpenRouterScreener,
     ScreeningVerdict,
@@ -14,6 +12,7 @@ from app.screening import (
     probe_screener,
     screen_inputs,
 )
+from tests.factories import status_error
 
 
 class RecordingScreener:
@@ -267,6 +266,47 @@ def test_a_real_404_reaches_the_probe_unwrapped(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(httpx.Client, "send", refuse)
+    screener = OpenRouterScreener(
+        api_key="k", base_url="http://localhost:9/api/v1", model="m"
+    )
+
+    assert probe_screener(screener) == "off"
+
+
+def test_a_verdict_cut_at_the_completion_cap_classifies_off(monkeypatch) -> None:
+    """090/#195: a verdict that hits max_tokens never reaches the schema — the
+    SDK raises LengthFinishReasonError before parsing, which would classify as
+    a healing "outage" (WARNING, indistinguishable from a network blip) while
+    the screener answers every call unusably. The 072 signal this file exists
+    for is the ERROR-level "off", so the adapter must narrow the cut to
+    UnusableAnswer. Same chain as the 404 test: a real 200, patched below the
+    SDK, no hand-raised error."""
+
+    def cut_short(self, request, **kwargs):
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "x",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "m",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "length",
+                        "message": {"role": "assistant", "content": "reasoning that"},
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 4096,
+                    "total_tokens": 4106,
+                },
+            },
+        )
+
+    monkeypatch.setattr(httpx.Client, "send", cut_short)
     screener = OpenRouterScreener(
         api_key="k", base_url="http://localhost:9/api/v1", model="m"
     )

@@ -313,6 +313,17 @@ remaining. Wall-clock is not the cost that runs out.
 inflates false `decisive` 25-fold. I spent a long time reasoning about the stopping
 *rule* without once asking what stopping *buys*. The trade was never close.
 
+**A timeout bounds an idle connection, never a generating one.** Written on the
+translator after a single call generated 65,536 tokens for $0.13
+([targeting-call-effort.md](research/targeting-call-effort.md)) — then not applied
+anywhere else for a month: four of six paid constructions stayed unbounded while
+their timeouts read as protection (090/#195). A completion cap and a timeout guard
+different failures; every paid call needs both, and a charge at the gate is a
+*price*, not a bound, until the completion cap makes the worst case a small
+multiple of it. The SDK detail that bit during the fix: on structured-output
+calls a capped completion surfaces as `LengthFinishReasonError` *before* any
+parsing, so "it will just fail to parse" was a route that never runs.
+
 **Amendment (2026-08-21):** the conclusion was later reversed, not the lesson —
 [010d](decisions/010d-adaptive-stopping.md) redesigned the rule (stop on the report's
 own 0.95 bar, two confirming boundaries), simulated it before it spent

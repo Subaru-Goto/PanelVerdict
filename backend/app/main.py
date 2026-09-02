@@ -2,9 +2,9 @@ import asyncio
 import base64
 import hmac
 import logging
-from dataclasses import asdict
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal, NamedTuple
@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 from pgvector.psycopg import register_vector_async
@@ -86,7 +87,6 @@ from app.screening import (
     self_model_name,
 )
 from app.targeting import CROSS_SECTION_NOTICE, settled_query
-from langgraph.checkpoint.memory import InMemorySaver
 from app.tracing import configure_tracing
 from app.vote import OutOfCredit, PanelLLM, total_usage
 
@@ -649,8 +649,10 @@ async def enforce_turn_limit(
         _Charge(
             "/chat-caller", caller, settings.chat_turns_per_caller_per_day, "turns"
         ),
-        # A turn's cost is unmeasured; the pool charges the measured ceiling
-        # A turn's real cost is unmeasured; USD_PER_TURN explains the stand-in.
+        # A measured price, not an upper bound: USD_PER_TURN covers the worst
+        # measured *low-effort* turn — the effort the analyst ships at — and
+        # what stops a turn out-spending it unboundedly is
+        # ANALYST_MAX_COMPLETION_TOKENS times the step budget (090/#195).
         spend=_Spend("/chat", _usd(USD_PER_TURN)),
     )
 

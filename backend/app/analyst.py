@@ -48,10 +48,10 @@ from app.schemas import (
     PanelVerdict,
     PanelVote,
     Persona,
-    VoterSummary,
     StopReason,
     TokenEvent,
     ToolEvent,
+    VoterSummary,
 )
 from app.verdict import panel_verdict
 
@@ -568,6 +568,13 @@ async def stream_analyst(
         return event.model_dump_json() + "\n"
 
     usage = _TurnUsage()
+    # Whether the turn's LAST completion with a stated finish_reason ended
+    # "length" — ANALYST_MAX_COMPLETION_TOKENS was hit (090/#195). Last, not
+    # any: an early cut tool call the model recovered from must not end a
+    # whole answer with the cut sentence. The cut text has already streamed
+    # by the time this is known, so a truncated turn must not end as if it
+    # were whole: the fixed sentence below replaces `done`.
+    truncated = False
 
     try:
         stream = await agent.astream_events(
@@ -612,6 +619,9 @@ async def stream_analyst(
 
                     if isinstance(payload, AIMessage):
                         usage.take(payload.usage_metadata)
+                        reason = (payload.response_metadata or {}).get("finish_reason")
+                        if reason is not None:
+                            truncated = reason == "length"
                         if payload.text:
                             yield line(TokenEvent(text=payload.text))
                     elif (
@@ -630,6 +640,14 @@ async def stream_analyst(
                         # the final chunk's usage_metadata into this event.
                         raw = payload.get("usage")
                         usage.take(raw if isinstance(raw, dict) else None)
+                        # And where its finish_reason arrives: the bridge
+                        # passes the chunks' response_metadata through as
+                        # this event's `metadata`.
+                        metadata = payload.get("metadata")
+                        if isinstance(metadata, dict):
+                            reason = metadata.get("finish_reason")
+                            if reason is not None:
+                                truncated = reason == "length"
         finally:
             with anyio.CancelScope(shield=True):
                 if pull is not None and not pull.done():
@@ -643,6 +661,16 @@ async def stream_analyst(
                         # and like it, deliberately not SystemExit.
                         pass
                 await stream.abort()
+        if truncated:
+            # Fixed text, terminal like every error here: a `done` after a cut
+            # answer would let the client file the fragment as a whole one.
+            yield line(
+                ErrorEvent(
+                    message="the answer hit the analyst's length ceiling and "
+                    "was cut off — ask a narrower question"
+                )
+            )
+            return
     except GraphRecursionError:
         yield line(
             ErrorEvent(message=f"analyst was still calling tools after {limit} steps")
