@@ -15,4 +15,6 @@ node_modules/
 backend/experiments/out/
 backend/.deepeval/
 .env.deploy
+# the red-team harness's one-key env file (123/#289)
+backend/experiments/red_team/.env.redteam
 .playwright-cli/
