@@ -1288,7 +1288,9 @@ async def _kept(
         if not kept:
             # The sentence states the limit, never the count: rows can exceed
             # a lowered cap, and a number nobody measured is not spoken. The
-            # remedy only exists while there is a cap to make room under.
+            # remedy only exists while there is a cap to make room under. Its
+            # pre-run twin is in frontend/app/components/allowance.tsx
+            # (124/#291): change both together.
             message = (
                 "This test was not saved: an account keeps at most "
                 f"{cap} saved test{'s' if cap != 1 else ''}, and your rail "

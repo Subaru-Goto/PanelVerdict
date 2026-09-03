@@ -16,6 +16,7 @@ import type {
 } from "../lib/api";
 import { formatPercent, formatPoints } from "../lib/format";
 import AnalystDock from "./analyst-dock";
+import { noticeClass } from "./notice-style";
 import { AnalystBoundary } from "./report-boundary";
 import { useAnalyst, OPENING_REQUEST, type Analyst } from "../lib/use-analyst";
 import PosteriorChart from "./posterior-chart";
@@ -48,11 +49,9 @@ function NoticeList({ notices }: { notices: Notice[] }) {
       {notices.map((notice, index) => (
         <li
           key={index}
-          className={
-            notice.severity === "warning"
-              ? "rounded border-l-4 border-dotted border-red bg-red/5 p-2 text-sm"
-              : "rounded border-l-4 border-line bg-surface-2 p-2 text-sm text-ink-2"
-          }
+          className={noticeClass(
+            notice.severity === "warning" ? "warning" : "info",
+          )}
         >
           {notice.message}
         </li>

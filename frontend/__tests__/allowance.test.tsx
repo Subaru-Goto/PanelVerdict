@@ -22,7 +22,7 @@ afterEach(() => {
   vi.resetAllMocks();
 });
 
-/** /me's answer with the rail as given; three runs left unless said. */
+/** /me's answer: the runs left, and a rail with room unless said. */
 function figures(
   runsLeft: number,
   rail: { saved: number; cap: number } = { saved: 0, cap: 10 },

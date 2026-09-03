@@ -325,11 +325,13 @@ export function onAccountChanged(listener: () => void): () => void {
 }
 
 /** The account's own figures, as `/me` states them: runs left today, and
- *  how full the rail is against its cap (124/#291). */
+ *  how full the rail is against its cap (124/#291). The rail pair is absent
+ *  when the backend does not report it yet — the two deploy separately, and
+ *  the runs figure should not vanish while the backend catches up. */
 export type AccountFigures = {
   runs_remaining: number;
-  saved_tests: number;
-  saved_tests_cap: number;
+  saved_tests?: number;
+  saved_tests_cap?: number;
 };
 
 /** This account's figures, or null if they could not be read.
@@ -343,18 +345,19 @@ export async function accountFigures(): Promise<AccountFigures | null> {
   if (!("Authorization" in headers)) return null;
   const res = await fetch("/api/me", { headers });
   if (!res.ok) return null;
-  const body = (await res
-    .json()
-    .catch(() => null)) as Partial<AccountFigures> | null;
-  return typeof body?.runs_remaining === "number" &&
+  const body = (await res.json().catch(() => null)) as Partial<
+    Record<keyof AccountFigures, unknown>
+  > | null;
+  if (typeof body?.runs_remaining !== "number") return null;
+  const figures: AccountFigures = { runs_remaining: body.runs_remaining };
+  if (
     typeof body.saved_tests === "number" &&
     typeof body.saved_tests_cap === "number"
-    ? {
-        runs_remaining: body.runs_remaining,
-        saved_tests: body.saved_tests,
-        saved_tests_cap: body.saved_tests_cap,
-      }
-    : null;
+  ) {
+    figures.saved_tests = body.saved_tests;
+    figures.saved_tests_cap = body.saved_tests_cap;
+  }
+  return figures;
 }
 
 /** One row of the account's own rail (117/#252).

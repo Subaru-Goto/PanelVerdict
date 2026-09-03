@@ -7,6 +7,7 @@ import {
   accountFigures,
   onAccountChanged,
 } from "../lib/api";
+import { noticeClass } from "./notice-style";
 
 /** The reader's own figures beside the button that spends one (063/#158):
  *  the prototype seats the allowance in the actions row, not the header,
@@ -46,15 +47,17 @@ export default function Allowance() {
     saved_tests: saved,
     saved_tests_cap: cap,
   } = figures;
+  const railFull = saved !== undefined && cap !== undefined && saved >= cap;
   return (
     <>
-      {saved >= cap && (
-        // Its own line above the button (`basis-full order-first` in the
-        // wrapping row). The post-run warning's shape: the limit, never the
-        // count, and the remedy only while there is a cap to make room under.
+      {railFull && (
+        // Its own line above the button (`order-first basis-full` in the
+        // wrapping row). The sentence is the twin of the post-run warning in
+        // backend/app/main.py: the limit, never the count, and the remedy
+        // only while there is a cap to make room under. Change both together.
         <p
           role="status"
-          className="order-first basis-full rounded border-l-4 border-dotted border-red bg-red/5 p-2 text-sm"
+          className={`order-first basis-full ${noticeClass("warning")}`}
         >
           {`Your rail is full: an account keeps at most ${cap} saved test${cap === 1 ? "" : "s"}, so this test will not be saved.`}
           {cap > 0 && " Delete a saved test to make room."}
