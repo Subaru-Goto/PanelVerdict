@@ -84,6 +84,11 @@ attack surface a stranger controls:
    its trigger — a held-out rerun below that baseline, confirmed once, or an
    off-topic answer or injection seen in production — promotes
    the screener onto this message with a topic verdict added, one call for both.
+   Measured 2026-09-03 ([`research/moderation-check.md`](research/moderation-check.md)):
+   a free hosted classifier blocks the overt injection shape at ~145 ms with no
+   false positives on the probe sets, but scores disguised steering at zero — a
+   cheaper *how* for this message when the trigger fires, never a replacement for
+   the screener on the headlines or the audience.
 
 These divide into **two kinds with different trust levels**, and the division is
 the load-bearing distinction in this document:
