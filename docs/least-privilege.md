@@ -84,6 +84,13 @@ attack surface a stranger controls:
    its trigger — a held-out rerun below that baseline, confirmed once, or an
    off-topic answer or injection seen in production — promotes
    the screener onto this message with a topic verdict added, one call for both.
+   Measured 2026-09-03 ([`research/moderation-check.md`](research/moderation-check.md)):
+   a free hosted classifier catches 11 of 18 overt injection probes at a 0.5
+   *Jailbreaking* threshold in ~150 ms, with one flag on 160 ordinary texts (that
+   flag itself an injection) — but the same clause behind ordinary copy mostly
+   passes, and disguised steering scores near zero. A cheaper, partial *how* for
+   this message when the trigger fires; never a replacement for the screener on
+   the headlines or the audience.
 
 These divide into **two kinds with different trust levels**, and the division is
 the load-bearing distinction in this document:
