@@ -48,9 +48,16 @@ jobs:
           # curl /health themselves.
           # "db":"up" is the half that keeps Supabase awake; a paused or broken
           # database must FAIL this job so it is noticed, not merely logged.
-          if printf '%s' "$body" | grep -q '"db":"up"'; then
-            echo "health ok — database up"
-          else
+          if ! printf '%s' "$body" | grep -q '"db":"up"'; then
             echo "health answered, but the database did not report up — check Supabase"
             exit 1
           fi
+          # "auth":"on" is the other half: sign-in silently unenforced is the
+          # failure /health exists to make visible (see its docstring), and a
+          # deployment that boots with SUPABASE_PROJECT_URL missing would
+          # otherwise look healthy from here.
+          if ! printf '%s' "$body" | grep -q '"auth":"on"'; then
+            echo "health answered, but sign-in is not being enforced — check SUPABASE_PROJECT_URL"
+            exit 1
+          fi
+          echo "health ok — database up, sign-in enforced"

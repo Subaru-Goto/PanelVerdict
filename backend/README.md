@@ -32,28 +32,33 @@ backend — never the deployment. Record and rates: `docs/research/chat-red-team
 Every run costs OpenRouter money; say the number before starting one.
 
 ```bash
+# from backend/
 # 1. a scratch database, so the run never touches real rows
 docker run -d --name pv-redteam -e POSTGRES_PASSWORD=scratch -e POSTGRES_DB=panelverdict \
-  -p 55432:5432 pgvector/pgvector:pg16
+  -p 55432:5432 pgvector/pgvector:pg18
 export POSTGRES_USER=postgres POSTGRES_PASSWORD=scratch POSTGRES_DB=panelverdict \
   POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=55432
 uv run python -m app.seed --schema-only
 uv run python -m app.seed --corpus-only            # 15 embeddings, under a cent
 export TEST_ID=$(uv run python -m experiments.red_team.seed_target)
 
-# 2. the backend in production shape, sign-in off, the chat turn caps lifted
-SUPABASE_PROJECT_URL= API_SHARED_SECRET=redteam-local \
+# 2. the backend in production shape, sign-in off, the chat turn caps lifted.
+#    `off` is a word on purpose: a blank URL still refuses to boot. The shared
+#    secret is a throwaway for this loopback process, not a real one.
+SUPABASE_PROJECT_URL=off API_SHARED_SECRET=redteam-local \
   CHAT_TURNS_PER_THREAD_PER_DAY=100000 CHAT_TURNS_PER_CALLER_PER_DAY=100000 \
   uv run uvicorn app.main:app --port 8000
 
-# 3. the run (smoke first: ten attacks, no strategies). promptfoo reads the
-#    OpenRouter key from the repo's .env itself; remote generation asks once
-#    for an email to register with promptfoo.
+# 3. the run (smoke first: ten attacks, no strategies). promptfoo is a
+#    third-party process fetched by npx: hand it the one key it needs, in a
+#    git-ignored file, never the whole .env. Remote generation asks once for
+#    an email to register with promptfoo.
 cd experiments/red_team
+grep '^OPENROUTER_API_KEY=' ../../../.env > .env.redteam
 export RED_TEAM_KEY=redteam-local PROMPTFOO_DISABLE_TELEMETRY=1
-npx promptfoo@0.122.2 redteam run -c smoke.yaml --env-file ../../../.env \
+npx promptfoo@0.122.2 redteam run -c smoke.yaml --env-file .env.redteam \
   -o ../out/red-team/smoke.tests.yaml -j 2 --no-cache --force
-npx promptfoo@0.122.2 redteam run -c full.yaml --env-file ../../../.env \
+npx promptfoo@0.122.2 redteam run -c full.yaml --env-file .env.redteam \
   -o ../out/red-team/full.tests.yaml -j 4 --no-cache --force
 
 # 4. read it: every attack, reply and verdict in a local browser UI —
@@ -63,5 +68,5 @@ npx promptfoo@0.122.2 view -y
 cd ../.. && uv run python -m experiments.red_team.analyze <eval-id> --fails
 ```
 
-Afterwards: `docker rm -f pv-redteam`. Outputs land in `experiments/out/` (git-ignored);
+Afterwards: `docker rm -f pv-redteam` and `rm experiments/red_team/.env.redteam`. Outputs land in `experiments/out/` (git-ignored);
 promptfoo keeps its own store in `~/.promptfoo`.

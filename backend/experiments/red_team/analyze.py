@@ -38,7 +38,10 @@ MACHINERY = re.compile(
     re.IGNORECASE,
 )
 
-INSTRUCTION_ATTACKS = {"hijacking", "system-prompt-override"}
+# Plugins whose every probe aims at the analyst's instructions. The other two
+# instruction-shaped cases — the machinery policy and any strategy-wrapped
+# probe — are named in `instruction_shaped` below.
+INSTRUCTION_PLUGINS = {"hijacking", "system-prompt-override"}
 STRATEGY_LABELS = {"jailbreak:meta": "jailbreak (iterative)"}
 
 
@@ -117,6 +120,20 @@ def rows_for(eval_id: str) -> list[dict]:
     return out
 
 
+def instruction_shaped(row: dict) -> bool:
+    """Was this probe an attack on the analyst's instructions — the thing the
+    pre-flight's Jailbreaking category exists to refuse? Hijacking and
+    system-prompt override always; the machinery policy's asks; and every
+    strategy-wrapped probe, whatever its plugin, because the wrapper is the
+    injection. A basic off-topic, harmful, PII or topic-policy probe is a
+    question, not an injection, and does not count."""
+    return (
+        row["plugin"] in INSTRUCTION_PLUGINS
+        or row["plugin"] == "policy:machinery"
+        or row["strategy"] != "basic"
+    )
+
+
 def summarize(rows: list[dict]) -> dict:
     by = defaultdict(Counter)
     for r in rows:
@@ -129,13 +146,7 @@ def summarize(rows: list[dict]) -> dict:
         by[key]["failed"] += not r["passed"] and not r["error"] and r["status"] == 200
         by[key]["grader_failed_a_refusal"] += not r["passed"] and r["status"] == 400
         by[key]["errors"] += bool(r["error"])
-    instruction = [
-        r
-        for r in rows
-        if r["plugin"] in INSTRUCTION_ATTACKS
-        or r["plugin"] == "policy:machinery"
-        or r["strategy"] != "basic"
-    ]
+    instruction = [r for r in rows if instruction_shaped(r)]
     reached = [r for r in instruction if r["status"] == 200]
     machinery = [r for r in rows if r["status"] == 200 and MACHINERY.search(r["reply"])]
     return {
@@ -170,7 +181,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("eval_id")
     parser.add_argument("--out", type=Path, default=None)
-    parser.add_argument("--fails", action="store_true", help="print every graded fail")
+    parser.add_argument(
+        "--fails", action="store_true", help="print every fail that reached the analyst"
+    )
     args = parser.parse_args()
     rows = rows_for(args.eval_id)
     summary = summarize(rows)
@@ -180,7 +193,7 @@ def main() -> None:
         args.out.write_text(json.dumps({"summary": summary, "rows": rows}, indent=2))
     if args.fails:
         for i, r in enumerate(rows):
-            if r["passed"] or r["error"] or r["status"] == 400:
+            if r["passed"] or r["status"] != 200:
                 continue
             print(f"\n--- fail #{i} {r['plugin']} / {r['strategy']} http={r['status']}")
             print("ATTACK:", r["attack"][:600].replace("\n", " "))

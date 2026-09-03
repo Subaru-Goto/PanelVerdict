@@ -52,10 +52,18 @@ def test_the_preview_price_is_its_two_calls() -> None:
     the rewrite, priced by USD_PER_ROLEPLAY, pinned below."""
 
 
-def test_an_empty_supabase_url_means_sign_in_is_not_configured() -> None:
-    """A local process cannot unset what the env file sets; it can only set the
-    variable empty. An empty string is not a URL, and taking it for one made the
-    JWKS client refuse to start (123/#289's local target)."""
-    settings = Settings(**_DB, supabase_project_url="")
+def test_supabase_url_off_means_sign_in_is_not_configured() -> None:
+    """A local process cannot unset what the env file sets; it can only
+    overwrite it. The word `off` is that overwrite (123/#289's local target)."""
+    settings = Settings(**_DB, supabase_project_url="off")
 
     assert settings.supabase_project_url is None
+
+
+def test_a_blank_supabase_url_stays_a_blank() -> None:
+    """Fail closed: a variable left empty in a deploy dashboard must not read
+    as "sign-in off" — it stays a non-URL the JWKS client refuses at boot, so
+    the mistake is a crash, not a deployment counting quotas on a header."""
+    settings = Settings(**_DB, supabase_project_url="")
+
+    assert settings.supabase_project_url == ""

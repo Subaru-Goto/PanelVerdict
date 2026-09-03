@@ -214,12 +214,15 @@ class Settings(BaseSettings):
 
     @field_validator("supabase_project_url", mode="before")
     @classmethod
-    def _empty_url_is_unset(cls, value: object) -> object:
-        # `SUPABASE_PROJECT_URL=` in the environment switches sign-in off for
-        # one process without editing the env file (123/#289's local target).
-        # An empty string is not a URL, and the JWKS client refused to start
-        # on one.
-        return None if value == "" else value
+    def _off_is_unset(cls, value: object) -> object:
+        # `SUPABASE_PROJECT_URL=off` switches sign-in off for one process
+        # without editing the env file (123/#289's local target). A word,
+        # not a blank: a variable left empty in a deploy dashboard still fails
+        # closed at boot (the JWKS client refuses an empty URL), where a blank
+        # that meant "off" would boot with every quota counting a header.
+        return (
+            None if isinstance(value, str) and value.strip().lower() == "off" else value
+        )
 
     # Elevated key, backend only, used for exactly one thing: asking Supabase to
     # delete a user who asked to be deleted. It bypasses Row Level Security
