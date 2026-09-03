@@ -17,7 +17,7 @@ afterEach(() => {
 
 describe("the report boundary (049/#147)", () => {
   it("replaces a crashed report with one sentence and a Refresh button", () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const refresh = vi.fn();
 
     render(
@@ -33,6 +33,9 @@ describe("the report boundary (049/#147)", () => {
     ).toBeTruthy();
     // The error's own words are for the console, never the reader.
     expect(screen.queryByText(/undefined/)).toBeNull();
+    expect(logged.mock.calls.flat().join(" ")).toMatch(
+      /cannot read properties/,
+    );
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     expect(refresh).toHaveBeenCalledTimes(1);
   });

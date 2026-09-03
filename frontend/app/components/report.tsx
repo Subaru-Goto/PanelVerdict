@@ -244,16 +244,14 @@ export default function Report({
   testId,
   onRefresh,
   analyst: analystMode = "live",
-}: {
-  result: EvaluateResponse;
-  /** What the crash cards do (049/#147): redraw from the server's copy. */
-  onRefresh: () => void;
-} & (
+}: { result: EvaluateResponse } & (
   | {
       /** The stored test's id, which a live analyst reads server-side
        *  (035/#136). */
       testId: string;
       analyst?: "live";
+      /** What the analyst's crash card does (049/#147). */
+      onRefresh: () => void;
     }
   | {
       /** "locked" on the demo (061): the analyst spends from a signed-in
@@ -261,6 +259,7 @@ export default function Report({
        *  control — and asks the backend nothing. */
       analyst: "locked";
       testId?: undefined;
+      onRefresh?: undefined;
     }
 )) {
   // The hook always runs (rules of hooks); an undefined opening asks nothing.
@@ -299,9 +298,15 @@ export default function Report({
         same thing differently.
       </p>
       <PanelCard result={result} />
-      {analystMode === "live" && <SummaryCard analyst={analyst} />}
+      {onRefresh !== undefined && (
+        <AnalystBoundary onRefresh={onRefresh}>
+          <SummaryCard analyst={analyst} />
+        </AnalystBoundary>
+      )}
       <VoteList votes={result.votes} />
-      {analystMode === "live" ? (
+      {/* `onRefresh` travels with the live arm, so it is also the live/locked
+          switch here. */}
+      {onRefresh !== undefined ? (
         <AnalystBoundary onRefresh={onRefresh}>
           <AnalystDock analyst={analyst} />
         </AnalystBoundary>

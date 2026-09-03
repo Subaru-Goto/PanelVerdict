@@ -6,6 +6,7 @@ import { runDemo, type DemoResult } from "../lib/api";
 import { AI_SYSTEM_DISCLOSURE, DEMO_REPLAY_NOTE } from "../lib/disclosure";
 import { KICKER } from "../lib/styles";
 import Report from "./report";
+import { ReportBoundary } from "./report-boundary";
 import { StepLine, elapsed } from "./step-line";
 import Stepper from "./stepper";
 
@@ -110,11 +111,10 @@ export default function DemoReplay({ demoCase }: { demoCase: string }) {
         {chrome}
         <p className="text-sm text-ink-2">{replayLine}</p>
         <p className="text-sm text-ink-3">{AI_SYSTEM_DISCLOSURE}</p>
-        <Report
-          result={result}
-          analyst="locked"
-          onRefresh={() => window.location.reload()}
-        />
+        {/* No stored test to refetch on the demo: Refresh replays the sample. */}
+        <ReportBoundary onRefresh={() => window.location.reload()}>
+          <Report result={result} analyst="locked" />
+        </ReportBoundary>
       </div>
     );
   }
