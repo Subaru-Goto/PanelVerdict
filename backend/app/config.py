@@ -233,6 +233,18 @@ class Settings(BaseSettings):
     # injection. Mistral's own flag sits near 0.9 and catches 5. A field so it
     # can be re-read against real questions once there are any.
     chat_guard_threshold: float = 0.5
+    # Content categories that refuse a chat message at the classifier's own
+    # flag (122/#288). Keys as the reply names them. These four fired on none of
+    # 160 ordinary texts (moderation-check.md); Financial, Health and Law fired
+    # or would fire on legitimate subjects and stay off; Dangerous, Criminal and
+    # PII stay off because a knife shop, a bail-bond service or the reader's own
+    # brand are legitimate subjects too.
+    chat_content_categories: tuple[str, ...] = (
+        "sexual",
+        "hate_and_discrimination",
+        "violence_and_threats",
+        "selfharm",
+    )
     profile: ProfileName = "dev"
     # Plain Luna, not `-pro`: `TARGET_REASONING_EFFORT = "low"` is a measured setting
     # (targeting-call-effort.md), and `-pro` is the same model served with reasoning mode

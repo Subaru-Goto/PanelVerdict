@@ -50,6 +50,7 @@ from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.chat_guard import (
     BlockedMessage,
     ChatGuard,
+    ContentRefused,
     MistralChatGuard,
     guard_chat_message,
     probe_chat_guard,
@@ -1885,9 +1886,12 @@ async def preflight_chat(
     past their turn limit is scored, then refused."""
     try:
         await guard_chat_message(
-            guard, request.message, threshold=settings.chat_guard_threshold
+            guard,
+            request.message,
+            threshold=settings.chat_guard_threshold,
+            content=settings.chat_content_categories,
         )
-    except BlockedMessage as error:
+    except (BlockedMessage, ContentRefused) as error:
         # 400, not 422: the message is well-formed; what it says was refused.
         raise HTTPException(status_code=400, detail=str(error)) from error
 

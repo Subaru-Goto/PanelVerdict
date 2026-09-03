@@ -24,7 +24,7 @@ from app.config import (
     Settings,
     settings,
 )
-from app.chat_guard import BlockedMessage
+from app.chat_guard import BlockedMessage, Classification, ContentRefused
 from app.corpus import seed_corpus
 from app.main import (
     LEDGER_HOURS,
@@ -1204,15 +1204,15 @@ def test_the_lifespan_closes_every_table_to_the_data_api(real_lifespan, conn) ->
 class _RunsGuard:
     model_name = "mistral-moderation-2603"
 
-    async def score(self, text: str) -> float:
-        return 0.0
+    async def classify(self, text: str) -> Classification:
+        return Classification(0.0)
 
     async def aclose(self) -> None:
         pass
 
 
 class _OffGuard(_RunsGuard):
-    async def score(self, text: str) -> float:
+    async def classify(self, text: str) -> Classification:
         request = httpx.Request("POST", "https://mistral.example/v1/moderations")
         raise httpx.HTTPStatusError(
             "401", request=request, response=httpx.Response(401, request=request)
@@ -1220,7 +1220,7 @@ class _OffGuard(_RunsGuard):
 
 
 class _DownGuard(_RunsGuard):
-    async def score(self, text: str) -> float:
+    async def classify(self, text: str) -> Classification:
         raise httpx.ConnectTimeout("no answer")
 
 
@@ -4085,8 +4085,8 @@ class TestChatPreflight:
         class Flagging:
             model_name = "fake-guard"
 
-            async def score(self, text: str) -> float:
-                return 0.97
+            async def classify(self, text: str) -> Classification:
+                return Classification(0.97)
 
         app.dependency_overrides[get_chat_guard] = lambda: Flagging()
         response = client.post("/chat", json=self._body())
@@ -4097,11 +4097,27 @@ class TestChatPreflight:
         # allowance are untouched.
         assert self._ledger_rows(conn) == 0
 
+    def test_a_flagged_content_category_is_a_400_with_the_content_sentence(
+        self, client, conn
+    ) -> None:
+        class Hateful:
+            model_name = "fake-guard"
+
+            async def classify(self, text: str) -> Classification:
+                return Classification(0.01, frozenset({"hate_and_discrimination"}))
+
+        app.dependency_overrides[get_chat_guard] = lambda: Hateful()
+        response = client.post("/chat", json=self._body())
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == str(ContentRefused())
+        assert self._ledger_rows(conn) == 0
+
     def test_a_guard_outage_lets_the_turn_through(self, client, conn) -> None:
         class Down:
             model_name = "fake-guard"
 
-            async def score(self, text: str) -> float:
+            async def classify(self, text: str) -> Classification:
                 raise httpx.ConnectError("boom")
 
         app.dependency_overrides[get_chat_guard] = lambda: Down()
@@ -4116,8 +4132,8 @@ class TestChatPreflight:
         class Warm:
             model_name = "fake-guard"
 
-            async def score(self, text: str) -> float:
-                return 0.6
+            async def classify(self, text: str) -> Classification:
+                return Classification(0.6)
 
         app.dependency_overrides[get_chat_guard] = lambda: Warm()
         monkeypatch.setattr(settings, "chat_guard_threshold", 0.5)
@@ -4134,7 +4150,7 @@ class TestChatPreflight:
         class Counting:
             model_name = "fake-guard"
 
-            async def score(self, text: str) -> float:
+            async def classify(self, text: str) -> Classification:
                 raise AssertionError(
                     "a signed-out visitor must cost no classifier call"
                 )
@@ -4150,9 +4166,9 @@ class TestChatPreflight:
         class Passing:
             model_name = "fake-guard"
 
-            async def score(self, text: str) -> float:
+            async def classify(self, text: str) -> Classification:
                 seen.append(text)
-                return 0.01
+                return Classification(0.01)
 
         app.dependency_overrides[get_chat_guard] = lambda: Passing()
         response = client.post(

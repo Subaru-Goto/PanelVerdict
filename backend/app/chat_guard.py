@@ -11,6 +11,8 @@ verdict, never the text.
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
+from dataclasses import dataclass, field
 from typing import Protocol
 
 import httpx
@@ -35,10 +37,21 @@ MODERATE_PATH = "/moderations"
 _PROBE_TEXT = "What does the tie zone mean in my report?"
 
 
+@dataclass(frozen=True)
+class Classification:
+    """What the pre-flight reads from one reply: the decision score, and the
+    categories the classifier itself flagged (its own per-category threshold —
+    122/#288: the corpus has no positives for the content categories, so the
+    classifier's flag is the only sourced cut)."""
+
+    jailbreaking: float
+    flagged: frozenset[str] = field(default_factory=frozenset)
+
+
 class ChatGuard(Protocol):
     model_name: str
 
-    async def score(self, text: str) -> float: ...
+    async def classify(self, text: str) -> Classification: ...
 
     async def aclose(self) -> None: ...
 
@@ -59,7 +72,7 @@ class MistralChatGuard:
         self._base_url = base_url
         self._client = client or httpx.AsyncClient(timeout=GUARD_TIMEOUT_SECONDS)
 
-    async def score(self, text: str) -> float:
+    async def classify(self, text: str) -> Classification:
         response = await self._client.post(
             f"{self._base_url}{MODERATE_PATH}",
             json={"model": self.model_name, "input": [text]},
@@ -71,7 +84,8 @@ class MistralChatGuard:
         scores = result["category_scores"]
         if DECISION_CATEGORY not in scores:
             raise NoDecisionScore(f"no {DECISION_CATEGORY} score in the reply")
-        return float(scores[DECISION_CATEGORY])
+        flagged = frozenset(c for c, hit in result["categories"].items() if hit)
+        return Classification(float(scores[DECISION_CATEGORY]), flagged)
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -97,15 +111,32 @@ class BlockedMessage(Exception):
         )
 
 
+class ContentRefused(Exception):
+    """The classifier flagged the message in a content category the product
+    refuses (122/#288). One sentence for every category, so the door is not a
+    labelled oracle; the category goes to the log, never to the reader."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "That is outside what the analyst discusses here. Ask about this test's"
+            " results, what they mean, or how headlines tend to perform."
+        )
+
+
 async def guard_chat_message(
-    guard: ChatGuard | None, text: str, *, threshold: float
+    guard: ChatGuard | None,
+    text: str,
+    *,
+    threshold: float,
+    content: Collection[str],
 ) -> None:
-    """Refuse a message whose score reaches the threshold; let everything else
-    through, including a message the classifier could not score."""
+    """Refuse a message whose decision score reaches the threshold, or that the
+    classifier flags in a refused content category; let everything else through,
+    including a message the classifier could not score."""
     if guard is None:
         return
     try:
-        score = await guard.score(text)
+        verdict = await guard.classify(text)
     except Exception as error:
         # Fail open, type name only: the error may carry the request body.
         # ERROR when the key or model is wrong for this account, WARNING for
@@ -117,17 +148,26 @@ async def guard_chat_message(
             guard.model_name,
         )
         return
-    refused = score >= threshold
+    category: str | None = None
+    if verdict.jailbreaking >= threshold:
+        category = DECISION_CATEGORY
+    else:
+        # Deterministic order, so the logged category does not depend on the
+        # reply's key order when two are flagged at once.
+        category = next((c for c in content if c in verdict.flagged), None)
     logger.log(
-        logging.WARNING if refused else logging.INFO,
+        logging.WARNING if category else logging.INFO,
         "chat pre-flight",
         extra={
-            "chat_guard": "refused" if refused else "pass",
-            "chat_guard_score": score,
+            "chat_guard": "refused" if category else "pass",
+            "chat_guard_score": verdict.jailbreaking,
+            "chat_guard_category": category,
         },
     )
-    if refused:
+    if category == DECISION_CATEGORY:
         raise BlockedMessage()
+    if category is not None:
+        raise ContentRefused()
 
 
 def _classify(error: Exception) -> ProbeOutcome:
@@ -143,7 +183,7 @@ async def probe_chat_guard(guard: ChatGuard) -> ProbeOutcome:
     """One real call at boot, so a wrong key is announced once rather than
     failing open silently on every request."""
     try:
-        await guard.score(_PROBE_TEXT)
+        await guard.classify(_PROBE_TEXT)
     except Exception as error:
         return _classify(error)
     return "runs"
