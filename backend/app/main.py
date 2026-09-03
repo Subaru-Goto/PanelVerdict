@@ -50,6 +50,7 @@ from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.chat_guard import (
     BlockedMessage,
     ChatGuard,
+    ContentRefused,
     MistralChatGuard,
     guard_chat_message,
     probe_chat_guard,
@@ -379,16 +380,18 @@ async def _enforce_chat_guard_policy(guard: ChatGuard | None) -> None:
                 " pre-flight cannot run, so this deployment refuses to start"
             )
         return
-    outcome = await probe_chat_guard(guard)
+    outcome = await probe_chat_guard(guard, content=settings.chat_content_categories)
     if outcome == "off":
         if settings.screener_required:
             raise RuntimeError(
                 "SCREENER_REQUIRED is set and the moderation model is not"
-                f" available to this account: model={guard.model_name}"
+                " available to this account, or does not name a configured"
+                f" content category: model={guard.model_name}"
             )
         logger.error(
-            "the moderation model is not available to this account — the chat"
-            " pre-flight is off, not degraded: model=%s",
+            "the moderation model is not available to this account, or does not"
+            " name a configured content category — the chat pre-flight is off,"
+            " not degraded: model=%s",
             guard.model_name,
         )
     elif outcome == "outage":
@@ -1885,9 +1888,12 @@ async def preflight_chat(
     past their turn limit is scored, then refused."""
     try:
         await guard_chat_message(
-            guard, request.message, threshold=settings.chat_guard_threshold
+            guard,
+            request.message,
+            threshold=settings.chat_guard_threshold,
+            content=settings.chat_content_categories,
         )
-    except BlockedMessage as error:
+    except (BlockedMessage, ContentRefused) as error:
         # 400, not 422: the message is well-formed; what it says was refused.
         raise HTTPException(status_code=400, detail=str(error)) from error
 
