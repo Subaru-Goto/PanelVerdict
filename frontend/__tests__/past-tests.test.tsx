@@ -15,13 +15,13 @@ const myTestMock = vi.fn();
 const forgetTestMock = vi.fn();
 let signedIn = true;
 
-const runsListeners: (() => void)[] = [];
+const runsListeners: ((change: "run" | "delete") => void)[] = [];
 
 vi.mock("../app/lib/api", () => ({
   myTests: (cursor?: string) => myTestsMock(cursor),
   myTest: (id: string) => myTestMock(id),
   forgetTest: (id: string) => forgetTestMock(id),
-  onAccountChanged: (listener: () => void) => {
+  onAccountChanged: (listener: (change: "run" | "delete") => void) => {
     runsListeners.push(listener);
     return () => {};
   },
@@ -306,7 +306,7 @@ describe("the account's own tests", () => {
     // The run-finished refresh supersedes the slow first read and succeeds.
     myTestsMock.mockResolvedValueOnce({ tests: [stored()], next_cursor: null });
     await act(async () => {
-      runsListeners.forEach((notify) => notify());
+      runsListeners.forEach((notify) => notify("run"));
     });
     await screen.findByText(/Save 50% today/);
 
@@ -554,6 +554,21 @@ describe("the rail across a change of session", () => {
 
     expect(screen.queryByText(/“The old account's”/)).toBeNull();
     expect(screen.getByText(/“The new account's”/)).toBeTruthy();
+  });
+
+  it("keeps its pages when its own delete is announced", async () => {
+    // A delete announces the account changed (124/#291) so the form's notice
+    // can re-read. The rail already removed the row itself; reloading page
+    // one here would throw away every page the reader had opened.
+    myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });
+    render(<PastTests />);
+    await screen.findByText(/“Save 50% today”/);
+
+    await act(async () => {
+      runsListeners.forEach((notify) => notify("delete"));
+    });
+
+    expect(myTestsMock).toHaveBeenCalledTimes(1);
   });
 
   it("stops saying the rail failed once it loads", async () => {

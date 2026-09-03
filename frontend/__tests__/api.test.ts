@@ -105,6 +105,7 @@ describe("forgetTest", () => {
     stop();
 
     expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith("delete");
   });
 
   it("does not announce a delete the server refused", async () => {

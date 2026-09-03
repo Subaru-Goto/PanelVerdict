@@ -247,7 +247,7 @@ async function outcomeOf(res: Response): Promise<EvaluateOutcome> {
   const outcome = (await res.json()) as EvaluateOutcome;
   // Only a finished run spent one — a run holding at the gate bought nothing.
   if (outcome.status === "complete") {
-    accountChanged.forEach((listener) => listener());
+    accountChanged.forEach((listener) => listener("run"));
   }
   return outcome;
 }
@@ -309,15 +309,22 @@ export async function resumeEvaluate(
   return outcomeOf(res);
 }
 
+/** What moved the account's figures: a finished run spends one and adds a
+ *  row to the rail; a delete makes room in it (124/#291). */
+export type AccountChange = "run" | "delete";
+
 /** Watch for the account's own figures changing. Returns an unsubscribe.
  *
- * Two things move them, both in this module: a finished run spends one, and
- * a delete makes room in the rail (124/#291). Without the signal the form
- * keeps reading "3 runs left" after the run that made it 2, or "your rail is
- * full" after the delete that emptied a seat. */
-const accountChanged = new Set<() => void>();
+ * Both causes live in this module. Without the signal the form keeps reading
+ * "3 runs left" after the run that made it 2, or "your rail is full" after
+ * the delete that emptied a seat. The cause travels because not every
+ * listener wants both: the rail reloads for a new row, not for a row it
+ * already removed itself. */
+const accountChanged = new Set<(change: AccountChange) => void>();
 
-export function onAccountChanged(listener: () => void): () => void {
+export function onAccountChanged(
+  listener: (change: AccountChange) => void,
+): () => void {
   accountChanged.add(listener);
   return () => {
     accountChanged.delete(listener);
@@ -453,5 +460,5 @@ export async function forgetTest(testId: string): Promise<void> {
     throw new Error(`API responded ${res.status}`);
   }
   // The rail has a seat free now: the form's full-rail notice re-reads.
-  accountChanged.forEach((listener) => listener());
+  accountChanged.forEach((listener) => listener("delete"));
 }
