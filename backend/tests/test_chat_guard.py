@@ -19,20 +19,22 @@ from app.chat_guard import (
 pytestmark = pytest.mark.anyio
 
 
+CONTENT = ("sexual", "hate_and_discrimination", "violence_and_threats", "selfharm")
+
+
 def _moderations(score: float, *, flagged: tuple[str, ...] = ()):
+    """A reply with the decision score given and the named categories flagged;
+    every other category (the four content ones and Financial) unflagged, its
+    score following its flag."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert request.url.path == "/v1/moderations"
         assert len(body["input"]) == 1
-        categories = {
-            "jailbreaking": score >= 0.9,
-            "financial": "financial" in flagged,
-            "hate_and_discrimination": "hate_and_discrimination" in flagged,
-            "sexual": "sexual" in flagged,
-        }
+        categories = {c: c in flagged for c in (*CONTENT, "financial")}
+        categories["jailbreaking"] = score >= 0.9
         scores = {c: (0.95 if hit else 0.01) for c, hit in categories.items()}
         scores["jailbreaking"] = score
-        scores["financial"] = 0.7
         return httpx.Response(
             200,
             json={
@@ -43,9 +45,6 @@ def _moderations(score: float, *, flagged: tuple[str, ...] = ()):
         )
 
     return handler
-
-
-CONTENT = ("sexual", "hate_and_discrimination", "violence_and_threats", "selfharm")
 
 
 def _guard(handler) -> MistralChatGuard:
@@ -150,9 +149,9 @@ async def test_the_probe_tells_a_revoked_key_from_an_outage():
     def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("boom", request=request)
 
-    assert await probe_chat_guard(_guard(unauthorised)) == "off"
-    assert await probe_chat_guard(_guard(down)) == "outage"
-    assert await probe_chat_guard(_guard(_moderations(0.01))) == "runs"
+    assert await probe_chat_guard(_guard(unauthorised), content=CONTENT) == "off"
+    assert await probe_chat_guard(_guard(down), content=CONTENT) == "outage"
+    assert await probe_chat_guard(_guard(_moderations(0.01)), content=CONTENT) == "runs"
 
 
 async def test_a_reply_without_the_decision_category_is_the_control_being_off():
@@ -168,7 +167,7 @@ async def test_a_reply_without_the_decision_category_is_the_control_being_off():
             },
         )
 
-    assert await probe_chat_guard(_guard(other_model)) == "off"
+    assert await probe_chat_guard(_guard(other_model), content=CONTENT) == "off"
 
 
 async def test_a_flagged_content_category_is_refused_with_its_own_sentence(caplog):
@@ -217,3 +216,26 @@ async def test_an_injection_that_is_also_hateful_gets_the_injection_sentence(cap
         await guard_chat_message(guard, "x", threshold=0.5, content=CONTENT)
     record = next(r for r in caplog.records if r.getMessage() == "chat pre-flight")
     assert record.chat_guard_category == "jailbreaking"
+
+
+async def test_a_reply_without_flags_still_refuses_an_injection():
+    # Schema drift on the flags must not fail the injection refusal open.
+    def score_only(request: httpx.Request) -> httpx.Response:
+        payload = _moderations(0.97)(request).json()
+        del payload["results"][0]["categories"]
+        return httpx.Response(200, json=payload)
+
+    with pytest.raises(BlockedMessage):
+        await guard_chat_message(
+            _guard(score_only), "x", threshold=0.5, content=CONTENT
+        )
+
+
+async def test_the_probe_refuses_a_content_category_the_reply_does_not_name():
+    # A misspelt name in the environment would otherwise never match and never
+    # be noticed: every log line would read "pass".
+    assert (
+        await probe_chat_guard(_guard(_moderations(0.01)), content=("self_harm",))
+        == "off"
+    )
+    assert await probe_chat_guard(_guard(_moderations(0.01)), content=()) == "runs"

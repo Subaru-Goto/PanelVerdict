@@ -3,9 +3,10 @@ before the analyst sees it.
 
 Blocks the bare "ignore your instructions" shape deterministically; an
 injection behind an ordinary question mostly passes, and topic is not its
-job (`docs/research/moderation-check.md`). Fails open like the headline
-screener: a classifier outage is never a product outage. Logs a score and a
-verdict, never the text.
+job (`docs/research/moderation-check.md`). Also refuses four content
+categories at the classifier's own flag (122/#288). Fails open like the
+headline screener: a classifier outage is never a product outage. Logs a
+score, a verdict and a category, never the text.
 """
 
 from __future__ import annotations
@@ -39,13 +40,15 @@ _PROBE_TEXT = "What does the tie zone mean in my report?"
 
 @dataclass(frozen=True)
 class Classification:
-    """What the pre-flight reads from one reply: the decision score, and the
-    categories the classifier itself flagged (its own per-category threshold —
-    122/#288: the corpus has no positives for the content categories, so the
-    classifier's flag is the only sourced cut)."""
+    """One reply, read twice: the decision score, and the categories the
+    classifier itself flagged at its own thresholds (122/#288)."""
 
     jailbreaking: float
     flagged: frozenset[str] = field(default_factory=frozenset)
+    # Every category the reply named, flagged or not: the boot probe checks the
+    # configured content categories against it, so a misspelt name in the
+    # environment is announced rather than silently never matching.
+    known: frozenset[str] = field(default_factory=frozenset)
 
 
 class ChatGuard(Protocol):
@@ -84,8 +87,15 @@ class MistralChatGuard:
         scores = result["category_scores"]
         if DECISION_CATEGORY not in scores:
             raise NoDecisionScore(f"no {DECISION_CATEGORY} score in the reply")
-        flagged = frozenset(c for c, hit in result["categories"].items() if hit)
-        return Classification(float(scores[DECISION_CATEGORY]), flagged)
+        # Read defensively: a reply with the decision score but no flags must
+        # still refuse an injection, not fail the whole pre-flight open.
+        categories = result.get("categories")
+        if not isinstance(categories, dict):
+            categories = {}
+        flagged = frozenset(c for c, hit in categories.items() if hit)
+        return Classification(
+            float(scores[DECISION_CATEGORY]), flagged, frozenset(categories)
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()
@@ -112,9 +122,8 @@ class BlockedMessage(Exception):
 
 
 class ContentRefused(Exception):
-    """The classifier flagged the message in a content category the product
-    refuses (122/#288). One sentence for every category, so the door is not a
-    labelled oracle; the category goes to the log, never to the reader."""
+    """The message was flagged in a content category the product refuses
+    (122/#288). One sentence for all of them; the category goes to the log."""
 
     def __init__(self) -> None:
         super().__init__(
@@ -148,7 +157,6 @@ async def guard_chat_message(
             guard.model_name,
         )
         return
-    category: str | None = None
     if verdict.jailbreaking >= threshold:
         category = DECISION_CATEGORY
     else:
@@ -179,11 +187,16 @@ def _classify(error: Exception) -> ProbeOutcome:
     return "outage"
 
 
-async def probe_chat_guard(guard: ChatGuard) -> ProbeOutcome:
+async def probe_chat_guard(
+    guard: ChatGuard, *, content: Collection[str]
+) -> ProbeOutcome:
     """One real call at boot, so a wrong key is announced once rather than
-    failing open silently on every request."""
+    failing open silently on every request — and a content category the reply
+    does not name is the control being off, not a category that never fires."""
     try:
-        await guard.classify(_PROBE_TEXT)
+        verdict = await guard.classify(_PROBE_TEXT)
     except Exception as error:
         return _classify(error)
+    if set(content) - verdict.known:
+        return "off"
     return "runs"

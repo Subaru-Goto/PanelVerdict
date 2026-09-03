@@ -1205,7 +1205,7 @@ class _RunsGuard:
     model_name = "mistral-moderation-2603"
 
     async def classify(self, text: str) -> Classification:
-        return Classification(0.0)
+        return Classification(0.0, known=frozenset(settings.chat_content_categories))
 
     async def aclose(self) -> None:
         pass

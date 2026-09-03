@@ -78,10 +78,11 @@ attack surface a stranger controls:
    charge**, so a blocked message costs nothing: *Jailbreaking* at 0.5, and —
    [122 · #288](https://github.com/Subaru-Goto/PanelVerdict/issues/288) — Sexual,
    Hate and Discrimination, Violence and Threats and Self-Harm at the
-   classifier's own flag, one sentence for all four so the door is not a
-   labelled oracle. Financial, Health and Law stay off (they fire on savings,
-   supplements and legal services); Dangerous, Criminal and PII stay off (a
-   knife shop or the reader's own brand is a legitimate subject).
+   classifier's own flag — their recall is unmeasured, the corpus having no
+   positives for them; only their silence on ordinary text is — one sentence
+   for all four so the door is not a labelled oracle. The other six stay off — Financial fired on a
+   savings-account question in the measurement, and the rest gate subjects a
+   headline may legitimately have; the reasons are on the ticket.
    Measured before adoption ([`research/moderation-check.md`](research/moderation-check.md)):
    11 of 18 overt injection probes caught, one flag on 160 ordinary texts (itself
    an injection), ~150 ms. What it misses is stated there too: the same clause

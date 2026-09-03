@@ -234,11 +234,10 @@ class Settings(BaseSettings):
     # can be re-read against real questions once there are any.
     chat_guard_threshold: float = 0.5
     # Content categories that refuse a chat message at the classifier's own
-    # flag (122/#288). Keys as the reply names them. These four fired on none of
-    # 160 ordinary texts (moderation-check.md); Financial, Health and Law fired
-    # or would fire on legitimate subjects and stay off; Dangerous, Criminal and
-    # PII stay off because a knife shop, a bail-bond service or the reader's own
-    # brand are legitimate subjects too.
+    # flag, keyed as the reply names them. Which four and why the other six stay
+    # off: 122/#288. None of these fired on the 160 ordinary texts of
+    # moderation-check.md. The boot probe refuses a name the reply does not
+    # use; an empty tuple switches the content categories off on purpose.
     chat_content_categories: tuple[str, ...] = (
         "sexual",
         "hate_and_discrimination",

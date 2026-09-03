@@ -104,7 +104,9 @@ headlines or the audience.**
 1. **Not a replacement for the model screeners** on `/evaluate`'s inputs. The
    threat there is disguised or appended steering, which it does not score.
 2. **A partial pre-flight for the chat message**, *Jailbreaking* only at a
-   threshold of 0.5, every other category disabled (a threshold of 1). On this
+   threshold of 0.5, every other category disabled (a threshold of 1) — *the
+   "only" superseded by [122/#288](https://github.com/Subaru-Goto/PanelVerdict/issues/288),
+   which reads four content categories at the classifier's own flag.* On this
    evidence it catches 11 of 18 overt injection probes — the bare
    "ignore/disregard your instructions" shape reliably, the same clause behind
    ordinary copy mostly not — in about 150 ms and for no money, with one flag on
