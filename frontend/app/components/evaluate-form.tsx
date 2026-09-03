@@ -26,6 +26,7 @@ import { useEvaluate } from "../lib/use-evaluate";
 import DemoReplay from "./demo-replay";
 import PanelGate from "./panel-gate";
 import Report from "./report";
+import { ReportBoundary } from "./report-boundary";
 import {
   COUNTRY_LABELS,
   readingKey,
@@ -141,6 +142,8 @@ function Waiting() {
   );
 }
 
+const UNOPENABLE = "That test could not be opened — it may have been deleted.";
+
 export default function EvaluateForm({
   // Passed in from the server-rendered page rather than fetched here, so the
   // line is in the first paint. A disclosure arriving after hydration leaves a
@@ -205,6 +208,16 @@ export default function EvaluateForm({
   // under a demo render whose failure would land in invisible state.
   const demoCase = params.get("demo");
   const openId = demoCase !== null ? null : params.get("open");
+
+  /** Draw a stored test again from the server's copy — the remedy behind the
+   *  report's crash card (049/#147). Every report on screen is reopenable
+   *  since 035/#136, kept or not. */
+  function refresh(testId: string): void {
+    myTest(testId).then(
+      (result) => show(result, testId),
+      () => fail(UNOPENABLE),
+    );
+  }
   // The rail's rows and "New test" are links into this same route, so Next
   // reuses the mounted page and only the params change. The previous id is
   // what tells "never had one" apart from "just lost one" — the second is
@@ -226,8 +239,7 @@ export default function EvaluateForm({
         // Stale — deleted in another tab — or the fetch just failed. Either
         // way it must say so: a wordless fall to the blank form reads as data
         // loss. The address keeps the id, so a reload retries.
-        if (live)
-          fail("That test could not be opened — it may have been deleted.");
+        if (live) fail(UNOPENABLE);
       },
     );
     return () => {
@@ -343,7 +355,19 @@ export default function EvaluateForm({
             gets its own analyst. Reopening from the rail below does exactly
             that, and unkeyed it inherited the previous report's chat thread and
             transcript — see the epoch's comment in use-evaluate. */}
-        <Report key={state.epoch} result={state.result} testId={state.testId} />
+        {/* Keyed like the report: a boundary holds its error until it is
+            remounted, and a refetched or reopened report is a new arrival
+            (a new epoch), so the card gives way to the redraw. */}
+        <ReportBoundary
+          key={state.epoch}
+          onRefresh={() => refresh(state.testId)}
+        >
+          <Report
+            result={state.result}
+            testId={state.testId}
+            onRefresh={() => refresh(state.testId)}
+          />
+        </ReportBoundary>
       </>
     );
   }

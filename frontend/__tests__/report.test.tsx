@@ -34,7 +34,9 @@ afterEach(() => {
 });
 
 const renderReport = (result = makeResponse()) =>
-  render(<Report result={result} testId="t-report" />, { wrapper: StrictMode });
+  render(<Report result={result} testId="t-report" onRefresh={() => {}} />, {
+    wrapper: StrictMode,
+  });
 
 describe("the lead", () => {
   it("names both headlines, the winner first", () => {
@@ -597,6 +599,7 @@ describe("panel card", () => {
     render(
       <Report
         testId="t-report"
+        onRefresh={() => {}}
         result={{
           ...base,
           query: {
@@ -619,12 +622,15 @@ describe("panel card", () => {
 
   it("wears a coverage badge only when the panel is not what was asked for", () => {
     const base = makeResponse();
-    const { rerender } = render(<Report result={base} testId="t-report" />);
+    const { rerender } = render(
+      <Report result={base} testId="t-report" onRefresh={() => {}} />,
+    );
     expect(screen.queryByText(/coverage:/)).toBeNull();
 
     rerender(
       <Report
         testId="t-report"
+        onRefresh={() => {}}
         result={{
           ...base,
           query: { ...base.query, coverage: "unmatched" as const },

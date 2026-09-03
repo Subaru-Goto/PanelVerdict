@@ -16,6 +16,7 @@ import type {
 } from "../lib/api";
 import { formatPercent, formatPoints } from "../lib/format";
 import AnalystDock from "./analyst-dock";
+import { AnalystBoundary } from "./report-boundary";
 import { useAnalyst, OPENING_REQUEST, type Analyst } from "../lib/use-analyst";
 import PosteriorChart from "./posterior-chart";
 import { isPracticalTie, leadingSide } from "../lib/verdict";
@@ -241,8 +242,13 @@ function Lead({
 export default function Report({
   result,
   testId,
+  onRefresh,
   analyst: analystMode = "live",
-}: { result: EvaluateResponse } & (
+}: {
+  result: EvaluateResponse;
+  /** What the crash cards do (049/#147): redraw from the server's copy. */
+  onRefresh: () => void;
+} & (
   | {
       /** The stored test's id, which a live analyst reads server-side
        *  (035/#136). */
@@ -296,7 +302,9 @@ export default function Report({
       {analystMode === "live" && <SummaryCard analyst={analyst} />}
       <VoteList votes={result.votes} />
       {analystMode === "live" ? (
-        <AnalystDock analyst={analyst} />
+        <AnalystBoundary onRefresh={onRefresh}>
+          <AnalystDock analyst={analyst} />
+        </AnalystBoundary>
       ) : (
         <p className="text-sm text-ink-2">
           The analyst answers questions about your own tests, spending from a

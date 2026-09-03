@@ -110,7 +110,11 @@ export default function DemoReplay({ demoCase }: { demoCase: string }) {
         {chrome}
         <p className="text-sm text-ink-2">{replayLine}</p>
         <p className="text-sm text-ink-3">{AI_SYSTEM_DISCLOSURE}</p>
-        <Report result={result} analyst="locked" />
+        <Report
+          result={result}
+          analyst="locked"
+          onRefresh={() => window.location.reload()}
+        />
       </div>
     );
   }
