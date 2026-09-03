@@ -120,6 +120,11 @@ headlines or the audience.**
    second vendor holding a key, reader questions sent to a second party, and
    ~150 ms before the first token.
 
+   *Decided later the same day on #279: adopted on the chat message as an
+   added layer, with the shape in point 2, and the trigger retired in its
+   favour. A held-out topic rerun below baseline still promotes a topic
+   verdict, which this classifier cannot give.*
+
 ## What this does not measure
 
 - **Threshold generalisation.** 0.5 was read off 22 attacks and 160 ordinary

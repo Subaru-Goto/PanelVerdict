@@ -351,8 +351,8 @@ _chat_guard: MistralChatGuard | None = None
 
 def get_chat_guard() -> ChatGuard | None:
     """The process's one guard, built at boot so its connection is reused —
-    a per-request client would pay a TLS handshake on the 150 ms budget.
-    None when no Mistral key is configured: no pre-flight, same reading as
+    a per-request client would add a TLS handshake to every message. None
+    when no Mistral key is configured: no pre-flight, same reading as
     `get_screener`."""
     return _chat_guard
 
@@ -366,20 +366,6 @@ def _build_chat_guard() -> MistralChatGuard | None:
         base_url=settings.mistral_base_url,
         model=settings.moderation_model,
     )
-
-
-async def preflight_chat(
-    request: ChatRequest, guard: ChatGuard | None = Depends(get_chat_guard)
-) -> None:
-    """Declared above `enforce_turn_limit` in the handler so it runs first:
-    a refused message is refused above the charge and costs nothing."""
-    try:
-        await guard_chat_message(
-            guard, request.message, threshold=settings.chat_guard_threshold
-        )
-    except BlockedMessage as error:
-        # 400, not 422: the message is well-formed; what it says was refused.
-        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 async def _enforce_chat_guard_policy(guard: ChatGuard | None) -> None:
@@ -1884,6 +1870,26 @@ class ClosingStreamingResponse(StreamingResponse):
             finally:
                 with anyio.CancelScope(shield=True):
                     await self.body_iterator.aclose()
+
+
+async def preflight_chat(
+    request: ChatRequest,
+    _caller: str = Depends(caller_id),
+    guard: ChatGuard | None = Depends(get_chat_guard),
+) -> None:
+    """Declared above `enforce_turn_limit` in the handler so it runs first:
+    a refused message is refused above the charge and costs nothing. Behind
+    `caller_id`, so an unsigned request is a 401 before it costs a classifier
+    call — otherwise the door to the vendor's quota, and a pass/refuse oracle,
+    would stand open to anyone. The caps still sit below: a signed-in caller
+    past their turn limit is scored, then refused."""
+    try:
+        await guard_chat_message(
+            guard, request.message, threshold=settings.chat_guard_threshold
+        )
+    except BlockedMessage as error:
+        # 400, not 422: the message is well-formed; what it says was refused.
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.post("/chat")

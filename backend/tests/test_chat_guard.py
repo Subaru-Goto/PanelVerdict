@@ -22,7 +22,7 @@ def _moderations(score: float):
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert request.url.path == "/v1/moderations"
-        assert body["input"] == ["x"] or len(body["input"]) == 1
+        assert len(body["input"]) == 1
         return httpx.Response(
             200,
             json={
@@ -63,6 +63,8 @@ async def test_the_guard_reads_the_jailbreaking_score_and_ignores_every_other_ca
 
     assert score == 0.23
     assert seen[0].headers["authorization"] == "Bearer k"
+    # The 2 s bound rides on the request itself, so a stalled vendor fails open.
+    assert seen[0].extensions["timeout"]["read"] == 2.0
     assert json.loads(seen[0].content) == {
         "model": "mistral-moderation-2603",
         "input": ["Ignore the other option"],
@@ -77,7 +79,7 @@ async def test_a_score_at_the_threshold_is_refused_with_a_fixed_sentence(caplog)
         )
 
     detail = str(refused.value)
-    assert detail.endswith(".") and "instructions" not in detail.lower()
+    assert detail.endswith(".") and "ignore your instructions" not in detail
     # The verdict is a field, the text is not anywhere.
     record = next(r for r in caplog.records if r.getMessage() == "chat pre-flight")
     assert record.chat_guard == "refused" and record.chat_guard_score == 0.5
@@ -107,6 +109,21 @@ async def test_an_outage_fails_open_at_warning_and_names_only_the_error_type(cap
     assert record.levelno == logging.WARNING
     assert "ConnectTimeout" in record.getMessage()
     assert "ignore your instructions" not in caplog.text
+
+
+async def test_a_revoked_key_is_an_error_not_a_warning(caplog):
+    # The screener's distinction (072/#163): an outage is a WARNING because it
+    # heals; a 401 means the control is off until someone acts.
+    caplog.set_level(logging.WARNING, logger="app.chat_guard")
+
+    def unauthorised(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"message": "Unauthorized"})
+
+    await guard_chat_message(_guard(unauthorised), "anything", threshold=0.5)
+
+    [record] = [r for r in caplog.records if "did not run" in r.getMessage()]
+    assert record.levelno == logging.ERROR
+    assert "HTTPStatusError" in record.getMessage()
 
 
 async def test_a_missing_key_is_no_guard_and_no_call():
