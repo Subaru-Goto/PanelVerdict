@@ -185,6 +185,7 @@ def client(conn, pg_url, stub_llm, monkeypatch):
         "chat_turns_per_caller_per_day",
         "global_daily_cap_usd",
         "saved_tests_per_user",
+        "mistral_api_key",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
 

@@ -1129,6 +1129,12 @@ def real_lifespan(pg_url, monkeypatch):
     # these tests buy a classifier call, and their own SCREENER_REQUIRED would
     # refuse the boot outright. Pinned the way the `client` fixture pins caps.
     monkeypatch.setattr(settings, "openrouter_api_key", None)
+    # The chat pre-flight is probed at boot the same way (120/#279): a
+    # developer's Mistral key would make a real call, and its absence under a
+    # patched SCREENER_REQUIRED would refuse the boot for the wrong reason.
+    # A guard that answers is the default; the guard's own boot tests replace it.
+    monkeypatch.setattr(settings, "mistral_api_key", None)
+    monkeypatch.setattr(main, "_build_chat_guard", lambda: _RunsGuard())
     monkeypatch.setattr(
         settings,
         "screener_required",
@@ -1193,6 +1199,38 @@ def test_the_lifespan_closes_every_table_to_the_data_api(real_lifespan, conn) ->
         ).fetchall()
     }
     assert "checkpoints" in closed, closed
+
+
+class _RunsGuard:
+    model_name = "mistral-moderation-2603"
+
+    async def score(self, text: str) -> float:
+        return 0.0
+
+    async def aclose(self) -> None:
+        pass
+
+
+class _OffGuard(_RunsGuard):
+    async def score(self, text: str) -> float:
+        request = httpx.Request("POST", "https://mistral.example/v1/moderations")
+        raise httpx.HTTPStatusError(
+            "401", request=request, response=httpx.Response(401, request=request)
+        )
+
+
+class _DownGuard(_RunsGuard):
+    async def score(self, text: str) -> float:
+        raise httpx.ConnectTimeout("no answer")
+
+
+class _CleanScreener:
+    """A screener that runs, for boot tests about the other control."""
+
+    model_name = "openai/gpt-5.6-luna"
+
+    def screen(self, text: str) -> ScreeningVerdict:
+        return ScreeningVerdict(flagged=False, reason="")
 
 
 class _OffScreener:
@@ -1275,6 +1313,54 @@ def test_an_outage_at_boot_does_not_stop_a_required_deployment(
             pass
 
     (record,) = [r for r in caplog.records if "probe" in r.message]
+    assert record.levelno == logging.WARNING
+
+
+def test_a_chat_guard_this_account_cannot_use_is_announced_at_boot(
+    real_lifespan, monkeypatch, caplog
+) -> None:
+    """The chat pre-flight gets the screener's boot announcement (120/#279):
+    a wrong key is one ERROR line at startup, not a silent fail-open per turn."""
+    monkeypatch.setattr(main, "_build_chat_guard", lambda: _OffGuard())
+
+    with caplog.at_level(logging.ERROR, logger="app.main"):
+        with TestClient(app):
+            pass
+
+    (record,) = [r for r in caplog.records if "moderation model" in r.message]
+    assert record.levelno == logging.ERROR
+    assert "mistral-moderation-2603" in record.getMessage()
+
+
+def test_a_required_deployment_refuses_the_boot_when_the_chat_guard_is_off_or_missing(
+    real_lifespan, monkeypatch
+) -> None:
+    monkeypatch.setattr(settings, "screener_required", True)
+    monkeypatch.setattr(main, "get_screener", lambda: _CleanScreener())
+
+    monkeypatch.setattr(main, "_build_chat_guard", lambda: _OffGuard())
+    with pytest.raises(RuntimeError, match="moderation model"):
+        with TestClient(app):
+            pass
+
+    monkeypatch.setattr(main, "_build_chat_guard", lambda: None)
+    with pytest.raises(RuntimeError, match="MISTRAL_API_KEY"):
+        with TestClient(app):
+            pass
+
+
+def test_a_chat_guard_outage_at_boot_does_not_stop_a_required_deployment(
+    real_lifespan, monkeypatch, caplog
+) -> None:
+    monkeypatch.setattr(settings, "screener_required", True)
+    monkeypatch.setattr(main, "get_screener", lambda: _CleanScreener())
+    monkeypatch.setattr(main, "_build_chat_guard", lambda: _DownGuard())
+
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        with TestClient(app):
+            pass
+
+    (record,) = [r for r in caplog.records if "pre-flight did not answer" in r.message]
     assert record.levelno == logging.WARNING
 
 
