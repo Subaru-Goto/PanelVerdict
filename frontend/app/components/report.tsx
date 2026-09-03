@@ -240,9 +240,13 @@ function Lead({
 
 export default function Report({
   result,
+  testId,
   analyst: analystMode = "live",
 }: {
   result: EvaluateResponse;
+  /** The stored test's id, which the analyst reads server-side (035/#136).
+   *  Absent only with the analyst locked. */
+  testId?: string;
   /** "locked" on the demo (061): the analyst spends from a signed-in
    *  account's budget, so a sample offers a line saying why, not a dead
    *  control — and asks the backend nothing. */
@@ -250,7 +254,7 @@ export default function Report({
 }) {
   // The hook always runs (rules of hooks); an undefined opening asks nothing.
   const analyst = useAnalyst(
-    result,
+    testId,
     analystMode === "live" ? OPENING_REQUEST : undefined,
   );
   const { verdict, tally, variants } = result;

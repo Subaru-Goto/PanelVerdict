@@ -374,9 +374,19 @@ _READABLE_VERSIONS = (REPORT_SCHEMA_VERSION,)
 
 
 async def store_report(
-    conn: psycopg.AsyncConnection, *, test_id: str, owner: str, report: dict
+    conn: psycopg.AsyncConnection,
+    *,
+    test_id: str,
+    owner: str,
+    report: dict,
+    kept: bool = True,
 ) -> bool:
-    """Keep a finished test for the account that ran it; return whether it was new.
+    """Store a finished test for the account that ran it; return whether it was new.
+
+    `kept=False` stores the row for its analyst and the recovery read only
+    (035/#136): out of the rail and the cap's count, swept after the horizon
+    `sweep_unkept_reports` is given. Which is why the report is stored at all
+    when the rail is full — the analyst has no other trusted copy.
 
     `ON CONFLICT DO NOTHING`, so a retried or resumed run never rewrites a report
     the customer may already be reading. Weaker reason than the votes ledger's
@@ -387,9 +397,9 @@ async def store_report(
     # autocommit, so a bare execute would be rolled back when it closes.
     async with conn.transaction():
         result = await conn.execute(
-            "INSERT INTO tests (test_id, owner, schema_version, report)"
-            " VALUES (%s, %s, %s, %s) ON CONFLICT (test_id) DO NOTHING",
-            (test_id, owner, REPORT_SCHEMA_VERSION, Jsonb(report)),
+            "INSERT INTO tests (test_id, owner, schema_version, report, kept)"
+            " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (test_id) DO NOTHING",
+            (test_id, owner, REPORT_SCHEMA_VERSION, Jsonb(report), kept),
         )
     return result.rowcount == 1
 
@@ -397,7 +407,10 @@ async def store_report(
 async def count_reports(
     conn: psycopg.AsyncConnection, *, owner: str, excluding: str
 ) -> int:
-    """How many tests this account holds, not counting `excluding`.
+    """How many tests this account keeps in its rail, not counting `excluding`.
+
+    Unkept rows (035/#136) are not the customer's to make room under, so they
+    do not count.
 
     The exclusion keeps the save cap honest on a re-completed run: a test
     already kept must never be told "history full" — its row exists, so
@@ -405,7 +418,7 @@ async def count_reports(
     """
     row = await (
         await conn.execute(
-            "SELECT count(*) FROM tests WHERE owner = %s AND test_id <> %s",
+            "SELECT count(*) FROM tests WHERE owner = %s AND kept AND test_id <> %s",
             (owner, excluding),
         )
     ).fetchone()
@@ -458,7 +471,7 @@ async def list_reports(
         await conn.execute(
             "SELECT test_id, created_at, report -> 'variants' AS variants,"
             " report -> 'verdict' AS verdict, report -> 'tally' AS tally"
-            " FROM tests WHERE owner = %s AND schema_version = ANY(%s)"
+            " FROM tests WHERE owner = %s AND kept AND schema_version = ANY(%s)"
             f"{resume} ORDER BY created_at DESC, test_id DESC LIMIT %s",
             (owner, list(_READABLE_VERSIONS), *(before or ()), limit),
         )
@@ -490,6 +503,24 @@ async def delete_report(
             "DELETE FROM tests WHERE test_id = %s AND owner = %s", (test_id, owner)
         )
     return result.rowcount == 1
+
+
+async def sweep_unkept_reports(
+    conn: psycopg.AsyncConnection, *, older_than_hours: int
+) -> int:
+    """Delete unkept reports past the horizon; return how many went.
+
+    Opportunistic, on write, like the ledgers' sweeps: called before a report is
+    stored, so the table never holds more unkept rows than a horizon's worth of
+    runs. Kept rows are never touched — deletion is the customer's own act.
+    """
+    async with conn.transaction():
+        result = await conn.execute(
+            "DELETE FROM tests WHERE NOT kept AND created_at < now()"
+            " - make_interval(hours => %s)",
+            (older_than_hours,),
+        )
+    return result.rowcount
 
 
 async def delete_reports_of(conn: psycopg.AsyncConnection, *, owner: str) -> int:

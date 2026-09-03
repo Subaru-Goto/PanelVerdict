@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { streamChat, type ChatStreamEvent } from "../app/lib/chat";
-import { makeResponse } from "./fixtures";
-
-const RESULT = makeResponse();
 
 /** A Response whose body arrives in exactly these chunks — the boundary every
  *  NDJSON reader has to survive is a JSON line split mid-object. */
@@ -28,8 +25,8 @@ const collect = async (): Promise<ChatStreamEvent[]> => {
   const events: ChatStreamEvent[] = [];
   for await (const event of streamChat({
     threadId: "t-1",
+    testId: "test-9",
     message: "Why did it stop early?",
-    result: RESULT,
   })) {
     events.push(event);
   }
@@ -47,10 +44,11 @@ describe("streamChat", () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     // Same origin, exact path: the stream flows through the proxy (045/#143).
     expect(url).toBe("/api/chat");
+    // The test travels as its id, never as its report (035/#136).
     expect(JSON.parse(init.body as string)).toEqual({
       thread_id: "t-1",
+      test_id: "test-9",
       message: "Why did it stop early?",
-      result: RESULT,
     });
   });
 
@@ -89,16 +87,13 @@ describe("streamChat", () => {
     ]);
   });
 
-  it("throws the backend's own refusal sentence on a pre-stream 422", async () => {
+  it("throws the backend's own refusal sentence on a pre-stream 404", async () => {
+    // A test that is not this account's, or is gone: the tests endpoint's
+    // own sentence, before any stream.
     mockFetch(
-      new Response(
-        JSON.stringify({
-          detail: "tally names variants ['x'], expected a and b",
-        }),
-        { status: 422 },
-      ),
+      new Response(JSON.stringify({ detail: "no such test" }), { status: 404 }),
     );
 
-    await expect(collect()).rejects.toThrow(/expected a and b/);
+    await expect(collect()).rejects.toThrow(/no such test/);
   });
 });

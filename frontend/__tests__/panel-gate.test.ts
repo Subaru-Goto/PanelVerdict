@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  evaluate,
-  resumeEvaluate,
-  type TargetQuery,
-} from "../app/lib/api";
+import { evaluate, resumeEvaluate, type TargetQuery } from "../app/lib/api";
 
 // 076/#166. `/evaluate` no longer always answers with a verdict: a first run
 // stops at the panel gate and answers with the panel it would seat. What is
@@ -12,7 +8,9 @@ import {
 // gate — the *shape* of the contract, not the screen it eventually becomes
 // (093/#198 owns that).
 
-vi.mock("../app/lib/auth", () => ({ authHeaders: vi.fn().mockResolvedValue({}) }));
+vi.mock("../app/lib/auth", () => ({
+  authHeaders: vi.fn().mockResolvedValue({}),
+}));
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -61,7 +59,11 @@ describe("a run that stops at the gate", () => {
   it("says the audience was already approved when it was", async () => {
     // The gate fires on the first run and whenever the audience changes — so
     // the client has to be able to say it has already seen this one.
-    const fetcher = stub({ status: "complete", counts: { voted: 5 } });
+    const fetcher = stub({
+      status: "complete",
+      thread_id: "t-run",
+      counts: { voted: 5 },
+    });
 
     await evaluate({ ...INPUT, readingAccepted: true });
 
@@ -72,7 +74,11 @@ describe("a run that stops at the gate", () => {
 
 describe("answering the gate", () => {
   it("accepts, and gets the verdict", async () => {
-    const fetcher = stub({ status: "complete", counts: { voted: 5 } });
+    const fetcher = stub({
+      status: "complete",
+      thread_id: "t-run",
+      counts: { voted: 5 },
+    });
 
     const outcome = await resumeEvaluate({ threadId: "t-1", action: "accept" });
 
@@ -86,7 +92,11 @@ describe("answering the gate", () => {
   });
 
   it("sends an edited reading when adjusting", async () => {
-    const fetcher = stub({ status: "paused", thread_id: "t-1", preview: PREVIEW });
+    const fetcher = stub({
+      status: "paused",
+      thread_id: "t-1",
+      preview: PREVIEW,
+    });
 
     await resumeEvaluate({
       threadId: "t-1",
@@ -116,7 +126,11 @@ describe("answering the gate", () => {
       action: "accept",
       instruction: "You are a keen runner.",
     });
-    await resumeEvaluate({ threadId: "t-1", action: "accept", instruction: "" });
+    await resumeEvaluate({
+      threadId: "t-1",
+      action: "accept",
+      instruction: "",
+    });
 
     const bodies = fetcher.mock.calls.map((call) =>
       JSON.parse(String((call[1] as RequestInit).body)),
@@ -127,7 +141,7 @@ describe("answering the gate", () => {
   });
 
   it("carries the session, because the resume spends the money", async () => {
-    stub({ status: "complete", counts: { voted: 5 } });
+    stub({ status: "complete", thread_id: "t-run", counts: { voted: 5 } });
 
     await resumeEvaluate({ threadId: "t-1", action: "accept" });
 

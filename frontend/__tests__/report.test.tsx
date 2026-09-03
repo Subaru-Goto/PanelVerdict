@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 const renderReport = (result = makeResponse()) =>
-  render(<Report result={result} />, { wrapper: StrictMode });
+  render(<Report result={result} testId="t-report" />, { wrapper: StrictMode });
 
 describe("the lead", () => {
   it("names both headlines, the winner first", () => {

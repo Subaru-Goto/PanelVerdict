@@ -454,7 +454,11 @@ describe("the audience through the interface", () => {
     // gate is a decision about spending money, and the rail beside it is an
     // invitation to leave it half-answered.
     evaluateMock.mockResolvedValue(PAUSED);
-    resumeMock.mockResolvedValue({ ...RESPONSE, status: "complete" });
+    resumeMock.mockResolvedValue({
+      ...RESPONSE,
+      status: "complete",
+      thread_id: "t-run",
+    });
     render(
       <Shell>
         <EvaluateForm />
@@ -554,7 +558,9 @@ describe("the stepper", () => {
     await act(async () => {});
     expect(current()).toContain("Voting");
 
-    await act(async () => settle({ ...RESPONSE, status: "complete" }));
+    await act(async () =>
+      settle({ ...RESPONSE, status: "complete", thread_id: "t-run" }),
+    );
     expect(current()).toContain("Verdict");
   });
 });

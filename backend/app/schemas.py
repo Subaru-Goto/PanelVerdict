@@ -743,23 +743,23 @@ class EvaluateResponse(BaseModel):
 class ChatRequest(BaseModel):
     """One analyst turn: the new message, the thread it continues, and the test.
 
-    History lives server-side under `thread_id`: the
-    checkpointed transcript keeps ToolMessages, so a follow-up is answered from
-    context instead of re-buying the tool calls a text-only replay would drop.
-    The client mints the id — one per rendered report.
+    History lives server-side under `thread_id`: the checkpointed transcript
+    keeps ToolMessages, so a follow-up is answered from context instead of
+    re-buying the tool calls a text-only replay would drop. The client mints
+    the id — one per rendered report.
 
-    The whole result still travels rather than a test id, because nothing
-    persists a finished test today — the votes ledger stores votes, not
-    verdicts. The payload is context, not testimony: every *verdict* number
-    the analyst cites is recomputed server-side from the tally
-    (`analyst.analysis_facts`). Who the voters were is the one thing that
-    cannot be — the panel's demographics are forwarded from `votes[].voter`
-    as given, because nothing server-side remembers a finished panel.
+    The test travels as its id, never as its report (035/#136). The server
+    loads the stored report under the signed-in subject, so what the analyst
+    reads — and which personas its tools may reach — is what the server wrote,
+    not what the caller posted. Extras are refused, so a client still sending
+    the report learns so with a 422 rather than being silently half-trusted.
     """
 
-    # 36 = the uuid4 the run was started under (EvaluateRequest's bound). The
-    # id is a log field (047/#145); unbounded, one turn could write anything
+    model_config = ConfigDict(extra="forbid")
+
+    # 36 = the uuid4 the run was started under (EvaluateRequest's bound). Both
+    # ids are log fields (047/#145); unbounded, one turn could write anything
     # into the trail.
+    test_id: str = Field(min_length=1, max_length=36)
     thread_id: str = Field(min_length=1, max_length=36)
     message: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
-    result: EvaluateResponse

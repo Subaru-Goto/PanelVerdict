@@ -54,7 +54,7 @@ export type EvaluateState =
    *  already-opened flag all survive into a report they are not about
    *  (117/#252). Counting every arrival rather than only the reopen keeps the
    *  key correct without depending on which transitions happen to remount. */
-  | { phase: "done"; result: EvaluateResponse; epoch: number };
+  | { phase: "done"; result: EvaluateResponse; testId: string; epoch: number };
 
 export function useEvaluate() {
   const [state, setState] = useState<EvaluateState>({ phase: "idle" });
@@ -84,7 +84,12 @@ export function useEvaluate() {
             threadId: outcome.thread_id,
             preview: outcome.preview,
           }
-        : { phase: "done", result: outcome, epoch: ++epoch.current },
+        : {
+            phase: "done",
+            result: outcome,
+            testId: outcome.thread_id,
+            epoch: ++epoch.current,
+          },
     );
   }
 
@@ -238,8 +243,8 @@ export function useEvaluate() {
    *  It lands in the same `done` phase a fresh run lands in, on purpose — a
    *  stored report is the report, so a second render path for it would be a
    *  second place for the report to be drawn wrongly. */
-  function show(result: EvaluateResponse): void {
-    setState({ phase: "done", result, epoch: ++epoch.current });
+  function show(result: EvaluateResponse, testId: string): void {
+    setState({ phase: "done", result, testId, epoch: ++epoch.current });
   }
 
   /** Land on the error phase for a failure this hook did not produce — a

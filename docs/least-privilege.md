@@ -348,16 +348,17 @@ WHERE id = ANY(%s)
 ```
 
 The model supplies a search phrase; it does not supply the id list. No sentence
-it can emit widens that clause. Be precise about what that defends against,
-though: the ids are read from `result.votes`, and `result` is the
-`EvaluateResponse` **the client posted**. So the scope holds against the *model*
-and not against the *caller* — a client can name any persona in the pool. Today
-the pool is synthetic and shared, so nothing leaks; with owned content that
-breaks quietly, because the code looks right.
-[035/#136](https://github.com/Subaru-Goto/PanelVerdict/issues/136) carries it,
-and the structural half is that `ChatRequest` carries the entire
-`EvaluateResponse` from the client — with owned tests, the server must load the
-result under the caller's identity and ignore what the body claimed.
+it can emit widens that clause. And since
+[035/#136](https://github.com/Subaru-Goto/PanelVerdict/issues/136) (2026-09-03)
+the caller does not supply it either: `ChatRequest` names a test by id, the
+server loads the stored report `WHERE test_id = %s AND owner = %s` under the
+signed-in subject, and `result.votes` is what the run wrote. A body that still
+carries a report is a 422; a test that is missing or another account's is the
+tests endpoint's own 404, above the pre-flight and the charge. So the scope
+holds against the model *and* against the caller. What made it possible is
+that every finished run is now stored — the save cap decides what the rail
+*keeps* (`kept`), not what the server holds: a run the rail refused is stored
+unkept, readable by its id for the ledger's day, then swept.
 
 Below the application, every table in `public` has row-level security on and no
 policies (`persistence.deny_data_api`), because the browser holds a publishable
@@ -464,7 +465,8 @@ works:
 4. ~~**There is no other customer's data.**~~ **Fired 2026-08-25** when sign-in
    shipped (063/#158). Asset 3 above records what replaced it: scoping by
    construction, RLS, and [035/#136](https://github.com/Subaru-Goto/PanelVerdict/issues/136)
-   as the requirement it promoted.
+   as the requirement it promoted — met 2026-09-03, when `/chat` started
+   loading the test server-side.
 
 ## Screening's own gaps
 

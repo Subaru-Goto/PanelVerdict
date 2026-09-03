@@ -26,7 +26,7 @@ from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
-from app.analyst import ToolDeps, analysis_facts, stream_analyst
+from app.analyst import ToolDeps, stream_analyst
 from app.assembly import Embedder
 from app.auth import (
     AccountDeleter,
@@ -73,6 +73,7 @@ from app.persistence import (
     load_personas_by_id,
     load_report,
     store_report,
+    sweep_unkept_reports,
 )
 from app.pipeline import EmptyPanel, NoVotes
 from app.roleplay import GeneratorFault, RolePlayGenerator, RolePlayRefused
@@ -1178,9 +1179,15 @@ class PausedRun(BaseModel):
 
 
 class CompletedRun(EvaluateResponse):
-    """A finished run. `status` is additive — every older field is still here."""
+    """A finished run. `status` is additive — every older field is still here.
+
+    `thread_id` is the run's own id, which is also the stored test's: the page
+    names it to the analyst and to the recovery read (035/#136). On the
+    response only, like `status` — a stored report does not carry its own key.
+    """
 
     status: Literal["complete"] = "complete"
+    thread_id: str
 
 
 def _outcome(
@@ -1206,6 +1213,7 @@ def _outcome(
         )
     result = state["result"]
     return CompletedRun(
+        thread_id=thread_id,
         usage=RunUsage(**asdict(total_usage(result.votes.usage))),
         verdict=result.verdict,
         tally=result.tally,
@@ -1262,7 +1270,11 @@ async def _kept(
         # money-shaped hole is why _only_one_answer holds a row lock; a
         # storage quota overshooting by a day's runs is not worth one.
         cap = settings.saved_tests_per_user
-        if await count_reports(conn, owner=caller, excluding=test_id) >= cap:
+        # The sweep rides on the write, like the ledgers': unkept rows older
+        # than the ledger's day go before this run's row arrives.
+        await sweep_unkept_reports(conn, older_than_hours=LEDGER_HOURS)
+        kept = await count_reports(conn, owner=caller, excluding=test_id) < cap
+        if not kept:
             # The sentence states the limit, never the count: rows can exceed
             # a lowered cap, and a number nobody measured is not spoken. The
             # remedy only exists while there is a cap to make room under.
@@ -1273,12 +1285,15 @@ async def _kept(
             )
             if cap > 0:
                 message += " Delete a saved test to make room for the next one."
-            return outcome.model_copy(
+            outcome = outcome.model_copy(
                 update={
                     "notices": outcome.notices
                     + (Notice(severity="warning", message=message),)
                 }
             )
+        # Stored either way (035/#136): the analyst reads the server's copy, so
+        # a report the rail will not keep is stored unkept — hidden from the
+        # rail, readable by its id for the ledger's day — rather than not at all.
         await store_report(
             conn,
             test_id=test_id,
@@ -1289,8 +1304,9 @@ async def _kept(
             # figure as if current — and it was never a fact about the test
             # (117/#252, review).
             report=outcome.model_copy(update={"notices": result.notices}).model_dump(
-                mode="json", exclude={"status"}
+                mode="json", exclude={"status", "thread_id"}
             ),
+            kept=kept,
         )
     except Exception:
         # Logged with the id so the loss is traceable to a run, and swallowed on
@@ -1898,9 +1914,31 @@ async def preflight_chat(
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+async def load_chat_report(
+    request: ChatRequest,
+    caller: str = Depends(caller_id),
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+) -> EvaluateResponse:
+    """The test this turn is about, from the server's own copy (035/#136).
+
+    Loaded under the signed-in subject in the query itself, so the analyst's
+    scope — which votes, which personas its tools may reach — is what the run
+    wrote and nothing the caller posted. Kept or not: the run the rail refused
+    is still on the reader's screen, and its analyst reads the unkept row.
+    Declared first in the handler, above the pre-flight and the charge: a
+    missing or foreign test is the tests endpoint's own 404, settled by one
+    free read, before a classifier call or a ledger row.
+    """
+    report = await load_report(conn, test_id=request.test_id, owner=caller)
+    if report is None:
+        raise HTTPException(status_code=404, detail="no such test")
+    return EvaluateResponse.model_validate(report)
+
+
 @app.post("/chat")
 async def chat(
     request: ChatRequest,
+    report: EvaluateResponse = Depends(load_chat_report),
     _preflight: None = Depends(preflight_chat),
     _limit: None = Depends(enforce_turn_limit),
     analyst: BaseChatModel = Depends(get_analyst),
@@ -1911,14 +1949,9 @@ async def chat(
     # No translator and no panel model: with `run_panel_test` gone, this
     # endpoint has nothing that could buy a vote. The absence is the guarantee —
     # a spend path cannot be reintroduced here without a visible new dependency.
-    # Validated before the stream starts, so a malformed tally costs a 422 and
-    # no model call — this is the last moment a status code can still say it.
-    # Every later failure is the stream's to report, as an in-band `error`
-    # event with a fixed sentence (see stream_analyst).
-    try:
-        analysis_facts(request.result)
-    except ValueError as error:
-        raise HTTPException(status_code=422, detail=str(error)) from error
+    # The report is the server's own, so its tally needs no guarding here;
+    # every failure from here on is the stream's to report, as an in-band
+    # `error` event with a fixed sentence (see stream_analyst).
     # Autocommit from here on: the stream's tools are this connection's only
     # remaining users, every one of them reads, and langgraph runs a turn's
     # tool calls concurrently on it (`ToolNode._afunc` gathers them).
@@ -1937,7 +1970,7 @@ async def chat(
     return ClosingStreamingResponse(
         stream_analyst(
             model=analyst,
-            result=request.result,
+            result=report,
             thread_id=request.thread_id,
             message=request.message,
             checkpointer=checkpointer,
