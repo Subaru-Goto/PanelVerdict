@@ -940,6 +940,10 @@ async def me(
 
     Reads without charging: no row is written, so opening the page does not
     spend a run.
+
+    The rail's figures ride along (124/#291), so the form can say "this test
+    will not be saved" before the run rather than after it. Counted the way
+    the save path counts, so the notice and the post-run warning agree.
     """
     limit = settings.evaluate_runs_per_day
     async with conn.cursor() as cur:
@@ -950,7 +954,12 @@ async def me(
         )
         row = await cur.fetchone()
     used = int(row[0]) if row else 0
-    return {"runs_per_day": limit, "runs_remaining": max(0, limit - used)}
+    return {
+        "runs_per_day": limit,
+        "runs_remaining": max(0, limit - used),
+        "saved_tests": await count_reports(conn, owner=caller),
+        "saved_tests_cap": settings.saved_tests_per_user,
+    }
 
 
 @app.delete("/me", status_code=204)

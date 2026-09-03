@@ -28,7 +28,8 @@ const GOOD = {
 const BROKEN = { ...GOOD, tally: undefined } as unknown as typeof GOOD;
 
 vi.mock("../app/lib/api", () => ({
-  remainingRuns: () => Promise.resolve(3),
+  accountFigures: () =>
+    Promise.resolve({ runs_remaining: 3, saved_tests: 0, saved_tests_cap: 10 }),
   evaluate: () => Promise.reject(new Error("not used")),
   resumeEvaluate: () => Promise.reject(new Error("not used")),
   LOCALES: ["US", "JP", "DE"],
@@ -38,7 +39,7 @@ vi.mock("../app/lib/api", () => ({
   myTest: (id: string) => myTestMock(id),
   runDemo: (demoCase: string) => runDemoMock(demoCase),
   forgetTest: () => Promise.resolve(),
-  onRunsChanged: () => () => {},
+  onAccountChanged: () => () => {},
 }));
 
 vi.mock("../app/lib/auth", () => ({

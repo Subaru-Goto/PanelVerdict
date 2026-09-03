@@ -7,7 +7,7 @@ import Link from "next/link";
 import {
   forgetTest,
   myTests,
-  onRunsChanged,
+  onAccountChanged,
   type StoredTest,
 } from "../lib/api";
 import { onAuthChange } from "../lib/auth";
@@ -142,10 +142,10 @@ export default function PastTests() {
   // dependencies for that second reason, since `signedIn` can come back the
   // same value for a different account.
   useEffect(load, [load, session]);
-  // A finished run is a new row. `onRunsChanged` already fires exactly then —
+  // A finished run is a new row. `onAccountChanged` already fires exactly then —
   // it is what keeps the remaining-runs figure honest — so the rail reuses it
   // rather than polling.
-  useEffect(() => onRunsChanged(load), [load]);
+  useEffect(() => onAccountChanged(load), [load]);
 
   if (signedIn !== true) return null;
 

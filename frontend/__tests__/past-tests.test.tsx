@@ -21,7 +21,7 @@ vi.mock("../app/lib/api", () => ({
   myTests: (cursor?: string) => myTestsMock(cursor),
   myTest: (id: string) => myTestMock(id),
   forgetTest: (id: string) => forgetTestMock(id),
-  onRunsChanged: (listener: () => void) => {
+  onAccountChanged: (listener: () => void) => {
     runsListeners.push(listener);
     return () => {};
   },
@@ -558,7 +558,7 @@ describe("the rail across a change of session", () => {
 
   it("stops saying the rail failed once it loads", async () => {
     // A cold backend fails the first load; the run that follows fires
-    // `onRunsChanged` and the rows arrive. The warning must not still be
+    // `onAccountChanged` and the rows arrive. The warning must not still be
     // standing above them.
     myTestsMock.mockRejectedValueOnce(new Error("offline"));
     myTestsMock.mockResolvedValue({ tests: [stored()], next_cursor: null });

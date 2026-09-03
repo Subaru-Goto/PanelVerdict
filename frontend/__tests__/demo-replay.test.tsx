@@ -31,7 +31,7 @@ vi.mock("../app/lib/api", () => ({
   myTests: () => Promise.resolve({ tests: [], next_cursor: null }),
   myTest: (id: string) => myTestMock(id),
   forgetTest: () => Promise.resolve(),
-  onRunsChanged: () => () => {},
+  onAccountChanged: () => () => {},
 }));
 
 // Signed out, and sign-in configured: the exact state whose wall must not

@@ -247,7 +247,7 @@ async function outcomeOf(res: Response): Promise<EvaluateOutcome> {
   const outcome = (await res.json()) as EvaluateOutcome;
   // Only a finished run spent one — a run holding at the gate bought nothing.
   if (outcome.status === "complete") {
-    runsChanged.forEach((listener) => listener());
+    accountChanged.forEach((listener) => listener());
   }
   return outcome;
 }
@@ -309,34 +309,52 @@ export async function resumeEvaluate(
   return outcomeOf(res);
 }
 
-/** Watch for the account's remaining runs changing. Returns an unsubscribe.
+/** Watch for the account's own figures changing. Returns an unsubscribe.
  *
- * Lives here because a run is the only thing that spends one. Without it the
- * figure keeps reading "3 runs left" after the run that made it 2. */
-const runsChanged = new Set<() => void>();
+ * Two things move them, both in this module: a finished run spends one, and
+ * a delete makes room in the rail (124/#291). Without the signal the form
+ * keeps reading "3 runs left" after the run that made it 2, or "your rail is
+ * full" after the delete that emptied a seat. */
+const accountChanged = new Set<() => void>();
 
-export function onRunsChanged(listener: () => void): () => void {
-  runsChanged.add(listener);
+export function onAccountChanged(listener: () => void): () => void {
+  accountChanged.add(listener);
   return () => {
-    runsChanged.delete(listener);
+    accountChanged.delete(listener);
   };
 }
 
-/** How many runs today's account has left, or null if it could not be read.
+/** The account's own figures, as `/me` states them: runs left today, and
+ *  how full the rail is against its cap (124/#291). */
+export type AccountFigures = {
+  runs_remaining: number;
+  saved_tests: number;
+  saved_tests_cap: number;
+};
+
+/** This account's figures, or null if they could not be read.
  *
- * Null rather than zero: "0 runs left" would tell someone they are out when a
- * read simply failed. */
-export async function remainingRuns(): Promise<number | null> {
+ * Null rather than zeros: "0 runs left" would tell someone they are out when
+ * a read simply failed. */
+export async function accountFigures(): Promise<AccountFigures | null> {
   const headers = await authHeaders();
   // Nothing to ask about: a signed-out visitor has no count, and the call
   // would only ever come back 401.
   if (!("Authorization" in headers)) return null;
   const res = await fetch("/api/me", { headers });
   if (!res.ok) return null;
-  const body = (await res.json().catch(() => null)) as {
-    runs_remaining?: number;
-  } | null;
-  return typeof body?.runs_remaining === "number" ? body.runs_remaining : null;
+  const body = (await res
+    .json()
+    .catch(() => null)) as Partial<AccountFigures> | null;
+  return typeof body?.runs_remaining === "number" &&
+    typeof body.saved_tests === "number" &&
+    typeof body.saved_tests_cap === "number"
+    ? {
+        runs_remaining: body.runs_remaining,
+        saved_tests: body.saved_tests,
+        saved_tests_cap: body.saved_tests_cap,
+      }
+    : null;
 }
 
 /** One row of the account's own rail (117/#252).
@@ -431,4 +449,6 @@ export async function forgetTest(testId: string): Promise<void> {
   if (!res.ok && res.status !== 404) {
     throw new Error(`API responded ${res.status}`);
   }
+  // The rail has a seat free now: the form's full-rail notice re-reads.
+  accountChanged.forEach((listener) => listener());
 }

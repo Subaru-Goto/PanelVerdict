@@ -24,8 +24,9 @@ vi.mock("../app/lib/api", () => ({
   myTests: (cursor?: string) => myTestsMock(cursor),
   myTest: vi.fn(),
   forgetTest: vi.fn(),
-  onRunsChanged: () => () => {},
-  remainingRuns: () => Promise.resolve(3),
+  onAccountChanged: () => () => {},
+  accountFigures: () =>
+    Promise.resolve({ runs_remaining: 3, saved_tests: 0, saved_tests_cap: 10 }),
 }));
 
 vi.mock("../app/lib/auth", () => ({

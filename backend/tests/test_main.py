@@ -1834,14 +1834,31 @@ def test_an_account_is_told_how_many_runs_it_has_left(
     give an abuser a progress bar is the shared pool's, which stays unsaid
     (092/#197)."""
     monkeypatch.setattr(settings, "evaluate_runs_per_day", 3)
+    monkeypatch.setattr(settings, "saved_tests_per_user", 10)
     seed_japanese(conn, 5)
 
     before = signed_in.get("/me", headers=_as("person-1")).json()
     signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("person-1"))
     after = signed_in.get("/me", headers=_as("person-1")).json()
 
-    assert before == {"runs_per_day": 3, "runs_remaining": 3}
-    assert after == {"runs_per_day": 3, "runs_remaining": 2}
+    rail = {"saved_tests": 0, "saved_tests_cap": 10}
+    assert before == {"runs_per_day": 3, "runs_remaining": 3} | rail
+    assert after == {"runs_per_day": 3, "runs_remaining": 2} | rail | {"saved_tests": 1}
+
+
+def test_an_account_is_told_how_full_its_rail_is(signed_in, conn, monkeypatch) -> None:
+    """The form warns about a full rail before the run, not after (124/#291).
+    The figures are the save path's own: an unkept report (035/#136) and
+    another account's tests do not fill this rail."""
+    monkeypatch.setattr(settings, "saved_tests_per_user", 2)
+    _stored_test(conn, owner="person-1")
+    _stored_test(conn, owner="person-1", kept=False)
+    _stored_test(conn, owner="person-2")
+
+    body = signed_in.get("/me", headers=_as("person-1")).json()
+
+    assert body["saved_tests"] == 1
+    assert body["saved_tests_cap"] == 2
 
 
 def test_the_remaining_count_is_not_readable_without_signing_in(signed_in) -> None:
