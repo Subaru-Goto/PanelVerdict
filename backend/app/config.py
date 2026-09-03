@@ -220,6 +220,12 @@ class Settings(BaseSettings):
     supabase_service_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Mistral's moderation classifier, measured for the chat pre-flight on
+    # 120/#279 (`experiments/moderation_check.py`). Nothing in the app calls it.
+    # None = the measurement refuses to run rather than send text nowhere.
+    mistral_api_key: SecretStr | None = None
+    mistral_base_url: str = "https://api.mistral.ai/v1"
+    moderation_model: str = "mistral-moderation-2603"
     profile: ProfileName = "dev"
     # Plain Luna, not `-pro`: `TARGET_REASONING_EFFORT = "low"` is a measured setting
     # (targeting-call-effort.md), and `-pro` is the same model served with reasoning mode
