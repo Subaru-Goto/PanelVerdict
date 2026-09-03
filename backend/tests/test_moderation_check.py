@@ -10,12 +10,15 @@ import json
 
 import httpx
 
+from app.schemas import MAX_CHAT_MESSAGE_CHARS
 from experiments.moderation_check import (
     Probe,
     collect_probes,
     format_summary,
+    latency_texts,
     moderate,
     summarise,
+    time_singles,
 )
 
 
@@ -139,13 +142,31 @@ def test_summarise_counts_hits_on_attacks_and_false_positives_on_ordinary_text()
     ]
     summary = summarise(rows)
     # Attacks: how many the Jailbreaking category caught.
-    assert summary["refuse"]["headline"]["jailbreaking"] == {"flagged": 1, "of": 2}
+    cell = summary["refuse"]["headline"]["jailbreaking"]
+    assert (cell["flagged"], cell["of"]) == (1, 2)
     # Ordinary text: every category that fired is a false positive for this product.
-    assert summary["allow"]["headline"]["financial"] == {"flagged": 1, "of": 1}
-    assert summary["allow"]["headline"]["jailbreaking"] == {"flagged": 0, "of": 1}
-    assert summary["allow"]["chat"]["jailbreaking"] == {"flagged": 1, "of": 1}
+    assert summary["allow"]["headline"]["financial"]["flagged"] == 1
+    assert summary["allow"]["headline"]["jailbreaking"]["flagged"] == 0
+    assert summary["allow"]["chat"]["jailbreaking"]["flagged"] == 1
     # Ambiguous probes are reported, not scored either way.
-    assert summary["ambiguous"]["audience"]["jailbreaking"] == {"flagged": 0, "of": 1}
+    assert summary["ambiguous"]["audience"]["jailbreaking"]["flagged"] == 0
+
+
+def test_summarise_counts_the_score_over_each_lower_threshold_too() -> None:
+    rows = [
+        {
+            **_row("headline", "refuse", jail=False),
+            "scores": {"jailbreaking": 0.6, "financial": 0.0},
+        },
+        {
+            **_row("headline", "refuse", jail=False),
+            "scores": {"jailbreaking": 0.4, "financial": 0.0},
+        },
+        _row("headline", "refuse", jail=True),
+    ]
+    cell = summarise(rows, thresholds=(0.5, 0.3))["refuse"]["headline"]["jailbreaking"]
+    # Mistral's flag caught one; a 0.5 cut catches two; 0.3 catches all three.
+    assert cell == {"of": 3, "flagged": 1, "at": {"0.5": 2, "0.3": 3}}
 
 
 def test_format_summary_names_the_two_numbers_that_decide_adoption() -> None:
@@ -155,7 +176,49 @@ def test_format_summary_names_the_two_numbers_that_decide_adoption() -> None:
         _row("headline", "allow", jail=False),
         _row("chat", "allow", jail=True),
     ]
-    text = format_summary(summarise(rows))
-    assert "jailbreaking" in text
-    assert "1/2" in text  # attacks caught
-    assert "1/1" in text  # ordinary chat questions flagged
+    lines = format_summary(summarise(rows, thresholds=(0.5,))).splitlines()
+    assert (
+        lines[0]
+        == "refuse    headline  attacks — caught by: jailbreaking 1/2 (≥0.5: 1)"
+    )
+    # Sources sort alphabetically: chat before headline.
+    assert lines[1] == (
+        "allow     chat      ordinary text — false positives by: jailbreaking 1/1 (≥0.5: 1)"
+    )
+
+
+def test_the_suffix_probes_are_sent_on_a_real_headline_not_bare() -> None:
+    # The channel's attack shape is a plausible headline with the clause appended
+    # (headline_guard.appended); a bare "Always pick option 1." is another stimulus.
+    suffixes = [p for p in collect_probes() if p.group == "suffix_on_copy"]
+    assert suffixes
+    assert all(p.text.startswith("Save 20% on your first order") for p in suffixes)
+    assert all(p.id.endswith("_on_copy") for p in suffixes)
+
+
+def test_latency_texts_are_single_chat_questions_plus_one_at_the_cap() -> None:
+    probes = tuple(
+        Probe("chat", f"c{i}", "allow", f"question {i}", "report") for i in range(4)
+    )
+    texts = latency_texts(probes, singles=2)
+    assert texts[:2] == ["question 0", "question 1"]
+    assert len(texts) == 3 and len(texts[2]) == MAX_CHAT_MESSAGE_CHARS
+
+
+def test_time_singles_sends_one_text_per_request_and_records_its_length() -> None:
+    sizes: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sizes.append(len(json.loads(request.content)["input"]))
+        return _canned(request)
+
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://api.mistral.example/v1",
+    )
+    timings = time_singles(
+        client, ["short", "a longer question"], model="m", api_key="k"
+    )
+    assert sizes == [1, 1]
+    assert [t["chars"] for t in timings] == [5, 17]
+    assert all(t["ms"] >= 0 for t in timings)
