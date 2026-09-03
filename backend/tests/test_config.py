@@ -50,3 +50,12 @@ def test_the_profiles_are_a_ladder() -> None:
 def test_the_preview_price_is_its_two_calls() -> None:
     """Retired with USD_PER_PREVIEW (094): a preview's only possible call is
     the rewrite, priced by USD_PER_ROLEPLAY, pinned below."""
+
+
+def test_an_empty_supabase_url_means_sign_in_is_not_configured() -> None:
+    """A local process cannot unset what the env file sets; it can only set the
+    variable empty. An empty string is not a URL, and taking it for one made the
+    JWKS client refuse to start (123/#289's local target)."""
+    settings = Settings(**_DB, supabase_project_url="")
+
+    assert settings.supabase_project_url is None

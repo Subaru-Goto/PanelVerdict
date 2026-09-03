@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from pydantic import PostgresDsn, SecretStr
+from pydantic import PostgresDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # parents[2]: app/ -> backend/ -> repo root, where the shared credentials file lives
@@ -211,6 +211,16 @@ class Settings(BaseSettings):
     # so local development and CI need no auth project. The deploy sets it.
     # Public by nature: it is the host the browser talks to, not a credential.
     supabase_project_url: str | None = None
+
+    @field_validator("supabase_project_url", mode="before")
+    @classmethod
+    def _empty_url_is_unset(cls, value: object) -> object:
+        # `SUPABASE_PROJECT_URL=` in the environment switches sign-in off for
+        # one process without editing the env file (123/#289's local target).
+        # An empty string is not a URL, and the JWKS client refused to start
+        # on one.
+        return None if value == "" else value
+
     # Elevated key, backend only, used for exactly one thing: asking Supabase to
     # delete a user who asked to be deleted. It bypasses Row Level Security
     # ("full access to your project's data" — guides/api/api-keys, read
