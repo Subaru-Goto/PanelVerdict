@@ -16,6 +16,7 @@ import type {
 } from "../lib/api";
 import { formatPercent, formatPoints } from "../lib/format";
 import AnalystDock from "./analyst-dock";
+import { AnalystBoundary } from "./report-boundary";
 import { useAnalyst, OPENING_REQUEST, type Analyst } from "../lib/use-analyst";
 import PosteriorChart from "./posterior-chart";
 import { isPracticalTie, leadingSide } from "../lib/verdict";
@@ -241,6 +242,7 @@ function Lead({
 export default function Report({
   result,
   testId,
+  onRefresh,
   analyst: analystMode = "live",
 }: { result: EvaluateResponse } & (
   | {
@@ -248,6 +250,8 @@ export default function Report({
        *  (035/#136). */
       testId: string;
       analyst?: "live";
+      /** What the analyst's crash card does (049/#147). */
+      onRefresh: () => void;
     }
   | {
       /** "locked" on the demo (061): the analyst spends from a signed-in
@@ -255,6 +259,7 @@ export default function Report({
        *  control — and asks the backend nothing. */
       analyst: "locked";
       testId?: undefined;
+      onRefresh?: undefined;
     }
 )) {
   // The hook always runs (rules of hooks); an undefined opening asks nothing.
@@ -293,10 +298,18 @@ export default function Report({
         same thing differently.
       </p>
       <PanelCard result={result} />
-      {analystMode === "live" && <SummaryCard analyst={analyst} />}
+      {onRefresh !== undefined && (
+        <AnalystBoundary onRefresh={onRefresh}>
+          <SummaryCard analyst={analyst} />
+        </AnalystBoundary>
+      )}
       <VoteList votes={result.votes} />
-      {analystMode === "live" ? (
-        <AnalystDock analyst={analyst} />
+      {/* `onRefresh` travels with the live arm, so it is also the live/locked
+          switch here. */}
+      {onRefresh !== undefined ? (
+        <AnalystBoundary onRefresh={onRefresh}>
+          <AnalystDock analyst={analyst} />
+        </AnalystBoundary>
       ) : (
         <p className="text-sm text-ink-2">
           The analyst answers questions about your own tests, spending from a

@@ -26,6 +26,7 @@ import { useEvaluate } from "../lib/use-evaluate";
 import DemoReplay from "./demo-replay";
 import PanelGate from "./panel-gate";
 import Report from "./report";
+import { ReportBoundary } from "./report-boundary";
 import {
   COUNTRY_LABELS,
   readingKey,
@@ -141,6 +142,8 @@ function Waiting() {
   );
 }
 
+const UNOPENABLE = "That test could not be opened — it may have been deleted.";
+
 export default function EvaluateForm({
   // Passed in from the server-rendered page rather than fetched here, so the
   // line is in the first paint. A disclosure arriving after hydration leaves a
@@ -205,6 +208,39 @@ export default function EvaluateForm({
   // under a demo render whose failure would land in invisible state.
   const demoCase = params.get("demo");
   const openId = demoCase !== null ? null : params.get("open");
+
+  // One fetch path for a stored test, whether the address named it or the
+  // report's crash card asked for it again (049/#147). `opening` is the id
+  // whose answer may still land; anything else that settles is dropped, so a
+  // reader who moved on is not dragged back. `refreshing` disables the card's
+  // button meanwhile — each redraw opens a paid analyst turn.
+  const opening = useRef<string | null>(null);
+  const [refreshing, setRefreshing] = useState<string | null>(null);
+  function open(testId: string, viaRefresh = false): void {
+    opening.current = testId;
+    // Only the card's own click sets state here: the reopen effect calls this
+    // synchronously, and a render-time setState there would cascade.
+    if (viaRefresh) setRefreshing(testId);
+    const current = () => opening.current === testId;
+    myTest(testId)
+      .then(
+        (result) => {
+          if (current()) show(result, testId);
+        },
+        () => {
+          // Stale — deleted in another tab — or the fetch just failed. Either
+          // way it must say so: a wordless fall to the blank form reads as
+          // data loss. The address keeps the id, so a reload retries.
+          if (current()) fail(UNOPENABLE);
+        },
+      )
+      .finally(() => {
+        if (current()) {
+          opening.current = null;
+          setRefreshing(null);
+        }
+      });
+  }
   // The rail's rows and "New test" are links into this same route, so Next
   // reuses the mounted page and only the params change. The previous id is
   // what tells "never had one" apart from "just lost one" — the second is
@@ -217,21 +253,9 @@ export default function EvaluateForm({
       if (wasOpen) reset();
       return;
     }
-    let live = true;
-    myTest(openId).then(
-      (result) => {
-        if (live) show(result, openId);
-      },
-      () => {
-        // Stale — deleted in another tab — or the fetch just failed. Either
-        // way it must say so: a wordless fall to the blank form reads as data
-        // loss. The address keeps the id, so a reload retries.
-        if (live)
-          fail("That test could not be opened — it may have been deleted.");
-      },
-    );
+    open(openId);
     return () => {
-      live = false;
+      opening.current = null;
     };
     // `show`, `reset` and `fail` are stable for the component's life; the id
     // is the input that means anything.
@@ -241,6 +265,8 @@ export default function EvaluateForm({
   // Leaving the report must also leave its address, or a reload would bring
   // the abandoned report straight back.
   function startOver(): void {
+    opening.current = null;
+    setRefreshing(null);
     if (openId !== null) router.replace("/test");
     reset();
   }
@@ -330,6 +356,7 @@ export default function EvaluateForm({
   // Once a report exists the page stops being a form: the reader wants the
   // answer at the top rather than the inputs they already filled in.
   if (state.phase === "done") {
+    const redraw = () => open(state.testId, true);
     main = (
       <>
         <button
@@ -339,11 +366,22 @@ export default function EvaluateForm({
         >
           Test again
         </button>
-        {/* Keyed, so a report replacing another *without* leaving this phase
-            gets its own analyst. Reopening from the rail below does exactly
-            that, and unkeyed it inherited the previous report's chat thread and
-            transcript — see the epoch's comment in use-evaluate. */}
-        <Report key={state.epoch} result={state.result} testId={state.testId} />
+        {/* Keyed by the epoch: a report replacing another *without* leaving
+            this phase (a reopen from the rail, a redraw after a crash) is a
+            new arrival, so the analyst starts its own thread and a boundary
+            holding an error gives way — see the epoch's comment in
+            use-evaluate. */}
+        <ReportBoundary
+          key={state.epoch}
+          onRefresh={redraw}
+          refreshing={refreshing === state.testId}
+        >
+          <Report
+            result={state.result}
+            testId={state.testId}
+            onRefresh={redraw}
+          />
+        </ReportBoundary>
       </>
     );
   }
