@@ -47,6 +47,13 @@ from app.config import (
 from app.db import check_connection
 from app.demo import DEMO_CASES, ReplayPanel, UnreachableGenerator, load_fixture
 from app.graph import GateDecision, PanelPreview, build_evaluate_graph
+from app.chat_guard import (
+    BlockedMessage,
+    ChatGuard,
+    MistralChatGuard,
+    guard_chat_message,
+    probe_chat_guard,
+)
 from app.llm import (
     OpenRouterEmbedder,
     OpenRouterPanelLLM,
@@ -194,6 +201,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     transaction pooler.
     """
     await _enforce_screener_policy()
+    global _chat_guard
+    _chat_guard = _build_chat_guard()
+    await _enforce_chat_guard_policy(_chat_guard)
     async with AsyncConnectionPool(
         settings.database_url,
         min_size=1,
@@ -229,7 +239,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 "sign-in is not configured (SUPABASE_PROJECT_URL unset): run"
                 " limits count a forwarded address, not an account"
             )
-        yield
+        try:
+            yield
+        finally:
+            if _chat_guard is not None:
+                await _chat_guard.aclose()
 
 
 app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
@@ -330,6 +344,73 @@ def get_screener() -> Screener | None:
         base_url=settings.openrouter_base_url,
         model=settings.screening_model,
     )
+
+
+_chat_guard: MistralChatGuard | None = None
+
+
+def get_chat_guard() -> ChatGuard | None:
+    """The process's one guard, built at boot so its connection is reused —
+    a per-request client would pay a TLS handshake on the 150 ms budget.
+    None when no Mistral key is configured: no pre-flight, same reading as
+    `get_screener`."""
+    return _chat_guard
+
+
+def _build_chat_guard() -> MistralChatGuard | None:
+    key = settings.mistral_api_key
+    if key is None:
+        return None
+    return MistralChatGuard(
+        api_key=key.get_secret_value(),
+        base_url=settings.mistral_base_url,
+        model=settings.moderation_model,
+    )
+
+
+async def preflight_chat(
+    request: ChatRequest, guard: ChatGuard | None = Depends(get_chat_guard)
+) -> None:
+    """Declared above `enforce_turn_limit` in the handler so it runs first:
+    a refused message is refused above the charge and costs nothing."""
+    try:
+        await guard_chat_message(
+            guard, request.message, threshold=settings.chat_guard_threshold
+        )
+    except BlockedMessage as error:
+        # 400, not 422: the message is well-formed; what it says was refused.
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+async def _enforce_chat_guard_policy(guard: ChatGuard | None) -> None:
+    """The screener's boot policy, applied to the chat pre-flight: announce
+    everywhere, refuse where SCREENER_REQUIRED says this deployment must
+    have its controls. One real call per process."""
+    if guard is None:
+        if settings.screener_required:
+            raise RuntimeError(
+                "SCREENER_REQUIRED is set but MISTRAL_API_KEY is not: the chat"
+                " pre-flight cannot run, so this deployment refuses to start"
+            )
+        return
+    outcome = await probe_chat_guard(guard)
+    if outcome == "off":
+        if settings.screener_required:
+            raise RuntimeError(
+                "SCREENER_REQUIRED is set and the moderation model is not"
+                f" available to this account: model={guard.model_name}"
+            )
+        logger.error(
+            "the moderation model is not available to this account — the chat"
+            " pre-flight is off, not degraded: model=%s",
+            guard.model_name,
+        )
+    elif outcome == "outage":
+        logger.warning(
+            "the chat pre-flight did not answer the startup probe (outage, not"
+            " configuration): model=%s — messages pass unscreened until it heals",
+            guard.model_name,
+        )
 
 
 def get_generator() -> RolePlayGenerator:
@@ -1808,6 +1889,7 @@ class ClosingStreamingResponse(StreamingResponse):
 @app.post("/chat")
 async def chat(
     request: ChatRequest,
+    _preflight: None = Depends(preflight_chat),
     _limit: None = Depends(enforce_turn_limit),
     analyst: BaseChatModel = Depends(get_analyst),
     conn: psycopg.AsyncConnection = Depends(get_conn),

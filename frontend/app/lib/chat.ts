@@ -45,9 +45,10 @@ export async function* streamChat(
     }),
   });
   if (!res.ok || res.body === null) {
-    // The 422 guard fires before the stream starts — the last moment the
-    // backend can speak through a status code, and its detail is safe by
-    // construction (fixed sentences, never provider text).
+    // The 422 guard and the 400 pre-flight refusal fire before the stream
+    // starts — the last moment the backend can speak through a status code —
+    // and their detail is safe by construction (fixed sentences, never
+    // provider or classifier text).
     const body = (await res.json().catch(() => null)) as {
       detail?: string;
     } | null;
