@@ -173,3 +173,14 @@ CREATE INDEX IF NOT EXISTS tests_owner_created_idx
 -- them would sell a still-valid token a fresh budget); the account being
 -- gone is what makes them unreadable, and the sweep is what clears them.
 ALTER TABLE votes ADD COLUMN IF NOT EXISTS owner_id text NOT NULL DEFAULT '';
+
+-- `kept` (035/#136): every finished run is stored, because the analyst reads
+-- the server's copy; the save cap decides whether the rail keeps the row. An
+-- unkept row is readable by id under its owner until the on-write sweep takes
+-- it. Rows from before the column are kept: they were only stored by choice.
+ALTER TABLE tests ADD COLUMN IF NOT EXISTS kept boolean NOT NULL DEFAULT true;
+
+-- The sweep's own index: it runs on every completion across all owners, and
+-- the rail's index (owner, created_at) does not serve a scan for unkept rows.
+CREATE INDEX IF NOT EXISTS tests_unkept_created_idx
+    ON tests (created_at) WHERE NOT kept;

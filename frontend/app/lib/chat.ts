@@ -1,7 +1,5 @@
 import { authHeaders } from "./auth";
 
-import type { EvaluateResponse } from "./api";
-
 /** One NDJSON line of the streaming /chat response — the TypeScript mirror of
  *  the backend's ChatStreamEvent union, discriminated the same way so a
  *  `switch (event.type)` narrows each arm to exactly its own fields. */
@@ -14,10 +12,13 @@ export type ErrorEvent = { type: "error"; message: string };
 export type DoneEvent = { type: "done" };
 export type ChatStreamEvent = ToolEvent | TokenEvent | ErrorEvent | DoneEvent;
 
+/** The test travels as its id (035/#136): the server reads its own stored
+ *  copy under the signed-in account, so the analyst's scope is what the run
+ *  wrote, never what this page holds. */
 export type ChatInput = {
   threadId: string;
+  testId: string;
   message: string;
-  result: EvaluateResponse;
 };
 
 /** One turn of the analyst, event by event, while the model is still writing.
@@ -40,8 +41,8 @@ export async function* streamChat(
     headers: { "Content-Type": "application/json", ...(await authHeaders()) },
     body: JSON.stringify({
       thread_id: input.threadId,
+      test_id: input.testId,
       message: input.message,
-      result: input.result,
     }),
   });
   if (!res.ok || res.body === null) {

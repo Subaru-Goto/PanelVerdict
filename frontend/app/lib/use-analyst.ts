@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import type { EvaluateResponse } from "./api";
 import { streamChat } from "./chat";
 
 export type AnalystReply = {
@@ -73,8 +72,10 @@ export type Analyst = {
   send: (message: string) => Promise<void>;
 };
 
+/** `testId` names the stored test the analyst reads (035/#136); undefined
+ *  only where the analyst is locked and nothing is ever sent. */
 export function useAnalyst(
-  result: EvaluateResponse,
+  testId: string | undefined,
   opening?: string,
 ): Analyst {
   // Minted client-side, once per mounted report: the server treats an unseen
@@ -133,7 +134,8 @@ export function useAnalyst(
 
   async function send(message: string): Promise<void> {
     const text = message.trim();
-    if (busyRef.current || text === "") return;
+    // No test to name means a locked analyst: nothing is ever sent.
+    if (busyRef.current || text === "" || testId === undefined) return;
     busyRef.current = true;
     setBusy(true);
 
@@ -189,7 +191,11 @@ export function useAnalyst(
     // a stream can end cleanly at the transport level and still be truncated.
     let finished = false;
     try {
-      for await (const event of streamChat({ threadId, message: text, result })) {
+      for await (const event of streamChat({
+        threadId,
+        testId,
+        message: text,
+      })) {
         if (goneRef.current) break;
         switch (event.type) {
           case "tool":

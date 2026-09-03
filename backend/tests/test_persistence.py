@@ -36,6 +36,7 @@ from app.persistence import (
     retrieve_panel,
     schema_columns,
     store_report,
+    sweep_unkept_reports,
     store_votes,
 )
 from app.schemas import (
@@ -1146,3 +1147,52 @@ async def test_a_report_this_build_cannot_render_is_invisible(conn, aconn):
     # Unrenderable is still the customer's content, so "delete my account" must
     # empty the table rather than the readable part of it.
     assert await delete_reports_of(aconn, owner="person-1") == 1
+
+
+@pytest.mark.anyio
+async def test_an_unkept_report_is_readable_by_its_owner_but_not_in_the_rail(
+    conn, aconn
+):
+    """The analyst reads the server's copy of every report (035/#136), so a run
+    the rail refused under 085's cap is still stored — hidden from the list and
+    the count, readable by id under its owner and nobody else."""
+    await store_report(aconn, test_id="t-kept", owner="p-1", report=make_report())
+    await store_report(
+        aconn, test_id="t-over", owner="p-1", report=make_report(), kept=False
+    )
+
+    listed = await list_reports(aconn, owner="p-1", limit=10)
+    assert [row["test_id"] for row in listed] == ["t-kept"]
+    assert await count_reports(aconn, owner="p-1", excluding="t-none") == 1
+    assert await load_report(aconn, test_id="t-over", owner="p-1") is not None
+    assert await load_report(aconn, test_id="t-over", owner="stranger") is None
+    # Hidden is not exempt: the customer's own delete, and "delete my account",
+    # take unkept rows with them.
+    assert await delete_report(aconn, test_id="t-over", owner="p-1") is True
+    await store_report(
+        aconn, test_id="t-over-2", owner="p-1", report=make_report(), kept=False
+    )
+    assert await delete_reports_of(aconn, owner="p-1") == 2
+
+
+@pytest.mark.anyio
+async def test_the_sweep_takes_only_unkept_reports_past_the_horizon(conn, aconn):
+    """Unkept rows live for a fixed horizon, then the on-write sweep takes them
+    — the spend ledger's own rule. A kept row is the customer's until they
+    delete it, however old; a young unkept row may still have a page open on it."""
+    for test_id, kept in (("old-kept", True), ("old-over", False), ("new-over", False)):
+        await store_report(
+            aconn, test_id=test_id, owner="p-1", report=make_report(), kept=kept
+        )
+    await aconn.execute(
+        "UPDATE tests SET created_at = now() - interval '25 hours'"
+        " WHERE test_id IN ('old-kept', 'old-over')"
+    )
+    await aconn.commit()
+
+    assert await sweep_unkept_reports(aconn, older_than_hours=24) == 1
+
+    remaining = await (
+        await aconn.execute("SELECT test_id FROM tests ORDER BY test_id")
+    ).fetchall()
+    assert remaining == [("new-over",), ("old-kept",)]

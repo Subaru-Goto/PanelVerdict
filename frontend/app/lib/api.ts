@@ -193,7 +193,9 @@ export type PanelComposition = {
  *  a resume pauses again when the reading was adjusted. */
 export type EvaluateOutcome =
   | { status: "paused"; thread_id: string; preview: PanelPreview }
-  | ({ status: "complete" } & EvaluateResponse);
+  /** `thread_id` is the run's own id and the stored test's: what the page
+   *  names to the analyst and to the recovery read (035/#136). */
+  | ({ status: "complete"; thread_id: string } & EvaluateResponse);
 
 /** The parts of a reading a human may edit at the gate.
  *

@@ -191,7 +191,11 @@ describe("re-previewing while a run is paused", () => {
 describe("the gate fires once per audience", () => {
   it("skips the gate on a later run with the reading unchanged", async () => {
     evaluateMock.mockResolvedValueOnce(PAUSED);
-    resumeMock.mockResolvedValue({ ...RESPONSE, status: "complete" });
+    resumeMock.mockResolvedValue({
+      ...RESPONSE,
+      status: "complete",
+      thread_id: "t-run",
+    });
     render(<EvaluateForm tracing={false} />);
     await fillAndSubmit();
     await act(async () => {
@@ -200,7 +204,11 @@ describe("the gate fires once per audience", () => {
     await screen.findByRole("button", { name: /test again/i });
 
     // Same audience, new headline pair: the approval already given rides along.
-    evaluateMock.mockResolvedValueOnce({ ...RESPONSE, status: "complete" });
+    evaluateMock.mockResolvedValueOnce({
+      ...RESPONSE,
+      status: "complete",
+      thread_id: "t-run",
+    });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /test again/i }));
     });
@@ -221,7 +229,11 @@ describe("the gate fires once per audience", () => {
 
   it("echoes the accepted reading under the form, and Change re-arms the gate", async () => {
     evaluateMock.mockResolvedValue(PAUSED);
-    resumeMock.mockResolvedValue({ ...RESPONSE, status: "complete" });
+    resumeMock.mockResolvedValue({
+      ...RESPONSE,
+      status: "complete",
+      thread_id: "t-run",
+    });
     render(<EvaluateForm tracing={false} />);
     await fillAndSubmit();
     await act(async () => {
@@ -251,7 +263,11 @@ describe("the gate fires once per audience", () => {
 
   it("gates again when a control changed since the approval", async () => {
     evaluateMock.mockResolvedValue(PAUSED);
-    resumeMock.mockResolvedValue({ ...RESPONSE, status: "complete" });
+    resumeMock.mockResolvedValue({
+      ...RESPONSE,
+      status: "complete",
+      thread_id: "t-run",
+    });
     render(<EvaluateForm tracing={false} />);
     await fillAndSubmit();
     await act(async () => {
@@ -278,7 +294,11 @@ describe("the gate fires once per audience", () => {
     // honest translation is no words at all — the run is exactly what was
     // approved, and the validator has nothing to refuse.
     evaluateMock.mockResolvedValueOnce(PAUSED);
-    resumeMock.mockResolvedValue({ ...RESPONSE, status: "complete" });
+    resumeMock.mockResolvedValue({
+      ...RESPONSE,
+      status: "complete",
+      thread_id: "t-run",
+    });
     render(<EvaluateForm tracing={false} />);
     await fillAndSubmit();
     fireEvent.change(screen.getByLabelText(/each panelist will act/i), {
@@ -292,7 +312,11 @@ describe("the gate fires once per audience", () => {
       fireEvent.click(screen.getByRole("button", { name: /test again/i }));
     });
 
-    evaluateMock.mockResolvedValueOnce({ ...RESPONSE, status: "complete" });
+    evaluateMock.mockResolvedValueOnce({
+      ...RESPONSE,
+      status: "complete",
+      thread_id: "t-run",
+    });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /evaluate/i }));
     });
@@ -309,7 +333,11 @@ describe("the gate fires once per audience", () => {
     // the gate, and skipping past it would orphan the thread and buy a second
     // preview for the same test.
     evaluateMock.mockResolvedValue(PAUSED);
-    resumeMock.mockResolvedValueOnce({ ...RESPONSE, status: "complete" });
+    resumeMock.mockResolvedValueOnce({
+      ...RESPONSE,
+      status: "complete",
+      thread_id: "t-run",
+    });
     render(<EvaluateForm tracing={false} />);
     await fillAndSubmit();
     await act(async () => {
@@ -390,7 +418,11 @@ describe("the waiting screen while votes are bought", () => {
 
   it("shows the stream for a skip run too, polling the id it minted", async () => {
     evaluateMock.mockResolvedValueOnce(PAUSED);
-    resumeMock.mockResolvedValue({ ...RESPONSE, status: "complete" });
+    resumeMock.mockResolvedValue({
+      ...RESPONSE,
+      status: "complete",
+      thread_id: "t-run",
+    });
     render(<EvaluateForm tracing={false} />);
     await fillAndSubmit();
     await act(async () => {

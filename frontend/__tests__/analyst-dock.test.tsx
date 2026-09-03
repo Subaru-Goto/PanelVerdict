@@ -12,9 +12,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import AnalystDock from "../app/components/analyst-dock";
 import { ANALYST_DISCLOSURE } from "../app/lib/disclosure";
 import { OPENING_REQUEST, useAnalyst } from "../app/lib/use-analyst";
-import { makeResponse, manualStream } from "./fixtures";
+import { manualStream } from "./fixtures";
 
-const RESULT = makeResponse();
+// The analyst reads the stored test by id (035/#136); the id is all it needs.
+const TEST_ID = "t-dock";
 
 /** Every render goes through StrictMode, because the dev server always does
  *  (App Router turns it on by default) and its extra mount→cleanup→mount is a
@@ -24,7 +25,7 @@ const RESULT = makeResponse();
  *  the dock share one thread. This harness stands in for that owner, without an
  *  opening message: these tests are about a reader starting the conversation. */
 function DockHost() {
-  return <AnalystDock analyst={useAnalyst(RESULT)} />;
+  return <AnalystDock analyst={useAnalyst(TEST_ID)} />;
 }
 
 const renderDock = () => {
@@ -124,7 +125,7 @@ describe("the dock is a real dialog", () => {
     // there is nothing behind it: the reader lands on `body`, hears no dialog
     // announced, and has to tab from the top of the page.
     function BusyHost() {
-      return <AnalystDock analyst={useAnalyst(RESULT, OPENING_REQUEST)} />;
+      return <AnalystDock analyst={useAnalyst(TEST_ID, OPENING_REQUEST)} />;
     }
     mockFetch(manualStream().response);
     render(<BusyHost />, { wrapper: StrictMode });

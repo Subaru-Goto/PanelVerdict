@@ -305,6 +305,7 @@ async def _run(
             async for line in stream_analyst(
                 model=model,
                 result=result or _result(),
+                owner="acct",
                 thread_id=thread_id,
                 message=message,
                 checkpointer=checkpointer or InMemorySaver(),
@@ -456,6 +457,7 @@ class TestAnalystAgent:
                 async for line in stream_analyst(
                     model=model,
                     result=_result(),
+                    owner="acct",
                     thread_id="t-direct",
                     message="What does a credible interval mean?",
                     checkpointer=InMemorySaver(),

@@ -220,7 +220,7 @@ export default function EvaluateForm({
     let live = true;
     myTest(openId).then(
       (result) => {
-        if (live) show(result);
+        if (live) show(result, openId);
       },
       () => {
         // Stale — deleted in another tab — or the fetch just failed. Either
@@ -343,7 +343,7 @@ export default function EvaluateForm({
             gets its own analyst. Reopening from the rail below does exactly
             that, and unkeyed it inherited the previous report's chat thread and
             transcript — see the epoch's comment in use-evaluate. */}
-        <Report key={state.epoch} result={state.result} />
+        <Report key={state.epoch} result={state.result} testId={state.testId} />
       </>
     );
   }

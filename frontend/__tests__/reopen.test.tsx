@@ -88,7 +88,11 @@ describe("reopening a stored test while a report is on screen", () => {
     // survive — the reopened report inherits the previous report's chat thread
     // and its transcript, and its own opening summary is never even asked for,
     // because `openedRef` is already true.
-    evaluateMock.mockResolvedValue({ ...makeResponse(), status: "complete" });
+    evaluateMock.mockResolvedValue({
+      ...makeResponse(),
+      status: "complete",
+      thread_id: "t-run",
+    });
     myTestMock.mockResolvedValue(OTHER);
 
     const { rerender } = render(<EvaluateForm tracing={false} />);
@@ -102,7 +106,12 @@ describe("reopening a stored test while a report is on screen", () => {
     fireEvent.click(screen.getByRole("button", { name: /evaluate/i }));
 
     await waitFor(() => expect(streamChatMock).toHaveBeenCalledTimes(1));
-    const first = streamChatMock.mock.calls[0][0] as { threadId: string };
+    const first = streamChatMock.mock.calls[0][0] as {
+      threadId: string;
+      testId: string;
+    };
+    // The analyst is told which test to read, not handed the report (035/#136).
+    expect(first.testId).toBe("t-run");
 
     // The rail's link landed: same page, new address.
     search = new URLSearchParams("open=t-older");
@@ -113,10 +122,10 @@ describe("reopening a stored test while a report is on screen", () => {
     await waitFor(() => expect(streamChatMock).toHaveBeenCalledTimes(2));
     const second = streamChatMock.mock.calls[1][0] as {
       threadId: string;
-      result: { variants: Record<string, string> };
+      testId: string;
     };
     expect(second.threadId).not.toBe(first.threadId);
-    expect(second.result.variants).toEqual(OTHER.variants);
+    expect(second.testId).toBe("t-older");
   });
 
   it("New test from a reopened report clears it back to the form", async () => {

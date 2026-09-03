@@ -50,6 +50,7 @@ import EvaluateForm from "../app/components/evaluate-form";
 const DEMO = {
   ...makeResponse(),
   status: "complete",
+  thread_id: "t-run",
   step_seconds: { select: 0.09, vote: 45.3, assemble: 0.02 },
   captured_at: "2026-09-01",
 };
