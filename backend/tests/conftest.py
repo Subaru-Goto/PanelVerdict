@@ -31,6 +31,7 @@ from app.main import (  # noqa: E402
     app,
     get_account_deleter,
     get_analyst,
+    get_chat_guard,
     get_checkpointer,
     get_conn,
     get_embedder,
@@ -184,6 +185,7 @@ def client(conn, pg_url, stub_llm, monkeypatch):
         "chat_turns_per_caller_per_day",
         "global_daily_cap_usd",
         "saved_tests_per_user",
+        "mistral_api_key",
     ):
         monkeypatch.setattr(settings, field, Settings.model_fields[field].default)
 
@@ -227,6 +229,8 @@ def client(conn, pg_url, stub_llm, monkeypatch):
     app.dependency_overrides[get_embedder] = lambda: FixedEmbedder(pointing(0))
     # The screener is a model too. None means 'advisory checks do not run'.
     app.dependency_overrides[get_screener] = lambda: None
+    # So is the chat pre-flight: None means no classifier call.
+    app.dependency_overrides[get_chat_guard] = lambda: None
     # The generator is a paid model call and, unlike the screener, is not
     # optional — a run cannot fall back to "no generator" without putting
     # unclassified text into a panelist identity. So it is stubbed, not disabled.

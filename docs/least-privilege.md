@@ -69,28 +69,25 @@ attack surface a stranger controls:
    prompt without passing the rewriter — the human's edit goes in as they left it,
    which is the point of the gate. So it is classified again on resume, by the
    same rules, before a single vote is bought.
-6. **The chat message** ([091 · #196](https://github.com/Subaru-Goto/PanelVerdict/issues/196),
-   decided 2026-09-02). The reader's question to the analyst — size-capped at
-   `MAX_CHAT_MESSAGE_CHARS`, **not screened**. Decided rather than inherited: a
-   screener call on every turn would double the turn's model calls and delay its
-   first token, for an injection nobody has observed on a channel where the
-   analyst's tools only read the caller's own report — two of them buy an
-   embedding per execution, the cheapest call on the account, bounded by the
-   run and edge caps rather than by the call budget, which counts model calls
-   (`app/analyst.py`, `_BudgetEndsTheTurn`). What bounds the channel today is the
-   prompt's topic rule, measured at 47/48 on held-out questions
-   ([`research/topic-boundary-check.md`](research/topic-boundary-check.md)).
-   [120 · #279](https://github.com/Subaru-Goto/PanelVerdict/issues/279) holds the deferral;
-   its trigger — a held-out rerun below that baseline, confirmed once, or an
-   off-topic answer or injection seen in production — promotes
-   the screener onto this message with a topic verdict added, one call for both.
-   Measured 2026-09-03 ([`research/moderation-check.md`](research/moderation-check.md)):
-   a free hosted classifier catches 11 of 18 overt injection probes at a 0.5
-   *Jailbreaking* threshold in ~150 ms, with one flag on 160 ordinary texts (that
-   flag itself an injection) — but the same clause behind ordinary copy mostly
-   passes, and disguised steering scores near zero. A cheaper, partial *how* for
-   this message when the trigger fires; never a replacement for the screener on
-   the headlines or the audience.
+6. **The chat message** ([120 · #279](https://github.com/Subaru-Goto/PanelVerdict/issues/279),
+   decided 2026-09-03; the deferral it replaces is
+   [091 · #196](https://github.com/Subaru-Goto/PanelVerdict/issues/196)). The
+   reader's question to the analyst — size-capped at `MAX_CHAT_MESSAGE_CHARS`,
+   then **one classifier call before the analyst sees it** (`app/chat_guard.py`):
+   Mistral's moderation model, *Jailbreaking* score only, refused at 0.5 with a
+   fixed sentence and **above the charge**, so a blocked message costs nothing.
+   Measured before adoption ([`research/moderation-check.md`](research/moderation-check.md)):
+   11 of 18 overt injection probes caught, one flag on 160 ordinary texts (itself
+   an injection), ~150 ms. What it misses is stated there too: the same clause
+   behind an ordinary question mostly passes, disguised steering scores near
+   zero, and topic is not its job — the prompt's topic rule (47/48 held out,
+   [`research/topic-boundary-check.md`](research/topic-boundary-check.md)) and
+   the observer of [121 · #281](https://github.com/Subaru-Goto/PanelVerdict/issues/281)
+   carry those. A second vendor sees the question, under a key nothing else
+   uses; the analyst's tools still only read the caller's own report. The
+   call sits behind sign-in and above the turn caps: an unsigned request is a
+   401 before any classifier call, a signed-in caller past their cap is scored
+   and then refused — the price of refusing above the charge.
 
 These divide into **two kinds with different trust levels**, and the division is
 the load-bearing distinction in this document:
@@ -141,7 +138,9 @@ other ([100/#209](https://github.com/Subaru-Goto/PanelVerdict/issues/209), decid
 
 **Judged text fails open.** `screen_inputs` lets an unreachable screener pass the
 run (`app/screening.py`: an unreachable screener returns quietly, a detection
-raises). This holds because the screener was never the only wall on this channel.
+raises), and `guard_chat_message` reads the same way for the chat pre-flight
+(`app/chat_guard.py`: an outage is one WARNING line and the turn proceeds; a
+verdict is a log field, never the text). This holds because the screener was never the only wall on this channel.
 During an outage there still stand, none of them able to fail:
 
 - the **nonce fence** — a headline cannot impersonate the scaffold;
@@ -487,7 +486,10 @@ lifespan now makes one real screening call at startup: a model that is off —
 unavailable to this account (401/403/404), or answering without honouring the
 verdict schema (`UnusableAnswer`) — is announced as *the control is off*, and
 where `SCREENER_REQUIRED` is set (the public deployment) it refuses the boot,
-which a deploy pipeline cannot miss. Outages never refuse: they heal, and
+which a deploy pipeline cannot miss. The chat pre-flight has the same boot
+probe and the same reading (`app/chat_guard.py`: 401/403/404 or a reply
+without a *Jailbreaking* score is *off*; `SCREENER_REQUIRED` refuses the boot
+for a missing `MISTRAL_API_KEY` too). Outages never refuse: they heal, and
 100/#209 rejected trading uptime against vendor availability. Two deliberate
 absences: 402 classifies as an outage, because credit heals by top-up and while
 it persists no model call works at all — there is nothing for an unscreened

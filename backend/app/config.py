@@ -220,12 +220,19 @@ class Settings(BaseSettings):
     supabase_service_key: SecretStr | None = None
     openrouter_api_key: SecretStr | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    # Mistral's moderation classifier, measured for the chat pre-flight on
-    # 120/#279 (`experiments/moderation_check.py`). Nothing in the app calls it.
-    # None = the measurement refuses to run rather than send text nowhere.
+    # Mistral's moderation classifier: the chat pre-flight (120/#279,
+    # `app/chat_guard.py`), measured in `experiments/moderation_check.py`.
+    # None = no pre-flight — the same reading as a missing OpenRouter key for
+    # the screener; SCREENER_REQUIRED refuses the boot in that case too.
     mistral_api_key: SecretStr | None = None
     mistral_base_url: str = "https://api.mistral.ai/v1"
     moderation_model: str = "mistral-moderation-2603"
+    # Jailbreaking score at or above which a chat message is refused. Read off
+    # 22 attacks and 160 ordinary texts (moderation-check.md, 2026-09-03): 11 of
+    # 18 overt injections caught, one flag on ordinary text, itself an
+    # injection. Mistral's own flag sits near 0.9 and catches 5. A field so it
+    # can be re-read against real questions once there are any.
+    chat_guard_threshold: float = 0.5
     profile: ProfileName = "dev"
     # Plain Luna, not `-pro`: `TARGET_REASONING_EFFORT = "low"` is a measured setting
     # (targeting-call-effort.md), and `-pro` is the same model served with reasoning mode
