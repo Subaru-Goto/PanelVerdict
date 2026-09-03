@@ -13,11 +13,19 @@ import Shell from "../app/components/shell";
 import { AI_SYSTEM_DISCLOSURE } from "../app/lib/disclosure";
 import { makeResponse } from "./fixtures";
 
-const { evaluateMock, resumeMock, myTestsMock } = vi.hoisted(() => ({
-  evaluateMock: vi.fn(),
-  resumeMock: vi.fn(),
-  myTestsMock: vi.fn(() => Promise.resolve({ tests: [], next_cursor: null })),
-}));
+const { evaluateMock, resumeMock, myTestsMock, accountFiguresMock } =
+  vi.hoisted(() => ({
+    evaluateMock: vi.fn(),
+    resumeMock: vi.fn(),
+    myTestsMock: vi.fn(() => Promise.resolve({ tests: [], next_cursor: null })),
+    accountFiguresMock: vi.fn(() =>
+      Promise.resolve({
+        runs_remaining: 3,
+        saved_tests: 0,
+        saved_tests_cap: 10,
+      }),
+    ),
+  }));
 
 // The wizard reads `?open=` from its address and clears it on reset
 // (119/#257); none of these tests arrive with one.
@@ -41,10 +49,10 @@ vi.mock("../app/lib/api", () => ({
   // The waiting screen's poll (021/#126): never answers here — these tests
   // are the form's, and the count has its own file.
   runProgress: () => new Promise(() => {}),
-  remainingRuns: () => Promise.resolve(3),
+  accountFigures: accountFiguresMock,
   myTest: () => Promise.resolve(RESPONSE),
   forgetTest: () => Promise.resolve(),
-  onRunsChanged: () => () => {},
+  onAccountChanged: () => () => {},
 }));
 
 // Signed in, so the rail is live in these tests: the page composes the form
@@ -70,6 +78,7 @@ afterEach(() => {
   evaluateMock.mockReset();
   resumeMock.mockReset();
   myTestsMock.mockClear();
+  accountFiguresMock.mockClear();
 });
 
 async function fillAndSubmit() {
@@ -109,6 +118,32 @@ describe("EvaluateForm", () => {
     render(<EvaluateForm tracing />);
 
     expect(screen.getByText(/traced for debugging/i)).toBeTruthy();
+  });
+
+  it("warns of a full rail before the run, and still lets it run", async () => {
+    // Timing only (124/#291): the cap and the post-run warning stay; the
+    // form now says it before the money goes. No new rule, so no disabling.
+    accountFiguresMock.mockResolvedValueOnce({
+      runs_remaining: 3,
+      saved_tests: 10,
+      saved_tests_cap: 10,
+    });
+    await act(async () => {
+      render(<EvaluateForm />);
+    });
+
+    expect(screen.getByText(/rail is full/i)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/headline a/i), {
+      target: { value: "Save 50% today" },
+    });
+    fireEvent.change(screen.getByLabelText(/headline b/i), {
+      target: { value: "Members save half price this week" },
+    });
+    expect(
+      screen
+        .getByRole("button", { name: /evaluate/i })
+        .hasAttribute("disabled"),
+    ).toBe(false);
   });
 
   it("runs on headlines alone — the audience is optional", () => {

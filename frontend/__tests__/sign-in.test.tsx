@@ -20,16 +20,16 @@ const {
   signOutMock,
   availableMock,
   onAuthChangeMock,
-  remainingRunsMock,
-  onRunsChangedMock,
+  accountFiguresMock,
+  onAccountChangedMock,
   displayNameMock,
 } = vi.hoisted(() => ({
   mountButtonMock: vi.fn(),
   signOutMock: vi.fn(),
   availableMock: vi.fn(),
   onAuthChangeMock: vi.fn(),
-  remainingRunsMock: vi.fn(),
-  onRunsChangedMock: vi.fn(),
+  accountFiguresMock: vi.fn(),
+  onAccountChangedMock: vi.fn(),
   displayNameMock: vi.fn(),
 }));
 
@@ -42,8 +42,8 @@ vi.mock("../app/lib/auth", () => ({
 }));
 
 vi.mock("../app/lib/api", () => ({
-  remainingRuns: remainingRunsMock,
-  onRunsChanged: onRunsChangedMock,
+  accountFigures: accountFiguresMock,
+  onAccountChanged: onAccountChangedMock,
 }));
 
 afterEach(() => {
@@ -60,12 +60,16 @@ function withSession(signedIn: boolean) {
     listener(signedIn);
     return () => {};
   });
-  onRunsChangedMock.mockImplementation(() => () => {});
+  onAccountChangedMock.mockImplementation(() => () => {});
 }
 
 function stubRuns(remaining: number | null) {
   // null is what the API layer reports when the count could not be read.
-  remainingRunsMock.mockResolvedValue(remaining);
+  accountFiguresMock.mockResolvedValue(
+    remaining === null
+      ? null
+      : { runs_remaining: remaining, saved_tests: 0, saved_tests_cap: 10 },
+  );
 }
 
 function stubName(name: string | null) {
@@ -85,7 +89,7 @@ describe("the sign-in control", () => {
     // that cannot work would be worse than offering nothing.
     availableMock.mockReturnValue(false);
     onAuthChangeMock.mockReturnValue(() => {});
-    onRunsChangedMock.mockReturnValue(() => {});
+    onAccountChangedMock.mockReturnValue(() => {});
     stubRuns(3);
 
     let container!: HTMLElement;
@@ -126,7 +130,7 @@ describe("the sign-in control", () => {
 
     await renderSettled();
 
-    expect(remainingRunsMock).not.toHaveBeenCalled();
+    expect(accountFiguresMock).not.toHaveBeenCalled();
   });
 
   it("shows no half-dressed pill while the name is still being read", async () => {
@@ -250,6 +254,6 @@ describe("the sign-in control", () => {
     await renderSettled();
 
     expect(screen.queryByText(/runs left/i)).toBeNull();
-    expect(remainingRunsMock).not.toHaveBeenCalled();
+    expect(accountFiguresMock).not.toHaveBeenCalled();
   });
 });

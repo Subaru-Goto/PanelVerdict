@@ -29,7 +29,8 @@ const OTHER = {
 };
 
 vi.mock("../app/lib/api", () => ({
-  remainingRuns: () => Promise.resolve(3),
+  accountFigures: () =>
+    Promise.resolve({ runs_remaining: 3, saved_tests: 0, saved_tests_cap: 10 }),
   evaluate: (input: unknown) => evaluateMock(input),
   resumeEvaluate: () => Promise.reject(new Error("not used")),
   LOCALES: ["US", "JP", "DE"],
@@ -50,7 +51,7 @@ vi.mock("../app/lib/api", () => ({
     }),
   myTest: (id: string) => myTestMock(id),
   forgetTest: () => Promise.resolve(),
-  onRunsChanged: () => () => {},
+  onAccountChanged: () => () => {},
 }));
 
 vi.mock("../app/lib/auth", () => ({

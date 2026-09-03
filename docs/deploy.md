@@ -264,4 +264,6 @@ Once step 6 is done, four more:
   guards against.
 - the same call with a token from a *different* Supabase project → `401`
 - signing in on the Vercel page never navigates away — the typed copy survives it
-- `GET /api/me` reports `runs_remaining` and it drops by one after a run
+- `GET /api/me` reports `runs_remaining` and it drops by one after a run; it also
+  reports `saved_tests` against `saved_tests_cap`, and `saved_tests` drops by one
+  after a delete in the rail (the form's full-rail notice reads these two)

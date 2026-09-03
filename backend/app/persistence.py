@@ -405,18 +405,21 @@ async def store_report(
 
 
 async def count_reports(
-    conn: psycopg.AsyncConnection, *, owner: str, excluding: str
+    conn: psycopg.AsyncConnection, *, owner: str, excluding: str | None = None
 ) -> int:
     """How many tests this account keeps in its rail, not counting `excluding`.
     Unkept rows (035/#136) do not count.
 
     The exclusion keeps the save cap honest on a re-completed run: a test
     already kept must never be told "history full" — its row exists, so
-    storing again is the idempotent no-op it always was (085/#176).
+    storing again is the idempotent no-op it always was (085/#176). `/me`
+    passes nothing: the form's full-rail notice (124/#291) wants the rail as
+    it stands.
     """
     row = await (
         await conn.execute(
-            "SELECT count(*) FROM tests WHERE owner = %s AND kept AND test_id <> %s",
+            "SELECT count(*) FROM tests"
+            " WHERE owner = %s AND kept AND test_id IS DISTINCT FROM %s",
             (owner, excluding),
         )
     ).fetchone()

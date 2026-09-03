@@ -38,10 +38,11 @@ vi.mock("../app/lib/api", () => ({
   MIN_PANEL_AGE: 18,
   MAX_PANEL_AGE: 100,
   myTests: () => Promise.resolve({ tests: [], next_cursor: null }),
-  remainingRuns: () => Promise.resolve(3),
+  accountFigures: () =>
+    Promise.resolve({ runs_remaining: 3, saved_tests: 0, saved_tests_cap: 10 }),
   myTest: () => Promise.reject(new Error("not used")),
   forgetTest: () => Promise.resolve(),
-  onRunsChanged: () => () => {},
+  onAccountChanged: () => () => {},
 }));
 
 vi.mock("../app/lib/auth", () => ({

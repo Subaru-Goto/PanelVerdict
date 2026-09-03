@@ -9,8 +9,9 @@ let signedIn: boolean | null = null;
 let available = true;
 
 vi.mock("../app/lib/api", () => ({
-  remainingRuns: () => Promise.resolve(3),
-  onRunsChanged: () => () => {},
+  accountFigures: () =>
+    Promise.resolve({ runs_remaining: 3, saved_tests: 0, saved_tests_cap: 10 }),
+  onAccountChanged: () => () => {},
   evaluate: () => Promise.reject(new Error("not used")),
   resumeEvaluate: () => Promise.reject(new Error("not used")),
   myTest: () => Promise.reject(new Error("not used")),

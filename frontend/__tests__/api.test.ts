@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { evaluate } from "../app/lib/api";
+import { evaluate, forgetTest, onAccountChanged } from "../app/lib/api";
 import { makeResponse } from "./fixtures";
 
 const RESPONSE = makeResponse();
@@ -70,9 +70,9 @@ describe("evaluate", () => {
         "runs are saved and resume free.",
     });
 
-    await expect(
-      evaluate({ headlineA: "a", headlineB: "b" }),
-    ).rejects.toThrow(/Top up and re-run/);
+    await expect(evaluate({ headlineA: "a", headlineB: "b" })).rejects.toThrow(
+      /Top up and re-run/,
+    );
   });
 
   it("falls back to the status line when detail is not a string", async () => {
@@ -82,8 +82,40 @@ describe("evaluate", () => {
       detail: [{ loc: ["body", "headline_a"], msg: "required" }],
     });
 
-    await expect(
-      evaluate({ headlineA: "a", headlineB: "b" }),
-    ).rejects.toThrow("API responded 422");
+    await expect(evaluate({ headlineA: "a", headlineB: "b" })).rejects.toThrow(
+      "API responded 422",
+    );
+  });
+});
+
+describe("forgetTest", () => {
+  it("announces that the account's figures changed once the row is gone", async () => {
+    // The form's full-rail notice re-reads /me on this signal (124/#291): a
+    // reader who deletes to make room should see the notice go, not linger.
+    // A 204 carries no body, so the shared stub (which serialises one) is
+    // the wrong shape here.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
+    );
+    const listener = vi.fn();
+    const stop = onAccountChanged(listener);
+
+    await forgetTest("t-1");
+    stop();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith("delete");
+  });
+
+  it("does not announce a delete the server refused", async () => {
+    mockFetch(500, {});
+    const listener = vi.fn();
+    const stop = onAccountChanged(listener);
+
+    await expect(forgetTest("t-1")).rejects.toThrow();
+    stop();
+
+    expect(listener).not.toHaveBeenCalled();
   });
 });
