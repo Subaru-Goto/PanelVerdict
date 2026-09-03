@@ -3988,8 +3988,9 @@ class TestChatPreflight:
 
     @staticmethod
     def _ledger_rows(conn) -> int:
+        # Every row: a turn writes two charges and a spend, and none may exist.
         with conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM request_ledger WHERE endpoint = '/chat'")
+            cur.execute("SELECT count(*) FROM request_ledger")
             return cur.fetchone()[0]
 
     def test_a_flagged_message_is_a_400_with_the_fixed_sentence_and_costs_nothing(
@@ -4021,7 +4022,41 @@ class TestChatPreflight:
         response = client.post("/chat", json=self._body())
 
         assert response.status_code == 200
-        assert self._ledger_rows(conn) == 1
+        assert self._ledger_rows(conn) > 0
+
+    def test_the_threshold_is_the_settings_field_not_a_literal(
+        self, client, monkeypatch
+    ) -> None:
+        class Warm:
+            model_name = "fake-guard"
+
+            async def score(self, text: str) -> float:
+                return 0.6
+
+        app.dependency_overrides[get_chat_guard] = lambda: Warm()
+        monkeypatch.setattr(settings, "chat_guard_threshold", 0.5)
+        assert client.post("/chat", json=self._body()).status_code == 400
+        monkeypatch.setattr(settings, "chat_guard_threshold", 0.7)
+        assert client.post("/chat", json=self._body()).status_code == 200
+
+    def test_an_unsigned_request_is_refused_before_any_classifier_call(
+        self, signed_in
+    ) -> None:
+        # The pre-flight sits above the charge, so it must sit behind sign-in
+        # too: otherwise anyone could spend the vendor's quota and probe the
+        # classifier for free.
+        class Counting:
+            model_name = "fake-guard"
+
+            async def score(self, text: str) -> float:
+                raise AssertionError(
+                    "a signed-out visitor must cost no classifier call"
+                )
+
+        app.dependency_overrides[get_chat_guard] = lambda: Counting()
+        response = signed_in.post("/chat", json=self._body())
+
+        assert response.status_code == 401
 
     def test_a_clean_message_is_scored_once_and_streams(self, client) -> None:
         seen: list[str] = []

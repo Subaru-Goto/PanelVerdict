@@ -145,6 +145,10 @@ names the host exactly when the check goes red.
    type: **Free**.
 3. Environment variables:
    - `OPENROUTER_API_KEY`
+   - `MISTRAL_API_KEY` — the chat pre-flight's classifier (120/#279). With
+     `SCREENER_REQUIRED=true` the boot refuses without it, exactly as it does
+     without a screening model; the key is free at Mistral's listed price and
+     used by nothing else
    - `API_SHARED_SECRET` — mint one (`openssl rand -hex 32`); the same value goes to
      Vercel in step 3. Without it the backend refuses every paid request (045/#143)
    - `POSTGRES_USER` (`postgres.<project-ref>`), `POSTGRES_PASSWORD`, `POSTGRES_DB`,
@@ -154,8 +158,9 @@ names the host exactly when the check goes red.
      untrusted-input path, and this is the deployment it protects: a screening
      model the startup probe finds unavailable fails the boot here instead of
      serving without the control (072/#163). Priced and scoped honestly: the
-     probe is one paid classifier call per boot and can hold a cold start for
-     up to `SCREEN_TIMEOUT_SECONDS` (10s) inside the ~30s wake the keep-warm
+     probes are one paid screening call and one free moderation call per boot
+     and can hold a cold start for up to `SCREEN_TIMEOUT_SECONDS` (10s) plus
+     `GUARD_TIMEOUT_SECONDS` (2s) inside the ~30s wake the keep-warm
      ping already budgets for; and it asserts the control at the boot instant
      only — a key or model revoked mid-life still fails open per request,
      one ERROR log line each, until the next boot

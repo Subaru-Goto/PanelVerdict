@@ -11,9 +11,13 @@ verdict, never the text.
 from __future__ import annotations
 
 import logging
-from typing import Literal, Protocol
+from typing import Protocol
 
 import httpx
+
+# One reading of "off" for both controls (072/#163): these statuses say the key
+# or model is wrong for this account; anything else is an outage.
+from app.screening import _CONFIGURATION_STATUSES, ProbeOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -21,16 +25,14 @@ logger = logging.getLogger(__name__)
 # Financial fired on a savings-account question in the measurement, and a
 # general category would block a reader's own subject.
 DECISION_CATEGORY = "jailbreaking"
-# ~8× the slowest single request measured (254 ms, a message at the chat cap;
-# moderation-check.md). A pre-flight that is still waiting at 2 s fails open.
+# The slowest single request measured was 254 ms, a message at the chat cap
+# (moderation-check.md); 2 s is that rounded up to a whole second with room
+# for a tail the six timed requests could not show. Still waiting then, the
+# pre-flight fails open.
 GUARD_TIMEOUT_SECONDS = 2.0
 MODERATE_PATH = "/moderations"
-# Same reading as the screener's: these say the key or model is wrong for
-# this account (off); anything else is an outage.
-_CONFIGURATION_STATUSES = frozenset({401, 403, 404})
-_PROBE_TEXT = "Why did the second headline win?"
-
-ProbeOutcome = Literal["runs", "off", "outage"]
+# Chat case r01 of the measured corpus: scored 0.0004 (moderation-check.md).
+_PROBE_TEXT = "What does the tie zone mean in my report?"
 
 
 class ChatGuard(Protocol):
@@ -66,14 +68,14 @@ class MistralChatGuard:
         [result] = response.json()["results"]
         scores = result["category_scores"]
         if DECISION_CATEGORY not in scores:
-            raise UnusableAnswer(f"no {DECISION_CATEGORY} score in the reply")
+            raise NoDecisionScore(f"no {DECISION_CATEGORY} score in the reply")
         return float(scores[DECISION_CATEGORY])
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
 
-class UnusableAnswer(RuntimeError):
+class NoDecisionScore(RuntimeError):
     """The model answered, but not with the score this control reads — the
     control is off, not degraded."""
 
@@ -104,7 +106,10 @@ async def guard_chat_message(
         score = await guard.score(text)
     except Exception as error:
         # Fail open, type name only: the error may carry the request body.
-        logger.warning(
+        # ERROR when the key or model is wrong for this account, WARNING for
+        # an outage — the screener's distinction: a revoked key is not a blip.
+        logger.log(
+            logging.ERROR if _classify(error) == "off" else logging.WARNING,
             "chat pre-flight did not run (%s): model=%s",
             type(error).__name__,
             guard.model_name,
@@ -123,8 +128,8 @@ async def guard_chat_message(
         raise BlockedMessage()
 
 
-def classify(error: Exception) -> ProbeOutcome:
-    if isinstance(error, UnusableAnswer):
+def _classify(error: Exception) -> ProbeOutcome:
+    if isinstance(error, NoDecisionScore):
         return "off"
     if isinstance(error, httpx.HTTPStatusError):
         if error.response.status_code in _CONFIGURATION_STATUSES:
@@ -138,5 +143,5 @@ async def probe_chat_guard(guard: ChatGuard) -> ProbeOutcome:
     try:
         await guard.score(_PROBE_TEXT)
     except Exception as error:
-        return classify(error)
+        return _classify(error)
     return "runs"
