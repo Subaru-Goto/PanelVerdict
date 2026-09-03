@@ -41,6 +41,7 @@ async def _lines(
         async for line in stream_analyst(
             model=model,
             result=_result(),
+            owner="acct",
             thread_id=thread_id,
             message="Why did it stop early?",
             checkpointer=checkpointer or InMemorySaver(),
@@ -412,6 +413,7 @@ async def test_a_disconnected_turn_still_logs_its_spend(conn, aconn, caplog) -> 
     stream = stream_analyst(
         model=model,
         result=_result(),
+        owner="acct",
         thread_id="usage-3",
         message="how close was it?",
         checkpointer=InMemorySaver(),

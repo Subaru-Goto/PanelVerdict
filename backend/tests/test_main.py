@@ -59,7 +59,7 @@ from app.screening import ScreeningVerdict
 from app.vote import OutOfCredit, UsageTotals, VoteResponse, VoteUsage
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from openai import APIStatusError
@@ -3270,7 +3270,11 @@ UNVERIFIED_CALLER = "testclient"
 
 
 def _stored_test(
-    conn, *, owner: str = UNVERIFIED_CALLER, report: dict | None = None, kept=True
+    conn,
+    *,
+    owner: str = UNVERIFIED_CALLER,
+    report: dict | None = None,
+    kept: bool = True,
 ) -> str:
     """A finished test in the table, as the run would have left it; its id.
 
@@ -4286,6 +4290,32 @@ class TestChatReadsTheStoredReport:
         assert missing.json() == foreign.json() == {"detail": "no such test"}
         assert classified == []
         assert conn.execute("SELECT count(*) FROM request_ledger").fetchone() == (0,)
+
+    def test_a_thread_id_is_not_a_key_to_another_accounts_transcript(
+        self, signed_in, conn
+    ) -> None:
+        """The report is owner-bound; the transcript has to be too. A thread id
+        travels through logs and screenshots, so under another account it must
+        open an empty thread, never the one it names (035/#136, review)."""
+        mine = _stored_test(conn, owner="owner")
+        theirs = _stored_test(conn, owner="someone-else")
+        model = ScriptedChatModel(responses=[AIMessage(content="ok")])
+        app.dependency_overrides[get_analyst] = lambda: model
+        shared = {"thread_id": "t-shared"}
+
+        signed_in.post(
+            "/chat",
+            json={**shared, "test_id": mine, "message": "first"},
+            headers=_as("owner"),
+        )
+        signed_in.post(
+            "/chat",
+            json={**shared, "test_id": theirs, "message": "second"},
+            headers=_as("someone-else"),
+        )
+
+        humans = [m.content for m in model.seen[1] if isinstance(m, HumanMessage)]
+        assert humans == ["second"]
 
     def test_an_unkept_report_still_has_its_analyst(self, client, conn) -> None:
         """The run the rail refused is on the reader's screen once; its analyst

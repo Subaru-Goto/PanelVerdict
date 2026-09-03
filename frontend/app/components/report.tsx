@@ -242,16 +242,21 @@ export default function Report({
   result,
   testId,
   analyst: analystMode = "live",
-}: {
-  result: EvaluateResponse;
-  /** The stored test's id, which the analyst reads server-side (035/#136).
-   *  Absent only with the analyst locked. */
-  testId?: string;
-  /** "locked" on the demo (061): the analyst spends from a signed-in
-   *  account's budget, so a sample offers a line saying why, not a dead
-   *  control — and asks the backend nothing. */
-  analyst?: "live" | "locked";
-}) {
+}: { result: EvaluateResponse } & (
+  | {
+      /** The stored test's id, which a live analyst reads server-side
+       *  (035/#136). */
+      testId: string;
+      analyst?: "live";
+    }
+  | {
+      /** "locked" on the demo (061): the analyst spends from a signed-in
+       *  account's budget, so a sample offers a line saying why, not a dead
+       *  control — and asks the backend nothing. */
+      analyst: "locked";
+      testId?: undefined;
+    }
+)) {
   // The hook always runs (rules of hooks); an undefined opening asks nothing.
   const analyst = useAnalyst(
     testId,

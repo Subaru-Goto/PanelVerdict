@@ -506,9 +506,10 @@ async def get_conn() -> AsyncIterator[psycopg.AsyncConnection]:
         yield conn
 
 
-# The ledger's day, written once, because four things read it: the cap, the
-# sweep, the remaining-runs figure `/me` reports, and how long a paused run may
-# be redeemed for. Two literals would let any of them drift from the others.
+# The ledger's day, written once, because everything that means "a day" reads
+# it: the cap, its sweep, the remaining-runs figure `/me` reports, how long a
+# paused run may be redeemed for, and how long an unkept report is readable
+# (035/#136). Two literals would let any of them drift from the others.
 LEDGER_HOURS = 24
 _LEDGER_WINDOW = f"requested_at > now() - interval '{LEDGER_HOURS} hours'"
 _LEDGER_EXPIRED = f"requested_at < now() - interval '{LEDGER_HOURS} hours'"
@@ -1233,7 +1234,8 @@ async def _kept(
     state: dict,
     caller: str,
 ) -> PausedRun | CompletedRun:
-    """Keep a finished report for the account that ran it (117/#252).
+    """Store a finished report for the account that ran it (117/#252), and
+    decide whether the rail keeps it (085/#176, 035/#136).
 
     **Best-effort, and never fails the response.** When this runs the votes are
     already bought, so a raised write would lose the report *and* the run —
@@ -1252,9 +1254,9 @@ async def _kept(
     (local development and the documented interim deploy) and not in production,
     where signing in is required to run at all.
 
-    `status` is excluded because it belongs to the HTTP answer rather than to
-    the record — a row carrying it would be a stored response, not a stored
-    test.
+    `status` and `thread_id` are excluded because they belong to the HTTP
+    answer rather than to the record — a row carrying them would be a stored
+    response, not a stored test.
     """
     if not isinstance(outcome, CompletedRun):
         return outcome
@@ -1291,9 +1293,7 @@ async def _kept(
                     + (Notice(severity="warning", message=message),)
                 }
             )
-        # Stored either way (035/#136): the analyst reads the server's copy, so
-        # a report the rail will not keep is stored unkept — hidden from the
-        # rail, readable by its id for the ledger's day — rather than not at all.
+        # Stored either way; `kept` is what the cap decides (035/#136).
         await store_report(
             conn,
             test_id=test_id,
@@ -1941,6 +1941,7 @@ async def chat(
     report: EvaluateResponse = Depends(load_chat_report),
     _preflight: None = Depends(preflight_chat),
     _limit: None = Depends(enforce_turn_limit),
+    caller: str = Depends(caller_id),
     analyst: BaseChatModel = Depends(get_analyst),
     conn: psycopg.AsyncConnection = Depends(get_conn),
     embedder: Embedder = Depends(get_embedder),
@@ -1971,6 +1972,7 @@ async def chat(
         stream_analyst(
             model=analyst,
             result=report,
+            owner=caller,
             thread_id=request.thread_id,
             message=request.message,
             checkpointer=checkpointer,

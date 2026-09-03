@@ -748,11 +748,10 @@ class ChatRequest(BaseModel):
     re-buying the tool calls a text-only replay would drop. The client mints
     the id — one per rendered report.
 
-    The test travels as its id, never as its report (035/#136). The server
-    loads the stored report under the signed-in subject, so what the analyst
-    reads — and which personas its tools may reach — is what the server wrote,
-    not what the caller posted. Extras are refused, so a client still sending
-    the report learns so with a 422 rather than being silently half-trusted.
+    The test travels as its id, never as its report (035/#136): the server
+    loads the stored report under the signed-in subject. Extras are refused,
+    so a client still sending the report gets a 422 rather than being silently
+    half-trusted.
     """
 
     model_config = ConfigDict(extra="forbid")

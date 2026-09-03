@@ -348,17 +348,17 @@ WHERE id = ANY(%s)
 ```
 
 The model supplies a search phrase; it does not supply the id list. No sentence
-it can emit widens that clause. And since
+it can emit widens that clause. Since
 [035/#136](https://github.com/Subaru-Goto/PanelVerdict/issues/136) (2026-09-03)
 the caller does not supply it either: `ChatRequest` names a test by id, the
 server loads the stored report `WHERE test_id = %s AND owner = %s` under the
-signed-in subject, and `result.votes` is what the run wrote. A body that still
-carries a report is a 422; a test that is missing or another account's is the
-tests endpoint's own 404, above the pre-flight and the charge. So the scope
-holds against the model *and* against the caller. What made it possible is
-that every finished run is now stored — the save cap decides what the rail
-*keeps* (`kept`), not what the server holds: a run the rail refused is stored
-unkept, readable by its id for the ledger's day, then swept.
+signed-in subject, and `result.votes` is what the run wrote. A missing or
+foreign test is the tests endpoint's own 404, above the pre-flight and the
+charge. The one other caller-supplied input to the analyst's context is the
+chat `thread_id`, and the checkpointer's key is the owner and that id together,
+so a thread id from someone else's log opens an empty thread. Be precise about
+what remains: the message text itself, which is what the pre-flight (entry 6)
+and the prompt's own rules are for.
 
 Below the application, every table in `public` has row-level security on and no
 policies (`persistence.deny_data_api`), because the browser holds a publishable

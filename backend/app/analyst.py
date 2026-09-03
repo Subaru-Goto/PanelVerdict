@@ -2,9 +2,11 @@
 
 The LLM decides *when* to call a tool; deterministic code decides *how* — every
 number the analyst can cite comes out of `verdict.py`, recomputed from the
-tally. Conversation memory is a server-side checkpointer keyed by `thread_id`:
-the checkpointed transcript keeps ToolMessages, so a follow-up is answered from
-context instead of re-buying tool calls a text-only replay would drop.
+tally. Conversation memory is a server-side checkpointer keyed by the owner
+and `thread_id` together: the checkpointed transcript keeps ToolMessages, so a
+follow-up is answered from context instead of re-buying tool calls a text-only
+replay would drop, and a thread id under another account opens an empty
+thread rather than the one it names (035/#136).
 The saver lives in Postgres (#144) — main.py's lifespan owns it — so threads
 survive restarts and are shared across workers; this module stays
 saver-agnostic and takes whatever `BaseCheckpointSaver` it is handed.
@@ -633,6 +635,7 @@ async def stream_analyst(
     *,
     model: BaseChatModel,
     result: EvaluateResponse,
+    owner: str,
     thread_id: str,
     message: str,
     checkpointer: BaseCheckpointSaver,
@@ -684,7 +687,9 @@ async def stream_analyst(
         stream = await agent.astream_events(
             {"messages": [HumanMessage(content=message)]},
             {
-                "configurable": {"thread_id": thread_id},
+                # The client mints `thread_id` and it travels through logs, so
+                # it is not a key on its own: the saver's thread is the owner's.
+                "configurable": {"thread_id": f"{owner}:{thread_id}"},
                 "recursion_limit": _BACKSTOP_STEPS,
             },
             version="v3",

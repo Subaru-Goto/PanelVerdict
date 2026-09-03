@@ -65,7 +65,9 @@ Re-running the same seed command creates all three.
 Cheaper still, and the right tool when nothing needs *seeding*: `uv run python -m
 app.seed --schema-only` applies `schema.sql` and the row-level-security sweep and
 stops there — no personas, no corpus, no embeddings, and no API key. That is the
-command to run on a deploy that adds a table or a column.
+command to run on a deploy that adds a table or a column. `tests.kept` (035/#136)
+is the first column case: without it no finished run is stored, and every new
+test's analyst answers 404 while the run itself returns 200.
 
 **Adding a column to a table that already exists** goes at the bottom of
 `backend/app/schema.sql`, in the documented `ALTER TABLE … ADD COLUMN IF NOT EXISTS`

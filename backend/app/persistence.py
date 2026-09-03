@@ -383,10 +383,10 @@ async def store_report(
 ) -> bool:
     """Store a finished test for the account that ran it; return whether it was new.
 
-    `kept=False` stores the row for its analyst and the recovery read only
-    (035/#136): out of the rail and the cap's count, swept after the horizon
-    `sweep_unkept_reports` is given. Which is why the report is stored at all
-    when the rail is full — the analyst has no other trusted copy.
+    `kept=False` stores the row out of the rail and the cap's count, for its
+    analyst and the recovery read, until `sweep_unkept_reports` takes it
+    (035/#136). Decided once: a re-store of the same id changes nothing, kept
+    included.
 
     `ON CONFLICT DO NOTHING`, so a retried or resumed run never rewrites a report
     the customer may already be reading. Weaker reason than the votes ledger's
@@ -408,9 +408,7 @@ async def count_reports(
     conn: psycopg.AsyncConnection, *, owner: str, excluding: str
 ) -> int:
     """How many tests this account keeps in its rail, not counting `excluding`.
-
-    Unkept rows (035/#136) are not the customer's to make room under, so they
-    do not count.
+    Unkept rows (035/#136) do not count.
 
     The exclusion keeps the save cap honest on a re-completed run: a test
     already kept must never be told "history full" — its row exists, so

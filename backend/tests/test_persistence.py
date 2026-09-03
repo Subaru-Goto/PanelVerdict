@@ -1166,6 +1166,13 @@ async def test_an_unkept_report_is_readable_by_its_owner_but_not_in_the_rail(
     assert await count_reports(aconn, owner="p-1", excluding="t-none") == 1
     assert await load_report(aconn, test_id="t-over", owner="p-1") is not None
     assert await load_report(aconn, test_id="t-over", owner="stranger") is None
+    # Hidden is not exempt: the customer's own delete, and "delete my account",
+    # take unkept rows with them.
+    assert await delete_report(aconn, test_id="t-over", owner="p-1") is True
+    await store_report(
+        aconn, test_id="t-over-2", owner="p-1", report=make_report(), kept=False
+    )
+    assert await delete_reports_of(aconn, owner="p-1") == 2
 
 
 @pytest.mark.anyio
