@@ -40,6 +40,8 @@ class ChatGuard(Protocol):
 
     async def score(self, text: str) -> float: ...
 
+    async def aclose(self) -> None: ...
+
 
 class MistralChatGuard:
     """`POST /v1/moderations`, shape from Mistral's OpenAPI file (read 2026-09-03)."""
