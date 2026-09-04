@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from app.config import (
     PROFILES,
+    PanelProfile,
     Settings,
 )
 
@@ -79,3 +80,93 @@ def test_the_pool_size_defaults_to_the_dashboard_reading_and_reads_the_environme
     assert Settings(**_DB).pooler_pool_size == 15
     monkeypatch.setenv("POOLER_POOL_SIZE", "20")
     assert Settings(**_DB).pooler_pool_size == 20
+
+
+# 106/#226: every measurement in docs/research/ that grades model behaviour was
+# run against one model, and swapping a model is one string in config.py. Each row
+# names the setting, the model its figures were measured on, and the records that
+# would go stale. The rerun itself is paid — the role-play guard alone is ~160
+# calls — so what runs here is the reminder, not the check.
+_MEASURED_ON = {
+    "targeting_model": (
+        "openai/gpt-5.6-luna",
+        "roleplay-guard-check.md, roleplay-cost.md",
+    ),
+    "analyst_model": (
+        "openai/gpt-5.6-luna",
+        "topic-boundary-check.md, corpus-retrieval-check.md, analyst-turn-cost.md, "
+        "chat-red-team.md",
+    ),
+    "judge_model": (
+        "openai/gpt-5.6-luna",
+        "the checks a judge grades: topic-boundary-check.md, "
+        "corpus-retrieval-check.md, chat-red-team.md, and the pool's plausibility "
+        "sample (docs/seeding-the-pool.md)",
+    ),
+    "screening_model": (
+        "openai/gpt-5.6-luna",
+        "headline-channel-check.md, enacted-context-check.md",
+    ),
+    "moderation_model": ("mistral-moderation-2603", "moderation-check.md"),
+    "embedding_model": (
+        "openai/text-embedding-3-small",
+        "corpus-retrieval-check.md, similarity-check.md, topic-boundary-check.md",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("setting", "measured", "records"),
+    [(name, model, docs) for name, (model, docs) in _MEASURED_ON.items()],
+)
+def test_a_model_change_owes_a_rerun_of_what_was_measured_on_it(
+    setting: str, measured: str, records: str
+) -> None:
+    """Not a claim that this model is the right one — a reminder that the figures
+    in docs/research/ are about *this* string. Changing it is fine; shipping the
+    change without rerunning the named records, or writing down why their numbers
+    still hold, is not.
+
+    The field's default is asserted rather than a constructed `Settings`, which
+    reads the environment: this is about what the repository ships, and a
+    deployment that overrides the model in its own environment is outside what
+    any test here can see. That limit is recorded in roleplay-guard-check.md.
+    """
+    assert Settings.model_fields[setting].default == measured, (
+        f"the {setting} default changed: {records} measured model behaviour on"
+        f" {measured}. Rerun the experiment each record names — the role-play"
+        " guard is `python -m experiments.roleplay_guard` — and record the"
+        " result, or say in the record why the figures still hold."
+    )
+
+
+def test_the_panel_model_owes_the_same_rerun() -> None:
+    """The panel's model lives on the profile rather than in `Settings`, and it is
+    the one every vote is cast by. Only `prod` is pinned: the profiles exist so a
+    size and a model can be chosen per environment, and the graded runs were all
+    bought at prod's."""
+    assert PROFILES["prod"].model == "openai/gpt-5.6-luna", (
+        "the prod panel model changed: manipulation-check-luna.md (071's gate),"
+        " panel-model-selection.md, enacted-context-check.md and"
+        " headline-channel-check.md measured the vote on openai/gpt-5.6-luna."
+    )
+
+
+def test_every_model_setting_is_named_in_the_rerun_table() -> None:
+    """The table is a hand-kept list, so this is what keeps it honest: a model
+    setting added without a row would be a measurement nothing protects.
+
+    The predicate is now the maintained part — a field with "model" nowhere in
+    its name would still escape — which is the cheapest honest version of this.
+    """
+    declared = {name for name in Settings.model_fields if "model" in name}
+
+    assert declared == set(_MEASURED_ON), (
+        "a model setting has no row in _MEASURED_ON: add it with the"
+        " docs/research record its behaviour was measured in."
+    )
+    # The panel's model is a `PanelProfile` field, pinned by its own test above.
+    # A second model field there would escape both, so the shape is asserted.
+    assert [name for name in PanelProfile.__dataclass_fields__ if "model" in name] == [
+        "model"
+    ], "PanelProfile grew a model field with no rerun rule"

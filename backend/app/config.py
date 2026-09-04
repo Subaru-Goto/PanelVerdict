@@ -274,6 +274,12 @@ class Settings(BaseSettings):
         "selfharm",
     )
     profile: ProfileName = "dev"
+    # Every model string in this class, above and below, is the one a recorded
+    # measurement was taken against; `tests/test_config.py::_MEASURED_ON` names
+    # which document each would make stale, and fails when one moves. Changing
+    # one is fine; shipping the change without rerunning what it invalidates is
+    # what 106/#226 is about — the role-play guard alone is ~160 paid calls, so
+    # the rerun cannot live in CI and the test is the reminder instead.
     # Plain Luna, not `-pro`: `TARGET_REASONING_EFFORT = "low"` is a measured setting
     # (targeting-call-effort.md), and `-pro` is the same model served with reasoning mode
     # TARGET_MAX_COMPLETION_TOKENS, which is the interaction that doc exists to prevent.
