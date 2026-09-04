@@ -11,10 +11,29 @@ from app.panel import render_persona_prompt
 from app.roleplay import render_enacted
 from app.schemas import PanelVoteOutput, Persona, VoteRecord
 
-# A cap on requests in flight, not a barrier between groups of 25: a group that waits
-# for its slowest member leaves the other workers idle, and a reasoning model's latency
-# varies enough for that to cost real time. 25 is a chosen cap rather than a
-# measured one — no run has yet been throttled by it.
+# A cap on requests in flight — and, since 010d, the stopping granularity. The vote
+# loop (pipeline.py) buys the panel in chunks of this many at most, joins each chunk,
+# and only then asks whether the run can stop. So the run does wait on a slowest
+# member, at most once per chunk — eight times for a full prod panel of 200, fewer
+# when the run stops early, and not at all for a chunk the ledger already holds,
+# since the fan-out covers only the misses. The earliest a decisive run can stop is
+# `_STOP_CONFIRMATIONS` chunks: 50 votes, the fewest a decisive test can buy from
+# the provider. Not the fewest it costs the day's pool, which 089 charges at the
+# gate by panel size and never reconciles. Chunk and cap are one knob under this
+# loop — a chunk smaller than the cap idles workers, a larger one queues them.
+#
+# 25 is a chosen cap rather than a measured one: no run has been throttled by it and
+# no provider rate limit is on record, so it cannot be moved on evidence. That is
+# also why it is one literal and not a per-environment setting — the same number
+# everywhere, with nothing to tune it by. It equals the dev profile's size by
+# coincidence: both were round numbers written the same day (docs/project-idea.md,
+# 2026-07-16), then justified apart — this one as a fan-out width, that one on the
+# resolution it buys (config.py). Change one and the other does not follow.
+#
+# A stored run gives a lower bound on the concurrency actually reached (033):
+# `usage.seconds_total` over `timings.step_seconds["vote"]`. Only votes the provider
+# reported usage for are in the numerator, and the denominator also holds the
+# screener call and the ledger read.
 VOTE_CONCURRENCY = 25
 
 # Fixed by default, so one test pairs the same panelists with the same positions run

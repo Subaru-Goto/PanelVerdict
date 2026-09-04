@@ -6,10 +6,13 @@ import time
 import pytest
 from psycopg.pq import TransactionStatus
 
-from app.pipeline import EmptyPanel, NoVotes, run_panel_test, run_vote_loop
-from app.targeting import select_panel
+from app import pipeline
+from app.config import PROFILES
 from app.persistence import persist_pool
+from app.pipeline import EmptyPanel, NoVotes, run_panel_test, run_vote_loop
 from app.schemas import PanelCounts, RequestedRegion, TargetRequest
+from app.targeting import select_panel
+from app.verdict import stopping_decision
 from app.vote import VOTE_CONCURRENCY, OutOfCredit, VoteResponse
 from tests.factories import (
     JAPAN_REQUEST,
@@ -243,6 +246,42 @@ async def test_a_clear_winner_stops_after_two_confirming_chunks(conn, aconn) -> 
     assert result.counts.voted == 50
     assert result.counts.matched == 75
     assert result.tally.total == 50
+
+
+@pytest.mark.anyio
+async def test_the_stop_cannot_fire_on_a_panel_of_one_chunk(conn, aconn) -> None:
+    """042/#140: the chunk is one concurrency-load, so a panel the size of the
+    cap is a single fan-out with a single boundary — and a streak of one never
+    reaches the two confirmations the stop needs. The dev profile is exactly
+    that size, so a landslide there runs to the cap; a dev run that "went to
+    the cap" is not a stop that misfired."""
+    seed_japanese(conn, VOTE_CONCURRENCY)
+
+    result = await _run(aconn, size=VOTE_CONCURRENCY, llm=PrefersLLM(_VARIANTS["b"]))
+
+    assert result.stop_reason is None
+    # The streak is what withheld the stop, not the reading: this one boundary
+    # read decisive, and one confirmation is never two.
+    assert (
+        stopping_decision(
+            preferring_b=result.tally.counts["b"], total=result.tally.total
+        )
+        == "decisive"
+    )
+
+
+def test_the_decisive_floor_sits_above_dev_and_halfway_through_demo() -> None:
+    """The earliest a decisive run can stop is confirmations × chunk. 50 is not
+    arithmetic here: docs/research/first-full-scale-run.md records the `stopped`
+    run ending at exactly 50 of 200 votes, "`decisive` at the 2-chunk floor".
+    Pinned against the real profiles too, so a change to either constant or to a
+    profile size has to come back here and say what it did to the floor."""
+    floor = pipeline._STOP_CONFIRMATIONS * VOTE_CONCURRENCY
+
+    assert floor == 50, "the floor the recorded run stopped at"
+    assert PROFILES["dev"].size < floor, "dev cannot stop early at all"
+    assert PROFILES["demo"].size == 2 * floor, "demo leaves at most half unbought"
+    assert PROFILES["prod"].size == 4 * floor, "prod at most three quarters"
 
 
 @pytest.mark.anyio

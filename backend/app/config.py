@@ -52,6 +52,16 @@ type ProfileName = Literal["dev", "demo", "prod"]
 #   prod 200 → ~$0.032/run measured (guard warns below $0.040) — ~300 fixed-length runs
 #              inside the $10 credit cap
 #
+# The earliest a decisive run can stop is two confirming chunks of VOTE_CONCURRENCY
+# (vote.py, pipeline.py) — arithmetic on those two numbers, and pinned in
+# test_pipeline.py (042/#140). A ceiling, not an expectation: simulation puts the
+# typical saving at 32% of the cap at a true 65/35 split and 55% at 70/30
+# (docs/research/adaptive-stopping.md).
+#
+#   dev   25 → never stops: one chunk is one boundary, and the rule needs two
+#   demo 100 → 50 votes at the earliest, so at most half the panel goes unbought
+#   prod 200 → 50 votes at the earliest, so at most three quarters
+#
 # The measured gpt-5-mini figures these replace, kept for comparison: $0.018 / $0.073 /
 # $0.145, with a decisive pair stopping at 50 votes for $0.036.
 #
