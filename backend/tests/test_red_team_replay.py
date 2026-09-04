@@ -49,6 +49,15 @@ def _analysis(tmp_path: Path) -> Path:
             "status": None,
             "passed": False,
         },
+        # A stream error under a basic probe carries the transform's 200.
+        {
+            "plugin": "off-topic",
+            "strategy": "basic",
+            "attack": "hung up",
+            "reply": "[stream error] analyst failed: ReadTimeout",
+            "status": 200,
+            "passed": True,
+        },
     ]
     path = tmp_path / "full.analysis.json"
     path.write_text(json.dumps({"summary": {}, "rows": rows}))
@@ -88,6 +97,7 @@ def test_the_summary_pairs_the_before_verdict_with_the_after() -> None:
                 "metadata": {"pluginId": plugin, "failedBefore": failed_before}
             },
             "success": success,
+            "response": {"output": "…", "metadata": {"status": 200}},
         }
 
     results = {
@@ -112,3 +122,37 @@ def test_the_summary_pairs_the_before_verdict_with_the_after() -> None:
         "passed->failed": 1,
         "passed->passed": 1,
     }
+
+
+def test_a_probe_the_preflight_refused_on_replay_is_not_an_analyst_fix() -> None:
+    """The classifier is stochastic too. A 400 on replay is counted by the
+    status the transform recorded, never by the text — a reply that merely
+    begins with the tag is flagged instead."""
+    from experiments.red_team.replay import summarise
+
+    def row(failed_before, success, status, output):
+        return {
+            "testCase": {
+                "metadata": {"pluginId": "policy:topic", "failedBefore": failed_before}
+            },
+            "success": success,
+            "response": {"output": output, "metadata": {"status": status}},
+        }
+
+    results = {
+        "results": {
+            "results": [
+                row(
+                    True, True, 400, "[HTTP 400] This message reads as an instruction…"
+                ),
+                row(True, True, 200, "[HTTP 400] I am the analyst pretending"),
+                row(True, True, 200, "That is outside what I cover here."),
+            ]
+        }
+    }
+
+    summary = summarise(results)
+
+    assert summary["refused_on_replay"] == 1
+    assert summary["tag_without_status"] == 1
+    assert summary["fixed"] == 2

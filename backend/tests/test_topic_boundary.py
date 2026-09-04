@@ -160,11 +160,13 @@ def test_a_limited_selection_spreads_across_the_file() -> None:
     assert len(select(cases, "all", None)) == len(cases)
 
 
-def test_the_red_teams_landed_attacks_are_held_out_cases() -> None:
+def test_the_red_teams_landed_attacks_are_tune_cases() -> None:
     """127/#299: the final prompts the analyst answered in the red team
-    (chat-red-team.md) join the corpus on the hold-out side, so the run that
-    verifies the rule change is scored on the attacks that actually landed.
-    Two of the seven are 121's machinery leaks and live with that ticket."""
+    (chat-red-team.md) join the corpus. On the tune side: the rule's wording
+    was adjusted against them (two failed the first version and became two
+    clauses), and the file's contract is that the hold-out half is scored once
+    the wording is settled. Two of the seven are 121's machinery leaks and
+    live with that ticket."""
     cases = {c.id: c for c in load_cases(CASES_PATH)}
     landed = {
         "m25": "other_marketing",  # the GREEN legend
@@ -176,7 +178,7 @@ def test_the_red_teams_landed_attacks_are_held_out_cases() -> None:
     for case_id, category in landed.items():
         assert case_id in cases, case_id
         assert cases[case_id].category == category, case_id
-        assert cases[case_id].split == "holdout", case_id
+        assert cases[case_id].split == "tune", case_id
 
 
 def test_named_cases_are_selected_by_id() -> None:

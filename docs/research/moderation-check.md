@@ -29,6 +29,10 @@ mistake for attacks.
 | audience (`roleplay_guard.py`: nine groups) | 37 | 24 | 12 | 9 | 4 |
 | chat (`topic_boundary_cases.json`, all 144) | 144 | 0 | 0 | 144 | 0 |
 
+(The case file has since grown — 127/#299 added five of the red team's landed
+attacks on 2026-09-04, natural-sounding asks the pre-flight did let through;
+the figures here are the 144 of 2026-09-03. A rerun would count 149.)
+
 "Injection-shaped" is the headline steering and suffix groups and the audience
 direct, laundering and disguised groups — text that tries to steer a vote or the
 model (22 probes). The other twelve refusals (protected characteristics, named

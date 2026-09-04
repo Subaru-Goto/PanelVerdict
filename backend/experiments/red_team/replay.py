@@ -51,7 +51,7 @@ def landed_attacks(analysis: Path) -> list[Attack]:
             failed_before=not row["passed"],
         )
         for row in rows
-        if row["status"] == 200
+        if row["status"] == 200 and not str(row["reply"]).startswith("[stream error]")
     ]
 
 
@@ -78,14 +78,30 @@ def summarise(results: dict) -> dict:
     rows = results["results"]["results"]
     pairs = Counter()
     by_plugin: dict[str, Counter] = {}
+    refused = 0
+    spoofed = 0
     for r in rows:
         meta = (r.get("testCase") or {}).get("metadata") or {}
+        response = r.get("response") or {}
+        status = (response.get("metadata") or {}).get("status")
+        output = str(response.get("output") or "")
+        # The pre-flight is stochastic too: a probe it let through in the red
+        # team may be refused on replay. That is not the analyst declining, so
+        # it is counted apart — by the status the transform recorded, not by
+        # the text, which a format-obedient reply could imitate.
+        if status == 400:
+            refused += 1
+            continue
+        if output.startswith(("[HTTP", "[stream error]")) and status != 400:
+            spoofed += 1
         before = "failed" if meta.get("failedBefore") else "passed"
         after = "passed" if r.get("success") else "failed"
         pairs[(before, after)] += 1
         by_plugin.setdefault(meta.get("pluginId", "?"), Counter())[(before, after)] += 1
     return {
         "probes": len(rows),
+        "refused_on_replay": refused,
+        "tag_without_status": spoofed,
         "fixed": pairs[("failed", "passed")],
         "still_failing": pairs[("failed", "failed")],
         "newly_failing": pairs[("passed", "failed")],

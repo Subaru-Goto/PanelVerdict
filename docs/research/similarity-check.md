@@ -39,7 +39,10 @@ nothing changes in the product from this ticket.**
   (10), `roleplay_guard` direct, disguised, laundering (12) — and 12 policy
   refusals (hate, protected classes and the like: refusals, not injections).
   Ordinary (160): the 144 topic-boundary questions and the 16 legitimate
-  headline and audience probes (7 + 9). Ambiguous probes excluded.
+  headline and audience probes (7 + 9). Ambiguous probes excluded. The topic
+  file has since grown to 149 (127/#299 added five of the red team's landed
+  attacks, which are also among the red-team texts above); the figures here
+  are the file as it was on 2026-09-03.
 - **Split (Q1):** halves, stratified by source, row and strategy or group,
   shuffled once under a fixed seed; an odd stratum gives its extra item to the
   learning half. Learning half 276 (attack phrase set 195, ordinary phrase set
