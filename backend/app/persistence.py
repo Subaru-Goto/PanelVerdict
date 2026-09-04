@@ -9,7 +9,7 @@ import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 import numpy as np
 import psycopg
@@ -323,7 +323,7 @@ def deny_data_api(conn: psycopg.Connection) -> None:
     conn.commit()
 
 
-async def adeny_data_api(conn: psycopg.AsyncConnection) -> None:
+async def adeny_data_api(conn: psycopg.AsyncConnection[Any]) -> None:
     """`deny_data_api` for a caller that has an event loop — the lifespan.
 
     Two implementations of three statements, rather than one shared one: the

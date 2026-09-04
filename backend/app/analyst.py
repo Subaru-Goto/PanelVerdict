@@ -16,10 +16,10 @@ import asyncio
 import json
 import logging
 from collections import Counter
-from collections.abc import AsyncIterator, Iterable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from statistics import median_low
-from typing import get_args, get_type_hints
+from typing import Any, get_args, get_type_hints
 
 import anyio
 import psycopg
@@ -123,7 +123,7 @@ class _BudgetEndsTheTurn(ModelCallLimitMiddleware):
     @hook_config(can_jump_to=["end"])
     def before_model(
         self, state: Mapping[str, object], runtime: object
-    ) -> dict[str, object] | None:  # type: ignore[override]
+    ) -> dict[str, object] | None:
         jump = super().before_model(state, runtime)  # type: ignore[arg-type]
         if jump is not None:
             # The one signal an operator gets that the wall was hit: the turn
@@ -613,7 +613,7 @@ class _TurnUsage:
         self.reasoning_tokens = 0
         self.reasoning_reported = 0
 
-    def take(self, usage: Mapping[str, object] | None) -> None:
+    def take(self, usage: Mapping[str, Any] | None) -> None:
         if usage is None:
             return
         self.calls += 1
@@ -658,7 +658,7 @@ async def stream_analyst(
     message: str,
     checkpointer: BaseCheckpointSaver,
     deps: ToolDeps,
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str, None]:
     """Yield the agent's turn as NDJSON lines — one `ChatStreamEvent` each.
 
     The agent is rebuilt per request because the tools close over the request's

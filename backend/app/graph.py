@@ -53,6 +53,7 @@ from app.pipeline import (
 )
 from app.roleplay import (
     REFUSAL_SENTENCES,
+    RefusalClass,
     RolePlayGenerator,
     RolePlayOutcome,
     RolePlayRefused,
@@ -132,7 +133,7 @@ class EvaluateState(TypedDict, total=False):
     # Set by the caller when this reading was already approved, so a repeat run
     # is not stopped again. The graph never sets it.
     reading_accepted: bool
-    query: TargetQuery | None
+    query: TargetQuery
     panel: list[Persona]
     notices: list[Notice]
     # Who started the run, and when. The resume endpoint checks both: a thread
@@ -143,12 +144,12 @@ class EvaluateState(TypedDict, total=False):
     # The approved role-play sentence. "" is a demographics-only run.
     instruction: str
     # The class of the last refused edit, cleared as soon as one passes.
-    refused: str | None
+    refused: RefusalClass | None
     decision: Literal["accept", "adjust"] | None
     # What a human edited the reading to. Kept apart from `query` so `select`
     # can tell whether the reading actually changed.
     edited: TargetQuery | None
-    collected: CollectedVotes | None
+    collected: CollectedVotes
     result: PanelTestResult | None
 
 

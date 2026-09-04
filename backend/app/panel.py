@@ -82,7 +82,7 @@ def _dispositions(big_five: BigFive) -> str:
     so reshuffling it is a re-embedding bill rather than a cosmetic change.
     """
     return "; ".join(
-        _TRAIT_PHRASES[trait][bucketize(score)] for trait, score in big_five
+        _TRAIT_PHRASES[trait][bucketize(score)] for trait, score in big_five.traits()
     )
 
 

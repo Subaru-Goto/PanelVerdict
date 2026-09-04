@@ -95,14 +95,15 @@ def _resolve_region(
     if exact is not None:
         return (exact,), "requested", None
 
-    approximate = _SEEDED_BY_TAG.get(region.culture_tag) if region.culture_tag else None
-    if approximate:
+    tag = region.culture_tag
+    approximate = _SEEDED_BY_TAG.get(tag) if tag is not None else None
+    if tag is not None and approximate:
         return (
             approximate,
             "approximated",
             _warn(
                 f"No {region.label} data; approximating with "
-                f"{region.culture_tag.value}-region personas ({_named(approximate)}). "
+                f"{tag.value}-region personas ({_named(approximate)}). "
                 "Treat as indicative."
             ),
         )
