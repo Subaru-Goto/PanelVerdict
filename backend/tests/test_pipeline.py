@@ -12,6 +12,7 @@ from app.persistence import persist_pool
 from app.pipeline import EmptyPanel, NoVotes, run_panel_test, run_vote_loop
 from app.schemas import PanelCounts, RequestedRegion, TargetRequest
 from app.targeting import select_panel
+from app.verdict import stopping_decision
 from app.vote import VOTE_CONCURRENCY, OutOfCredit, VoteResponse
 from tests.factories import (
     JAPAN_REQUEST,
@@ -259,19 +260,28 @@ async def test_the_stop_cannot_fire_on_a_panel_of_one_chunk(conn, aconn) -> None
     result = await _run(aconn, size=VOTE_CONCURRENCY, llm=PrefersLLM(_VARIANTS["b"]))
 
     assert result.stop_reason is None
-    assert result.counts.voted == VOTE_CONCURRENCY
+    # The streak is what withheld the stop, not the reading: this one boundary
+    # read decisive, and one confirmation is never two.
+    assert (
+        stopping_decision(
+            preferring_b=result.tally.counts["b"], total=result.tally.total
+        )
+        == "decisive"
+    )
 
 
 def test_the_decisive_floor_sits_above_dev_and_halfway_through_demo() -> None:
-    """The earliest a decisive run can stop is confirmations × chunk. Pinned
-    against the real profiles, so a change to either number or to a profile
-    size has to come back here and say what it did to the floor."""
+    """The earliest a decisive run can stop is confirmations × chunk. 50 is not
+    arithmetic here: docs/research/first-full-scale-run.md records the `stopped`
+    run ending at exactly 50 of 200 votes, "`decisive` at the 2-chunk floor".
+    Pinned against the real profiles too, so a change to either constant or to a
+    profile size has to come back here and say what it did to the floor."""
     floor = pipeline._STOP_CONFIRMATIONS * VOTE_CONCURRENCY
 
-    assert floor == 50
-    assert PROFILES["dev"].size < floor, "dev never stops early"
-    assert PROFILES["demo"].size == 2 * floor, "demo saves at most half"
-    assert PROFILES["prod"].size == 4 * floor, "prod saves up to three quarters"
+    assert floor == 50, "the floor the recorded run stopped at"
+    assert PROFILES["dev"].size < floor, "dev cannot stop early at all"
+    assert PROFILES["demo"].size == 2 * floor, "demo leaves at most half unbought"
+    assert PROFILES["prod"].size == 4 * floor, "prod at most three quarters"
 
 
 @pytest.mark.anyio
