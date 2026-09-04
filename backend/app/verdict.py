@@ -20,7 +20,12 @@ from app.schemas import (
 # rate, so calling it a tie is honesty rather than laxity. It cannot be derived from
 # the posterior — it encodes what difference is worth acting on, which is a domain
 # judgment. Signed off 2026-07-27.
-_ROPE = (0.43, 0.57)
+ROPE = (0.43, 0.57)
+
+# The share of the posterior a call has to sit inside. One definition rather than
+# the four identical literals that used to sit in the signatures below: 041/#139
+# needed to name the bar without computing a throwaway verdict to read it off.
+CREDIBLE_MASS = 0.95
 
 
 @dataclass(frozen=True)
@@ -145,7 +150,7 @@ class MeaningfulPreference:
 
 
 def probability_meaningfully_preferred(
-    *, preferring_b: int, total: int, rope: tuple[float, float] = _ROPE
+    *, preferring_b: int, total: int, rope: tuple[float, float] = ROPE
 ) -> MeaningfulPreference:
     """How probable it is that each variant wins by an amount worth acting on.
 
@@ -173,7 +178,7 @@ def probability_meaningfully_preferred(
 
 
 def probability_practical_tie(
-    *, preferring_b: int, total: int, rope: tuple[float, float] = _ROPE
+    *, preferring_b: int, total: int, rope: tuple[float, float] = ROPE
 ) -> float:
     """How probable it is that the difference is too small to act on either way.
 
@@ -191,8 +196,8 @@ def stopping_decision(
     *,
     preferring_b: int,
     total: int,
-    rope: tuple[float, float] = _ROPE,
-    credible_mass: float = 0.95,
+    rope: tuple[float, float] = ROPE,
+    credible_mass: float = CREDIBLE_MASS,
 ) -> StopReason | None:
     """Whether more votes would change what the report says — None means keep buying.
 
@@ -220,7 +225,10 @@ def stopping_decision(
 
 
 def detectable_gap(
-    *, total: int, rope: tuple[float, float] = _ROPE, credible_mass: float = 0.95
+    *,
+    total: int,
+    rope: tuple[float, float] = ROPE,
+    credible_mass: float = CREDIBLE_MASS,
 ) -> float | None:
     """The smallest preference gap a panel this size could call decisive, or None.
 
@@ -266,7 +274,7 @@ def _verdict_at(
 
 
 def rope_verdict(
-    interval: tuple[float, float], *, rope: tuple[float, float] = _ROPE
+    interval: tuple[float, float], *, rope: tuple[float, float] = ROPE
 ) -> RopeVerdict:
     """Compare a credible interval against the region of practical equivalence.
 
@@ -302,7 +310,7 @@ def rope_verdict(
 
 
 def posterior(
-    *, preferring_b: int, total: int, credible_mass: float = 0.95
+    *, preferring_b: int, total: int, credible_mass: float = CREDIBLE_MASS
 ) -> Posterior:
     """Beta-Binomial posterior over p, the share of the panel that prefers B.
 
@@ -344,8 +352,8 @@ def panel_verdict(
     *,
     preferring_b: int,
     total: int,
-    rope: tuple[float, float] = _ROPE,
-    credible_mass: float = 0.95,
+    rope: tuple[float, float] = ROPE,
+    credible_mass: float = CREDIBLE_MASS,
 ) -> PanelVerdict:
     """Assemble the reportable verdict: posterior, the band's probabilities, and the band.
 

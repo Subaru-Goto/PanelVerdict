@@ -5,7 +5,7 @@ from scipy import integrate, stats
 
 from app.schemas import VoteRecord
 from app.verdict import (
-    _ROPE,
+    ROPE,
     detectable_gap,
     expected_preference_shortfall,
     panel_verdict,
@@ -436,7 +436,7 @@ class TestDetectableGap:
     def test_no_panel_can_detect_a_gap_inside_the_band(self) -> None:
         """A difference the band calls negligible is negligible at any sample size, so
         the gap can never fall below the band's own half-width however much is spent."""
-        rope_half = _ROPE[1] - 0.5
+        rope_half = ROPE[1] - 0.5
 
         for n in (25, 200, 2000):
             gap = detectable_gap(total=n)
