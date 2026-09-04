@@ -51,7 +51,7 @@ const DEMO = {
   ...makeResponse(),
   status: "complete",
   thread_id: "t-run",
-  step_seconds: { select: 0.09, vote: 45.3, assemble: 0.02 },
+  timings: { step_seconds: { select: 0.09, vote: 45.3, assemble: 0.02 } },
   captured_at: "2026-09-01",
 };
 
@@ -86,6 +86,21 @@ describe("the demo replay", () => {
     // duration away, and a rounded-away number reads as an invented one.
     expect(screen.getByText("90 ms")).toBeTruthy();
     expect(screen.getByText("20 ms")).toBeTruthy();
+  });
+
+  it("prints nothing on a step the fixture never timed", async () => {
+    // Absent means absent: a step without a captured figure gets no
+    // duration at all, since a printed zero would be an invented one.
+    runDemoMock.mockResolvedValue({
+      ...DEMO,
+      timings: { step_seconds: { select: 0.09, vote: 45.3 } },
+    });
+    render(<EvaluateForm tracing={false} />);
+
+    expect(await screen.findByText("45.3 s")).toBeTruthy();
+    expect(screen.getByText("Verdict computed")).toBeTruthy();
+    expect(screen.queryByText(/^0 ms$/)).toBeNull();
+    expect(screen.queryByText("20 ms")).toBeNull();
   });
 
   it("ends on the real report, with the honesty line naming the day", async () => {

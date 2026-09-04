@@ -134,7 +134,7 @@ describe("a report that crashes while drawing (049/#147)", () => {
       ...BROKEN,
       status: "complete",
       thread_id: "t-run",
-      step_seconds: { select: 0.09, vote: 45.3, assemble: 0.02 },
+      timings: { step_seconds: { select: 0.09, vote: 45.3, assemble: 0.02 } },
       captured_at: "2026-09-01",
     });
 

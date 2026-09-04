@@ -18,7 +18,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import time
 from datetime import date
 from pathlib import Path
 from typing import Literal
@@ -187,8 +186,8 @@ async def _capture(case: str, out_dir: Path) -> str | None:
 
     The one paid step in the demo's life (~$0.06 per case, 064's per-run
     figure). It walks the same graph the route replays through, so what is
-    captured is exactly what will be served — votes and per-node seconds
-    both, the seconds because they are unrecoverable afterwards. Returns the
+    captured is exactly what will be served — votes and the graph's own
+    per-node seconds both, because they are unrecoverable afterwards. Returns the
     run's stop reason, so the caller can retry the tie case.
     """
     profile = PROFILES["prod"]
@@ -214,12 +213,9 @@ async def _capture(case: str, out_dir: Path) -> str | None:
             generator=UnreachableGenerator(),
             checkpointer=InMemorySaver(),
         )
-        # Streamed rather than invoked, because the stream is where the
-        # timings live: one update per node, clocked as it lands.
-        state: dict = {}
-        step_seconds: dict[str, float] = {}
-        last = time.monotonic()
-        async for update in graph.astream(
+        # The graph clocks its own nodes (033/#134): the seconds a paid run
+        # stores beside its report are the seconds this fixture keeps.
+        state = await graph.ainvoke(
             {
                 "query": settled_query(PanelEdit()),
                 "notices": [CROSS_SECTION_NOTICE],
@@ -235,15 +231,7 @@ async def _capture(case: str, out_dir: Path) -> str | None:
                 "owner": "internal:demo-capture",
             },
             {"configurable": {"thread_id": f"demo-capture-{case}"}},
-            stream_mode="updates",
-        ):
-            now = time.monotonic()
-            for node, produced in update.items():
-                step_seconds[node] = round(
-                    step_seconds.get(node, 0.0) + (now - last), 3
-                )
-                state.update(produced or {})
-            last = now
+        )
     result = state["result"]
     fixture = DemoFixture(
         case=case,
@@ -251,7 +239,7 @@ async def _capture(case: str, out_dir: Path) -> str | None:
         captured_at=date.today().isoformat(),
         configuration=llm.configuration,
         size=profile.size,
-        step_seconds=step_seconds,
+        step_seconds=state["step_seconds"],
         votes=sorted(
             (
                 DemoVote(

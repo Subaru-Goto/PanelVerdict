@@ -714,6 +714,24 @@ class RunUsage(BaseModel):
     seconds_total: float
 
 
+class RunTimings(BaseModel):
+    """The run's own clock, per graph node (033/#134).
+
+    Seconds spent in each node the run passed through, keyed by node name
+    (`roleplay`, `select`, `confirm`, `vote`, `assemble`). A node that ran
+    twice, as `select` does after an adjust at the gate, carries the sum. The
+    human's wait at the gate is not in here: the clock runs inside the graph,
+    and a paused node writes nothing. A node missing from the map was never
+    clocked — a run paused before this shipped and resumed after carries only
+    the steps that ran afterwards.
+
+    Stored with every kept test; whether a reader sees it is the ticket's
+    call (a live run: no; the demo: its captured run's figures).
+    """
+
+    step_seconds: dict[str, float]
+
+
 class EvaluateResponse(BaseModel):
     """One panel test as the report renders it.
 
@@ -744,6 +762,8 @@ class EvaluateResponse(BaseModel):
     # None on reports kept before 070 shipped and on demo fixtures captured
     # before it — absent is not zero, the same reading VoteUsage gives it.
     usage: RunUsage | None = None
+    # None on reports kept before 033 shipped — absent, not zero.
+    timings: RunTimings | None = None
 
 
 class ChatRequest(BaseModel):

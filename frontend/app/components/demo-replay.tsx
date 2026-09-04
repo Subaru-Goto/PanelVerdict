@@ -65,7 +65,7 @@ export default function DemoReplay({ demoCase }: { demoCase: string }) {
   useEffect(() => {
     if (state.phase !== "playing") return;
     const seconds =
-      state.result.step_seconds[REPLAY_STEPS[state.done].node] ?? 0;
+      state.result.timings.step_seconds[REPLAY_STEPS[state.done].node] ?? 0;
     const timer = setTimeout(
       () =>
         // Functional, so the transition reads the state the timer fires
@@ -136,8 +136,8 @@ export default function DemoReplay({ demoCase }: { demoCase: string }) {
             // A node the fixture never timed shows nothing — a printed zero
             // would be an invented duration.
             sub={
-              result.step_seconds[node] !== undefined
-                ? elapsed(result.step_seconds[node])
+              result.timings.step_seconds[node] !== undefined
+                ? elapsed(result.timings.step_seconds[node])
                 : undefined
             }
           />
