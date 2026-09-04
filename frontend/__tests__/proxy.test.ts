@@ -183,10 +183,10 @@ describe("the evaluate proxy", () => {
 describe("the proxy routes' execution budget", () => {
   it("covers every route there is — and every route to come", () => {
     // Routing through a function inserts a timeout the direct-to-backend path
-    // never had. A prod run measures ~40s (010a: 4.65 s/vote, concurrency 25,
-    // 200 votes), a cold Render start adds ~1 minute (docs/deploy.md), and
-    // the platform default 504s first — while the ledger has already charged
-    // the run. One platform rule instead of a per-file export, for two
+    // never had, and the ledger has charged the run before it fires. The
+    // number is the run's one deadline, RUN_BUDGET_SECONDS (032/#133), and
+    // this pin is what keeps the platform rule and the browser's own abort
+    // the same number. One platform rule instead of a per-file export, for two
     // measured reasons: Next 16.2's static analysis silently ignores a
     // re-exported segment config (the resume route shipped without its budget
     // that way), and a hand-pasted literal is a hand-kept list a new route

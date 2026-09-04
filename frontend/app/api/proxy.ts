@@ -49,12 +49,12 @@ export async function backendTracing({
 }
 
 /** Every route through here runs under one execution budget, set platform-side
- * in vercel.json ("app/api/**" → maxDuration 60) and pinned by proxy.test.ts.
- * Sourced: a prod run measures ~40s (010a) and a cold Render start ~1 minute
- * (docs/deploy.md) — the platform default 504s first, after the ledger has
- * already charged the run. One rule rather than per-file exports, because a
- * re-exported segment config is silently ignored by Next 16.2's static
- * analysis and a hand-pasted literal is a list a new route silently misses. */
+ * in vercel.json ("app/api/**" → maxDuration) and pinned equal to
+ * RUN_BUDGET_SECONDS by proxy.test.ts — the number, its sources and what the
+ * reader sees when it fires live in lib/run-budget.ts (032/#133). One rule
+ * rather than per-file exports, because a re-exported segment config is
+ * silently ignored by Next 16.2's static analysis and a hand-pasted literal
+ * is a list a new route silently misses. */
 export async function proxyToBackend(
   // A closed set, plus the one path with a caller-supplied segment. The
   // template literal keeps `/tests/<id>` inside the type while still requiring
