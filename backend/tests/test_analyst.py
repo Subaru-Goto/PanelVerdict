@@ -293,9 +293,7 @@ class TestToolSurface:
         }
         assert "run_panel_test" not in names
 
-    def test_analyze_results_hands_over_the_split_and_its_confounds(
-        self, conn
-    ) -> None:
+    def test_analyze_results_hands_over_the_split_and_its_confounds(self, conn) -> None:
         """The JSON the model actually receives, not the model that built it —
         the only seam that proves the tool contract rather than the function."""
         (tool,) = [
@@ -313,9 +311,9 @@ class TestToolSurface:
             for split in splits["dimensions"]
             if split["demographic_confound"]
         }
-        assert "persona-seed-data" in traits["conscientiousness"][
-            "demographic_confound"
-        ]
+        assert (
+            "persona-seed-data" in traits["conscientiousness"]["demographic_confound"]
+        )
 
 
 def _deps(

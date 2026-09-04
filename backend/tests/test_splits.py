@@ -183,8 +183,10 @@ def test_every_trait_split_carries_the_demographic_it_is_entangled_with():
     for trait, split in traits.items():
         assert split.demographic_confound is not None, trait
         assert "persona-seed-data" in split.demographic_confound, trait
-    assert "age" in traits["conscientiousness"].demographic_confound
-    assert "gender" in traits["neuroticism"].demographic_confound
+    conscientiousness = traits["conscientiousness"].demographic_confound or ""
+    neuroticism = traits["neuroticism"].demographic_confound or ""
+    assert "age" in conscientiousness
+    assert "gender" in neuroticism
 
 
 def test_a_demographic_split_claims_no_confound_of_its_own():
