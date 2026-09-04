@@ -294,11 +294,19 @@ def build_metrics(judge: Any) -> dict[Expected, Measures]:
     }
 
 
-def select(cases: Sequence[Case], split: str, limit: int | None) -> tuple[Case, ...]:
+def select(
+    cases: Sequence[Case],
+    split: str,
+    limit: int | None,
+    ids: set[str] | None = None,
+) -> tuple[Case, ...]:
     """The split's cases; with a limit, spread evenly through the file rather
     than its head — the file is ordered by category, and a dry run that saw
-    only one kind would price only one rubric."""
+    only one kind would price only one rubric. With `ids`, exactly those
+    cases, in the file's order: a re-run of what failed costs what failed."""
     chosen = [c for c in cases if split == "all" or c.split == split]
+    if ids:
+        chosen = [c for c in chosen if c.id in ids]
     if not limit or limit >= len(chosen):
         return tuple(chosen)
     step = len(chosen) / limit
@@ -326,6 +334,12 @@ def main() -> None:
         "--split", choices=("tune", "holdout", "all"), default="holdout"
     )
     parser.add_argument(
+        "--ids",
+        type=lambda text: {part.strip() for part in text.split(",") if part.strip()},
+        default=None,
+        help="comma-separated case ids: run exactly these",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=None,
@@ -336,7 +350,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    cases = select(load_cases(CASES_PATH), args.split, args.limit)
+    cases = select(load_cases(CASES_PATH), args.split, args.limit, args.ids)
     # One analyst turn (itself one or more model calls) and one judge call per
     # case; a derivation, so changing the file cannot leave this figure wrong.
     print(f"{args.split}: {len(cases)} cases, {2 * len(cases)}+ paid calls.")
@@ -409,6 +423,8 @@ def main() -> None:
                 # turn, with no earlier exchange to lean on either way.
                 text: list[str] = []
                 async for line in stream_analyst(
+                    # The checkpointer key is owner-scoped (035/#136); one owner for the run.
+                    owner="experiment",
                     model=chat,
                     result=payload,
                     thread_id=f"topic-{uuid4()}",

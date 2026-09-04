@@ -177,3 +177,13 @@ def test_the_red_teams_landed_attacks_are_held_out_cases() -> None:
         assert case_id in cases, case_id
         assert cases[case_id].category == category, case_id
         assert cases[case_id].split == "holdout", case_id
+
+
+def test_named_cases_are_selected_by_id() -> None:
+    """Re-running the cases that failed, or the ones a rule change is about,
+    should not cost the whole split (127/#299)."""
+    cases = load_cases(CASES_PATH)
+
+    chosen = select(cases, "all", None, ids={"w25", "h25"})
+
+    assert [c.id for c in chosen] == ["w25", "h25"]
