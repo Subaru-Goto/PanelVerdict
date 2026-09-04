@@ -428,16 +428,19 @@ class TestDetectableGap:
         votes, so one extra panelist can round the other way and widen the gap slightly —
         the trend is what holds, not every step of it."""
         gaps = [detectable_gap(total=n) for n in (25, 50, 100, 200, 400)]
+        found = [gap for gap in gaps if gap is not None]
 
-        assert all(gap is not None for gap in gaps)
-        assert gaps == sorted(gaps, reverse=True)
+        assert len(found) == len(gaps)
+        assert found == sorted(found, reverse=True)
 
     def test_no_panel_can_detect_a_gap_inside_the_band(self) -> None:
         """A difference the band calls negligible is negligible at any sample size, so
         the gap can never fall below the band's own half-width however much is spent."""
         rope_half = _ROPE[1] - 0.5
 
-        assert all(detectable_gap(total=n) > rope_half for n in (25, 200, 2000))
+        for n in (25, 200, 2000):
+            gap = detectable_gap(total=n)
+            assert gap is not None and gap > rope_half
 
     def test_the_gap_tracks_the_analytic_prediction(self) -> None:
         """Checked against a different formula rather than against itself: a 95%

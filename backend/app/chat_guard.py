@@ -157,6 +157,7 @@ async def guard_chat_message(
             guard.model_name,
         )
         return
+    category: str | None
     if verdict.jailbreaking >= threshold:
         category = DECISION_CATEGORY
     else:

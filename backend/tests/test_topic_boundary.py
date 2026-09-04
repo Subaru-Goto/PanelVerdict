@@ -13,6 +13,9 @@ import pytest
 from experiments.topic_boundary import (
     CASES_PATH,
     Case,
+    Category,
+    Expected,
+    Split,
     format_summary,
     judge_with,
     load_cases,
@@ -29,7 +32,9 @@ def test_the_case_file_covers_every_category_in_both_splits() -> None:
     # Tune on one half, report on the other: a category missing from either
     # split makes the held-out score silent about it.
     cases = load_cases(CASES_PATH)
-    by_split_category = Counter((c.split, c.category) for c in cases)
+    by_split_category: Counter[tuple[str, str]] = Counter(
+        (c.split, c.category) for c in cases
+    )
     for category in IN_SCOPE | OUT_OF_SCOPE:
         assert by_split_category[("tune", category)] >= 3, category
         assert by_split_category[("holdout", category)] >= 3, category
@@ -63,7 +68,7 @@ def test_a_malformed_case_is_refused(tmp_path: Path) -> None:
 # --- the judged run's arithmetic, over canned rows -------------------------
 
 
-def _case(id_: str, category: str, expected: str, split: str) -> Case:
+def _case(id_: str, category: Category, expected: Expected, split: Split) -> Case:
     return Case(
         id=id_, question=f"q-{id_}", category=category, expected=expected, split=split
     )

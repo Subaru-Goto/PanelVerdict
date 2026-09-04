@@ -1,6 +1,7 @@
 import unicodedata
 from enum import Enum
-from typing import Literal
+from collections.abc import Iterator
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -32,6 +33,11 @@ class BigFive(BaseModel):
     extraversion: float  # sociability, assertiveness, energy, reward-seeking
     agreeableness: float  # compassion, trust, cooperation, politeness
     neuroticism: float  # negative-emotion proneness; low = stable
+
+    def traits(self) -> Iterator[tuple["TraitName", float]]:
+        """The five scores in field order, each under its typed name."""
+        for name in get_args(TraitName):
+            yield name, getattr(self, name)
 
 
 # Big Five domain order — matches BigFive's field order above; the sampler and its

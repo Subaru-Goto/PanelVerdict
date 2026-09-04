@@ -7,6 +7,7 @@ import sys
 from datetime import UTC, datetime
 
 import pytest
+from starlette.types import Message
 
 from app.logs import (
     UVICORN_LOGGERS,
@@ -17,6 +18,10 @@ from app.logs import (
     bind_thread,
     configure_logging,
 )
+
+
+async def never_receive() -> Message:
+    raise AssertionError("the endpoint under test reads no request body")
 
 
 def _record(
@@ -152,7 +157,7 @@ def test_an_explicit_thread_id_field_wins_over_the_bound_one() -> None:
     with bind_thread("other"):
         ContextStamp().filter(record)
 
-    assert record.thread_id == "chat-7"
+    assert record.__dict__["thread_id"] == "chat-7"
 
 
 @pytest.mark.anyio
@@ -176,7 +181,7 @@ async def test_the_bind_spans_the_response_send_so_the_access_line_has_the_id(
 
     with stamped_caplog.at_level(logging.INFO, logger="uvicorn.access"):
         await RequestIdMiddleware(endpoint)(
-            {"type": "http", "headers": []}, None, server_send
+            {"type": "http", "headers": []}, never_receive, server_send
         )
 
     (record,) = stamped_caplog.records

@@ -100,7 +100,8 @@ def _pool_size(conn: psycopg.Connection) -> int:
     leaves no aborted transaction behind.
     """
     try:
-        return conn.execute("SELECT count(*) FROM personas").fetchone()[0]
+        row = conn.execute("SELECT count(*) FROM personas").fetchone()
+        return row[0] if row else 0
     except psycopg.errors.UndefinedTable:
         return 0
 

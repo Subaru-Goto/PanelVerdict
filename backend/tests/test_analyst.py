@@ -69,7 +69,7 @@ def _result(*, preferring_b: int = 14, total: int = 50) -> EvaluateResponse:
         ),
         counts=PanelCounts(requested=200, matched=200, voted=total),
         query=TargetQuery(
-            countries=("US",),
+            countries=(Locale.US,),
             coverage="requested",
             min_age=18,
             max_age=100,
@@ -760,6 +760,8 @@ class TestToolsGatheredOnOneConnection:
             finally:
                 a_failed.set()
 
+        searched: object
+        explained: object
         searched, explained = await asyncio.gather(
             doomed_search(),
             tools["explain_the_report"].ainvoke(

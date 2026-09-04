@@ -7,6 +7,7 @@ here is the mechanism rather than a detail.
 """
 
 import os
+from typing import Any
 
 import pytest
 
@@ -24,7 +25,7 @@ def isolated_env(monkeypatch):
     monkeypatch.setattr(os, "environ", dict(os.environ))
 
 
-_DB = {
+_DB: dict[str, Any] = {
     "postgres_user": "u",
     "postgres_password": "p",
     "postgres_db": "d",

@@ -1,4 +1,5 @@
 import json
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -72,6 +73,7 @@ def test_a_custom_question_cannot_reach_the_answer_instruction() -> None:
         nonce="<<n>>",
     )
     content = messages[1].content
+    assert isinstance(content, str)
 
     assert "Which would you be more likely to click?" in content
     assert "Which do you prefer?" not in content
@@ -105,7 +107,7 @@ def _raw(
     *,
     input_tokens: int = 300,
     output_tokens: int = 80,
-    output_token_details: dict[str, int] | None = None,
+    output_token_details: OutputTokenDetails | None = None,
     token_usage: dict[str, object] | None = None,
 ) -> AIMessage:
     """An AIMessage shaped the way langchain hands one back from a vote.
@@ -121,7 +123,7 @@ def _raw(
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
             input_token_details=InputTokenDetails(),
-            output_token_details=OutputTokenDetails(**(output_token_details or {})),
+            output_token_details=output_token_details or OutputTokenDetails(),
         ),
         response_metadata={"token_usage": token_usage} if token_usage else {},
     )
@@ -131,7 +133,9 @@ def _real_parse_error(text: str) -> Exception:
     """The exception langchain itself puts in `parsing_error`, produced by the parser
     rather than described — a hand-rolled stand-in cannot show what its message contains.
     """
-    parser = PydanticOutputParser(pydantic_object=PanelVoteOutput)
+    parser: PydanticOutputParser[PanelVoteOutput] = PydanticOutputParser(
+        pydantic_object=PanelVoteOutput
+    )
     with pytest.raises(OutputParserException) as caught:
         parser.invoke(AIMessage(content=text))
     return caught.value
@@ -218,7 +222,7 @@ def test_a_parsing_error_raises_rather_than_passing_for_a_vote() -> None:
     """include_raw stops a parse failure raising on its own — it comes back in the dict
     beside a null `parsed`, so a caller that checked only `parsed` would file an empty
     result as a real vote."""
-    result = {
+    result: dict[str, object] = {
         "raw": AIMessage(content="not json at all"),
         "parsed": None,
         "parsing_error": _real_parse_error("not json at all"),
@@ -238,7 +242,7 @@ def test_the_raise_does_not_repeat_the_output_that_failed_to_parse() -> None:
     The fixture is the exception the parser really raises: a hand-rolled `ValueError`
     would let this test pass while the shipped path still copied the text.
     """
-    result = {
+    result: dict[str, object] = {
         "raw": AIMessage(content="Sorry, I cannot choose. Contact ada@example.com"),
         "parsed": None,
         "parsing_error": _real_parse_error(
@@ -259,6 +263,7 @@ def test_cached_input_tokens_are_carried_when_reported() -> None:
     Carrying it is also what lets a real run confirm or overturn the expectation that no
     prefix of ours is cache-eligible."""
     raw = _raw()
+    assert raw.usage_metadata is not None
     raw.usage_metadata["input_token_details"]["cache_read"] = 0
 
     response = _vote_response(_result(raw), seconds=1.0)
@@ -274,9 +279,15 @@ def test_no_cache_figure_is_unreported_rather_than_zero() -> None:
     assert response.usage.cached_tokens is None
 
 
+def _steps(adapter: object) -> list[Any]:
+    """The runnable chain inside an adapter, walked untyped: the test looks at
+    how the adapter wired it, which no public type describes."""
+    return cast(Any, adapter)._model.steps
+
+
 def _bound_model(llm: OpenRouterPanelLLM) -> ChatOpenAI:
     """The chat model inside include_raw's runnable: RunnableMap(raw=llm) | parser."""
-    return llm._model.steps[0].steps__["raw"]
+    return _steps(llm)[0].steps__["raw"]
 
 
 def test_a_reasoning_effort_is_sent_as_the_unified_object() -> None:
@@ -330,7 +341,7 @@ def test_two_adapters_built_the_same_way_share_a_cache_key() -> None:
     delimiter nonce is exactly such a thing, which is why it is rendered as a
     fixed sentinel here and only randomised on the wire.
     """
-    base = {
+    base: dict[str, Any] = {
         "api_key": "test",
         "base_url": "http://openrouter.invalid",
     }
@@ -419,7 +430,7 @@ def test_configuration_declares_everything_the_adapter_binds() -> None:
     measured to move the verdict, and a cached vote must not answer a reworded
     one."""
 
-    base = {
+    base: dict[str, Any] = {
         "api_key": "test",
         "base_url": "http://openrouter.invalid",
     }
@@ -454,7 +465,7 @@ def test_how_a_vote_is_carried_is_not_part_of_its_identity() -> None:
     now `llm.LANGCHAIN_INTEGRATION`, a constant, so it cannot reach the key by
     accident — but the next argument can.)
     """
-    asked = {"model": "openai/gpt-5-mini"}
+    asked: dict[str, Any] = {"model": "openai/gpt-5-mini"}
 
     assert (
         OpenRouterPanelLLM(
@@ -530,7 +541,7 @@ def test_the_translator_caps_its_output_and_asks_for_little_reasoning() -> None:
         base_url="http://openrouter.invalid",
         model="openai/gpt-5-mini",
     )
-    bound = translator._model.steps[0]
+    bound = _steps(translator)[0]
 
     assert bound.max_tokens == TARGET_MAX_COMPLETION_TOKENS
     assert bound._default_params["reasoning_effort"] == TARGET_REASONING_EFFORT
@@ -550,17 +561,15 @@ def test_every_paid_call_is_bounded_and_none_inherits_the_sdk_default() -> None:
     the client deadline calling the translator "one more request of the same family" as
     a vote, so an unbounded translator made a published derivation untrue.
     """
-    transport = {
+    transport: dict[str, Any] = {
         "api_key": "test",
         "base_url": "http://openrouter.invalid",
     }
     bound = {
-        "translator": OpenRouterTargetTranslator(
-            **transport, model="openai/gpt-5-mini"
-        )._model.steps[0],
-        "judge": OpenRouterJudge(**transport, model="openai/gpt-5-mini")._model.steps[
-            0
-        ],
+        "translator": _steps(
+            OpenRouterTargetTranslator(**transport, model="openai/gpt-5-mini")
+        )[0],
+        "judge": _steps(OpenRouterJudge(**transport, model="openai/gpt-5-mini"))[0],
         "embedder": OpenRouterEmbedder(
             **transport, model="openai/text-embedding-3-small"
         )._embeddings,
@@ -638,19 +647,17 @@ def test_every_paid_completion_is_bounded() -> None:
     of magnitude of headroom, not a fit."""
     from app.screening import OpenRouterScreener
 
-    transport = {
+    transport: dict[str, Any] = {
         "api_key": "test",
         "base_url": "http://openrouter.invalid",
     }
     capped = {
         "vote": _bound_model(OpenRouterPanelLLM(**transport, model="m")),
         "analyst": analyst_chat_model(**transport, model="m"),
-        "translator": OpenRouterTargetTranslator(**transport, model="m")._model.steps[
-            0
-        ],
-        "roleplay": OpenRouterRolePlayGenerator(**transport, model="m")._model.steps[0],
-        "screener": OpenRouterScreener(**transport, model="m")._model.steps[0],
-        "judge": OpenRouterJudge(**transport, model="m")._model.steps[0],
+        "translator": _steps(OpenRouterTargetTranslator(**transport, model="m"))[0],
+        "roleplay": _steps(OpenRouterRolePlayGenerator(**transport, model="m"))[0],
+        "screener": _steps(OpenRouterScreener(**transport, model="m"))[0],
+        "judge": _steps(OpenRouterJudge(**transport, model="m"))[0],
     }
 
     assert {name: client.max_tokens for name, client in capped.items()} == {
@@ -685,7 +692,8 @@ class TestOutOfCreditTranslation:
             base_url="http://openrouter.invalid",
             model="openai/gpt-5-mini",
         )
-        llm._model = self._Raising(status)
+        # A fake in a private slot; only `invoke` is ever called on it.
+        llm._model = cast(Any, self._Raising(status))
         return llm
 
     def test_a_402_becomes_out_of_credit_with_fixed_text(self) -> None:
@@ -708,6 +716,7 @@ def test_the_analyst_model_asks_for_usage_and_runs_at_low_effort() -> None:
 
     model = analyst_chat_model(api_key="k", base_url="http://x/api/v1", model="m")
 
+    assert isinstance(model, ChatOpenAI)
     assert model.stream_usage is True
     assert model.reasoning_effort == "low"
 
@@ -722,6 +731,7 @@ def test_the_analyst_caps_each_completion() -> None:
     completion observed exceeds that. 3 x 544 = 1632, next power of two up."""
     model = analyst_chat_model(api_key="k", base_url="http://x/api/v1", model="m")
 
+    assert isinstance(model, ChatOpenAI)
     assert model.max_tokens == ANALYST_MAX_COMPLETION_TOKENS == 2048
 
 

@@ -1,6 +1,7 @@
 import json
 import sys
 from threading import Lock
+from typing import Literal
 
 import pytest
 
@@ -246,6 +247,8 @@ def _rows(*, llm, **kwargs):
 class StubLLM:
     """Votes option_1 always — position-fixed, so counterbalancing is observable."""
 
+    configuration = "stub"
+
     def __init__(self) -> None:
         self.prompts: list[str] = []
         self._lock = Lock()
@@ -275,7 +278,9 @@ class ContentVoter:
         option_2: str,
         enacted: str = "",
     ):
-        chosen = "option_1" if option_1 < option_2 else "option_2"
+        chosen: Literal["option_1", "option_2"] = (
+            "option_1" if option_1 < option_2 else "option_2"
+        )
         return voted(chosen, f"{len(system_prompt)}")
 
 

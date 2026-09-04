@@ -3,12 +3,13 @@
 import json
 import re
 from collections import Counter
-from collections.abc import Iterable, Iterator, Sequence
-from typing import Literal, get_args
+from collections.abc import Callable, Iterable, Iterator, Sequence
+from typing import Any, Literal, cast, get_args
 
 import httpx
 import psycopg
-from langchain_core.language_models import BaseChatModel
+from langchain_core.language_models import BaseChatModel, LanguageModelInput
+from langchain_core.runnables import Runnable
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import BaseTool
@@ -17,7 +18,7 @@ from openai import APIStatusError
 from app.assembly import AssembledPersona
 from app.config import settings
 from app.persistence import persist_pool
-from app.roleplay import RolePlayOutcome, checked_instruction
+from app.roleplay import RefusalClass, RolePlayOutcome, checked_instruction
 from app.schemas import (
     INCOME_BAND_QUINTILES,
     MAX_PERSONA_AGE,
@@ -286,11 +287,11 @@ def make_persona(
 ) -> Persona:
     return Persona(
         id=id_,
-        country=country,
+        country=Locale(country),
         age=age,
         gender=gender,
         income_quintile=income_quintile,
-        education=education,
+        education=EducationLevel(education),
         big_five=big_five
         or BigFive(
             openness=0.1,
@@ -352,12 +353,16 @@ class ScriptedChatModel(BaseChatModel):
     seen: list[list[BaseMessage]] = []
 
     def bind_tools(
-        self, tools: Sequence[BaseTool], **kwargs: object
-    ) -> "ScriptedChatModel":
+        self,
+        tools: Sequence[dict[str, Any] | type | Callable[..., Any] | BaseTool],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Runnable[LanguageModelInput, AIMessage]:
         # The binding is observable through the transcript (a real ToolMessage
         # only appears if the agent executed a real tool), so recording the
         # schemas here would duplicate what the tests already prove.
-        return self
+        return cast(Runnable[LanguageModelInput, AIMessage], self)
 
     def _next_message(self, messages: list[BaseMessage]) -> AIMessage:
         self.seen.append(list(messages))
@@ -450,8 +455,8 @@ class StubGenerator:
     generated sentence from an edited one by looking at it.
     """
 
-    def __init__(self, refusals: dict[str, str] | None = None) -> None:
-        self.refusals = refusals or {}
+    def __init__(self, refusals: dict[str, RefusalClass] | None = None) -> None:
+        self.refusals: dict[str, RefusalClass] = refusals or {}
         self.drafted: list[str] = []
         self.checked: list[str] = []
 

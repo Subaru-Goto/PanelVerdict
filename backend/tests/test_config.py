@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from pydantic import ValidationError
 
@@ -6,7 +8,7 @@ from app.config import (
     Settings,
 )
 
-_DB = {
+_DB: dict[str, Any] = {
     "postgres_user": "u",
     "postgres_password": "p",
     "postgres_db": "d",
@@ -35,7 +37,7 @@ def test_a_profile_name_that_does_not_exist_is_refused_at_startup() -> None:
     """Rejected on construction rather than at first use, so a typo in the environment
     fails before anything is retrieved or paid for."""
     with pytest.raises(ValidationError):
-        Settings(**_DB, profile="production")
+        Settings(**_DB, profile="production")  # type: ignore[arg-type]  # the rejection is the test
 
 
 def test_the_profiles_are_a_ladder() -> None:

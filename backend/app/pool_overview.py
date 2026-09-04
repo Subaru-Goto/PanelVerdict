@@ -328,11 +328,11 @@ def format_report(personas: list[Persona]) -> str:
         )
 
     lines += ["", "Correlations — worst three gaps against the priors:"]
-    for deviation in correlation_deviations(personas)[:3]:
-        pair = f"{deviation.trait_a[:4]}/{deviation.trait_b[:4]}"
+    for correlation in correlation_deviations(personas)[:3]:
+        pair = f"{correlation.trait_a[:4]}/{correlation.trait_b[:4]}"
         lines.append(
-            f"  {pair:<20}expected {deviation.expected:+.3f}   "
-            f"realized {deviation.realized:+.3f}"
+            f"  {pair:<20}expected {correlation.expected:+.3f}   "
+            f"realized {correlation.realized:+.3f}"
         )
     return "\n".join(lines)
 

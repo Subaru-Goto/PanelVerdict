@@ -2,7 +2,7 @@ import asyncio
 import base64
 import hmac
 import logging
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
@@ -21,7 +21,8 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 from pgvector.psycopg import register_vector_async
-from psycopg.rows import dict_row
+from psycopg import AsyncConnection
+from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
@@ -206,7 +207,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _chat_guard
     _chat_guard = _build_chat_guard()
     await _enforce_chat_guard_policy(_chat_guard)
-    async with AsyncConnectionPool(
+    # The type names the row shape the saver expects; `row_factory` below is
+    # what actually produces it.
+    async with AsyncConnectionPool[AsyncConnection[DictRow]](
         settings.database_url,
         min_size=1,
         max_size=1,
@@ -467,7 +470,7 @@ def budget_notice(remaining: float | None, *, size: int) -> tuple[Notice, ...]:
     )
 
 
-async def get_conn() -> AsyncIterator[psycopg.AsyncConnection]:
+async def get_conn() -> AsyncGenerator[psycopg.AsyncConnection, None]:
     """One plain connection per request, pgvector adapter registered.
 
     The adapter is per-connection state and the chat path binds query vectors
@@ -1887,9 +1890,14 @@ class ClosingStreamingResponse(StreamingResponse):
     run's shutdown halfway through.
     """
 
-    def __init__(self, content, *, thread_id: str, **kwargs) -> None:
+    def __init__(
+        self, content: AsyncGenerator[str, None], *, thread_id: str, **kwargs: Any
+    ) -> None:
         super().__init__(content, **kwargs)
         self.thread_id = thread_id
+        # Starlette keeps the same object as `body_iterator`, typed as a bare
+        # iterable; this name keeps the generator's `aclose`.
+        self._stream = content
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         # The bind lives here, not in the endpoint: the body is produced after
@@ -1899,7 +1907,7 @@ class ClosingStreamingResponse(StreamingResponse):
                 await super().__call__(scope, receive, send)
             finally:
                 with anyio.CancelScope(shield=True):
-                    await self.body_iterator.aclose()
+                    await self._stream.aclose()
 
 
 async def preflight_chat(

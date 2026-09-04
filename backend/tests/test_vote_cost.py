@@ -23,7 +23,10 @@ def test_each_row_carries_the_usage_of_the_panelist_it_names() -> None:
     the wrong persona id would produce a plausible mean over a mislabelled panel."""
     rows = _rows("low", 0, ["p1", "p2", "p3"], (_usage(301), _usage(302), _usage(303)))
 
-    assert [(row.persona_id, row.usage.input_tokens) for row in rows] == [
+    assert [
+        (row.persona_id, row.usage.input_tokens if row.usage is not None else None)
+        for row in rows
+    ] == [
         ("p1", 301),
         ("p2", 302),
         ("p3", 303),
@@ -33,7 +36,7 @@ def test_each_row_carries_the_usage_of_the_panelist_it_names() -> None:
 def test_a_vote_that_reported_no_usage_keeps_its_row_and_holds_no_usage() -> None:
     """The vote happened, so it gets a row. Substituting zeros would pull every mean the
     report computes toward a cost nobody was charged."""
-    rows = _rows("default", 1, ["p1", "p2"], (_usage(300), None))
+    rows = _rows(None, 1, ["p1", "p2"], (_usage(300), None))
 
     assert rows[1].persona_id == "p2"
     assert rows[1].usage is None

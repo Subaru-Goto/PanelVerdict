@@ -13,7 +13,7 @@ import asyncio
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import psycopg
 from psycopg.rows import dict_row
@@ -247,7 +247,7 @@ LIMIT %(limit)s
 
 
 async def search_corpus(
-    conn: psycopg.AsyncConnection,
+    conn: psycopg.AsyncConnection[Any],
     query: str,
     embedder: Embedder,
     *,

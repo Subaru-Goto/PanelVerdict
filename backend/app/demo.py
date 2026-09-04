@@ -178,6 +178,9 @@ class UnreachableGenerator:
     def draft(self, *, words: str) -> "RolePlayOutcome":
         raise RuntimeError("the demo has no audience words to draft from")
 
+    def check(self, *, instruction: str) -> "RolePlayOutcome":
+        raise RuntimeError("the demo has no instruction to check")
+
 
 async def _capture(case: str, out_dir: Path) -> str | None:
     """Buy one real `prod` run for a case and write it down as a fixture.

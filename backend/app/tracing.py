@@ -50,5 +50,5 @@ def configure_tracing(settings: Settings = _settings) -> bool:
         os.environ[switch] = wanted
     # The SDK memoises its environment lookups, and we have just changed the
     # environment underneath it.
-    ls_utils.get_env_var.cache_clear()
+    ls_utils.get_env_var.cache_clear()  # type: ignore[attr-defined]  # overloads hide lru_cache
     return ls_utils.tracing_is_enabled() is True

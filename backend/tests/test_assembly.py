@@ -8,7 +8,7 @@ from app.assembly import (
 )
 from app.panel import persona_summary
 from app.sampler import JointCell
-from app.schemas import Locale, Persona
+from app.schemas import EducationLevel, Locale, Persona
 
 
 class StubEmbedder:
@@ -28,14 +28,14 @@ _CELLS = [
     JointCell(
         age_band="20-29",
         gender="female",
-        education="tertiary",
+        education=EducationLevel.TERTIARY,
         income_quintile=4,
         weight=0.5,
     ),
     JointCell(
         age_band="30-39",
         gender="male",
-        education="secondary",
+        education=EducationLevel.SECONDARY,
         income_quintile=2,
         weight=0.5,
     ),

@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import numpy as np
 import pytest
@@ -13,18 +14,18 @@ from app.pool_overview import (
     worst_deviation,
 )
 from app.sampler import JointCell
-from app.schemas import BigFive, Persona
+from app.schemas import BigFive, EducationLevel, Locale, Persona
 
 BANDS = ("18-19", "20-29", "30-39", "80+")
 
 
 def persona(id_: str, *, age: int = 34, gender: str = "female", **overrides) -> Persona:
-    base = dict(
-        country="US",
+    base: dict[str, Any] = dict(
+        country=Locale.US,
         age=age,
         gender=gender,
         income_quintile=3,
-        education="tertiary",
+        education=EducationLevel.TERTIARY,
         big_five=_varied(int(id_.rsplit("-", 1)[-1])),
     )
     return Persona(id=id_, **(base | overrides))
@@ -58,7 +59,7 @@ class TestDemographicDeviations:
             JointCell(
                 age_band="20-29",
                 gender=gender,
-                education="tertiary",
+                education=EducationLevel.TERTIARY,
                 income_quintile=3,
                 weight=1.0,
             )
@@ -77,7 +78,7 @@ class TestDemographicDeviations:
             JointCell(
                 age_band="20-29",
                 gender=gender,
-                education="tertiary",
+                education=EducationLevel.TERTIARY,
                 income_quintile=3,
                 weight=1.0,
             )
@@ -102,14 +103,15 @@ class TestDemographicDeviations:
             JointCell(
                 age_band="20-29",
                 gender=gender,
-                education="tertiary",
+                education=EducationLevel.TERTIARY,
                 income_quintile=3,
                 weight=1.0,
             )
             for gender in ("male", "female")
         ]
         pool = [persona(f"US-{i}", age=25, gender="male") for i in range(50)] + [
-            persona(f"JP-{i}", age=25, gender="female", country="JP") for i in range(50)
+            persona(f"JP-{i}", age=25, gender="female", country=Locale.JP)
+            for i in range(50)
         ]
         deviations = demographic_deviations(
             pool, {"US": balanced, "JP": list(balanced)}
@@ -129,7 +131,7 @@ class TestDemographicDeviations:
             JointCell(
                 age_band="20-29",
                 gender="male",
-                education="tertiary",
+                education=EducationLevel.TERTIARY,
                 income_quintile=3,
                 weight=1.0,
             )
@@ -241,7 +243,7 @@ class TestWorstDeviation:
             JointCell(
                 age_band="20-29",
                 gender=gender,
-                education="tertiary",
+                education=EducationLevel.TERTIARY,
                 income_quintile=3,
                 weight=1.0,
             )

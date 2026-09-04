@@ -3,7 +3,7 @@ import sys
 
 import psycopg
 import pytest
-from factories import DIM
+from tests.factories import DIM
 
 from app.config import settings
 from app.persistence import apply_schema, missing_columns, schema_columns
@@ -34,7 +34,9 @@ def _persona_count(conn: psycopg.Connection) -> int:
 
 
 def _count(conn: psycopg.Connection, table: str) -> int:
-    return conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+    row = conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+    assert row is not None
+    return row[0]
 
 
 def test_seed_pool_persists_all_when_empty(conn):
