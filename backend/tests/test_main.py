@@ -12,6 +12,8 @@ from uuid import uuid4
 import httpx
 
 import psycopg
+
+from app.db import CONNECT_TIMEOUT_SECONDS
 import pytest
 from app import graph as graph_module
 from app import main
@@ -27,6 +29,7 @@ from app.config import (
 from app.chat_guard import BlockedMessage, Classification, ContentRefused
 from app.corpus import seed_corpus
 from app.main import (
+    DB_BUSY,
     LEDGER_HOURS,
     TESTS_PAGE_ROWS,
     StoredTest,
@@ -982,6 +985,67 @@ async def test_the_chat_connection_can_bind_a_query_vector(
         assert found == []
     finally:
         await dependency.aclose()
+
+
+@pytest.mark.anyio
+async def test_a_connection_that_cannot_open_answers_503_in_one_sentence(
+    monkeypatch,
+) -> None:
+    """112/#242: the open is bounded (the same deadline /health uses), and a
+    request that cannot get a connection says so as a status, not a traceback.
+    The driver's words stay out of the answer."""
+    seen: dict[str, object] = {}
+
+    async def refuse(cls, url: str, **kwargs: object) -> None:
+        seen.update(kwargs)
+        raise psycopg.OperationalError("connection timeout expired")
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", classmethod(refuse))
+    dependency = get_conn()
+
+    with pytest.raises(HTTPException) as caught:
+        await anext(dependency)
+
+    assert caught.value.status_code == 503
+    assert caught.value.detail == DB_BUSY
+    assert "timeout expired" not in str(caught.value.detail)
+    assert seen["connect_timeout"] == CONNECT_TIMEOUT_SECONDS
+
+
+def test_startup_sizes_the_shared_executor_to_the_pool(real_lifespan) -> None:
+    """112/#242: every to_thread, every sync graph node and every new
+    connection's DNS lookup share the loop's default executor, which Python
+    sizes to cpu+4 — five on the deployed container. It fronts a pool of
+    `pooler_pool_size` connections, so it is sized to that number and never the
+    smaller ceiling by accident. Observed as behaviour: that many blocking
+    calls run at once, and not one more."""
+    import threading
+    import time
+
+    peak = 0
+    running = 0
+    lock = threading.Lock()
+
+    def hold() -> None:
+        nonlocal peak, running
+        with lock:
+            running += 1
+            peak = max(peak, running)
+        time.sleep(0.2)
+        with lock:
+            running -= 1
+
+    async def fan_out() -> int:
+        await asyncio.gather(
+            *(asyncio.to_thread(hold) for _ in range(settings.pooler_pool_size + 5))
+        )
+        return peak
+
+    with TestClient(app) as client:
+        assert client.portal is not None  # open while the context holds
+        observed = client.portal.call(fan_out)
+
+    assert observed == settings.pooler_pool_size
 
 
 class HeldOpenChatModel(ScriptedChatModel):

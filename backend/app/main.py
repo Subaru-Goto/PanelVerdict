@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import hmac
 import logging
@@ -45,7 +46,7 @@ from app.config import (
     USD_PER_VOTE,
     settings,
 )
-from app.db import check_connection
+from app.db import CONNECT_TIMEOUT_SECONDS, check_connection
 from app.demo import DEMO_CASES, ReplayPanel, UnreachableGenerator, load_fixture
 from app.graph import GateDecision, PanelPreview, build_evaluate_graph
 from app.chat_guard import (
@@ -203,6 +204,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     the session pooler (port 5432) is fine — 006f's rule bans only the
     transaction pooler.
     """
+    # The loop's default executor carries every to_thread, every sync graph
+    # node and every new connection's DNS lookup. Python sizes it to cpu+4 —
+    # five on the deployed container. It fronts `pooler_pool_size` connections,
+    # so it gets that many workers (112/#242); threads waiting on the network
+    # are cheap, and the pool, not the CPU count, is the ceiling that means
+    # something here. Set before anything below uses it.
+    asyncio.get_running_loop().set_default_executor(
+        ThreadPoolExecutor(
+            max_workers=settings.pooler_pool_size, thread_name_prefix="shared"
+        )
+    )
     await _enforce_screener_policy()
     global _chat_guard
     _chat_guard = _build_chat_guard()
@@ -470,6 +482,9 @@ def budget_notice(remaining: float | None, *, size: int) -> tuple[Notice, ...]:
     )
 
 
+DB_BUSY = "The database is busy right now. Try again in a moment."
+
+
 async def get_conn() -> AsyncGenerator[psycopg.AsyncConnection, None]:
     """One plain connection per request, pgvector adapter registered.
 
@@ -504,7 +519,16 @@ async def get_conn() -> AsyncGenerator[psycopg.AsyncConnection, None]:
     A pool may still be right, but it needs the number nothing here has: what
     the session pooler will actually grant. Measuring that is 112/#242.
     """
-    async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
+    try:
+        conn = await psycopg.AsyncConnection.connect(
+            settings.database_url, connect_timeout=CONNECT_TIMEOUT_SECONDS
+        )
+    except psycopg.OperationalError:
+        # Bounded (112/#242): a pool with no seat free or a pooler that does
+        # not answer is a 503 in three seconds, not a request that waits on the
+        # pooler's queue or the OS. The driver's words stay out of the answer.
+        raise HTTPException(status_code=503, detail=DB_BUSY) from None
+    async with conn:
         await register_vector_async(conn)
         yield conn
 
