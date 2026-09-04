@@ -332,7 +332,8 @@ async def run_vote_loop(
     started = perf_counter()
 
     # Chunks are one concurrency-load each, so no worker idles mid-chunk and the
-    # dev profile (size 25) degenerates to a single fan-out. A streak is broken by
+    # dev profile (size 25) degenerates to a single fan-out — one boundary, so
+    # the stop can never fire there (042/#140, pinned). A streak is broken by
     # any boundary that reads differently — including the direction of a decisive,
     # so a lead that flips sides cannot accumulate confirmations across the flip.
     votes = PanelVotes(records=[], usage=(), failures=())

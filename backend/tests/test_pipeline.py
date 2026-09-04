@@ -6,10 +6,12 @@ import time
 import pytest
 from psycopg.pq import TransactionStatus
 
-from app.pipeline import EmptyPanel, NoVotes, run_panel_test, run_vote_loop
-from app.targeting import select_panel
+from app import pipeline
+from app.config import PROFILES
 from app.persistence import persist_pool
+from app.pipeline import EmptyPanel, NoVotes, run_panel_test, run_vote_loop
 from app.schemas import PanelCounts, RequestedRegion, TargetRequest
+from app.targeting import select_panel
 from app.vote import VOTE_CONCURRENCY, OutOfCredit, VoteResponse
 from tests.factories import (
     JAPAN_REQUEST,
@@ -243,6 +245,33 @@ async def test_a_clear_winner_stops_after_two_confirming_chunks(conn, aconn) -> 
     assert result.counts.voted == 50
     assert result.counts.matched == 75
     assert result.tally.total == 50
+
+
+@pytest.mark.anyio
+async def test_the_stop_cannot_fire_on_a_panel_of_one_chunk(conn, aconn) -> None:
+    """042/#140: the chunk is one concurrency-load, so a panel the size of the
+    cap is a single fan-out with a single boundary — and a streak of one never
+    reaches the two confirmations the stop needs. The dev profile is exactly
+    that size, so a landslide there runs to the cap; a dev run that "went to
+    the cap" is not a stop that misfired."""
+    seed_japanese(conn, VOTE_CONCURRENCY)
+
+    result = await _run(aconn, size=VOTE_CONCURRENCY, llm=PrefersLLM(_VARIANTS["b"]))
+
+    assert result.stop_reason is None
+    assert result.counts.voted == VOTE_CONCURRENCY
+
+
+def test_the_decisive_floor_sits_above_dev_and_halfway_through_demo() -> None:
+    """The earliest a decisive run can stop is confirmations × chunk. Pinned
+    against the real profiles, so a change to either number or to a profile
+    size has to come back here and say what it did to the floor."""
+    floor = pipeline._STOP_CONFIRMATIONS * VOTE_CONCURRENCY
+
+    assert floor == 50
+    assert PROFILES["dev"].size < floor, "dev never stops early"
+    assert PROFILES["demo"].size == 2 * floor, "demo saves at most half"
+    assert PROFILES["prod"].size == 4 * floor, "prod saves up to three quarters"
 
 
 @pytest.mark.anyio
