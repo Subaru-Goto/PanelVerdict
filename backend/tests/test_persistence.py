@@ -5,6 +5,7 @@ from typing import get_args
 import numpy as np
 import psycopg
 import pytest
+from psycopg.pq import TransactionStatus
 from tests.factories import (
     DIM,
     big_five,
@@ -18,6 +19,7 @@ import app.persistence
 from app.assembly import AssembledPersona
 from app.persistence import (
     _PERSONA_COLUMNS,
+    anyone_matches,
     REPORT_SCHEMA_VERSION,
     apply_schema,
     deny_data_api,
@@ -437,6 +439,9 @@ def test_persist_pool_counts_only_new_writes_on_rerun(conn):
 # The whole pool, unfiltered — every retrieval test narrows this rather than
 # assembling eight fields, so what each one is actually about stays visible.
 _EVERYONE = resolve_target(TargetRequest())
+
+# An age span nobody can fall in — what "under 18" clamps to.
+_NOBODY = _EVERYONE.model_copy(update={"min_age": 18, "max_age": 17})
 
 
 @pytest.mark.anyio
@@ -1198,3 +1203,38 @@ async def test_the_sweep_takes_only_unkept_reports_past_the_horizon(conn, aconn)
         await aconn.execute("SELECT test_id FROM tests ORDER BY test_id")
     ).fetchall()
     assert remaining == [("new-over",), ("old-kept",)]
+
+
+# 108/#231: the skip path asks this before it charges, so both callers of one
+# predicate must agree — and the read must not sit open across the model call
+# that follows it on the caller's path.
+@pytest.mark.anyio
+async def test_the_pool_is_asked_whether_anybody_matches_at_all(conn, aconn):
+    _numbered_pool(conn, 3)
+
+    assert await anyone_matches(aconn, _EVERYONE) is True
+    assert await anyone_matches(aconn, _NOBODY) is False
+
+
+@pytest.mark.anyio
+async def test_asking_leaves_no_transaction_open(conn, aconn):
+    """`_refuse_if_run_capped` states the rule this shares: nothing was
+    written, and a pooled connection must not idle in transaction across the
+    audience classifier's call."""
+    _numbered_pool(conn, 3)
+
+    await anyone_matches(aconn, _EVERYONE)
+
+    assert aconn.info.transaction_status == TransactionStatus.IDLE
+
+
+@pytest.mark.anyio
+async def test_the_answer_agrees_with_what_the_draw_seats(conn, aconn):
+    """One predicate, two callers: a target the check clears must seat somebody,
+    and one it refuses must seat nobody. This is the drift the extraction was
+    for — a check that disagreed with the draw would charge for an empty panel."""
+    _numbered_pool(conn, 3)
+
+    for query in (_EVERYONE, _NOBODY):
+        drawn = await retrieve_panel(aconn, query, size=10, seed=0)
+        assert await anyone_matches(aconn, query) is bool(drawn)

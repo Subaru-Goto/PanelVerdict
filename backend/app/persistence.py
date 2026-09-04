@@ -673,6 +673,61 @@ def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona
     return _read_personas(conn, order="random", limit=limit)
 
 
+def _panel_predicate(query: TargetQuery) -> tuple[list[str], list[SqlParam]]:
+    """The WHERE clause a target reads as, built once for both its callers.
+
+    `retrieve_panel` draws the panel and `anyone_matches` asks whether there is
+    one to draw; a second hand-written copy could drift, and drift here means a
+    caller charged for a panel the draw cannot seat (108/#231).
+
+    Every fragment below is a literal; only values reach the database as
+    parameters, and `%s` placeholders stay positional with `params`.
+    """
+    conditions = ["country = ANY(%s)", "age BETWEEN %s AND %s"]
+    params: list[SqlParam] = [
+        [country.value for country in query.countries],
+        query.min_age,
+        query.max_age,
+    ]
+    if query.gender is not None:
+        conditions.append("gender = %s")
+        params.append(query.gender)
+    if query.income_quintiles:
+        conditions.append("income_quintile = ANY(%s)")
+        params.append(list(query.income_quintiles))
+    if query.education:
+        conditions.append("education = ANY(%s)")
+        params.append([level.value for level in query.education])
+    for requested in query.traits:
+        # The column name is the trait name, both taken from `TraitName`; the
+        # comparison comes from `LEVEL_BOUNDS`. Neither is caller-supplied text, and
+        # the score itself is bound as a parameter.
+        for comparison, bound in LEVEL_BOUNDS[requested.level]:
+            conditions.append(f"{requested.trait} {comparison} %s")
+            params.append(bound)
+    return conditions, params
+
+
+async def anyone_matches(conn: psycopg.AsyncConnection, query: TargetQuery) -> bool:
+    """Whether the pool holds a single person this target would seat.
+
+    Not a count, deliberately: how many match is the draw's business, and only
+    an empty panel is a run worth refusing.
+    """
+    conditions, params = _panel_predicate(query)
+    async with conn.cursor() as cur:
+        await cur.execute(
+            f"SELECT 1 FROM personas WHERE {' AND '.join(conditions)} LIMIT 1",
+            params,
+        )
+        seated = await cur.fetchone() is not None
+    # Nothing was written, and a model call follows on the caller's path: the
+    # same rule `_refuse_if_run_capped` states, since a read left open would
+    # hold a pooled connection idle in transaction across it.
+    await conn.rollback()
+    return seated
+
+
 async def retrieve_panel(
     conn: psycopg.AsyncConnection,
     query: TargetQuery,
@@ -700,32 +755,8 @@ async def retrieve_panel(
     if size < 1:
         raise ValueError(f"a panel needs at least one persona, got {size}")
 
-    # Every fragment below is a literal; only values reach the database as
-    # parameters, and `%s` placeholders stay positional with `params`.
-    conditions = ["country = ANY(%s)", "age BETWEEN %s AND %s"]
-    params: list[SqlParam] = [
-        [country.value for country in query.countries],
-        query.min_age,
-        query.max_age,
-    ]
-    if query.gender is not None:
-        conditions.append("gender = %s")
-        params.append(query.gender)
-    if query.income_quintiles:
-        conditions.append("income_quintile = ANY(%s)")
-        params.append(list(query.income_quintiles))
-    if query.education:
-        conditions.append("education = ANY(%s)")
-        params.append([level.value for level in query.education])
-    for requested in query.traits:
-        # The column name is the trait name, both taken from `TraitName`; the
-        # comparison comes from `LEVEL_BOUNDS`. Neither is caller-supplied text, and
-        # the score itself is bound as a parameter.
-        for comparison, bound in LEVEL_BOUNDS[requested.level]:
-            conditions.append(f"{requested.trait} {comparison} %s")
-            params.append(bound)
-
-    params += [str(seed), size]
+    conditions, params = _panel_predicate(query)
+    params = [*params, str(seed), size]
 
     # Ties break on id, so the panel cannot vary run to run for a reason the customer
     # could not see. Only an md5 collision could reach it, but the ordering has to be

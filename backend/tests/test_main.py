@@ -10,58 +10,8 @@ from decimal import Decimal
 from uuid import uuid4
 
 import httpx
-
 import psycopg
-
-from app import main as main_module
-
-from app.db import CONNECT_TIMEOUT_SECONDS
 import pytest
-from app import graph as graph_module
-from app import main
-from app.auth import InvalidSession, SessionUnverifiable
-from app.config import (
-    PROFILES,
-    USD_PER_ROLEPLAY,
-    USD_PER_VOTE,
-    PanelProfile,
-    Settings,
-    settings,
-)
-from app.chat_guard import BlockedMessage, Classification, ContentRefused
-from app.corpus import seed_corpus
-from app.main import (
-    DB_BUSY,
-    LEDGER_HOURS,
-    TESTS_PAGE_ROWS,
-    StoredTest,
-    _only_one_answer,
-    app,
-    budget_notice,
-    get_account_deleter,
-    get_analyst,
-    get_checkpointer,
-    get_conn,
-    get_embedder,
-    get_generator,
-    get_panel_llm,
-    get_remaining_credit,
-    get_chat_guard,
-    get_screener,
-    get_verifier,
-    tracing_enabled,
-)
-from app.persistence import REPORT_SCHEMA_VERSION, nearest_panelists, persist_pool
-from app.roleplay import GeneratorFault
-from app.schemas import (
-    EvaluateRequest,
-    EvaluateResponse,
-    MAX_AUDIENCE_CHARS,
-    MAX_HEADLINE_CHARS,
-    RunUsage,
-)
-from app.screening import ScreeningVerdict
-from app.vote import OutOfCredit, UsageTotals, VoteResponse, VoteUsage
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, HumanMessage
@@ -72,17 +22,66 @@ from pgvector.psycopg import register_vector_async
 from psycopg.pq import TransactionStatus
 from psycopg.types.json import Jsonb
 from pydantic import SecretStr
+
+from app import graph as graph_module
+from app import main
+from app import main as main_module
+from app.auth import InvalidSession, SessionUnverifiable
+from app.chat_guard import BlockedMessage, Classification, ContentRefused
+from app.config import (
+    PROFILES,
+    USD_PER_ROLEPLAY,
+    USD_PER_VOTE,
+    PanelProfile,
+    Settings,
+    settings,
+)
+from app.corpus import seed_corpus
+from app.db import CONNECT_TIMEOUT_SECONDS
+from app.main import (
+    DB_BUSY,
+    LEDGER_HOURS,
+    NOBODY_MATCHES,
+    TESTS_PAGE_ROWS,
+    StoredTest,
+    _only_one_answer,
+    app,
+    budget_notice,
+    get_account_deleter,
+    get_analyst,
+    get_chat_guard,
+    get_checkpointer,
+    get_conn,
+    get_embedder,
+    get_generator,
+    get_panel_llm,
+    get_remaining_credit,
+    get_screener,
+    get_verifier,
+    tracing_enabled,
+)
+from app.persistence import REPORT_SCHEMA_VERSION, nearest_panelists, persist_pool
+from app.roleplay import GeneratorFault
+from app.schemas import (
+    MAX_AUDIENCE_CHARS,
+    MAX_HEADLINE_CHARS,
+    EvaluateRequest,
+    EvaluateResponse,
+    RunUsage,
+)
+from app.screening import ScreeningVerdict
+from app.vote import OutOfCredit, UsageTotals, VoteResponse, VoteUsage
 from tests.factories import (
+    ScriptedChatModel,
+    StubGenerator,
     make_assembled,
     make_panel_vote,
     make_persona,
     make_report,
     ndjson_events,
     pointing,
-    ScriptedChatModel,
     seed_japanese,
     status_error,
-    StubGenerator,
     tool_call_message,
     voted,
 )
@@ -769,13 +768,17 @@ def test_a_shortfall_notice_reaches_the_response(client, conn) -> None:
 
 def test_a_target_nobody_matches_is_the_requests_fault(client, conn) -> None:
     """422, not 502: the pool is fine and the provider was never called — the target
-    named an audience this pool cannot serve."""
+    named an audience this pool cannot serve.
+
+    Since 108/#231 this is answered above the charge, in the handler's own
+    sentence, rather than by `EmptyPanel` from inside a run already paid for.
+    """
     persist_pool(conn, [make_assembled(make_persona(id_="US-00000", country="US"))])
 
     response = client.post("/evaluate", json=_REQUEST_BODY)
 
     assert response.status_code == 422
-    assert "no persona matches" in response.json()["detail"]
+    assert response.json()["detail"] == NOBODY_MATCHES
 
 
 def test_a_panel_with_no_votes_is_a_bad_gateway_naming_types_only(client, conn) -> None:
@@ -1389,9 +1392,8 @@ def test_a_dead_screener_is_announced_at_boot(
     function itself — the doubles every route test installs never reach it."""
     monkeypatch.setattr(main, "get_screener", lambda: _OffScreener())
 
-    with caplog.at_level(logging.ERROR, logger="app.main"):
-        with TestClient(app):
-            pass
+    with caplog.at_level(logging.ERROR, logger="app.main"), TestClient(app):
+        pass
 
     (record,) = [r for r in caplog.records if "screening model" in r.message]
     assert record.levelno == logging.ERROR
@@ -1408,9 +1410,8 @@ def test_a_required_screener_that_is_off_refuses_the_boot(
     monkeypatch.setattr(settings, "screener_required", True)
     monkeypatch.setattr(main, "get_screener", lambda: _OffScreener())
 
-    with pytest.raises(RuntimeError, match="SCREENER_REQUIRED"):
-        with TestClient(app):
-            pass
+    with pytest.raises(RuntimeError, match="SCREENER_REQUIRED"), TestClient(app):
+        pass
 
 
 def test_a_required_deployment_with_no_key_refuses_the_boot(
@@ -1420,9 +1421,8 @@ def test_a_required_deployment_with_no_key_refuses_the_boot(
     declared the control required is the same contradiction as a 404."""
     monkeypatch.setattr(settings, "screener_required", True)
 
-    with pytest.raises(RuntimeError, match="SCREENER_REQUIRED"):
-        with TestClient(app):
-            pass
+    with pytest.raises(RuntimeError, match="SCREENER_REQUIRED"), TestClient(app):
+        pass
 
 
 def test_an_outage_at_boot_does_not_stop_a_required_deployment(
@@ -1435,9 +1435,8 @@ def test_an_outage_at_boot_does_not_stop_a_required_deployment(
     monkeypatch.setattr(settings, "screener_required", True)
     monkeypatch.setattr(main, "get_screener", lambda: _DownScreener())
 
-    with caplog.at_level(logging.WARNING, logger="app.main"):
-        with TestClient(app):
-            pass
+    with caplog.at_level(logging.WARNING, logger="app.main"), TestClient(app):
+        pass
 
     (record,) = [r for r in caplog.records if "probe" in r.message]
     assert record.levelno == logging.WARNING
@@ -1450,9 +1449,8 @@ def test_a_chat_guard_this_account_cannot_use_is_announced_at_boot(
     a wrong key is one ERROR line at startup, not a silent fail-open per turn."""
     monkeypatch.setattr(main, "_build_chat_guard", lambda: _OffGuard())
 
-    with caplog.at_level(logging.ERROR, logger="app.main"):
-        with TestClient(app):
-            pass
+    with caplog.at_level(logging.ERROR, logger="app.main"), TestClient(app):
+        pass
 
     (record,) = [r for r in caplog.records if "moderation model" in r.message]
     assert record.levelno == logging.ERROR
@@ -1466,14 +1464,12 @@ def test_a_required_deployment_refuses_the_boot_when_the_chat_guard_is_off_or_mi
     monkeypatch.setattr(main, "get_screener", lambda: _CleanScreener())
 
     monkeypatch.setattr(main, "_build_chat_guard", lambda: _OffGuard())
-    with pytest.raises(RuntimeError, match="moderation model"):
-        with TestClient(app):
-            pass
+    with pytest.raises(RuntimeError, match="moderation model"), TestClient(app):
+        pass
 
     monkeypatch.setattr(main, "_build_chat_guard", lambda: None)
-    with pytest.raises(RuntimeError, match="MISTRAL_API_KEY"):
-        with TestClient(app):
-            pass
+    with pytest.raises(RuntimeError, match="MISTRAL_API_KEY"), TestClient(app):
+        pass
 
 
 def test_a_chat_guard_outage_at_boot_does_not_stop_a_required_deployment(
@@ -1483,9 +1479,8 @@ def test_a_chat_guard_outage_at_boot_does_not_stop_a_required_deployment(
     monkeypatch.setattr(main, "get_screener", lambda: _CleanScreener())
     monkeypatch.setattr(main, "_build_chat_guard", lambda: _DownGuard())
 
-    with caplog.at_level(logging.WARNING, logger="app.main"):
-        with TestClient(app):
-            pass
+    with caplog.at_level(logging.WARNING, logger="app.main"), TestClient(app):
+        pass
 
     (record,) = [r for r in caplog.records if "pre-flight did not answer" in r.message]
     assert record.levelno == logging.WARNING
@@ -2707,12 +2702,79 @@ def test_accepting_a_panel_of_nobody_is_refused_not_charged(
     refused = _resume(client, thread_id)
 
     assert refused.status_code == 422
+    assert refused.json()["detail"] == NOBODY_MATCHES
     with conn.cursor() as cur:
         cur.execute(
             "SELECT count(*) FROM request_ledger WHERE endpoint = %s", ("/evaluate",)
         )
         row = cur.fetchone()
     assert row is not None and row[0] == 0, "nothing was bought, nothing charged"
+
+
+# 108/#231: the skip path had no panel when it charged, so an impossible reading
+# bought a run and then failed inside the graph. Both doors now refuse above the
+# charge, and the check shares the draw's own predicate.
+def test_an_impossible_reading_costs_nothing_on_the_skip_path(client, conn) -> None:
+    """The gated door already refuses a reading nobody matches before the money
+    moves. This is the same refusal on the door that skips the gate, where the
+    old order charged first and discovered the empty panel afterwards."""
+    seed_japanese(conn, 5)
+
+    refused = client.post(
+        "/evaluate",
+        json=_REQUEST_BODY | {"target": {"countries": ["JP"], "min_age": 99}},
+    )
+
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == NOBODY_MATCHES
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM request_ledger WHERE endpoint = %s", ("/evaluate",)
+        )
+        row = cur.fetchone()
+    assert row is not None and row[0] == 0, "nothing was bought, nothing charged"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM spend_ledger")
+        spent = cur.fetchone()
+    assert spent is not None and spent[0] == 0, "the day's pool was not touched"
+
+
+def test_an_impossible_reading_costs_nothing_even_with_an_audience(
+    client, conn
+) -> None:
+    """The empty-panel refusal is asked before the audience sentence is judged,
+    so a caller who got both wrong pays for neither. Judging first would charge
+    the check and the day's pool for a run that could never have voted."""
+    seed_japanese(conn, 5)
+
+    refused = client.post(
+        "/evaluate",
+        json=_REQUEST_BODY
+        | {
+            "target": {"countries": ["JP"], "min_age": 99},
+            "audience": "night-shift workers",
+            "instruction": "You are a night-shift worker.",
+        },
+    )
+
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == NOBODY_MATCHES
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM spend_ledger")
+        spent = cur.fetchone()
+    assert spent is not None and spent[0] == 0, "no check was paid for"
+
+
+def test_a_reading_that_matches_only_a_few_is_not_refused(client, conn) -> None:
+    """The check asks whether anybody matches, never whether enough do: a thin
+    panel is a shortfall the report explains, and refusing it here would turn
+    every small audience into an error."""
+    seed_japanese(conn, 2)
+
+    response = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["counts"]["voted"] == 2
 
 
 def test_the_preview_allowance_is_bounded(client, conn, monkeypatch) -> None:
