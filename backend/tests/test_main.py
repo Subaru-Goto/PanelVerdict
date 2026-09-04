@@ -1012,15 +1012,21 @@ async def test_a_connection_that_cannot_open_answers_503_in_one_sentence(
     assert seen["connect_timeout"] == CONNECT_TIMEOUT_SECONDS
 
 
-def test_startup_sizes_the_shared_executor_to_the_pool(real_lifespan) -> None:
+def test_startup_sizes_the_shared_executor_to_the_pool(
+    real_lifespan, monkeypatch
+) -> None:
     """112/#242: every to_thread, every sync graph node and every new
     connection's DNS lookup share the loop's default executor, which Python
     sizes to cpu+4 — five on the deployed container. It fronts a pool of
     `pooler_pool_size` connections, so it is sized to that number and never the
     smaller ceiling by accident. Observed as behaviour: that many blocking
-    calls run at once, and not one more."""
+    calls run at once, and not one more. Pinned to 3, below the 5 that
+    Python's own rule can ever give, so the test cannot pass by the machine's
+    core count."""
     import threading
     import time
+
+    monkeypatch.setattr(settings, "pooler_pool_size", 3)
 
     peak = 0
     running = 0
