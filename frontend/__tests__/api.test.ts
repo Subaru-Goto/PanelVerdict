@@ -151,7 +151,11 @@ describe("the run's deadline", () => {
     vi.useFakeTimers();
     const fetchMock = hangingFetch();
     vi.stubGlobal("fetch", fetchMock);
-    const run = evaluate({ headlineA: "a", headlineB: "b" });
+    // The assertion is bound before the clock moves: the rejection lands
+    // while the timers advance, and an unbound one is an unhandled error.
+    const run = expect(
+      evaluate({ headlineA: "a", headlineB: "b" }),
+    ).rejects.toBeInstanceOf(RunTimedOut);
     await vi.advanceTimersByTimeAsync(0);
 
     const signal = signalOf(fetchMock);
@@ -159,18 +163,20 @@ describe("the run's deadline", () => {
     expect(signal.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(signal.aborted).toBe(true);
-    await expect(run).rejects.toBeInstanceOf(RunTimedOut);
+    await run;
   });
 
   it("resumeEvaluate carries the same signal", async () => {
     vi.useFakeTimers();
     const fetchMock = hangingFetch();
     vi.stubGlobal("fetch", fetchMock);
-    const run = resumeEvaluate({ threadId: "t", action: "accept" });
+    const run = expect(
+      resumeEvaluate({ threadId: "t", action: "accept" }),
+    ).rejects.toBeInstanceOf(RunTimedOut);
     await vi.advanceTimersByTimeAsync(RUN_BUDGET_SECONDS * 1000);
 
     expect(signalOf(fetchMock).aborted).toBe(true);
-    await expect(run).rejects.toBeInstanceOf(RunTimedOut);
+    await run;
   });
 
   it("a fetch the deadline aborted is a RunTimedOut", async () => {
@@ -196,9 +202,11 @@ describe("the run's deadline", () => {
         }),
     );
     vi.stubGlobal("fetch", late);
-    const timedOut = evaluate({ headlineA: "a", headlineB: "b" });
+    const timedOut = expect(
+      evaluate({ headlineA: "a", headlineB: "b" }),
+    ).rejects.toBeInstanceOf(RunTimedOut);
     await vi.advanceTimersByTimeAsync(RUN_BUDGET_SECONDS * 1000);
-    await expect(timedOut).rejects.toBeInstanceOf(RunTimedOut);
+    await timedOut;
 
     mockFetch(504, {});
     await expect(evaluate({ headlineA: "a", headlineB: "b" })).rejects.toThrow(

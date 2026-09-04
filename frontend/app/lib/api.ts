@@ -235,8 +235,15 @@ export type GateAnswer = {
  * comes back, or the browser's own signal fires because nothing came back at
  * all. Both are the same fact, so both become `RunTimedOut`. A 504 inside the
  * budget is something else — a gateway between here and the backend — and
- * stays the plain API error. `setTimeout` rather than `AbortSignal.timeout`,
- * so the test clock can drive it. */
+ * stays the plain API error.
+ *
+ * The browser's timer normally fires first; the 504 arm is reached when a
+ * background tab has its timers throttled. An aborted fetch rejects with the
+ * signal's reason, but some engines drop it and reject with a bare AbortError,
+ * so both names count — and both mean the deadline, since nothing else aborts
+ * these requests (099/#208: no cancel). `setTimeout` and `Date.now` rather
+ * than `AbortSignal.timeout` and `performance.now`, because those two are what
+ * the test clock drives. */
 async function underBudget(
   send: (signal: AbortSignal) => Promise<Response>,
 ): Promise<Response> {
@@ -302,6 +309,7 @@ export async function evaluate(
   // it. A signed token is different in kind — the backend checks the signature
   // rather than the sender. Absent when nobody is signed in, and the refusal
   // that follows is the correct answer.
+  // Read before the clock starts: the token is not part of the run's wait.
   const headers = await authHeaders();
   const res = await underBudget((signal) =>
     fetch("/api/evaluate", {
@@ -332,6 +340,7 @@ export async function evaluate(
 export async function resumeEvaluate(
   answer: GateAnswer,
 ): Promise<EvaluateOutcome> {
+  // Read before the clock starts: the token is not part of the run's wait.
   const headers = await authHeaders();
   const res = await underBudget((signal) =>
     fetch("/api/evaluate/resume", {

@@ -182,9 +182,10 @@ names the host exactly when the check goes red.
 3. Deploy; then go back to Render and set `FRONTEND_ORIGIN` to the Vercel URL.
 4. Check **Settings → Functions** shows Fluid compute on (the default for new
    projects). The proxy routes' 300 s budget in `frontend/vercel.json` is the Hobby
-   maximum Vercel's duration table gives *with* Fluid compute (docs read 2026-09-04);
-   the table states no figure without it, so an older project should confirm the
-   setting before relying on the budget.
+   maximum Vercel's duration table gives *with* Fluid compute (docs read 2026-09-04).
+   Before Fluid compute the plan's ceiling was 60 s (Vercel changelog, "Vercel
+   Functions for Hobby can now run up to 60 seconds"), so an older project should
+   confirm the setting before relying on the budget.
 
 ## 4 — cron-job.org (the keep-warm)
 
