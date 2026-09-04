@@ -337,23 +337,26 @@ gone is what makes them unreadable. The sweep rule lives with the column in
 
 **Data access is defended by scoping, never by a classifier.** A classifier is a
 model guessing whether text looks like an attack, and its blind spots are ours; a
-`WHERE` clause has none. The pattern is already here — every analyst tool is
-closed over `result`, the stored report, and reads only what it carries:
+`WHERE` clause has none. The clause is the one that loads the report the analyst
+reads (`persistence.load_report`, from `main.load_chat_report`):
 
-```python
-def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
-    ...
-    return analysis_facts(result).model_dump_json()   # this test's votes, from code
+```sql
+WHERE test_id = %s AND owner = %s
 ```
 
-The model supplies a question; it does not supply which test, whose votes, or
-any id. No sentence it can emit widens that scope. (The retired `search_personas`
-did the same with `WHERE id = ANY(%s)` over the panel's ids — 084/#175 removed
-it for being the weakest tool, not for being unscoped.) Since
+with `owner` the signed-in subject, from code. Every tool is then closed over that
+one `EvaluateResponse` — `analyze_results` and `read_reasons` take no arguments and
+serialise what it carries; the only tool with a model-supplied argument,
+`explain_the_report`, queries the methodology corpus, which has no per-reader rows
+and so nothing to scope. The model supplies a question; it does not supply which
+test, whose votes, or any id, and no sentence it can emit widens that clause. (The
+retired `search_personas` scoped the same way, `WHERE id = ANY(%s)` over the
+panel's ids — 084/#175 removed it for being the weakest tool, not for being
+unscoped.) Since
 [035/#136](https://github.com/Subaru-Goto/PanelVerdict/issues/136) (2026-09-03)
 the caller does not supply it either: `ChatRequest` names a test by id, the
-server loads the stored report `WHERE test_id = %s AND owner = %s` under the
-signed-in subject, and `result.votes` is what the run wrote. A missing or
+server loads the stored report under that clause, and `result.votes` is what the
+run wrote. A missing or
 foreign test is the tests endpoint's own 404, above the pre-flight and the
 charge. The one other caller-supplied input to the analyst's context is the
 chat `thread_id`, and the checkpointer's key is the owner and that id together,

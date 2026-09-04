@@ -607,7 +607,7 @@ _ORDERINGS = {"id": "ORDER BY id", "random": "ORDER BY random()"}
 
 # Everything a persona query binds: scalars for equality and range, trait scores for
 # the level bounds, and lists for the ANY(...) filters.
-type SqlParam = str | int | float | list[str] | list[int] | np.ndarray
+type SqlParam = str | int | float | list[str] | list[int]
 
 
 def _fetch_personas(

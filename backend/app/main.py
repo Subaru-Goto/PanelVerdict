@@ -21,7 +21,6 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
-from pgvector.psycopg import register_vector_async
 from psycopg import AsyncConnection
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
@@ -494,12 +493,15 @@ NOBODY_MATCHES = "nobody in the pool matches that reading — widen it and look 
 
 
 async def get_conn() -> AsyncGenerator[psycopg.AsyncConnection, None]:
-    """One plain connection per request, pgvector adapter registered.
+    """One plain connection per request, nothing registered on it.
 
-    The adapter is per-connection state and the chat path binds query vectors
-    (explain_the_report's corpus search), so every checkout gets it. Deliberately NOT
-    `prepare_connection`: that also runs schema DDL, which is the seed's job,
-    not a request's.
+    It used to register the pgvector adapter, because the analyst's persona
+    search bound a numpy query vector; 084/#175 retired that search, and the one
+    vector query left on the request path — the corpus search — binds its vector
+    as text and selects none back (probed 2026-09-04: it runs on a bare
+    connection). The seed's `prepare_connection` still registers it for its own
+    numpy writes, and also runs schema DDL, which is why a request never calls
+    that either.
 
     **Not pooled, and that is a decision rather than an omission.** A pool was
     tried here (111/#240) to restore a ceiling the async conversion was thought
@@ -544,7 +546,6 @@ async def get_conn() -> AsyncGenerator[psycopg.AsyncConnection, None]:
         logger.warning("connection refused at open: %s", type(error).__name__)
         raise HTTPException(status_code=503, detail=DB_BUSY) from None
     async with conn:
-        await register_vector_async(conn)
         yield conn
 
 

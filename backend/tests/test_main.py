@@ -969,25 +969,31 @@ def test_a_reply_containing_unicode_line_breaks_survives_the_wire(client, conn) 
 
 
 @pytest.mark.anyio
-async def test_the_chat_connection_can_bind_a_query_vector(
+async def test_the_real_chat_connection_runs_the_corpus_search(
     conn, pg_url, monkeypatch
 ) -> None:
-    """Every other test replaces get_conn with the fixture connection, which
-    registers the pgvector adapter — only this test exercises the real
-    dependency. The corpus search binds a numpy vector; a connection without the
-    adapter cannot even send that query. (`conn` is here as a precondition:
-    it guarantees the container already has the extension and schema.)
+    """Every other test replaces get_conn with the fixture connection — only
+    this one exercises the real dependency, over the real URL. It used to prove
+    the pgvector adapter was registered, because the persona search bound a
+    numpy vector; 084/#175 retired that search, and the corpus search binds its
+    vector as text, so nothing on the request path needs the adapter any more
+    (probed 2026-09-04: four passages back on a bare connection) and `get_conn`
+    no longer registers it. What is left to pin is that the dependency yields a
+    connection the one remaining vector query runs on. (`conn` is here as a
+    precondition: the container has the extension, the schema and the corpus.)"""
+    from tests.test_corpus_retrieval import FakeEmbedder
 
-    The connection stays per-request (see `get_conn`), so this exercises the
-    dependency directly."""
+    seed_corpus(conn, FakeEmbedder())
     # database_url is a derived property, so the patch lands on the class.
     monkeypatch.setattr(type(settings), "database_url", pg_url)
 
     dependency = get_conn()
     try:
         live = await anext(dependency)
-        found = await search_corpus(live, "practical tie", FixedEmbedder(pointing(0)))
-        assert found == []  # nothing seeded; the point is that the query was sent
+        found = await search_corpus(
+            live, "what is a practical tie", FixedEmbedder(pointing(0))
+        )
+        assert found and all(passage.citation for passage in found)
     finally:
         await dependency.aclose()
 
@@ -1516,40 +1522,45 @@ def test_a_resume_works_against_the_checkpointer_the_deploy_actually_uses(
     assert body["counts"]["voted"] == 5
 
 
-def test_chat_search_tool_runs_on_the_streams_own_schedule(client, conn) -> None:
+def test_chat_embedding_tool_runs_on_the_streams_own_schedule(client, conn) -> None:
     """The stream body executes after the handler returns; this pins that the
     yield-dependency connection is still open when the tool finally runs, and
-    that the whole wiring — request votes → panel scope, embedder → query
-    vector — holds over HTTP, not just in-process."""
+    that the whole wiring — embedder → query vector → corpus query — holds over
+    HTTP, not just in-process. `explain_the_report` because it is the one tool
+    left that touches both the connection and the embedder (084/#175 retired
+    the persona search this test used to drive); the corpus is seeded and the
+    question matches a passage, or the search returns [] without ever binding
+    the vector."""
+    from tests.test_corpus_retrieval import FakeEmbedder
+
     persist_pool(
-        conn,
-        [
-            make_assembled(make_persona(id_="US-00000"), embedding=pointing(0)),
-            make_assembled(make_persona(id_="US-00001"), embedding=pointing(1)),
-        ],
+        conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
     )
+    seed_corpus(conn, FakeEmbedder())
     app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
         responses=[
-            tool_call_message(name="analyze_results", args={}),
-            AIMessage(content="One panelist stands out."),
+            tool_call_message(
+                name="explain_the_report", args={"question": "what is a practical tie"}
+            ),
+            AIMessage(content="A tie means the band held."),
         ]
     )
-    votes = [make_panel_vote("US-00000"), make_panel_vote("US-00001")]
+    votes = [make_panel_vote("US-00000")]
 
     response = client.post(
         "/chat",
         json={
             "thread_id": "t-main-5",
-            "message": "Who here is thrifty?",
+            "message": "What is a practical tie?",
             "test_id": _stored_test(conn, report=make_report(votes=votes)),
         },
     )
 
     assert response.status_code == 200
     events = ndjson_events(response.text)
-    assert {"type": "tool", "name": "analyze_results"} in events
+    assert {"type": "tool", "name": "explain_the_report"} in events
     tokens = [e["text"] for e in events if e["type"] == "token"]
-    assert "".join(tokens) == "One panelist stands out."
+    assert "".join(tokens) == "A tie means the band held."
     assert events[-1] == {"type": "done"}
 
 

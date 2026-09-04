@@ -282,7 +282,7 @@ class TestToolSurface:
     /evaluate where the screening and the caps already live.
     """
 
-    def test_every_tool_reads_and_none_of_them_spends(self, conn) -> None:
+    def test_every_tool_reads_and_none_of_them_buys_a_panel(self, conn) -> None:
         names = {tool.name for tool in build_tools(_result(), _deps(conn))}
 
         assert names == {
@@ -729,8 +729,10 @@ class TestToolsGatheredOnOneConnection:
         async def doomed_search() -> str:
             # 084/#175 retired the tool this used to be; the wreck is the same
             # shape on the one embedding tool left, asked twice at once. The
-            # question has to match a passage lexically, or the corpus search
-            # never compares the bad vector at all and returns [] unharmed.
+            # question has to match a passage lexically: membership is decided
+            # by the lexical gate and the vector only orders what passed it, so
+            # an unmatched question came back [] unharmed (observed re-aiming
+            # this test), and the wreck never happened.
             try:
                 return await tools["explain_the_report"].ainvoke(
                     {"question": "is a practical tie thrifty"}

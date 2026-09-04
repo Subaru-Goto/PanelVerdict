@@ -167,6 +167,7 @@ The course requires a domain-specialised *chatbot* with advanced RAG + tool call
 2. **Tool calling (≥3):** the chat LLM gets tools; each tool is deterministic code inside (LLM decides *when*, code decides *how*). Shipped set (updated 2026-08-21 — all read-only; `run_panel_test` was built, then deliberately removed as the analyst's one spend path, and `estimate_cost`/`get_test_history` were never built — see [`least-privilege.md`](least-privilege.md)):
    - `analyze_results()` — Bayesian posterior: preference share + CrI, expected preference shortfall, the band's probabilities
    - `read_reasons()` — the panel's vote rationales
+   - `explain_the_report(question)` — hybrid retrieval over the methodology corpus ([018/#124](https://github.com/Subaru-Goto/PanelVerdict/issues/124)): what a figure or a term on the report means, with a citation
    Rerunning is a human decision: the report's **Test again** control goes through `/evaluate`.
 3. **Domain specialisation:** domain = content/marketing creative testing; focused knowledge base (above); domain prompts (persona templates, verdict phrasing rules); security = the full guardrails section (injection defense stack is the standout).
 4. **Technical implementation:** LangChain + OpenRouter ✓ (already the plan); error handling = retries on fan-out, schema-validated outputs, discard-don't-coerce; input validation = screening stack + size/format limits.

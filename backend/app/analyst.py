@@ -468,9 +468,6 @@ def vote_reasons(result: EvaluateResponse) -> dict[str, ChosenReasons]:
     }
 
 
-# Top-5 per search: user sign-off 2026-07-29, convention rather than
-# measurement — ~40 tokens per summary keeps one search near 200 tokens while
-# giving the model enough names to answer concretely.
 @dataclass(frozen=True)
 class ToolDeps:
     """Everything the tools need at call time that is not the test itself.
