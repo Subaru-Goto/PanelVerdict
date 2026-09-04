@@ -6,6 +6,7 @@ costs nothing, because a gate that spends money before it asks is not a gate.
 """
 
 import asyncio
+import itertools
 import threading
 
 import pytest
@@ -13,6 +14,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 
+from app import graph as graph_module
 from app.graph import GateDecision, build_evaluate_graph
 from app.schemas import Locale, TargetQuery
 from app.roleplay import RolePlayRefused
@@ -695,3 +697,42 @@ class TestEnactedContext:
         )
 
         assert not [n for n in state["result"].notices if "instructed" in n.message]
+
+
+@pytest.mark.anyio
+async def test_a_run_clocks_every_step_it_ran_and_a_rerun_adds_to_the_clock(
+    conn, aconn, monkeypatch
+) -> None:
+    """033/#134: the run keeps its own time, per node, in the state — so the
+    checkpointer carries the pre-gate steps across the human's wait, and the
+    wait itself is never counted. A stub clock ticking once per read makes every
+    node take exactly 1.0, so additivity is an equality, not a machine's speed.
+    """
+    seed_japanese(conn, 5)
+    ticks = itertools.count()
+    monkeypatch.setattr(graph_module, "_clock", lambda: float(next(ticks)))
+    graph = _graph(aconn)
+
+    first = await graph.ainvoke(_start(), _config())
+    # `confirm` paused before it could write: a node that interrupts records
+    # nothing, and the preview above the interrupt is cheap by rule.
+    assert first["step_seconds"] == {"roleplay": 1.0, "select": 1.0}
+
+    edited = first["__interrupt__"][0].value["query"]
+    await graph.ainvoke(
+        Command(resume=GateDecision(action="adjust", query=edited).model_dump()),
+        _config(),
+    )
+    state = await graph.ainvoke(
+        Command(resume=GateDecision(action="accept").model_dump()), _config()
+    )
+
+    # An adjust round ran `confirm` and `select` a second time each: the
+    # re-run adds to the clock rather than replacing it.
+    assert state["step_seconds"] == {
+        "roleplay": 1.0,
+        "select": 2.0,
+        "confirm": 2.0,
+        "vote": 1.0,
+        "assemble": 1.0,
+    }

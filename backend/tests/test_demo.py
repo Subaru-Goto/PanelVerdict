@@ -58,9 +58,16 @@ class TestTheDemoEndpoint:
         assert response.status_code == 200, response.text
         body = response.json()
         assert body["status"] == "complete"
-        # The captured run's own seconds ride along: the frontend replays
-        # them, and inventing durations is forbidden (061, 2026-08-24).
-        assert body["step_seconds"] == {"select": 0.4, "vote": 9.2, "assemble": 0.1}
+        # The captured run's own seconds ride along, under the same key a
+        # live report keeps its clock (033/#134): the frontend replays them,
+        # and inventing durations is forbidden (061, 2026-08-24). The replay
+        # itself took milliseconds, and those never reach the reader.
+        assert body["timings"]["step_seconds"] == {
+            "select": 0.4,
+            "vote": 9.2,
+            "assemble": 0.1,
+        }
+        assert "step_seconds" not in body
         # The honesty line names the day the run was bought.
         assert body["captured_at"] == "2026-08-31"
         # The report's numbers come from the replayed votes, not a literal.
@@ -228,3 +235,64 @@ class TestCommittedFixtures:
             fixture = load_fixture(path.stem)
             assert fixture is not None
             assert fixture.case == path.stem
+
+
+class TestTheCapture:
+    @pytest.mark.anyio
+    async def test_writes_the_graph_s_own_clock_not_a_stopwatch_of_its_own(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """033/#134: the run clocks itself inside the graph, so the capture
+        reads that clock off the final state — one timer in the codebase, and
+        the fixture's seconds are exactly what a paid run would have stored.
+        Everything paid or networked is stubbed; the file written is real."""
+        from types import SimpleNamespace
+
+        import psycopg
+        from pydantic import SecretStr
+
+        from app import demo
+
+        class Conn:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return None
+
+        async def connect(cls, url):
+            return Conn()
+
+        async def no_vector(conn):
+            return None
+
+        clocked = {"roleplay": 0.0, "select": 0.4, "confirm": 0.0, "vote": 9.2}
+        result = SimpleNamespace(
+            stop_reason="decisive",
+            verdict=SimpleNamespace(
+                credible_interval=(0.1, 0.3), share_preferring_b=0.2
+            ),
+            votes=SimpleNamespace(
+                records=[
+                    SimpleNamespace(
+                        persona_id="JP-00001", chosen_variant_id="a", reason="r"
+                    )
+                ]
+            ),
+        )
+
+        class Graph:
+            async def ainvoke(self, payload, config):
+                return {"result": result, "step_seconds": clocked}
+
+        monkeypatch.setattr(psycopg.AsyncConnection, "connect", classmethod(connect))
+        monkeypatch.setattr(demo, "register_vector_async", no_vector)
+        monkeypatch.setattr(demo.settings, "openrouter_api_key", SecretStr("stub"))
+        monkeypatch.setattr(demo, "build_evaluate_graph", lambda **deps: Graph())
+
+        await demo._capture("free-delivery", tmp_path)
+
+        written = DemoFixture.model_validate_json(
+            (tmp_path / "free-delivery.json").read_text()
+        )
+        assert written.step_seconds == clocked

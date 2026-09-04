@@ -32,7 +32,10 @@ interface), 094/#200 (enacted context).
 """
 
 import asyncio
-from typing import Literal, TypedDict
+import inspect
+import time
+from collections.abc import Callable
+from typing import Annotated, Any, Literal, TypedDict
 
 import psycopg
 from langchain_core.runnables import RunnableConfig
@@ -117,6 +120,13 @@ class GateDecision(BaseModel):
     instruction: str | None = None
 
 
+def _add_seconds(kept: dict[str, float], new: dict[str, float]) -> dict[str, float]:
+    merged = dict(kept or {})
+    for node, seconds in (new or {}).items():
+        merged[node] = round(merged.get(node, 0.0) + seconds, 3)
+    return merged
+
+
 class EvaluateState(TypedDict, total=False):
     """Everything that survives a restart. Serializable by construction.
 
@@ -151,6 +161,52 @@ class EvaluateState(TypedDict, total=False):
     edited: TargetQuery | None
     collected: CollectedVotes
     result: PanelTestResult | None
+    # The run's own clock, per node (033/#134). Additive across re-runs: an
+    # adjust round runs `select` again and its seconds join the first pass.
+    # Checkpointed with the rest, so the pre-gate steps survive the human's
+    # wait, and the wait itself is never counted.
+    step_seconds: Annotated[dict[str, float], _add_seconds]
+
+
+# Read twice per node run; a module attribute so a test can hand it a stub.
+_clock = time.monotonic
+
+
+def _timed(name: str, node: Callable[..., Any]) -> Callable[..., Any]:
+    """Wrap a node so its seconds land in `step_seconds`.
+
+    A node that raises — the gate's `interrupt()` included — records nothing;
+    LangGraph re-runs it from the top on resume, and that run is clocked whole.
+    A sync node stays sync: LangGraph runs it in a thread, and an async wrapper
+    would drag its blocking call onto the loop.
+    """
+    wants_config = "config" in inspect.signature(node).parameters
+
+    def stamped(produced: EvaluateState | None, started: float) -> EvaluateState:
+        return {
+            **(produced or {}),
+            "step_seconds": {name: round(_clock() - started, 3)},
+        }
+
+    if inspect.iscoroutinefunction(node):
+
+        async def run_async(
+            state: EvaluateState, config: RunnableConfig
+        ) -> EvaluateState:
+            started = _clock()
+            return stamped(
+                await (node(state, config) if wants_config else node(state)), started
+            )
+
+        run_async.__name__ = name
+        return run_async
+
+    def run_sync(state: EvaluateState, config: RunnableConfig) -> EvaluateState:
+        started = _clock()
+        return stamped(node(state, config) if wants_config else node(state), started)
+
+    run_sync.__name__ = name
+    return run_sync
 
 
 def _preview(state: EvaluateState) -> PanelPreview:
@@ -378,11 +434,11 @@ def build_evaluate_graph(
         return "vote"
 
     builder = StateGraph(EvaluateState)
-    builder.add_node("roleplay", roleplay)
-    builder.add_node("select", select)
-    builder.add_node("confirm", confirm)
-    builder.add_node("vote", vote)
-    builder.add_node("assemble", assemble)
+    builder.add_node("roleplay", _timed("roleplay", roleplay))
+    builder.add_node("select", _timed("select", select))
+    builder.add_node("confirm", _timed("confirm", confirm))
+    builder.add_node("vote", _timed("vote", vote))
+    builder.add_node("assemble", _timed("assemble", assemble))
     builder.add_edge(START, "roleplay")
     builder.add_edge("roleplay", "select")
     builder.add_edge("select", "confirm")

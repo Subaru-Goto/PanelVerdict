@@ -87,6 +87,7 @@ from app.schemas import (
     PanelEdit,
     PanelVerdict,
     ResumeRequest,
+    RunTimings,
     RunUsage,
     TargetQuery,
     VoteTally,
@@ -1260,6 +1261,7 @@ def _outcome(
     return CompletedRun(
         thread_id=thread_id,
         usage=RunUsage(**asdict(total_usage(result.votes.usage))),
+        timings=RunTimings(step_seconds=state.get("step_seconds", {})),
         verdict=result.verdict,
         tally=result.tally,
         counts=result.counts,
@@ -1402,11 +1404,11 @@ async def _run_graph(graph, payload, thread_id: str):
 
 
 class DemoRun(CompletedRun):
-    """A replayed run, plus the captured run's own per-step seconds — the
-    frontend replays those, because inventing durations is forbidden (061)."""
+    """A replayed run, carrying the captured run's own per-step seconds in
+    `timings` — the frontend replays those, because inventing durations is
+    forbidden (061) — plus the day the run was bought, which the honesty line
+    names."""
 
-    step_seconds: dict[str, float]
-    # The day the run was bought — the honesty line names it.
     captured_at: str
 
 
@@ -1476,8 +1478,10 @@ async def demo(
             # reading_accepted means no gate; a pause here is a broken premise.
             raise HTTPException(status_code=500, detail="the demo run did not finish")
         return DemoRun(
-            **outcome.model_dump(),
-            step_seconds=fixture.step_seconds,
+            **outcome.model_dump(exclude={"timings"}),
+            # The replay's own clock ran in milliseconds; the reader is shown
+            # the bought run's seconds, never the replay's.
+            timings=RunTimings(step_seconds=fixture.step_seconds),
             captured_at=fixture.captured_at,
         )
 

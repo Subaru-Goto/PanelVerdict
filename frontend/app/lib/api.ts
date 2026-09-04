@@ -138,7 +138,14 @@ export type EvaluateResponse = {
   stop_reason: StopReason | null;
   variants: Record<string, string>;
   votes: Vote[];
+  /** The run's own clock per graph node (033/#134). Stored with the test and
+   *  carried here; a live run shows none of it (the design's rule), the demo
+   *  replays its captured run's figures. Absent on reports kept before it
+   *  shipped. */
+  timings?: RunTimings | null;
 };
+
+export type RunTimings = { step_seconds: Record<string, number> };
 
 /** An object rather than three same-typed positional strings — a swap would
  *  type-check. Named once here; the hook reuses it. */
@@ -490,9 +497,10 @@ export async function runProgress(threadId: string): Promise<RunProgress> {
 }
 
 /** A demo case's replayed report (061/#156), plus what only a demo carries:
- * the captured run's own per-step seconds, and the day it was bought. */
+ * the day it was bought. Its `timings` are the captured run's own seconds,
+ * always present, which the replay plays. */
 export type DemoResult = EvaluateResponse & {
-  step_seconds: Record<string, number>;
+  timings: RunTimings;
   captured_at: string;
 };
 

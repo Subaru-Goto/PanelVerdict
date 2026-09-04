@@ -4000,6 +4000,48 @@ def test_an_old_stored_report_without_usage_still_loads(signed_in, conn) -> None
     assert stored.json()["usage"] is None
 
 
+# 033/#134: the run's own clock, per step, stored beside the report so "why was
+# that one slow?" is a read of the row, not a reconstruction from constants.
+def test_a_kept_test_carries_the_run_s_clock_per_step(signed_in, conn) -> None:
+    """Every node the run passed through is named with its seconds; the row
+    stores the same object the wire carries. The values are a machine's speed,
+    so only their presence and shape are asserted here (the additivity is
+    pinned in test_graph.py with a stub clock)."""
+    seed_japanese(conn, 5)
+
+    report = signed_in.post(
+        "/evaluate", json=_REQUEST_BODY, headers=_as("acct-a")
+    ).json()
+
+    steps = report["timings"]["step_seconds"]
+    assert set(steps) == {"roleplay", "select", "confirm", "vote", "assemble"}
+    assert all(isinstance(v, float) and v >= 0 for v in steps.values())
+    (stored,) = [
+        row[0]
+        for row in conn.execute("SELECT report -> 'timings' FROM tests").fetchall()
+    ]
+    assert stored == report["timings"]
+
+
+def test_an_old_stored_report_without_timings_still_loads(signed_in, conn) -> None:
+    """Reports kept before 033 shipped have no timings key. Absent is a legal
+    value, the same reading 070 gave `usage`."""
+    seed_japanese(conn, 5)
+    signed_in.post("/evaluate", json=_REQUEST_BODY, headers=_as("acct-a"))
+    (test_id,) = [
+        row[0] for row in conn.execute("SELECT test_id FROM tests").fetchall()
+    ]
+    conn.execute(
+        "UPDATE tests SET report = report - 'timings' WHERE test_id = %s", (test_id,)
+    )
+    conn.commit()
+
+    stored = signed_in.get(f"/tests/{test_id}", headers=_as("acct-a"))
+
+    assert stored.status_code == 200
+    assert stored.json()["timings"] is None
+
+
 def test_every_line_of_a_request_carries_its_request_id_and_the_run_s_thread_id(
     client, conn, stamped_caplog
 ) -> None:
