@@ -33,8 +33,9 @@ from app.verdict import (
 )
 
 # A tenth of a preference point, finer than any sentence about a panel of a few
-# hundred can carry. Full doubles cost ~10 tokens each and three ride on every
-# row: 44 rows made the block 4,511 tokens before this (measured 2026-09-04).
+# hundred can carry. Three full doubles ride on every row, so rounding is worth
+# 440 tokens of the 4,511 the block came to without it
+# (docs/research/vote-split-noise.md).
 _SHARE_PLACES = 3
 
 # The dimensions a voter can be grouped by, as one closed type rather than bare
@@ -177,8 +178,8 @@ def _too_few(
 
     Short on purpose: forty-four of these ride on one payload, so the standing
     half of the warning is stated once on `VoteSplits.reading_note` and only what
-    differs per cell is here. The long form cost 1,760 tokens a run of the 4,511
-    the block came to before this (measured 2026-09-04).
+    differs per cell is here. The long form was 1,760 tokens a run
+    (docs/research/vote-split-noise.md).
     """
     low, high = interval
     if high - low <= band:
