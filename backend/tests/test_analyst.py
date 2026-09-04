@@ -101,6 +101,24 @@ def _result_with_voters() -> EvaluateResponse:
 
 
 class TestAnalysisFacts:
+    def test_who_preferred_which_reaches_the_facts_recomputed_from_the_votes(
+        self,
+    ) -> None:
+        """The split is not on the wire — it is derived here from the votes, so a
+        client that doctored its tally cannot move it (041/#139)."""
+        facts = analysis_facts(_result_with_voters())
+
+        assert facts.splits is not None
+        named = {split.dimension for split in facts.splits.dimensions}
+        assert "age_band" in named and "conscientiousness" in named
+        age = next(s for s in facts.splits.dimensions if s.dimension == "age_band")
+        assert {row.level for row in age.rows} == {"20-29", "40-49", "80+"}
+
+    def test_a_request_carrying_no_votes_claims_no_split(self) -> None:
+        """Same reason `panel` is None there: a crosstab of nothing would be a
+        claim about a panel that isn't present."""
+        assert analysis_facts(_result()).splits is None
+
     def test_the_verdict_is_recomputed_from_the_tally_not_trusted(self) -> None:
         facts = analysis_facts(_result())
         reference = panel_verdict(preferring_b=14, total=50)
@@ -274,6 +292,30 @@ class TestToolSurface:
             "explain_the_report",
         }
         assert "run_panel_test" not in names
+
+    def test_analyze_results_hands_over_the_split_and_its_confounds(
+        self, conn
+    ) -> None:
+        """The JSON the model actually receives, not the model that built it —
+        the only seam that proves the tool contract rather than the function."""
+        (tool,) = [
+            tool
+            for tool in build_tools(_result_with_voters(), _deps(conn))
+            if tool.name == "analyze_results"
+        ]
+
+        payload = json.loads(tool.invoke({}))
+
+        splits = payload["splits"]
+        assert splits["rope"] == [0.43, 0.57]
+        traits = {
+            split["dimension"]: split
+            for split in splits["dimensions"]
+            if split["demographic_confound"]
+        }
+        assert "persona-seed-data" in traits["conscientiousness"][
+            "demographic_confound"
+        ]
 
 
 def _deps(

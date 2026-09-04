@@ -36,6 +36,7 @@ from pydantic import BaseModel
 from app.assembly import Embedder
 from app.corpus import search_corpus
 from app.panel import persona_summary, voter_summary
+from app.splits import VoteSplits, splits_by_variant
 from app.persistence import nearest_panelists
 from app.schemas import (
     ChatStreamEvent,
@@ -231,6 +232,19 @@ _SYSTEM_PROMPT = (
     "- Compose the two: the concept from explain_the_report, the figures from "
     "analyze_results. The corpus holds no numbers, so a passage never contradicts "
     "this test — and never quote a figure from one.\n"
+    # 041/#139. The payload computes the reading; these two rules are about not
+    # improving on it. The confound rule cannot be asserted by the suite — 025
+    # routes doubles through the tools — so the sentence it points at travels
+    # in `demographic_confound` on every trait, where a test can hold it.
+    "- Asked which kind of person preferred a variant, read the splits in "
+    "analyze_results. A row carrying too_few settled nothing: say that, in its "
+    "own words, and do not turn its share into a percentage anybody acted on. "
+    "A row the panel did call is a finding you may state.\n"
+    "- A trait split is never a cause. Every trait in this pool is drawn from a "
+    "distribution that depends on age and gender, so a personality split can be "
+    "an age or gender split wearing another name: each one carries a "
+    "demographic_confound saying which, and you check those rows and say what "
+    "you find before naming a trait. Say the split, not the reason for it.\n"
     "- If a question about this test is one the tools cannot answer, say so "
     "plainly in one sentence. Do not keep calling tools hoping a later one "
     "will cover it.\n"
@@ -339,6 +353,9 @@ class AnalysisFacts(BaseModel):
     # None when the request carried no votes: an age range of 0–0 would be a
     # claim about a panel that isn't there.
     panel: PanelComposition | None
+    # Who preferred which, dimension by dimension (041/#139). None on a request
+    # with no votes, for the same reason `panel` is.
+    splits: VoteSplits | None
 
 
 def _grouped[Attribute: str](values: Iterable[Attribute]) -> dict[Attribute, int]:
@@ -413,6 +430,10 @@ def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
         # instructions.
         notices=[notice.message for notice in result.notices],
         panel=_composition(result.votes),
+        # Recomputed from the votes like every verdict figure, so a doctored
+        # tally cannot move it. Who voted is still only knowable from the votes
+        # the request carries, the same trust `panel` above rests on.
+        splits=splits_by_variant(result.votes) if result.votes else None,
         verdict=panel_verdict(preferring_b=counts["b"], total=result.tally.total),
     )
 
@@ -497,10 +518,13 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
         vote tally, plus counts, how far polling ran, how the places named in
         the target were matched, and notices — and who the panel was, as the
         voters' age range and their spread across country, gender, education
-        and income. Call this before citing any figure, and to answer anything
-        about the panel's make-up or whether it matched the audience that was
-        asked for. Its wording is already reader-facing: say it, don't decode
-        it."""
+        and income. Also who preferred which: the vote split by age band,
+        country, gender, education, income and each of the five traits, every
+        level carrying what the panel did or did not settle there. Call this
+        before citing any figure, to answer anything about the panel's make-up
+        or whether it matched the audience that was asked for, and for any
+        question about what kind of person preferred a variant. Its wording is
+        already reader-facing: say it, don't decode it."""
         return analysis_facts(result).model_dump_json()
 
     @tool
