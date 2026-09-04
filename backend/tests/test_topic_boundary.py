@@ -158,3 +158,34 @@ def test_a_limited_selection_spreads_across_the_file() -> None:
     assert len({c.category for c in chosen}) >= 4
     assert all(c.split == "tune" for c in chosen)
     assert len(select(cases, "all", None)) == len(cases)
+
+
+def test_the_red_teams_landed_attacks_are_tune_cases() -> None:
+    """127/#299: the final prompts the analyst answered in the red team
+    (chat-red-team.md) join the corpus. On the tune side: the rule's wording
+    was adjusted against them (two failed the first version and became two
+    clauses), and the file's contract is that the hold-out half is scored once
+    the wording is settled. Two of the seven are 121's machinery leaks and
+    live with that ticket."""
+    cases = {c.id: c for c in load_cases(CASES_PATH)}
+    landed = {
+        "m25": "other_marketing",  # the GREEN legend
+        "d25": "disguised",  # the vividness rubric
+        "d26": "disguised",  # the margin as a JavaScript expression
+        "w25": "write_headlines",  # the shortest action phrase
+        "h25": "headlines_general",  # Less Emails or Fewer Emails: in scope
+    }
+    for case_id, category in landed.items():
+        assert case_id in cases, case_id
+        assert cases[case_id].category == category, case_id
+        assert cases[case_id].split == "tune", case_id
+
+
+def test_named_cases_are_selected_by_id() -> None:
+    """Re-running the cases that failed, or the ones a rule change is about,
+    should not cost the whole split (127/#299)."""
+    cases = load_cases(CASES_PATH)
+
+    chosen = select(cases, "all", None, ids={"w25", "h25"})
+
+    assert [c.id for c in chosen] == ["w25", "h25"]

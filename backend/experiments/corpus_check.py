@@ -330,6 +330,8 @@ async def run_routing(
     for i, question in enumerate(questions):
         tools: list[str] = []
         async for line in stream_analyst(
+            # The checkpointer key is owner-scoped (035/#136); one owner for the run.
+            owner="experiment",
             model=model,
             result=result,
             thread_id=f"routing-{expect}-{i}",
