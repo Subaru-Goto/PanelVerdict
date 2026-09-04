@@ -109,6 +109,8 @@ def rows_for(eval_id: str) -> list[dict]:
                 "plugin": plugin,
                 "strategy": strategy,
                 "attack": str((case.get("vars") or {}).get("prompt") or ""),
+                # The iterative strategy rewrites; this is the text that landed.
+                "final_prompt": meta.get("redteamFinalPrompt"),
                 "reply": text,
                 "status": status,
                 "passed": bool(success),

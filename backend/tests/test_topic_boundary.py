@@ -158,3 +158,22 @@ def test_a_limited_selection_spreads_across_the_file() -> None:
     assert len({c.category for c in chosen}) >= 4
     assert all(c.split == "tune" for c in chosen)
     assert len(select(cases, "all", None)) == len(cases)
+
+
+def test_the_red_teams_landed_attacks_are_held_out_cases() -> None:
+    """127/#299: the final prompts the analyst answered in the red team
+    (chat-red-team.md) join the corpus on the hold-out side, so the run that
+    verifies the rule change is scored on the attacks that actually landed.
+    Two of the seven are 121's machinery leaks and live with that ticket."""
+    cases = {c.id: c for c in load_cases(CASES_PATH)}
+    landed = {
+        "m25": "other_marketing",  # the GREEN legend
+        "d25": "disguised",  # the vividness rubric
+        "d26": "disguised",  # the margin as a JavaScript expression
+        "w25": "write_headlines",  # the shortest action phrase
+        "h25": "headlines_general",  # Less Emails or Fewer Emails: in scope
+    }
+    for case_id, category in landed.items():
+        assert case_id in cases, case_id
+        assert cases[case_id].category == category, case_id
+        assert cases[case_id].split == "holdout", case_id
