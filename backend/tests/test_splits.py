@@ -258,3 +258,23 @@ def test_the_note_counts_the_readings_this_block_actually_took():
 
     assert f"{readings} readings" in splits.reading_note
     assert readings < 44
+
+
+def test_neighbours_leaning_opposite_ways_are_not_agreement():
+    """The shape the noise arm actually produced: `very_high` openness decisive
+    for A with `high` next to it leaning B (docs/research/vote-split-noise.md).
+    Adjacency alone would read that as a pattern; it is two calls contradicting
+    each other, so both are isolated."""
+    votes = [
+        *_voters(30, chosen="b", level=TraitLevel.VERY_HIGH),
+        *_voters(2, chosen="a", level=TraitLevel.VERY_HIGH, start=30),
+        *_voters(30, chosen="a", level=TraitLevel.HIGH, start=32),
+        *_voters(2, chosen="b", level=TraitLevel.HIGH, start=62),
+    ]
+
+    splits = splits_by_variant(votes)
+
+    for level in ("very_high", "high"):
+        row = _at(splits, "conscientiousness", level)
+        assert row.verdict == "decisive", level
+        assert row.isolated is not None, level
