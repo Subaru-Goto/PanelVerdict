@@ -1,7 +1,7 @@
 """The DB-backed half of plausibility QC: read a sample back, judge it, format it."""
 
 import psycopg
-from factories import make_assembled, make_persona
+from tests.factories import make_assembled, make_persona
 
 from app.persistence import load_persona_sample, persist_persona
 from app.plausibility import (

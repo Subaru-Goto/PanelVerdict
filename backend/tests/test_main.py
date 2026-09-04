@@ -291,9 +291,15 @@ def test_a_thread_over_its_turn_limit_is_refused_before_the_stream(
     invocations = {"model": 0}
 
     class CountingModel(ScriptedChatModel):
-        def _generate(self, messages, **kwargs):
+        def _generate(
+            self,
+            messages: list[BaseMessage],
+            stop: list[str] | None = None,
+            run_manager: object = None,
+            **kwargs: object,
+        ) -> ChatResult:
             invocations["model"] += 1
-            return super()._generate(messages, **kwargs)
+            return super()._generate(messages, stop, run_manager, **kwargs)
 
     app.dependency_overrides[get_analyst] = lambda: CountingModel(
         responses=[AIMessage(content="ok")]
@@ -1624,7 +1630,7 @@ class TestInputLimits:
     is what lets every later guardrail reason about a bounded input.
     """
 
-    def _payload(self, **over: str) -> dict[str, str]:
+    def _payload(self, **over: object) -> dict[str, object]:
         return {
             "target": {"countries": ["US"]},
             "headline_a": "Save 50%",
@@ -3169,7 +3175,9 @@ class TestOnlyOneAnswer:
         from which a release is visible at all."""
         async with await psycopg.AsyncConnection.connect(url) as probe:
             cur = await probe.execute(self.LOCKED, (f"resume:{thread_id}",))
-            return bool((await cur.fetchone())[0])
+            row = await cur.fetchone()
+            assert row is not None
+            return bool(row[0])
 
     @pytest.mark.anyio
     async def test_the_lock_is_released_once_the_answer_is_given(

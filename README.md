@@ -216,7 +216,7 @@ No test calls a paid model — every model is a double, and the database ones ru
 against a throwaway container, so the whole suite is free.
 
 ```bash
-cd backend  && uv run pytest && uv run ruff check . && uv run ruff format --check .
+cd backend  && uv run pytest && uv run ruff check . && uv run ruff format --check . && uv run mypy
 cd frontend && npm test && npm run typecheck && npx eslint app __tests__
 ```
 

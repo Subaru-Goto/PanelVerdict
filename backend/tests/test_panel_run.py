@@ -29,7 +29,7 @@ class TestLatencyPercentiles:
     def test_nearest_rank_on_a_known_series(self) -> None:
         """1..200 seconds: nearest-rank says p50 is the 100th value, p95 the 190th,
         p99 the 198th — a worked example, not a re-derivation of the formula."""
-        usage = [_usage(float(s)) for s in range(1, 201)]
+        usage: list[VoteUsage | None] = [_usage(float(s)) for s in range(1, 201)]
 
         reading = latency_percentiles(usage)
 

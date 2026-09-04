@@ -4,7 +4,7 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
-from factories import big_five, make_assembled, make_persona
+from tests.factories import big_five, make_assembled, make_persona
 
 from app.llm import build_target_messages
 from app.persistence import persist_pool

@@ -2,6 +2,8 @@ import math
 
 import pytest
 
+from typing import Any
+
 from app.schemas import TraitLevel
 from experiments.analysis import (
     control_share,
@@ -17,8 +19,8 @@ from experiments.design import VoteRow
 HIGH, LOW = "predicted_high", "predicted_low"
 
 
-def row(**overrides) -> VoteRow:
-    base = dict(
+def row(**overrides: object) -> VoteRow:
+    base: dict[str, Any] = dict(
         arm="traits_5",
         trait="openness",
         level=TraitLevel.MEDIUM.value,

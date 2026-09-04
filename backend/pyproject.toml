@@ -51,8 +51,14 @@ explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 # Ship no stubs and no py.typed marker.
-module = ["scipy.*", "testcontainers.*"]
+module = ["pandas.*", "scipy.*", "testcontainers.*", "yaml"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# On-demand research code, imported by a few tests: checked for the caller's
+# sake, its own errors not reported.
+module = ["experiments.*", "pipeline.*"]
+follow_imports = "silent"
 
 [dependency-groups]
 dev = [

@@ -302,6 +302,8 @@ class ReportingItsOwnAge:
     """Reports usage whose token count is the age in the prompt it was handed, so a
     usage figure can be traced back to the panelist it was billed for."""
 
+    configuration = "reporting-its-own-age"
+
     def __init__(self, refuse_age: int | None = None) -> None:
         self._refuse_age = refuse_age
 
@@ -345,7 +347,7 @@ def test_each_usage_figure_stays_with_the_vote_it_was_billed_for() -> None:
     )
 
     ages = {p.id: p.age for p in panel}
-    assert [u.input_tokens for u in votes.usage] == [
+    assert [u.input_tokens if u else None for u in votes.usage] == [
         ages[r.persona_id] for r in votes.records
     ]
 
@@ -365,7 +367,7 @@ def test_a_failed_vote_leaves_no_usage_hole_to_shift_the_rest() -> None:
 
     assert len(votes.failures) == 1
     assert len(votes.usage) == len(votes.records) == 4
-    assert [u.input_tokens for u in votes.usage] == [30, 31, 32, 34]
+    assert [u.input_tokens if u else None for u in votes.usage] == [30, 31, 32, 34]
 
 
 def test_totals_report_how_many_votes_each_sum_covers() -> None:

@@ -78,7 +78,7 @@ def test_every_phrase_reaches_a_rendered_summary() -> None:
     # the completeness test checks the table's keys; this checks the phrases
     # actually come out the other end, at every intensity
     persona = make_persona()
-    rendered = set()
+    rendered: set[str] = set()
     for level, score in ((lvl, _LEVEL_SCORE[lvl]) for lvl in TraitLevel):
         summary = persona_summary(
             persona.model_copy(

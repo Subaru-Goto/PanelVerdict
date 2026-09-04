@@ -5,7 +5,7 @@ from typing import get_args
 import numpy as np
 import psycopg
 import pytest
-from factories import (
+from tests.factories import (
     DIM,
     big_five,
     make_assembled,
@@ -54,7 +54,9 @@ from app.targeting import resolve_target
 
 
 def _count(conn: psycopg.Connection, table: str) -> int:
-    return conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+    row = conn.execute(f"SELECT count(*) FROM {table}").fetchone()
+    assert row is not None
+    return row[0]
 
 
 def test_persist_writes_one_row_per_persona(conn):

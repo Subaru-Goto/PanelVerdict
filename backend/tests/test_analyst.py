@@ -760,6 +760,8 @@ class TestToolsGatheredOnOneConnection:
             finally:
                 a_failed.set()
 
+        searched: object
+        explained: object
         searched, explained = await asyncio.gather(
             doomed_search(),
             tools["explain_the_report"].ainvoke(

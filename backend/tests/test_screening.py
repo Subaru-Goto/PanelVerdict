@@ -132,7 +132,7 @@ def test_every_untrusted_field_is_screened_and_blanks_are_skipped() -> None:
 def test_no_screener_configured_is_not_an_error() -> None:
     """The key is optional in this codebase, and a missing one already means
     'advisory checks do not run' rather than 'the product is down'."""
-    assert screen_inputs(None, ["anything"]) is None
+    screen_inputs(None, ["anything"])  # returns quietly, raises nothing
 
 
 @pytest.mark.parametrize(

@@ -470,7 +470,7 @@ def budget_notice(remaining: float | None, *, size: int) -> tuple[Notice, ...]:
     )
 
 
-async def get_conn() -> AsyncIterator[psycopg.AsyncConnection]:
+async def get_conn() -> AsyncGenerator[psycopg.AsyncConnection, None]:
     """One plain connection per request, pgvector adapter registered.
 
     The adapter is per-connection state and the chat path binds query vectors

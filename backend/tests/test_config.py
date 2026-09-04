@@ -1,3 +1,4 @@
+from typing import Any
 import pytest
 from pydantic import ValidationError
 
@@ -6,7 +7,7 @@ from app.config import (
     Settings,
 )
 
-_DB = {
+_DB: dict[str, Any] = {
     "postgres_user": "u",
     "postgres_password": "p",
     "postgres_db": "d",

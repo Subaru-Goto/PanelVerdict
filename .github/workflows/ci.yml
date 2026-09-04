@@ -28,6 +28,13 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen
       - run: uv run pytest -q
+      # Same three checks as the README's verify line (103/#221): a lint or a
+      # type check that runs only locally runs when it is already too late.
+      - name: lint and type-check
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run mypy
 
   frontend:
     runs-on: ubuntu-latest
