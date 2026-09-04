@@ -13,6 +13,8 @@ import httpx
 
 import psycopg
 
+from app import main as main_module
+
 from app.db import CONNECT_TIMEOUT_SECONDS
 import pytest
 from app import graph as graph_module
@@ -1012,12 +1014,37 @@ async def test_a_connection_that_cannot_open_answers_503_in_one_sentence(
     assert seen["connect_timeout"] == CONNECT_TIMEOUT_SECONDS
 
 
+@pytest.mark.anyio
+async def test_an_open_that_hangs_before_libpq_is_still_bounded(
+    monkeypatch, caplog
+) -> None:
+    """psycopg resolves the host through the shared executor before libpq's
+    own timeout starts, so a queued lookup sits outside `connect_timeout`.
+    The outer bound covers it: an open that never reaches libpq still answers
+    503 within the deadline, and the refusal is logged by its class."""
+
+    async def hang(cls, url: str, **kwargs: object) -> None:
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", classmethod(hang))
+    monkeypatch.setattr(main_module, "CONNECT_TIMEOUT_SECONDS", 0.05)
+    dependency = get_conn()
+
+    with caplog.at_level(logging.WARNING, logger="app.main"):
+        with pytest.raises(HTTPException) as caught:
+            await anext(dependency)
+
+    assert caught.value.status_code == 503
+    assert caught.value.detail == DB_BUSY
+    assert "TimeoutError" in caplog.text
+
+
 def test_startup_sizes_the_shared_executor_to_the_pool(
     real_lifespan, monkeypatch
 ) -> None:
     """112/#242: every to_thread, every sync graph node and every new
     connection's DNS lookup share the loop's default executor, which Python
-    sizes to cpu+4 — five on the deployed container. It fronts a pool of
+    sizes to cpu+4 — five on a 1-vCPU container by that rule. It fronts a pool of
     `pooler_pool_size` connections, so it is sized to that number and never the
     smaller ceiling by accident. Observed as behaviour: that many blocking
     calls run at once, and not one more. Pinned to 3, below the 5 that

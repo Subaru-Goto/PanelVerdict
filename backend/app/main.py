@@ -177,8 +177,8 @@ async def _enforce_screener_policy() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """The app's only startup/shutdown lifecycle: the screener probe, then
-    the analyst's checkpointer.
+    """The app's only startup/shutdown lifecycle: the shared executor's size,
+    the screener probe, then the analyst's checkpointer.
 
     One saver for the process lifetime — threads must outlive requests, which
     is the whole point of a checkpointer. In Postgres (#144) so a restart or a
@@ -206,7 +206,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """
     # The loop's default executor carries every to_thread, every sync graph
     # node and every new connection's DNS lookup. Python sizes it to cpu+4 —
-    # five on the deployed container. It fronts `pooler_pool_size` connections,
+    # five on a 1-vCPU container by that rule, or whatever core count a shared
+    # host reports. It fronts `pooler_pool_size` connections,
     # so it gets that many workers (112/#242); threads waiting on the network
     # are cheap, and the pool, not the CPU count, is the ceiling that means
     # something here. Set before anything below uses it.
@@ -520,13 +521,20 @@ async def get_conn() -> AsyncGenerator[psycopg.AsyncConnection, None]:
     the session pooler will actually grant. Measuring that is 112/#242.
     """
     try:
-        conn = await psycopg.AsyncConnection.connect(
-            settings.database_url, connect_timeout=CONNECT_TIMEOUT_SECONDS
-        )
-    except psycopg.OperationalError:
+        # The outer bound covers the whole open, DNS included: psycopg resolves
+        # the host through the shared executor *before* libpq's own timeout
+        # starts, so a queued lookup would otherwise wait unbounded.
+        async with asyncio.timeout(CONNECT_TIMEOUT_SECONDS):
+            conn = await psycopg.AsyncConnection.connect(
+                settings.database_url, connect_timeout=CONNECT_TIMEOUT_SECONDS
+            )
+    except (psycopg.OperationalError, TimeoutError) as error:
         # Bounded (112/#242): a pool with no seat free or a pooler that does
         # not answer is a 503 in three seconds, not a request that waits on the
-        # pooler's queue or the OS. The driver's words stay out of the answer.
+        # pooler's queue or the OS. The driver's words stay out of the answer;
+        # the class goes to the log, because a refused password lands here too
+        # and must not read as a busy pool to whoever is on call.
+        logger.warning("connection refused at open: %s", type(error).__name__)
         raise HTTPException(status_code=503, detail=DB_BUSY) from None
     async with conn:
         await register_vector_async(conn)

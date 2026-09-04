@@ -4,7 +4,8 @@ from app.config import settings
 
 # Every connection this app opens waits this long for the pooler (112/#242).
 # Evidence it is enough: the keep-warm ping opens a connection under it 120
-# times a day and has to answer "db":"up" (keepalive.yml). When the pool is
+# times a day (cron-job.org, every 12 min), and the daily check asserts the
+# answer is "db":"up" (keepalive.yml). When the pool is
 # full the pooler queues a client for up to a minute (Supavisor FAQ, read
 # 2026-09-04); a request learns in three seconds instead of waiting that out.
 CONNECT_TIMEOUT_SECONDS = 3
