@@ -332,7 +332,7 @@ async def run_routing(
         async for line in stream_analyst(
             # The checkpointer key is owner-scoped (035/#136); one owner for the run.
             owner="experiment",
-model=model,
+            model=model,
             result=result,
             thread_id=f"routing-{expect}-{i}",
             message=question,

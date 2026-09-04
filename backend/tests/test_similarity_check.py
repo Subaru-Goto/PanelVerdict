@@ -10,6 +10,7 @@ import json
 import math
 from pathlib import Path
 
+from experiments.topic_boundary import CASES_PATH, load_cases
 from experiments.similarity_check import (
     Item,
     Scored,
@@ -72,7 +73,11 @@ def test_the_corpus_labels_attacks_by_row_and_ordinary_text_by_source(tmp_path) 
     assert len(redteam) == 3
     ordinary = [i for i in items if i.label == "ordinary"]
     assert {i.source for i in ordinary} >= {"chat", "headline", "audience"}
-    assert len([i for i in ordinary if i.source == "chat"]) == 144
+    # Every topic-boundary question is ordinary text here — the file grows
+    # (127/#299 added the red team's landed attacks), so count it, not a literal.
+    assert len([i for i in ordinary if i.source == "chat"]) == len(
+        load_cases(CASES_PATH)
+    )
     # moderation-check.md's injection-shaped set: 10 headline + 12 audience.
     assert len([i for i in items if i.row == "injection"]) == 22
     assert len([i for i in items if i.row == "policy"]) == 12
