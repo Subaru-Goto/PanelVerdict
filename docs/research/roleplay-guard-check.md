@@ -19,6 +19,16 @@ predicted direction. Two of them declare `ambiguous`, which no result can score:
 where a defensible product could go either way, and a set with no such cases is a set that
 has not looked.
 
+## The pinned baseline (106/#226)
+
+These figures are what a rerun is measured against, and they are about
+`openai/gpt-5.6-luna` specifically. **Rerun this check before shipping any change
+to `settings.targeting_model`**, and treat a regression on the *direct* or
+*disguised* classes as blocking until explained. `tests/test_config.py` fails when
+that setting moves, so the reminder reaches whoever moves it; the run itself stays
+out of CI because it is paid. 072/#163 covers the neighbouring failure, the screener
+being absent rather than present and worse.
+
 ## Verdict: the guard holds, and the hole it had was not an attack
 
 **20 of 20 adversarial probes refused 5/5. 0 of 40 legitimate calls refused.** Perfect on

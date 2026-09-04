@@ -79,3 +79,82 @@ def test_the_pool_size_defaults_to_the_dashboard_reading_and_reads_the_environme
     assert Settings(**_DB).pooler_pool_size == 15
     monkeypatch.setenv("POOLER_POOL_SIZE", "20")
     assert Settings(**_DB).pooler_pool_size == 20
+
+
+# 106/#226: every measurement in docs/research/ that grades model behaviour was
+# run against one model, and swapping that model is one string here. The run
+# itself is paid — the guard alone is ~160 calls — so it cannot live in CI; what
+# can is noticing the change that makes a rerun owed. Each row names the setting,
+# the model its figures were measured on, and the document that would be stale.
+# A row missing from here is a measurement nothing protects, so the last
+# assertion refuses to let a new model setting arrive without one.
+_MEASURED_ON = {
+    "targeting_model": (
+        "openai/gpt-5.6-luna",
+        "roleplay-guard-check.md, roleplay-cost.md",
+    ),
+    "analyst_model": (
+        "openai/gpt-5.6-luna",
+        "topic-boundary-check.md, corpus-retrieval-check.md, analyst-turn-cost.md",
+    ),
+    "judge_model": (
+        "openai/gpt-5.6-luna",
+        "every check graded by a judge: topic-boundary-check.md, "
+        "corpus-retrieval-check.md, chat-red-team.md",
+    ),
+    "screening_model": (
+        "openai/gpt-5.6-luna",
+        "headline-channel-check.md, enacted-context-check.md",
+    ),
+    "moderation_model": ("mistral-moderation-2603", "moderation-check.md"),
+    "embedding_model": (
+        "openai/text-embedding-3-small",
+        "corpus-retrieval-check.md, similarity-check.md",
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("setting", "measured", "records"),
+    [(name, model, docs) for name, (model, docs) in _MEASURED_ON.items()],
+)
+def test_a_model_change_owes_a_rerun_of_what_was_measured_on_it(
+    setting: str, measured: str, records: str
+) -> None:
+    """Not a claim that this model is the right one — a reminder that the figures
+    in docs/research/ are about *this* string. Changing it here is fine; shipping
+    the change without rerunning the named checks, or recording why their numbers
+    still hold, is not. Editing this line is the acknowledgement."""
+    assert getattr(Settings(**_DB), setting) == measured, (
+        f"{setting} changed: {records} measured model behaviour on {measured}."
+        " Rerun those checks and record the result, or say in the record why the"
+        " figures still hold, before this ships."
+    )
+
+
+def test_the_panel_model_owes_the_same_rerun() -> None:
+    """The panel's model lives on the profile rather than in `Settings`, and it
+    is the one every vote is cast by (manipulation-check-luna.md is 071's gate
+    result, panel-model-selection.md the selection)."""
+    assert {profile.model for profile in PROFILES.values()} == {
+        "openai/gpt-5.6-luna"
+    }, (
+        "the panel model changed: manipulation-check-luna.md and"
+        " panel-model-selection.md measured the vote on openai/gpt-5.6-luna."
+    )
+
+
+def test_every_model_setting_is_named_in_the_rerun_table() -> None:
+    """The table above is a hand-kept list, so this is the line that keeps it
+    honest: a model setting added without a row would be a measurement nothing
+    protects, and the omission is silent otherwise."""
+    declared = {
+        name
+        for name in Settings.model_fields
+        if name.endswith("_model") or name == "model"
+    }
+
+    assert declared == set(_MEASURED_ON), (
+        "a model setting has no row in _MEASURED_ON: add it with the"
+        " docs/research record its behaviour was measured in."
+    )
