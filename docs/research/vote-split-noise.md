@@ -126,5 +126,5 @@ charges; `app/config.py` records the widened gap.
   measures either case.
 - **Adjacency is not inference.** The flag says neighbours disagree, not that the row
   is false. The between-group contrast that would actually test a trait's effect needs
-  a ROPE on the difference scale, which is a separate domain judgement (041/#139
-  records it as the follow-up).
+  a ROPE on the difference scale, which is a separate domain judgement — owed by
+  [128/#309](https://github.com/Subaru-Goto/PanelVerdict/issues/309).
