@@ -13,6 +13,7 @@ import psycopg
 
 from app.assembly import Embedder, assemble_pool
 from app.config import settings
+from app.db import CONNECT_TIMEOUT_SECONDS
 from app.llm import OpenRouterEmbedder, OpenRouterJudge
 from app.logs import configure_logging
 from app.corpus import DOCUMENTS, seed_corpus
@@ -136,10 +137,11 @@ def _check_schema() -> None:
     and exits — `deploy.md` records three deploys where a missing table meant a
     500 on every request that touched it, and a red build is the alternative.
     """
-    # Timed out like `db.py`'s pool: an unreachable or misspelled pooler host
-    # should fail this job in seconds with a readable error, not sit on the OS
-    # TCP timeout while a CI runner burns.
-    with psycopg.connect(settings.database_url, connect_timeout=3) as conn:
+    # An unreachable or misspelled pooler host should fail this job in seconds
+    # with a readable error, not sit on the OS TCP timeout while a CI runner burns.
+    with psycopg.connect(
+        settings.database_url, connect_timeout=CONNECT_TIMEOUT_SECONDS
+    ) as conn:
         stale = missing_columns(conn)
     if stale:
         raise SystemExit(

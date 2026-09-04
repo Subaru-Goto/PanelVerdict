@@ -69,3 +69,13 @@ def test_a_blank_supabase_url_stays_a_blank() -> None:
     settings = Settings(**_DB, supabase_project_url="")
 
     assert settings.supabase_project_url == ""
+
+
+def test_the_pool_size_defaults_to_the_dashboard_reading_and_reads_the_environment(
+    monkeypatch,
+) -> None:
+    """112/#242: 15 is what the session pooler granted this project on
+    2026-09-04; another deployment's dashboard may say otherwise."""
+    assert Settings(**_DB).pooler_pool_size == 15
+    monkeypatch.setenv("POOLER_POOL_SIZE", "20")
+    assert Settings(**_DB).pooler_pool_size == 20

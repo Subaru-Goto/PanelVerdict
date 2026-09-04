@@ -155,6 +155,10 @@ names the host exactly when the check goes red.
      Vercel in step 3. Without it the backend refuses every paid request (045/#143)
    - `POSTGRES_USER` (`postgres.<project-ref>`), `POSTGRES_PASSWORD`, `POSTGRES_DB`,
      `POSTGRES_HOST`, `POSTGRES_PORT` — the session-pooler values from step 1
+   - `POOLER_POOL_SIZE` — the session pooler's **Pool Size** from Database Settings →
+     Connection pooling (15 on this project, read 2026-09-04, which is the
+     setting's default). The backend sizes its shared thread executor to it (112/#242), so a
+     project whose dashboard says otherwise sets it here
    - `PROFILE` — leave unset for `dev` while dark; `prod` is a deliberate act
    - `SCREENER_REQUIRED=true` — the screener is the only control on the
      untrusted-input path, and this is the deployment it protects: a screening

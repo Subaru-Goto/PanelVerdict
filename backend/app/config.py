@@ -137,6 +137,12 @@ class Settings(BaseSettings):
     postgres_db: str
     postgres_host: str = "localhost"
     postgres_port: int = 5432
+    # What the session pooler grants this project: the dashboard's Pool Size
+    # (Database Settings → Connection pooling), read 2026-09-04. The shared
+    # executor is sized to it at startup (112/#242): it fronts these
+    # connections and must never be the smaller ceiling by accident. Another
+    # deployment sets it to its own dashboard's figure.
+    pooler_pool_size: int = 15
     frontend_origin: str = "http://localhost:3000"
     # The edge secret the frontend's server-side proxy sends with every call to
     # a paid endpoint (045/#143). Never NEXT_PUBLIC_*: anything compiled into
