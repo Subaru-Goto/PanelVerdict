@@ -154,12 +154,13 @@ class Grade(BaseModel):
 async def _with_live(part, *args) -> None:
     """Run one part against an async connection with the pgvector adapter.
 
-    Both halves matter. Async, because `search_corpus` and `nearest_panelists`
-    followed the request path (111/#240) and a script has no loop of its own.
-    Adapter-registered, because `nearest_panelists` binds a numpy query vector
-    and psycopg cannot even send that statement without it — the first version
-    of this conversion opened a bare connection here and would have aborted a
-    paid run the moment the model routed to `search_personas`.
+    Both halves matter. Async, because `search_corpus` followed the request
+    path (111/#240) and a script has no loop of its own. Adapter-registered,
+    because the corpus search binds a numpy query vector and psycopg cannot even
+    send that statement without it — the first version of this conversion opened
+    a bare connection here and would have aborted a paid run at the first
+    embedding tool call. (`nearest_panelists`, the other vector reader this
+    used to name, went with `search_personas` in 084/#175.)
     """
     async with await psycopg.AsyncConnection.connect(
         settings.database_url, autocommit=True

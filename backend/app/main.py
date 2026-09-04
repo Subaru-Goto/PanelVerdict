@@ -436,8 +436,8 @@ def get_generator() -> RolePlayGenerator:
 
 
 def get_embedder() -> Embedder:
-    """The query half of search_personas — same model that embedded the pool,
-    so query and corpus vectors live in one space."""
+    """The query half of explain_the_report — same model that embedded the
+    corpus, so question and passage vectors live in one space."""
     return OpenRouterEmbedder(
         api_key=_require_api_key(),
         base_url=settings.openrouter_base_url,
@@ -497,7 +497,7 @@ async def get_conn() -> AsyncGenerator[psycopg.AsyncConnection, None]:
     """One plain connection per request, pgvector adapter registered.
 
     The adapter is per-connection state and the chat path binds query vectors
-    (search_personas), so every checkout gets it. Deliberately NOT
+    (explain_the_report's corpus search), so every checkout gets it. Deliberately NOT
     `prepare_connection`: that also runs schema DDL, which is the seed's job,
     not a request's.
 

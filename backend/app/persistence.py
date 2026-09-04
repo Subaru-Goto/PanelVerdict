@@ -770,32 +770,6 @@ async def retrieve_panel(
     )
 
 
-async def nearest_panelists(
-    conn: psycopg.AsyncConnection,
-    *,
-    embedding: Sequence[float],
-    panel_ids: Sequence[str],
-    limit: int,
-) -> list[Persona]:
-    """The panelists whose summaries are nearest to `embedding`, nearest first.
-
-    Panel-only by contract: `panel_ids` are the voters of the current test, and
-    nobody outside them may appear — the analyst talks about the people in the
-    report, not the whole pool. An empty `panel_ids` returns
-    nobody, never everybody.
-    """
-    # `<=>` is cosine distance; the index opclass in schema.sql must agree
-    # (vector_cosine_ops), or the planner quietly ignores the index.
-    return await _afetch_personas(
-        conn,
-        f"SELECT {_PERSONA_COLUMNS} FROM personas "
-        "WHERE id = ANY(%s) "
-        "ORDER BY summary_embedding <=> %s "
-        "LIMIT %s",
-        [list(panel_ids), np.array(embedding), limit],
-    )
-
-
 class VoteRow(TypedDict):
     """One `votes` row as `load_votes` selects it — same contract as `PersonaRow`:
     the SELECT list and the field reads share one spelling."""

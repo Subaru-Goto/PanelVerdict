@@ -35,8 +35,7 @@ from pydantic import BaseModel
 
 from app.assembly import Embedder
 from app.corpus import search_corpus
-from app.panel import persona_summary, voter_summary
-from app.persistence import nearest_panelists
+from app.panel import voter_summary
 from app.schemas import (
     ChatStreamEvent,
     CoverageRung,
@@ -107,7 +106,7 @@ class _BudgetEndsTheTurn(ModelCallLimitMiddleware):
     would show the library's wording the day that stops being true.
 
     What the budget counts is model calls and nothing else: one call may fan
-    out several tool executions, and `search_personas` buys an embedding per
+    out several tool executions, and `explain_the_report` buys an embedding per
     execution — spend the edge caps and the completion ceilings bound, not
     this number."""
 
@@ -338,7 +337,7 @@ class AnalysisFacts(BaseModel):
     A value of `null` has no sayable form, and the payload composed no English
     about it, so the model quoted the field name at the reader — machinery the
     prompt forbids but the tool supplied. Withheld beats forbidden, the same
-    move that took persona ids off `search_personas`. `region_match` replaces
+    move that keeps persona ids off every tool (025). `region_match` replaces
     the `coverage` rung for the same reason, plus one of its own: the enum name
     read like a verdict on the whole target when it only ever spoke of places.
     """
@@ -472,9 +471,6 @@ def vote_reasons(result: EvaluateResponse) -> dict[str, ChosenReasons]:
 # Top-5 per search: user sign-off 2026-07-29, convention rather than
 # measurement — ~40 tokens per summary keeps one search near 200 tokens while
 # giving the model enough names to answer concretely.
-_SEARCH_LIMIT = 5
-
-
 @dataclass(frozen=True)
 class ToolDeps:
     """Everything the tools need at call time that is not the test itself.
@@ -485,8 +481,8 @@ class ToolDeps:
 
     It held a translator, a panel model and a panel size until the analyst
     stopped being able to start tests. What is left is what a reader needs: a
-    connection and an embedder. The embedder spends — one embedding per search,
-    the cheapest call on the account — bounded by the run and edge caps.
+    connection and an embedder. The embedder spends — one embedding per corpus
+    question, the cheapest call on the account — bounded by the run and edge caps.
     """
 
     conn: psycopg.AsyncConnection
@@ -496,9 +492,14 @@ class ToolDeps:
 def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
     """The tools for one request, closed over that request's test.
 
-    Every one of them reads and none of them writes. Two buy an embedding per
-    execution (`search_personas`, `explain_the_report`); the call budget counts
-    model calls, not those, so the bound on them is the run and edge caps.
+    Every one of them reads and none of them writes. One buys an embedding per
+    execution (`explain_the_report`); the call budget counts model calls, not
+    those, so the bound on it is the run and edge caps.
+
+    `search_personas` — top-n by cosine over the panel's profiles — was retired by
+    084/#175: five nearest profiles said nothing about the panel as a whole, and it
+    was vote-blind, so asked who preferred B it could return an A-voter. Who
+    preferred which is `analyze_results`' split now (041/#139).
 
     The analyst used to hold `run_panel_test`, which bought a whole new panel,
     and that made it the only path by which a model could spend money — reached,
@@ -527,27 +528,6 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
         question about what kind of person preferred a variant. Its wording is
         already reader-facing: say it, don't decode it."""
         return analysis_facts(result).model_dump_json()
-
-    @tool
-    async def search_personas(query: str) -> str:
-        """Individual panelists of THIS test whose profiles best match a
-        plain-language description, nearest first — for characterizing or
-        quoting particular people. For the panel's overall make-up call
-        analyze_results instead: this returns a handful of profiles, never a
-        distribution. The query describes people, not SQL."""
-        # The embedding is a model call: to a thread, so a tool cannot stall
-        # the loop mid-answer.
-        embedding = await asyncio.to_thread(deps.embedder.embed, [query])
-        found = await nearest_panelists(
-            deps.conn,
-            embedding=embedding[0],
-            panel_ids=[vote.persona_id for vote in result.votes],
-            limit=_SEARCH_LIMIT,
-        )
-        # Summaries only: a persona id is a database handle, not a name a
-        # reader can use. Withheld rather than
-        # forbidden — the model cannot quote what it was never given.
-        return json.dumps([persona_summary(persona) for persona in found])
 
     @tool
     def read_reasons() -> str:
@@ -582,7 +562,7 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
             ]
         )
 
-    return [analyze_results, search_personas, read_reasons, explain_the_report]
+    return [analyze_results, read_reasons, explain_the_report]
 
 
 def checkpointed_models(state: type) -> set[type[BaseModel]]:

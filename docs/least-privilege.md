@@ -261,7 +261,7 @@ questions all day. The walls are sign-in at the edge (063/#158), the per-caller
 daily allowance and the global cap — the real backstop — charged *before* the
 paid call, and the analyst's declared per-turn call budget (`CALLS_PER_TURN`,
 052/#149). The budget counts model calls and nothing else: one call may fan
-out several tool executions (each a database query, `search_personas` also a
+out several tool executions (each a database query, `explain_the_report` also a
 paid embedding), and the input side — the replayed transcript plus the
 client-supplied report, which nothing sizes today — has no wall of its own;
 both residuals are recorded on the tech-debt backlog. The known gap is topic:
@@ -337,18 +337,19 @@ gone is what makes them unreadable. The sweep rule lives with the column in
 
 **Data access is defended by scoping, never by a classifier.** A classifier is a
 model guessing whether text looks like an attack, and its blind spots are ours; a
-`WHERE` clause has none. The pattern is already here — `search_personas` scopes
-by construction:
+`WHERE` clause has none. The pattern is already here — every analyst tool is
+closed over `result`, the stored report, and reads only what it carries:
 
 ```python
-panel_ids=[vote.persona_id for vote in result.votes]   # from code, not the model
-```
-```sql
-WHERE id = ANY(%s)
+def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
+    ...
+    return analysis_facts(result).model_dump_json()   # this test's votes, from code
 ```
 
-The model supplies a search phrase; it does not supply the id list. No sentence
-it can emit widens that clause. Since
+The model supplies a question; it does not supply which test, whose votes, or
+any id. No sentence it can emit widens that scope. (The retired `search_personas`
+did the same with `WHERE id = ANY(%s)` over the panel's ids — 084/#175 removed
+it for being the weakest tool, not for being unscoped.) Since
 [035/#136](https://github.com/Subaru-Goto/PanelVerdict/issues/136) (2026-09-03)
 the caller does not supply it either: `ChatRequest` names a test by id, the
 server loads the stored report `WHERE test_id = %s AND owner = %s` under the

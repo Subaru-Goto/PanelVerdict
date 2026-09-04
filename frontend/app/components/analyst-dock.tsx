@@ -13,9 +13,10 @@ import {
 /** The final chip copy. Each maps to a tool the demo has to show. Which tool a
  *  chip reaches is the analyst's routing decision, not a fixed mapping — the
  *  first two ask what a figure means and now route through explain_the_report,
- *  the third describes people and reaches search_personas. None can spend
- *  anything, and that is true of every tool the analyst has rather than a
- *  property of this list. */
+ *  the third asks about people and reaches analyze_results, which carries the
+ *  panel's make-up and, since 041, who preferred which. (It used to reach
+ *  search_personas, retired by 084.) None can spend anything, and that is true
+ *  of every tool the analyst has rather than a property of this list. */
 /** PENDING USER SIGN-OFF (not yet approved): how close to the bottom still
  *  counts as "following along". A feel parameter, judged in a browser. */
 const PINNED_SLACK_PX = 48;
