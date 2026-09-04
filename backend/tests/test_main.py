@@ -4023,6 +4023,29 @@ def test_a_kept_test_carries_the_run_s_clock_per_step(signed_in, conn) -> None:
     assert stored == report["timings"]
 
 
+def test_a_gated_run_s_row_carries_the_steps_from_both_sides_of_the_wait(
+    signed_in, conn
+) -> None:
+    """The pre-gate steps ran in the first request and the rest in the resume;
+    the checkpointer carries the clock between them, so the row the resume
+    keeps names all five — and the wait between the two is not one of them."""
+    seed_japanese(conn, 5)
+    paused = signed_in.post(
+        "/evaluate", json=_UNAPPROVED_BODY, headers=_as("acct-a")
+    ).json()
+
+    body = _resume(signed_in, paused["thread_id"], headers=_as("acct-a")).json()
+
+    assert body["status"] == "complete"
+    (stored,) = [
+        row[0]
+        for row in conn.execute(
+            "SELECT report -> 'timings' -> 'step_seconds' FROM tests"
+        ).fetchall()
+    ]
+    assert set(stored) == {"roleplay", "select", "confirm", "vote", "assemble"}
+
+
 def test_an_old_stored_report_without_timings_still_loads(signed_in, conn) -> None:
     """Reports kept before 033 shipped have no timings key. Absent is a legal
     value, the same reading 070 gave `usage`."""

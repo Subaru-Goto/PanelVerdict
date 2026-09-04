@@ -720,13 +720,13 @@ class RunTimings(BaseModel):
     Seconds spent in each node the run passed through, keyed by node name
     (`roleplay`, `select`, `confirm`, `vote`, `assemble`). A node that ran
     twice, as `select` does after an adjust at the gate, carries the sum. The
-    human's wait at the gate is not in here: the clock runs inside the
-    graph, and a paused node writes nothing.
+    human's wait at the gate is not in here: the clock runs inside the graph,
+    and a paused node writes nothing. A node missing from the map was never
+    clocked — a run paused before this shipped and resumed after carries only
+    the steps that ran afterwards.
 
-    Stored with every kept test so "why was that one slow?" is a read of the
-    row. Not rendered for a live run (the design shows one no timings); the
-    demo replays its captured run's figures under this same key. No
-    `extra="forbid"`, for `EvaluateResponse`'s own documented reason.
+    Stored with every kept test; whether a reader sees it is the ticket's
+    call (a live run: no; the demo: its captured run's figures).
     """
 
     step_seconds: dict[str, float]

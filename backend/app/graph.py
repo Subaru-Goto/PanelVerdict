@@ -120,10 +120,16 @@ class GateDecision(BaseModel):
     instruction: str | None = None
 
 
+# Milliseconds: the finest figure the replay prints (step-line.tsx), and the
+# precision the capture script always wrote.
+_SECONDS_PLACES = 3
+
+
 def _add_seconds(kept: dict[str, float], new: dict[str, float]) -> dict[str, float]:
-    merged = dict(kept or {})
-    for node, seconds in (new or {}).items():
-        merged[node] = round(merged.get(node, 0.0) + seconds, 3)
+    # LangGraph hands the first write an empty dict, never None (probed 2026-09-04).
+    merged = dict(kept)
+    for node, seconds in new.items():
+        merged[node] = round(merged.get(node, 0.0) + seconds, _SECONDS_PLACES)
     return merged
 
 
@@ -183,10 +189,7 @@ def _timed(name: str, node: Callable[..., Any]) -> Callable[..., Any]:
     wants_config = "config" in inspect.signature(node).parameters
 
     def stamped(produced: EvaluateState | None, started: float) -> EvaluateState:
-        return {
-            **(produced or {}),
-            "step_seconds": {name: round(_clock() - started, 3)},
-        }
+        return {**(produced or {}), "step_seconds": {name: _clock() - started}}
 
     if inspect.iscoroutinefunction(node):
 
@@ -198,14 +201,12 @@ def _timed(name: str, node: Callable[..., Any]) -> Callable[..., Any]:
                 await (node(state, config) if wants_config else node(state)), started
             )
 
-        run_async.__name__ = name
         return run_async
 
     def run_sync(state: EvaluateState, config: RunnableConfig) -> EvaluateState:
         started = _clock()
         return stamped(node(state, config) if wants_config else node(state), started)
 
-    run_sync.__name__ = name
     return run_sync
 
 

@@ -1261,7 +1261,7 @@ def _outcome(
     return CompletedRun(
         thread_id=thread_id,
         usage=RunUsage(**asdict(total_usage(result.votes.usage))),
-        timings=RunTimings(step_seconds=state.get("step_seconds", {})),
+        timings=RunTimings(step_seconds=state["step_seconds"]),
         verdict=result.verdict,
         tally=result.tally,
         counts=result.counts,
@@ -1404,11 +1404,12 @@ async def _run_graph(graph, payload, thread_id: str):
 
 
 class DemoRun(CompletedRun):
-    """A replayed run, carrying the captured run's own per-step seconds in
-    `timings` — the frontend replays those, because inventing durations is
-    forbidden (061) — plus the day the run was bought, which the honesty line
-    names."""
+    """A replayed run, plus what only a demo carries."""
 
+    # Required here, optional on a live report: the replay animates these
+    # seconds, and inventing durations is forbidden (061).
+    timings: RunTimings
+    # The day the run was bought — the honesty line names it.
     captured_at: str
 
 

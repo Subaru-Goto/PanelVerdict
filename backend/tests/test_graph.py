@@ -736,3 +736,19 @@ async def test_a_run_clocks_every_step_it_ran_and_a_rerun_adds_to_the_clock(
         "vote": 1.0,
         "assemble": 1.0,
     }
+
+
+def test_the_timer_keeps_a_sync_node_sync_and_an_async_node_async() -> None:
+    """LangGraph decides thread-or-loop by `inspect.iscoroutinefunction`
+    (langgraph/_internal/_runnable.py, `is_async_callable`). A sync node made
+    async by its wrapper would run its blocking model call on the loop."""
+    import inspect
+
+    def blocking(state):
+        return {}
+
+    async def awaiting(state):
+        return {}
+
+    assert not inspect.iscoroutinefunction(graph_module._timed("b", blocking))
+    assert inspect.iscoroutinefunction(graph_module._timed("a", awaiting))
