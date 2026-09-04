@@ -33,6 +33,7 @@ from app.corpus import seed_corpus
 from app.main import (
     DB_BUSY,
     LEDGER_HOURS,
+    NOBODY_MATCHES,
     TESTS_PAGE_ROWS,
     StoredTest,
     _only_one_answer,
@@ -769,13 +770,17 @@ def test_a_shortfall_notice_reaches_the_response(client, conn) -> None:
 
 def test_a_target_nobody_matches_is_the_requests_fault(client, conn) -> None:
     """422, not 502: the pool is fine and the provider was never called — the target
-    named an audience this pool cannot serve."""
+    named an audience this pool cannot serve.
+
+    Since 108/#231 this is answered above the charge, in the handler's own
+    sentence, rather than by `EmptyPanel` from inside a run already paid for.
+    """
     persist_pool(conn, [make_assembled(make_persona(id_="US-00000", country="US"))])
 
     response = client.post("/evaluate", json=_REQUEST_BODY)
 
     assert response.status_code == 422
-    assert "no persona matches" in response.json()["detail"]
+    assert response.json()["detail"] == NOBODY_MATCHES
 
 
 def test_a_panel_with_no_votes_is_a_bad_gateway_naming_types_only(client, conn) -> None:
@@ -2707,12 +2712,52 @@ def test_accepting_a_panel_of_nobody_is_refused_not_charged(
     refused = _resume(client, thread_id)
 
     assert refused.status_code == 422
+    assert refused.json()["detail"] == NOBODY_MATCHES
     with conn.cursor() as cur:
         cur.execute(
             "SELECT count(*) FROM request_ledger WHERE endpoint = %s", ("/evaluate",)
         )
         row = cur.fetchone()
     assert row is not None and row[0] == 0, "nothing was bought, nothing charged"
+
+
+# 108/#231: the skip path had no panel when it charged, so an impossible reading
+# bought a run and then failed inside the graph. Both doors now refuse above the
+# charge, and the check shares the draw's own predicate.
+def test_an_impossible_reading_costs_nothing_on_the_skip_path(client, conn) -> None:
+    """The gated door already refuses a reading nobody matches before the money
+    moves. This is the same refusal on the door that skips the gate, where the
+    old order charged first and discovered the empty panel afterwards."""
+    seed_japanese(conn, 5)
+
+    refused = client.post(
+        "/evaluate",
+        json=_REQUEST_BODY | {"target": {"countries": ["JP"], "min_age": 99}},
+    )
+
+    assert refused.status_code == 422
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM request_ledger WHERE endpoint = %s", ("/evaluate",)
+        )
+        row = cur.fetchone()
+    assert row is not None and row[0] == 0, "nothing was bought, nothing charged"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM spend_ledger")
+        spent = cur.fetchone()
+    assert spent is not None and spent[0] == 0, "the day's pool was not touched"
+
+
+def test_a_reading_that_matches_only_a_few_is_not_refused(client, conn) -> None:
+    """The check asks whether anybody matches, never whether enough do: a thin
+    panel is a shortfall the report explains, and refusing it here would turn
+    every small audience into an error."""
+    seed_japanese(conn, 2)
+
+    response = client.post("/evaluate", json=_REQUEST_BODY)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["counts"]["voted"] == 2
 
 
 def test_the_preview_allowance_is_bounded(client, conn, monkeypatch) -> None:

@@ -68,6 +68,7 @@ from app.logs import RequestIdMiddleware, bind_thread, configure_logging
 from app.panel import render_persona_prompt, votes_with_voters
 from app.persistence import (
     adeny_data_api,
+    anyone_matches,
     count_reports,
     delete_report,
     delete_reports_of,
@@ -485,6 +486,11 @@ def budget_notice(remaining: float | None, *, size: int) -> tuple[Notice, ...]:
 
 
 DB_BUSY = "The database is busy right now. Try again in a moment."
+
+# One sentence for one condition, said at both of `/evaluate`'s doors: the gate's
+# accept, which has the panel in hand, and the skip path, which asks for it
+# (108/#231). Two wordings for the same refusal would read as two problems.
+NOBODY_MATCHES = "nobody in the pool matches that reading — widen it and look again"
 
 
 async def get_conn() -> AsyncGenerator[psycopg.AsyncConnection, None]:
@@ -1524,10 +1530,19 @@ async def evaluate(
                 status_code=409,
                 detail="that run id is already in use — mint a fresh one",
             )
+    query = settled_query(request.target)
     if request.reading_accepted:
         await _refuse_if_run_capped(conn, caller)
     instruction = await _approved_on_entry(conn, request, generator, caller)
     if request.reading_accepted:
+        # The gate's own door knows the seat count before it charges; this one
+        # has drawn nothing, so it asks the draw's predicate whether anybody is
+        # there (108/#231). Above the charge, so a reading that can never vote
+        # costs nothing — the same rule, now on both doors. `EmptyPanel` still
+        # raises inside the graph and still spends: the pool can empty between
+        # this question and the draw, and an adjust at the gate re-seats.
+        if not await anyone_matches(conn, query):
+            raise HTTPException(status_code=422, detail=NOBODY_MATCHES)
         await _buy_panel(conn, caller)
     variants = {"a": request.headline_a, "b": request.headline_b}
     thread_id = request.thread_id or str(uuid4())
@@ -1548,7 +1563,7 @@ async def evaluate(
         state = await _run_graph(
             graph,
             {
-                "query": settled_query(request.target),
+                "query": query,
                 "notices": [CROSS_SECTION_NOTICE] if untargeted else [],
                 "audience": request.audience,
                 "instruction": instruction,
@@ -1808,12 +1823,7 @@ async def resume_evaluate(
                 # never vote costs nothing. (Unsafe headline text is refused later,
                 # inside `vote`, and does spend a run — as it did before the gate
                 # existed.)
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        "nobody in the pool matches that reading — widen it and look again"
-                    ),
-                )
+                raise HTTPException(status_code=422, detail=NOBODY_MATCHES)
             approved = ""
             if request.action == "accept":
                 # Above the purchase: a sentence that will never be run costs no run.
