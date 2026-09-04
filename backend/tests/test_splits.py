@@ -2,8 +2,18 @@ from pathlib import Path
 from typing import get_args
 
 from app.schemas import TraitLevel, TraitName
-from app.splits import _AGE_BANDS, splits_by_variant
+from app.splits import _AGE_BANDS, _ORDERS, Dimension, splits_by_variant
 from tests.factories import make_panel_vote
+
+
+def _dimension_names() -> tuple[str, ...]:
+    """Every member of the `Dimension` union, flattened — traits arrive as their
+    own `TraitName` union inside it."""
+    return tuple(
+        name
+        for member in get_args(Dimension)
+        for name in (get_args(member) or (member,))
+    )
 
 
 def _voters(count: int, *, chosen: str, level: TraitLevel, start: int = 0):
@@ -41,7 +51,7 @@ def test_a_level_that_clears_the_report_s_bar_is_called_for_the_variant_it_chose
     (high,) = [row for row in conscientiousness.rows if row.level == "high"]
     assert high.votes == 38
     assert high.verdict == "decisive"
-    assert high.share_preferring_b is not None and high.share_preferring_b > 0.5
+    assert high.share_preferring_b > 0.5
 
 
 def test_age_is_split_by_the_band_it_was_drawn_from_not_the_concrete_age():
@@ -64,18 +74,35 @@ def test_age_is_split_by_the_band_it_was_drawn_from_not_the_concrete_age():
 
 
 def test_every_dimension_the_voter_carries_is_crossed_with_the_variant():
+    """Derived from the `Dimension` type, not listed: a member added to the union
+    that `levels_of` forgets produces no rows, and a hand-written set here would
+    not notice."""
     votes = [make_panel_vote("p0", chosen="b"), make_panel_vote("p1", chosen="a")]
 
     named = {split.dimension for split in splits_by_variant(votes).dimensions}
 
-    assert named == {
-        *get_args(TraitName),
-        "age_band",
-        "country",
-        "gender",
-        "education",
-        "income_band",
-    }
+    assert named == set(_dimension_names())
+
+
+def test_a_dimension_is_either_ordered_or_deliberately_not():
+    """`_ORDERS` decides which dimensions can carry `isolated`, so a new ordinal
+    dimension left out of it would silently lose the flag. Country and gender are
+    the two that genuinely have no order to read."""
+    assert set(_ORDERS) | {"country", "gender"} == set(_dimension_names())
+
+
+def test_every_ordered_dimension_orders_all_of_its_own_levels():
+    """The orders are derived from their own types, so this catches the reverse
+    mistake: a level that exists but is missing from the order would raise inside
+    `_isolated_levels` rather than come back unflagged."""
+    votes = [make_panel_vote("p0", chosen="b"), make_panel_vote("p1", chosen="a")]
+
+    for split in splits_by_variant(votes).dimensions:
+        order = _ORDERS.get(split.dimension)
+        if order is None:
+            continue
+        for row in split.rows:
+            assert row.level in order, (split.dimension, row.level)
 
 
 def test_the_age_bands_are_the_ones_the_pool_was_sampled_at():
@@ -232,9 +259,7 @@ def test_a_dimension_with_no_order_makes_no_claim_about_neighbours():
     splits = splits_by_variant(votes)
 
     for dimension in ("gender", "country"):
-        for row in next(
-            s for s in splits.dimensions if s.dimension == dimension
-        ).rows:
+        for row in next(s for s in splits.dimensions if s.dimension == dimension).rows:
             assert row.isolated is None, dimension
 
 
@@ -278,3 +303,36 @@ def test_neighbours_leaning_opposite_ways_are_not_agreement():
         row = _at(splits, "conscientiousness", level)
         assert row.verdict == "decisive", level
         assert row.isolated is not None, level
+
+
+def test_a_thin_cell_that_clears_the_bar_still_says_it_is_thin():
+    """The Done-when clause the ticket is written around: "says 'too few to say'
+    rather than printing a percentage over seven votes". Seven unanimous votes
+    *do* clear the report's bar, so the verdict stands — but the cell's interval
+    is 31 points wide, and a share read off it is not a figure anybody should
+    act on. The warning is about the width, not about being uncalled."""
+    votes = [
+        *_voters(7, chosen="b", level=TraitLevel.VERY_HIGH),
+        *_voters(40, chosen="a", level=TraitLevel.LOW, start=7),
+    ]
+
+    row = _at(splits_by_variant(votes), "conscientiousness", "very_high")
+
+    assert row.votes == 7
+    assert row.verdict == "decisive"
+    assert row.too_few is not None
+    assert "7 votes" in row.too_few
+
+
+def test_a_called_cell_wide_enough_to_stand_on_its_own_says_nothing_extra():
+    """The other side of the same rule: 232 of 400 has a 10-point interval, well
+    inside the band, so there is nothing to warn about either way."""
+    votes = [
+        *_voters(290, chosen="b", level=TraitLevel.LOW),
+        *_voters(110, chosen="a", level=TraitLevel.LOW, start=290),
+    ]
+
+    row = _at(splits_by_variant(votes), "conscientiousness", "low")
+
+    assert row.verdict == "decisive"
+    assert row.too_few is None

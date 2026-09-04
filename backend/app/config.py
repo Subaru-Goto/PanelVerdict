@@ -121,9 +121,16 @@ USD_PER_ROLEPLAY = USD_PER_TRANSLATION
 # What one chat turn charges the day's pool (064/#192). Measured 2026-09-02
 # (docs/research/analyst-turn-cost.md): six real turns through stream_analyst,
 # worst low-effort turn $0.00043 derived from reported tokens at dated list
-# prices — rounded up so the pool errs toward overcharging, as USD_PER_VOTE
-# does. The old stand-in (one vote, $0.0002) undercharged a default-effort
+# prices. The old stand-in (one vote, $0.0002) undercharged a default-effort
 # turn 3-5x, the one direction a ceiling must not err.
+#
+# It no longer errs toward overcharging, and 041/#139 is what changed that: the
+# vote split adds ~2,800 tokens to any turn that calls `analyze_results`
+# (docs/research/vote-split-noise.md), about $0.0007 as a cache write on the
+# first such turn in a thread and ~$0.00006 on each one after. So a first
+# splits-reading turn bills a small multiple of what it charges, and the day's
+# real exposure is above the cap by that much. Re-measuring this price with the
+# block present is owed; until then the gap is the global cap's note below.
 #
 # Flat per turn, not scaled by thread length — decided with the measurement
 # (090/#195): a thread's replayed history is 80-96% cache reads at a tenth of

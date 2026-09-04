@@ -36,7 +36,6 @@ from pydantic import BaseModel
 from app.assembly import Embedder
 from app.corpus import search_corpus
 from app.panel import persona_summary, voter_summary
-from app.splits import VoteSplits, splits_by_variant
 from app.persistence import nearest_panelists
 from app.schemas import (
     ChatStreamEvent,
@@ -57,6 +56,7 @@ from app.schemas import (
     ToolEvent,
     VoterSummary,
 )
+from app.splits import VoteSplits, splits_by_variant
 from app.verdict import panel_verdict
 
 logger = logging.getLogger(__name__)
@@ -430,9 +430,10 @@ def analysis_facts(result: EvaluateResponse) -> AnalysisFacts:
         # instructions.
         notices=[notice.message for notice in result.notices],
         panel=_composition(result.votes),
-        # Recomputed from the votes like every verdict figure, so a doctored
-        # tally cannot move it. Who voted is still only knowable from the votes
-        # the request carries, the same trust `panel` above rests on.
+        # Recomputed from the votes rather than read off the request, so a
+        # doctored tally cannot move it — and on the analyst's own path the votes
+        # are the server's stored copy anyway (035/#136: `load_chat_report`
+        # queries under the signed-in subject), not something a caller posted.
         splits=splits_by_variant(result.votes) if result.votes else None,
         verdict=panel_verdict(preferring_b=counts["b"], total=result.tally.total),
     )

@@ -19,27 +19,40 @@ prints is what that record quotes.
 
 import random
 from collections import defaultdict
+from typing import get_args
 
 import numpy as np
+import tiktoken
 
 from app.bigfive import bucketize
-from app.schemas import EducationLevel, Locale
+from app.schemas import (
+    EducationLevel,
+    IncomeBand,
+    Locale,
+    PanelVote,
+    TraitLevel,
+    TraitName,
+)
 from app.splits import levels_of, splits_by_variant
 from app.verdict import probability_meaningfully_preferred
 from tests.factories import make_panel_vote
 
 REPORTS = 300
 PANEL = 200
-_TRAITS = (
-    "openness",
-    "conscientiousness",
-    "extraversion",
-    "agreeableness",
-    "neuroticism",
-)
+
+# Arm 2's planted effect, chosen rather than measured: a deliberately strong,
+# monotone age effect, so the flag's cost on a true finding is measurable at all.
+# It is not a claim about how real readers behave, and the record says so.
+_YOUNGEST_PREFERS_B = 0.30
+_AGE_SWING = 0.55
+_SWING_FROM = 25
+_SWING_TO = 70
+# Derived, not listed: the app owns what a voter carries.
+_TRAITS = get_args(TraitName)
+_INCOME_BANDS = get_args(IncomeBand)
 
 
-def _coin_flip_panel(seed: int, size: int) -> list:
+def _coin_flip_panel(seed: int, size: int) -> list[PanelVote]:
     """A panel with no effect in it at all: the choice is independent of the voter."""
     rng = random.Random(seed)
     gen = np.random.default_rng(seed)
@@ -51,7 +64,7 @@ def _coin_flip_panel(seed: int, size: int) -> list:
             country=rng.choice(list(Locale)),
             gender=rng.choice(["female", "male"]),
             education=rng.choice(list(EducationLevel)),
-            income_band=rng.choice(["lower", "middle", "upper"]),
+            income_band=rng.choice(_INCOME_BANDS),
             traits={
                 trait: bucketize(float(gen.standard_normal())) for trait in _TRAITS
             },
@@ -60,7 +73,7 @@ def _coin_flip_panel(seed: int, size: int) -> list:
     ]
 
 
-def _age_effect_panel(seed: int, size: int) -> list:
+def _age_effect_panel(seed: int, size: int) -> list[PanelVote]:
     """A panel with one real effect: older voters prefer B, no trait effect at all.
 
     The lift on conscientiousness reproduces what the sampler already builds in
@@ -81,7 +94,9 @@ def _age_effect_panel(seed: int, size: int) -> list:
             )
             for trait in _TRAITS
         }
-        prefers_b = 0.30 + 0.55 * min(max((age - 25) / 45, 0), 1)
+        prefers_b = _YOUNGEST_PREFERS_B + _AGE_SWING * min(
+            max((age - _SWING_FROM) / (_SWING_TO - _SWING_FROM), 0), 1
+        )
         votes.append(
             make_panel_vote(
                 f"p{index}",
@@ -90,14 +105,14 @@ def _age_effect_panel(seed: int, size: int) -> list:
                 country=Locale.US,
                 gender=rng.choice(["female", "male"]),
                 education=rng.choice(list(EducationLevel)),
-                income_band=rng.choice(["lower", "middle", "upper"]),
+                income_band=rng.choice(_INCOME_BANDS),
                 traits=traits,
             )
         )
     return votes
 
 
-def _cells(votes: list) -> list[tuple[int, int]]:
+def _cells(votes: list[PanelVote]) -> list[tuple[int, int]]:
     tallies: dict[str, dict[str, list[int]]] = defaultdict(
         lambda: defaultdict(lambda: [0, 0])
     )
@@ -110,6 +125,80 @@ def _cells(votes: list) -> list[tuple[int, int]]:
         for levels in tallies.values()
         for preferring_b, total in levels.values()
     ]
+
+
+# The ticket asks for the three-band collapse to be costed, not assumed
+# (041/#139: "should be costed against losing the very_high row that a targeting
+# question most often asks about"). Folding the extremes inward is the collapse
+# it names; `_COLLAPSE` is applied to the drawn level, so the panel is identical
+# and only the grouping differs.
+_COLLAPSE = {
+    TraitLevel.VERY_LOW: TraitLevel.LOW,
+    TraitLevel.LOW: TraitLevel.LOW,
+    TraitLevel.MEDIUM: TraitLevel.MEDIUM,
+    TraitLevel.HIGH: TraitLevel.HIGH,
+    TraitLevel.VERY_HIGH: TraitLevel.HIGH,
+}
+
+
+def _collapsed(votes: list[PanelVote]) -> list[PanelVote]:
+    """The same votes with each trait read at three bands instead of five."""
+    return [
+        vote.model_copy(
+            update={
+                "voter": vote.voter.model_copy(
+                    update={
+                        "traits": {
+                            trait: _COLLAPSE[level]
+                            for trait, level in vote.voter.traits.items()
+                        }
+                    }
+                )
+            }
+        )
+        for vote in votes
+    ]
+
+
+def _trait_rows(votes: list[PanelVote]) -> list:
+    return [
+        row
+        for split in splits_by_variant(votes).dimensions
+        if split.dimension in _TRAITS
+        for row in split.rows
+    ]
+
+
+def _cost_the_collapse() -> None:
+    five_noise = three_noise = 0
+    five_true = three_true = 0
+    extreme_true = 0
+    for seed in range(REPORTS):
+        flat = _coin_flip_panel(seed, PANEL)
+        five_noise += any(row.verdict == "decisive" for row in _trait_rows(flat))
+        three_noise += any(
+            row.verdict == "decisive" for row in _trait_rows(_collapsed(flat))
+        )
+        real = _age_effect_panel(seed, PANEL)
+        five = [row for row in _trait_rows(real) if row.verdict == "decisive"]
+        five_true += len(five)
+        extreme_true += sum(1 for row in five if row.level in ("very_low", "very_high"))
+        three_true += sum(
+            1 for row in _trait_rows(_collapsed(real)) if row.verdict == "decisive"
+        )
+    print("\ncosting the three-band collapse, trait dimensions only:")
+    print(
+        f"  noise: a decisive trait row in {five_noise}/{REPORTS} reports at five "
+        f"bands, {three_noise}/{REPORTS} at three"
+    )
+    print(
+        f"  effect arm: {five_true} decisive trait rows at five bands, "
+        f"{three_true} at three"
+    )
+    print(
+        f"  of the five-band rows, {extreme_true} were very_low/very_high — the "
+        f"rows a collapse cannot report at all"
+    )
 
 
 def main() -> None:
@@ -142,6 +231,10 @@ def main() -> None:
         f"= {flagged / total_called * 100:.0f}%"
     )
 
+    blob = splits_by_variant(_coin_flip_panel(0, PANEL)).model_dump_json()
+    tokens = len(tiktoken.get_encoding("o200k_base").encode(blob))
+    print(f"\nblock size: {len(blob)} chars = {tokens} tokens (o200k_base)")
+
     print("\nfamily-wise rate if the per-cell bar were raised:")
     probs = [
         [
@@ -156,6 +249,8 @@ def main() -> None:
     for bar in (0.95, 0.97, 0.98, 0.99, 0.995, 0.999):
         hit = sum(1 for report in probs if any(p >= bar for p in report))
         print(f"  bar={bar:<6.3f} {hit:3d}/{REPORTS} = {hit / REPORTS * 100:5.1f}%")
+
+    _cost_the_collapse()
 
     print("\nthe other arm: one real effect (older voters prefer B), same panel size")
     real_called = real_flagged = reports_with_age = 0
