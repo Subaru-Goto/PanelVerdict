@@ -12,6 +12,7 @@ import {
   type PanelEdit,
 } from "./api";
 import { readingKey, seatedCount, settledEdit } from "./reading";
+import { RunTimedOut } from "./run-budget";
 
 /** A reading a human accepted at the gate, remembered so the gate fires once
  *  per audience (077/#167): a later run whose key matches rides as
@@ -97,7 +98,9 @@ export function useEvaluate() {
     work: () => Promise<EvaluateOutcome>,
     run?: { threadId: string; size: number },
   ): Promise<void> {
-    setState(run === undefined ? { phase: "loading" } : { phase: "loading", run });
+    setState(
+      run === undefined ? { phase: "loading" } : { phase: "loading", run },
+    );
     try {
       land(await work());
     } catch (error) {
@@ -221,6 +224,13 @@ export function useEvaluate() {
       }
       land(outcome);
     } catch (error) {
+      // A refused edit keeps the gate: the thread is still paused there. A
+      // deadline does not — the run was bought, and a gate still offering
+      // "run the panel" would buy it again (032/#133).
+      if (error instanceof RunTimedOut) {
+        setState({ phase: "error", message: error.message });
+        return;
+      }
       setState({
         phase: "gated",
         threadId,

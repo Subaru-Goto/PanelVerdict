@@ -1,4 +1,5 @@
 import { authHeaders } from "./auth";
+import { RUN_BUDGET_SECONDS, RunTimedOut } from "./run-budget";
 
 export type VoteTally = {
   counts: Record<string, number>;
@@ -228,6 +229,43 @@ export type GateAnswer = {
   headlineB?: string;
 };
 
+/** Run one request under the run's deadline (032/#133).
+ *
+ * Two ways the deadline shows: the proxy's budget ends the function and a 504
+ * comes back, or the browser's own signal fires because nothing came back at
+ * all. Both are the same fact, so both become `RunTimedOut`. A 504 inside the
+ * budget is something else — a gateway between here and the backend — and
+ * stays the plain API error. `setTimeout` rather than `AbortSignal.timeout`,
+ * so the test clock can drive it. */
+async function underBudget(
+  send: (signal: AbortSignal) => Promise<Response>,
+): Promise<Response> {
+  const started = Date.now();
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new DOMException("run deadline", "TimeoutError")),
+    RUN_BUDGET_SECONDS * 1000,
+  );
+  let res: Response;
+  try {
+    res = await send(controller.signal);
+  } catch (error) {
+    if (
+      error instanceof DOMException &&
+      (error.name === "TimeoutError" || error.name === "AbortError")
+    ) {
+      throw new RunTimedOut();
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (res.status === 504 && Date.now() - started >= RUN_BUDGET_SECONDS * 1000) {
+    throw new RunTimedOut();
+  }
+  return res;
+}
+
 /** Read a proxy response as an outcome, or throw the backend's own sentence.
  *
  * The backend's refusals are safe to show: fixed sentences and exception type
@@ -264,23 +302,27 @@ export async function evaluate(
   // it. A signed token is different in kind — the backend checks the signature
   // rather than the sender. Absent when nobody is signed in, and the refusal
   // that follows is the correct answer.
-  const res = await fetch("/api/evaluate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-    body: JSON.stringify({
-      target: request.target ?? {},
-      headline_a: request.headlineA,
-      headline_b: request.headlineB,
-      reading_accepted: request.readingAccepted ?? false,
-      audience: request.audience ?? "",
-      ...(request.instruction !== undefined
-        ? { instruction: request.instruction }
-        : {}),
-      ...(request.threadId !== undefined
-        ? { thread_id: request.threadId }
-        : {}),
+  const headers = await authHeaders();
+  const res = await underBudget((signal) =>
+    fetch("/api/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      signal,
+      body: JSON.stringify({
+        target: request.target ?? {},
+        headline_a: request.headlineA,
+        headline_b: request.headlineB,
+        reading_accepted: request.readingAccepted ?? false,
+        audience: request.audience ?? "",
+        ...(request.instruction !== undefined
+          ? { instruction: request.instruction }
+          : {}),
+        ...(request.threadId !== undefined
+          ? { thread_id: request.threadId }
+          : {}),
+      }),
     }),
-  });
+  );
   return outcomeOf(res);
 }
 
@@ -290,22 +332,26 @@ export async function evaluate(
 export async function resumeEvaluate(
   answer: GateAnswer,
 ): Promise<EvaluateOutcome> {
-  const res = await fetch("/api/evaluate/resume", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-    body: JSON.stringify({
-      thread_id: answer.threadId,
-      action: answer.action,
-      ...(answer.query ? { query: answer.query } : {}),
-      // undefined and "" diverge on the wire on purpose — see GateAnswer.
-      ...(answer.instruction !== undefined
-        ? { instruction: answer.instruction }
-        : {}),
-      ...(answer.headlineA !== undefined && answer.headlineB !== undefined
-        ? { headline_a: answer.headlineA, headline_b: answer.headlineB }
-        : {}),
+  const headers = await authHeaders();
+  const res = await underBudget((signal) =>
+    fetch("/api/evaluate/resume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      signal,
+      body: JSON.stringify({
+        thread_id: answer.threadId,
+        action: answer.action,
+        ...(answer.query ? { query: answer.query } : {}),
+        // undefined and "" diverge on the wire on purpose — see GateAnswer.
+        ...(answer.instruction !== undefined
+          ? { instruction: answer.instruction }
+          : {}),
+        ...(answer.headlineA !== undefined && answer.headlineB !== undefined
+          ? { headline_a: answer.headlineA, headline_b: answer.headlineB }
+          : {}),
+      }),
     }),
-  });
+  );
   return outcomeOf(res);
 }
 

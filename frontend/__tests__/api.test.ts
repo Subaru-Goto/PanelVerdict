@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { evaluate, forgetTest, onAccountChanged } from "../app/lib/api";
+import {
+  evaluate,
+  forgetTest,
+  onAccountChanged,
+  resumeEvaluate,
+} from "../app/lib/api";
+import { RUN_BUDGET_SECONDS, RunTimedOut } from "../app/lib/run-budget";
 import { makeResponse } from "./fixtures";
 
 const RESPONSE = makeResponse();
@@ -117,5 +123,86 @@ describe("forgetTest", () => {
     stop();
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+// 032/#133: the one deadline the run has, mirrored on the client so a dead
+// connection cannot outlive the proxy's budget.
+describe("the run's deadline", () => {
+  afterEach(() => vi.useRealTimers());
+
+  const signalOf = (fetchMock: ReturnType<typeof vi.fn>): AbortSignal => {
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    return init.signal as AbortSignal;
+  };
+
+  // A fetch that behaves like the browser's: pending until its signal fires,
+  // then rejecting with the signal's reason.
+  const hangingFetch = () =>
+    vi.fn().mockImplementation(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init.signal as AbortSignal;
+          signal.addEventListener("abort", () => reject(signal.reason));
+        }),
+    );
+
+  it("evaluate carries a signal that fires at the budget, not before", async () => {
+    vi.useFakeTimers();
+    const fetchMock = hangingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const run = evaluate({ headlineA: "a", headlineB: "b" });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const signal = signalOf(fetchMock);
+    await vi.advanceTimersByTimeAsync(RUN_BUDGET_SECONDS * 1000 - 1);
+    expect(signal.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(signal.aborted).toBe(true);
+    await expect(run).rejects.toBeInstanceOf(RunTimedOut);
+  });
+
+  it("resumeEvaluate carries the same signal", async () => {
+    vi.useFakeTimers();
+    const fetchMock = hangingFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const run = resumeEvaluate({ threadId: "t", action: "accept" });
+    await vi.advanceTimersByTimeAsync(RUN_BUDGET_SECONDS * 1000);
+
+    expect(signalOf(fetchMock).aborted).toBe(true);
+    await expect(run).rejects.toBeInstanceOf(RunTimedOut);
+  });
+
+  it("a fetch the deadline aborted is a RunTimedOut", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new DOMException("aborted", "TimeoutError")),
+    );
+
+    await expect(
+      evaluate({ headlineA: "a", headlineB: "b" }),
+    ).rejects.toBeInstanceOf(RunTimedOut);
+  });
+
+  it("a 504 after the budget is the deadline; one before it is a plain API error", async () => {
+    vi.useFakeTimers();
+    const late = vi.fn().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          setTimeout(
+            () => resolve(new Response(null, { status: 504 })),
+            RUN_BUDGET_SECONDS * 1000,
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", late);
+    const timedOut = evaluate({ headlineA: "a", headlineB: "b" });
+    await vi.advanceTimersByTimeAsync(RUN_BUDGET_SECONDS * 1000);
+    await expect(timedOut).rejects.toBeInstanceOf(RunTimedOut);
+
+    mockFetch(504, {});
+    await expect(evaluate({ headlineA: "a", headlineB: "b" })).rejects.toThrow(
+      "API responded 504",
+    );
   });
 });

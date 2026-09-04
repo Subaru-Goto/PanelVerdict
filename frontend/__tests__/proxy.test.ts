@@ -7,6 +7,7 @@ import { POST as chatProxy } from "../app/api/chat/route";
 import { POST as evaluateProxy } from "../app/api/evaluate/route";
 import { backendTracing } from "../app/api/proxy";
 import { GET as testsProxy } from "../app/api/tests/route";
+import { RUN_BUDGET_SECONDS } from "../app/lib/run-budget";
 
 // 045/#143: the browser never holds the edge secret — these route handlers do,
 // server-side. The tests stub the backend fetch the way api.test.ts stubs it.
@@ -197,7 +198,7 @@ describe("the proxy routes' execution budget", () => {
     ) as { functions?: Record<string, { maxDuration?: number }> };
     const budget = config.functions?.["app/api/**/route.ts"]?.maxDuration;
 
-    expect(budget).toBeGreaterThanOrEqual(60);
+    expect(budget).toBe(RUN_BUDGET_SECONDS);
   });
 
   it("no route carries a private copy that could drift from the rule", () => {
