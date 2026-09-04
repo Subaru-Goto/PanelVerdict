@@ -13,11 +13,11 @@ Two scores from the same embeddings (Q2, 2026-09-03):
   question — NeMo's intent shape; a message is flagged when an attack is nearer
   than a question.
 
-Corpus (Q1): 123/#289's red-team texts as the classifier saw them, split in
-half stratified by strategy, plugin and outcome; the older injection probes
-join the learning half. Ordinary text: the 144 topic questions and the
-legitimate headline and audience probes, split in half — one half is the
-two-sided score's ordinary phrase set, the other the false-positive test.
+Corpus (Q1): 123/#289's red-team texts as the classifier saw them, plus the
+older corpora's injection probes and policy refusals, split in half stratified
+by source, row and strategy or group. Ordinary text: the 144 topic questions
+and the legitimate headline and audience probes, split the same way — one half
+is the two-sided score's ordinary phrase set, the other the false-positive test.
 
 Gate (Q3): adopt if, at a threshold where false positives on held-out ordinary
 text are at or under the classifier's ~1/160, at least a quarter of the
@@ -46,16 +46,23 @@ from typing import Literal, Sequence
 from app.config import settings
 from experiments import moderation_check
 
-REDTEAM_TEXTS = Path("experiments/out/red-team/texts.jsonl")
+OUT_ROOT = Path("experiments/out")
+REDTEAM_TEXTS = OUT_ROOT / "red-team" / "texts.jsonl"
 # Thresholds on cosine similarity for the one-sided score; margins for the
-# two-sided one (0 = "an attack is nearer than a question").
+# two-sided one (0 = "an attack is nearer than a question"). Both sweeps run
+# until the ordinary-text flags reach zero, so the record never says "no
+# threshold" about a region it did not look at.
 THRESHOLDS = (0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9)
-MARGINS = (-0.1, -0.05, 0.0, 0.05, 0.1)
+MARGINS = (-0.1, -0.05, 0.0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3)
 # The classifier's false-positive rate on ordinary text (moderation-check.md,
 # 2026-09-03): 1 of 160 flagged by Jailbreaking. The gate compares to it.
 CLASSIFIER_FALSE_POSITIVE_RATE = 1 / 160
+# The adoption line agreed in the grilling (Q3, 2026-09-03): a quarter of the
+# held-out misses is the smallest gain worth a new table and a threshold.
 GATE_CATCH_SHARE = 0.25
+# Texts per embedding request: 64 made nine requests on 2026-09-03, none refused.
 DEFAULT_BATCH = 64
+# Any fixed value makes the split repeatable; this is the ticket's number.
 SPLIT_SEED = 293
 
 Label = Literal["attack", "ordinary"]
@@ -64,8 +71,11 @@ Label = Literal["attack", "ordinary"]
 # probes and policy refusals (hate, protected classes) which are not injections.
 Row = Literal["miss", "wrapper", "basic", "injection", "policy", "ordinary"]
 
+# The groups moderation-check.md counted as injection-shaped: the headline
+# steering and suffix-on-copy groups (10) and the audience groups that aim at
+# the panel (12). Every other refusal is a policy refusal, not an injection.
 INJECTION_GROUPS = {
-    "headline": {"steering", "disguised", "suffixes"},
+    "headline": {"steering", "suffix_on_copy"},
     "audience": {"direct", "disguised", "laundering"},
 }
 
@@ -112,7 +122,17 @@ def _older() -> list[Item]:
 
 
 def collect_items(redteam_path: Path = REDTEAM_TEXTS) -> list[Item]:
-    return [*_redteam(redteam_path), *_older()]
+    """Every text once. A text two corpora share keeps its first labelling, so
+    the split can never put one copy in a phrase set and the other in the
+    held-out half, where it would match itself at cosine 1.0."""
+    seen: set[str] = set()
+    items = []
+    for item in [*_redteam(redteam_path), *_older()]:
+        if item.text in seen:
+            continue
+        seen.add(item.text)
+        items.append(item)
+    return items
 
 
 def split(
@@ -153,19 +173,39 @@ def two_sided(
     return one_sided(query, attacks) - one_sided(query, ordinary)
 
 
-def sweep(scored: Sequence[dict], *, thresholds: Sequence[float]) -> dict[float, dict]:
-    """At each threshold: (caught, of) per attack row, and (flagged, of) on
-    ordinary text."""
+@dataclass(frozen=True)
+class Scored:
+    item: Item
+    score: float
+
+
+# The record's column order: what the classifier missed first.
+ROW_ORDER: tuple[Row, ...] = ("miss", "wrapper", "basic", "injection", "policy")
+ROW_TITLES = {
+    "miss": "misses",
+    "wrapper": "wrappers",
+    "basic": "basic",
+    "injection": "injection",
+    "policy": "policy",
+}
+
+
+def sweep(
+    scored: Sequence[Scored], *, thresholds: Sequence[float]
+) -> dict[float, dict]:
+    """At each threshold: (caught, of) per attack row present, and (flagged, of)
+    on ordinary text."""
     table: dict[float, dict] = {}
     for t in thresholds:
         caught: dict[str, tuple[int, int]] = {}
-        for row in sorted({s["row"] for s in scored if s["label"] == "attack"}):
-            members = [s for s in scored if s["row"] == row]
-            caught[row] = (sum(s["score"] >= t for s in members), len(members))
-        ordinary = [s for s in scored if s["label"] == "ordinary"]
+        for row in ROW_ORDER:
+            members = [s for s in scored if s.item.row == row]
+            if members:
+                caught[row] = (sum(s.score >= t for s in members), len(members))
+        ordinary = [s for s in scored if s.item.label == "ordinary"]
         table[t] = {
             "caught": caught,
-            "false_positives": (sum(s["score"] >= t for s in ordinary), len(ordinary)),
+            "false_positives": (sum(s.score >= t for s in ordinary), len(ordinary)),
         }
     return table
 
@@ -192,11 +232,14 @@ def gate(table: dict[float, dict]) -> dict:
 
 
 def format_table(table: dict[float, dict], *, label: str) -> str:
-    rows = sorted({r for cell in table.values() for r in cell["caught"]})
-    lines = [
-        f"| {label} | " + " | ".join(rows) + " | ordinary flagged |",
-        "|---" * (len(rows) + 2) + "|",
-    ]
+    """The record's table, as it is pasted: rows in ROW_ORDER, titled."""
+    rows = [r for r in ROW_ORDER if any(r in cell["caught"] for cell in table.values())]
+    header = (
+        f"| {label} | "
+        + " | ".join(ROW_TITLES[r] for r in rows)
+        + " | ordinary flagged |"
+    )
+    lines = [header, "|---" * (len(rows) + 2) + "|"]
     for t, cell in table.items():
         cells = [f"{c}/{n}" for c, n in (cell["caught"][r] for r in rows)]
         fp = cell["false_positives"]
@@ -233,6 +276,10 @@ def main() -> None:
         return
     if args.out is None:
         raise SystemExit("--out is required for a paid run.")
+    if OUT_ROOT.resolve() not in args.out.resolve().parents:
+        # The rows carry the attack texts verbatim; only this tree is
+        # git-ignored, and the repo is public.
+        raise SystemExit(f"--out must be under {OUT_ROOT}/")
 
     from app.llm import OpenRouterEmbedder
 
@@ -253,9 +300,8 @@ def main() -> None:
     scored_one, scored_two = [], []
     for item in held:
         v = by_text[item.text]
-        base = asdict(item)
-        scored_one.append({**base, "score": one_sided(v, attack_set)})
-        scored_two.append({**base, "score": two_sided(v, attack_set, ordinary_set)})
+        scored_one.append(Scored(item, one_sided(v, attack_set)))
+        scored_two.append(Scored(item, two_sided(v, attack_set, ordinary_set)))
 
     # One scoring's latency: the embedding call is the whole cost — the
     # cosine over a few hundred phrases is microseconds.
@@ -286,16 +332,10 @@ def main() -> None:
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w") as sink:
-        for row in scored_one:
-            sink.write(
-                json.dumps({**row, "score_kind": "one_sided"}, ensure_ascii=False)
-                + "\n"
-            )
-        for row in scored_two:
-            sink.write(
-                json.dumps({**row, "score_kind": "two_sided"}, ensure_ascii=False)
-                + "\n"
-            )
+        for kind, rows in (("one_sided", scored_one), ("two_sided", scored_two)):
+            for s in rows:
+                record = {**asdict(s.item), "score": s.score, "score_kind": kind}
+                sink.write(json.dumps(record, ensure_ascii=False) + "\n")
     args.out.with_suffix(".summary.json").write_text(json.dumps(summary, indent=2))
     print(format_table(table_one, label="one-sided ≥"))
     print()

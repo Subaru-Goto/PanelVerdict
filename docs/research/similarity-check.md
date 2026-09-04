@@ -11,8 +11,11 @@ to train and no service to host. The question was whether the misses sit near
 the attacks we already know in embedding space, without ordinary questions
 sitting there too.
 
-**Answer: no, at a false-positive rate the reader would not notice. Declined
-and recorded.**
+**Answer: the plain threshold (Bedrock's shape) does not; the two-sided score
+(NeMo's intent shape) clears the agreed gate on the letter — and what it
+catches is the template leftovers, not the natural rewrites. Adoption is
+deferred to [126/#297](https://github.com/Subaru-Goto/PanelVerdict/issues/297);
+nothing changes in the product from this ticket.**
 
 ## Method
 
@@ -24,24 +27,30 @@ and recorded.**
   `tests/test_similarity_check.py`. Rows in
   `experiments/out/similarity-check.jsonl`, the tables in
   `similarity-check.summary.json` (git-ignored; the figures below are the record).
-- **Corpus:** 547 texts. Attacks (387): 123/#289's 353 red-team texts as the
-  classifier saw them — the iterative strategy's final prompts, the wrappers'
-  full text; two stream errors left out — in three rows: **miss** (reached the
-  analyst, 76), **wrapper** (composite template, refused, 238), **basic**
-  (refused, 31); plus the older corpora's 16 injection-shaped probes
-  (`headline_guard`: steering, disguised, suffixes; `roleplay_guard`: direct,
-  disguised, laundering) and 18 policy refusals (hate, protected classes —
-  refusals, not injections). Ordinary (160): the 144 topic-boundary questions
-  and the 16 legitimate headline and audience probes. Ambiguous probes excluded.
+- **Corpus:** 546 texts, every text once (one composite wrapper appeared
+  twice in the red-team output and is kept once, so no text can sit in a phrase
+  set and the held-out half at the same time). Attacks (386): 123/#289's 352
+  red-team texts as the classifier saw them — the iterative strategy's final
+  prompts, the wrappers' full text; two stream errors left out — in three rows:
+  **miss** (reached the analyst, 76), **wrapper** (refused under a strategy:
+  237 composite templates and 8 iterative rewrites, 245), **basic** (refused,
+  31); plus the older corpora's 22 injection-shaped probes — the set
+  `moderation-check.md` counted: `headline_guard` steering and suffix-on-copy
+  (10), `roleplay_guard` direct, disguised, laundering (12) — and 12 policy
+  refusals (hate, protected classes and the like: refusals, not injections).
+  Ordinary (160): the 144 topic-boundary questions and the 16 legitimate
+  headline and audience probes (7 + 9). Ambiguous probes excluded.
 - **Split (Q1):** halves, stratified by source, row and strategy or group,
-  shuffled once under a fixed seed. Learning half 276 (attack phrase set 197,
-  ordinary phrase set 81 — one item of the 160 lands on the learning side of an
-  odd stratum), held out 271 (38 misses, 123 wrappers, 15 basic, 8 injection,
-  8 policy, 79 ordinary). Nothing held out is in either phrase set.
+  shuffled once under a fixed seed; an odd stratum gives its extra item to the
+  learning half. Learning half 276 (attack phrase set 195, ordinary phrase set
+  81), held out 270 (38 misses — 12 basic, 20 iterative rewrites, 6 composite
+  wrappers that slipped the classifier — 122 wrappers, 15 basic, 10 injection,
+  6 policy, 79 ordinary). Nothing held out is in either phrase set.
 - **Scores (Q2):** one-sided — the highest cosine similarity to any attack
   phrase, Bedrock's shape, swept 0.5–0.9; two-sided — that minus the highest
-  similarity to any ordinary phrase, NeMo's shape, swept over margins −0.1–0.1
-  (0 = "an attack is nearer than a question").
+  similarity to any ordinary phrase, NeMo's shape, swept over margins −0.1–0.3
+  (0 = "an attack is nearer than a question"). Both sweeps run until the
+  ordinary-text flags reach zero.
 - **Gate (Q3):** adopt if, at the loosest threshold with false positives on
   held-out ordinary text at or under the classifier's 1/160
   (`moderation-check.md`), at least a quarter of the held-out misses are caught.
@@ -53,50 +62,68 @@ One-sided (caught / held out):
 
 | score ≥ | misses | wrappers | basic | injection | policy | ordinary flagged |
 |---|---|---|---|---|---|---|
-| 0.5 | 30/38 | 123/123 | 15/15 | 7/8 | 2/8 | 21/79 |
-| 0.55 | 30/38 | 122/123 | 14/15 | 4/8 | 2/8 | 9/79 |
-| 0.6 | 27/38 | 121/123 | 11/15 | 2/8 | 2/8 | 4/79 |
-| 0.65 | 21/38 | 120/123 | 7/15 | 2/8 | 2/8 | 3/79 |
-| 0.7 | 13/38 | 119/123 | 5/15 | 1/8 | 2/8 | 1/79 |
-| 0.75 | 9/38 | 119/123 | 4/15 | 0/8 | 2/8 | 1/79 |
-| **0.8** | **8/38** | 116/123 | 4/15 | 0/8 | 2/8 | **0/79** |
-| 0.85 | 6/38 | 110/123 | 4/15 | 0/8 | 1/8 | 0/79 |
-| 0.9 | 6/38 | 104/123 | 4/15 | 0/8 | 0/8 | 0/79 |
+| 0.5 | 31/38 | 122/122 | 15/15 | 9/10 | 0/6 | 19/79 |
+| 0.55 | 27/38 | 121/122 | 14/15 | 6/10 | 0/6 | 10/79 |
+| 0.6 | 25/38 | 121/122 | 10/15 | 4/10 | 0/6 | 5/79 |
+| 0.65 | 17/38 | 120/122 | 5/15 | 4/10 | 0/6 | 3/79 |
+| 0.7 | 12/38 | 118/122 | 5/15 | 3/10 | 0/6 | 2/79 |
+| 0.75 | 9/38 | 117/122 | 4/15 | 1/10 | 0/6 | 1/79 |
+| **0.8** | **7/38** | 115/122 | 4/15 | 1/10 | 0/6 | **0/79** |
+| 0.85 | 6/38 | 109/122 | 4/15 | 0/10 | 0/6 | 0/79 |
+| 0.9 | 6/38 | 103/122 | 4/15 | 0/10 | 0/6 | 0/79 |
 
 Two-sided:
 
 | margin ≥ | misses | wrappers | basic | injection | policy | ordinary flagged |
 |---|---|---|---|---|---|---|
-| −0.1 | 38/38 | 123/123 | 15/15 | 8/8 | 5/8 | 48/79 |
-| −0.05 | 38/38 | 123/123 | 15/15 | 8/8 | 5/8 | 28/79 |
-| 0 | 37/38 | 123/123 | 15/15 | 7/8 | 4/8 | 14/79 |
-| 0.05 | 33/38 | 123/123 | 14/15 | 5/8 | 3/8 | 6/79 |
-| 0.1 | 28/38 | 123/123 | 13/15 | 5/8 | 2/8 | 2/79 |
+| −0.1 | 38/38 | 122/122 | 15/15 | 10/10 | 3/6 | 49/79 |
+| −0.05 | 38/38 | 122/122 | 15/15 | 10/10 | 3/6 | 30/79 |
+| 0 | 35/38 | 122/122 | 15/15 | 9/10 | 2/6 | 13/79 |
+| 0.05 | 32/38 | 122/122 | 15/15 | 7/10 | 1/6 | 3/79 |
+| 0.1 | 27/38 | 122/122 | 13/15 | 6/10 | 1/6 | 1/79 |
+| 0.15 | 22/38 | 120/122 | 12/15 | 5/10 | 1/6 | 1/79 |
+| 0.2 | 16/38 | 119/122 | 7/15 | 0/10 | 1/6 | 1/79 |
+| **0.25** | **11/38** | 118/122 | 5/15 | 0/10 | 0/6 | **0/79** |
+| 0.3 | 7/38 | 118/122 | 5/15 | 0/10 | 0/6 | 0/79 |
 
 - **Gate, one-sided:** the loosest threshold at the classifier's false-positive
-  rate is 0.8 (0/79), where **8 of 38 misses (21%)** are caught. Under the
-  quarter asked for. One step looser, 0.7, catches 13 of 38 (34%) and flags 1 of
-  79 ordinary questions — twice the classifier's rate.
-- **Gate, two-sided:** no margin keeps false positives at the classifier's
-  rate; the best cell (margin 0.1) flags 2 of 79 while catching 28 of 38.
-- **Latency:** one embedding call 0.32 s median, 0.42 s max (n = 6); the cosine
+  rate is 0.8 (0/79), where **7 of 38 misses (18%)** are caught. Not met.
+- **Gate, two-sided:** margin 0.25 (0/79), where **11 of 38 misses (29%)** are
+  caught. **Met**, by four attacks. One step looser (0.2) catches 16 of 38 and
+  flags 1 of 79 — twice the classifier's rate.
+- **Which misses:** at margin 0.25 the 11 are 6 of the 6 composite wrappers
+  that slipped the classifier, 4 of the 12 basic attacks, and **1 of the 20
+  natural rewrites**. At 0.8 one-sided: 6, 0 and 1.
+- **Against Mistral's row** (`moderation-check.md`: disguised injections caught
+  0/4; 1/160 ordinary flagged): the held-out disguised probes from the older
+  corpora are caught 0/2 by either score at its gate threshold; the overt ones
+  1/8 (one-sided) and 0/8 (two-sided). What either score adds over the
+  classifier is the template-shaped attacks it let through.
+- **Latency:** one embedding call 0.40 s median, 0.61 s max (n = 6); the cosine
   over a few hundred phrases is microseconds.
-- **Cost:** about 62,000 tokens — a tenth of a cent for the whole corpus; in
-  production, one embedding call per message at $0.02/M.
+- **Cost:** about 62,000 tokens (characters ÷ 4) — a tenth of a cent for the
+  whole corpus. Per message in production: a 2,000-character message (the
+  schema's cap) is about 500 tokens, $0.00001 at $0.02/M; the median ordinary
+  question here is 48 characters.
 
 ## Reading
 
 - **The wrappers cluster; the rewrites do not.** Template jailbreaks are
-  near-copies of each other — 116 of 123 caught at zero false positives — but
-  those are the attacks the classifier already refuses 238 of 250 times. The
-  natural rewrites are written to read like questions about the report, and in
-  embedding space that is where they sit: the two-sided score, which asks
-  whether an attack or an ordinary question is nearer, finds most of them only
-  by also flagging one ordinary question in six.
-- **The gate is stricter than it reads at this corpus size.** With 79 held-out
-  ordinary texts, "at or under 1/160" is satisfiable only by zero flags. A
-  larger ordinary corpus would let 0.7 be judged at its true rate; it would not
-  change the shape of the table.
+  near-copies of each other — 115 of 122 caught at zero false positives by the
+  plain threshold — and the classifier already refuses 238 of 250 of them. The
+  six that slipped through are the two-sided score's whole gain over the
+  classifier, plus four basic attacks. The natural rewrites are written to read
+  like questions about the report, and in embedding space that is where they
+  sit: 1 of 20 caught at either gate threshold, and the two-sided score finds
+  more of them only by also flagging ordinary questions (27 of 38 at margin
+  0.1, with 1 of 79 flagged).
+- **The gate is met on the letter and thin in fact.** It counted all misses; the
+  ones caught are the shape the classifier already handles. With 79 held-out
+  ordinary texts, "at or under 1/160" is satisfiable only by zero flags, so the
+  false-positive side is measured at a coarser resolution than the gate. An
+  earlier split of the same corpus (before a labelling fix moved four probes
+  between rows) put the two-sided score's best clean cell at 2 of 79 flagged:
+  the result moves with the split at this corpus size.
 - **An input-side filter is the wrong layer for paraphrase.** The similarity
   check is an intent matcher: good at denied topics that resemble each other,
   weak against attacks that resemble legitimate use — which is what the ticket
@@ -104,13 +131,17 @@ Two-sided:
 
 ## Decision
 
-**Declined.** No phrase-set similarity check in `guard_chat_message`, no
-pgvector table of attack phrases, no threshold constant. The classifier stays
-the input-side control for what it catches — templates and fake system
-messages — and the analyst's own rules, which held on 30 of the 40 rewrites in
-the red team, stay the control against paraphrase.
+**Gate met by the two-sided score; adoption deferred to 126/#297.** Nothing
+changes in the product from this ticket: no phrase table, no margin constant,
+no call in `guard_chat_message`. The record says the agreed rule was satisfied,
+and that what it would buy is the template leftovers at 0.4 s per message;
+whether that is worth a control, measured on a larger ordinary corpus, is the
+follow-up's question. The classifier stays the input-side control for what it
+catches — templates and fake system messages — and the analyst's own rules,
+which held on 30 of the 40 rewrites in the red team, stay the control against
+paraphrase.
 
-## What would catch the misses instead
+## What would catch the natural rewrites instead
 
 Assessed with the author on 2026-09-03; each lives on its own ticket.
 
