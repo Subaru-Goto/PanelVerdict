@@ -384,13 +384,17 @@ and the money goes where the attack path is:
    `backend/experiments/roleplay_guard.py` probes exactly the classes that
    matter (direct, disguised, laundering) and is rerunnable evidence. Because
    the whole argument leans on its numbers staying true, a change to the
-   classifier's model owes a rerun before it ships (106/#226): the baseline is
+   classifier's model owes a rerun before it ships (106/#226). The baseline is
    pinned in `docs/research/roleplay-guard-check.md`, and `test_config.py` fails
-   when `targeting_model` moves, so the reminder reaches whoever moves it rather
-   than depending on someone remembering. The run stays out of CI because it is
-   ~160 paid calls. A silent model swap degrading the guard would otherwise
-   surface first as somebody's screenshot. Every other model the recorded checks
-   were graded on is pinned the same way, in one table.
+   when the `targeting_model` **default** moves, so a source change cannot ship
+   without someone editing the row that says a rerun is owed. Be precise about
+   the boundary: that catches the change a reviewer would see anyway, and it does
+   **not** catch a deployment setting `TARGETING_MODEL` in its own environment,
+   which is what actually decides the model in use. Nor does a matching string
+   prove a matching model, since a provider can change what a name serves. The
+   run stays out of CI because it is ~160 paid calls. Every other model a
+   recorded check was graded on is pinned the same way, in one table, except the
+   panel's own, which lives on the profile and is pinned beside it.
 2. **The refusal is the screenshot.** What a blocked attacker captures is the
    refusal sentence. A plain, confident remedy — this reads as an instruction to
    the panel, not an audience — is a screenshot that demonstrates the guard
