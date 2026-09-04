@@ -49,6 +49,11 @@ check_untyped_defs = true
 warn_unused_ignores = true
 explicit_package_bases = true
 
+[tool.pydantic-mypy]
+# Off, the plugin types every model constructor argument as Any and a wrong
+# type is only caught when pydantic validates it at run time.
+init_typed = true
+
 [[tool.mypy.overrides]]
 # Ship no stubs and no py.typed marker.
 module = ["pandas.*", "scipy.*", "testcontainers.*", "yaml"]

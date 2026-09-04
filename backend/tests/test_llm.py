@@ -1,6 +1,6 @@
 import json
-
 from typing import Any, cast
+
 import httpx
 import pytest
 from langchain_core.exceptions import OutputParserException
@@ -279,7 +279,7 @@ def test_no_cache_figure_is_unreported_rather_than_zero() -> None:
     assert response.usage.cached_tokens is None
 
 
-def _steps(adapter: object) -> Any:
+def _steps(adapter: object) -> list[Any]:
     """The runnable chain inside an adapter, walked untyped: the test looks at
     how the adapter wired it, which no public type describes."""
     return cast(Any, adapter)._model.steps
@@ -692,6 +692,7 @@ class TestOutOfCreditTranslation:
             base_url="http://openrouter.invalid",
             model="openai/gpt-5-mini",
         )
+        # A fake in a private slot; only `invoke` is ever called on it.
         llm._model = cast(Any, self._Raising(status))
         return llm
 

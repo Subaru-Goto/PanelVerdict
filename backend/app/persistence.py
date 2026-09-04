@@ -9,13 +9,13 @@ import re
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, TypedDict, cast
+from typing import Literal, TypedDict, cast
 
 import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector
 from psycopg.types.json import Jsonb
-from psycopg.rows import dict_row
+from psycopg.rows import DictRow, dict_row
 
 from app.assembly import AssembledPersona
 from app.bigfive import LEVEL_BOUNDS
@@ -323,7 +323,7 @@ def deny_data_api(conn: psycopg.Connection) -> None:
     conn.commit()
 
 
-async def adeny_data_api(conn: psycopg.AsyncConnection[Any]) -> None:
+async def adeny_data_api(conn: psycopg.AsyncConnection[DictRow]) -> None:
     """`deny_data_api` for a caller that has an event loop — the lifespan.
 
     Two implementations of three statements, rather than one shared one: the
@@ -581,20 +581,22 @@ def persist_pool(conn: psycopg.Connection, pool: Iterable[AssembledPersona]) -> 
 def _persona_from_row(row: PersonaRow) -> Persona:
     """Rebuild a Persona from its columns. The summary embedding is deliberately
     not read back — it is derived from these fields, and no reader needs both."""
-    return Persona(
-        id=row["id"],
-        country=row["country"],
-        age=row["age"],
-        gender=row["gender"],
-        income_quintile=row["income_quintile"],
-        education=row["education"],
-        big_five=BigFive(
-            openness=row["openness"],
-            conscientiousness=row["conscientiousness"],
-            extraversion=row["extraversion"],
-            agreeableness=row["agreeableness"],
-            neuroticism=row["neuroticism"],
-        ),
+    return Persona.model_validate(
+        {
+            "id": row["id"],
+            "country": row["country"],
+            "age": row["age"],
+            "gender": row["gender"],
+            "income_quintile": row["income_quintile"],
+            "education": row["education"],
+            "big_five": BigFive(
+                openness=row["openness"],
+                conscientiousness=row["conscientiousness"],
+                extraversion=row["extraversion"],
+                agreeableness=row["agreeableness"],
+                neuroticism=row["neuroticism"],
+            ),
+        }
     )
 
 

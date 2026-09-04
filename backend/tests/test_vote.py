@@ -7,7 +7,7 @@ import pytest
 from app.bigfive import bigfive_from_levels
 from app.logs import bind_thread
 from app.panel import render_persona_prompt
-from app.schemas import PanelVoteOutput, Persona, TraitLevel
+from app.schemas import EducationLevel, Locale, PanelVoteOutput, Persona, TraitLevel
 from app.vote import (
     VoteResponse,
     VoteUsage,
@@ -26,11 +26,11 @@ def _persona(pid: str, *, age: int = 30) -> Persona:
     """Valid persona with filler traits — only the id and age matter to these tests."""
     return Persona(
         id=pid,
-        country="US",
+        country=Locale.US,
         age=age,
         gender="male",
         income_quintile=3,
-        education="secondary",
+        education=EducationLevel.SECONDARY,
         big_five=bigfive_from_levels(
             openness=TraitLevel.LOW,
             conscientiousness=TraitLevel.LOW,
@@ -347,7 +347,7 @@ def test_each_usage_figure_stays_with_the_vote_it_was_billed_for() -> None:
     )
 
     ages = {p.id: p.age for p in panel}
-    assert [u.input_tokens if u else None for u in votes.usage] == [
+    assert [u.input_tokens if u is not None else None for u in votes.usage] == [
         ages[r.persona_id] for r in votes.records
     ]
 
@@ -367,7 +367,12 @@ def test_a_failed_vote_leaves_no_usage_hole_to_shift_the_rest() -> None:
 
     assert len(votes.failures) == 1
     assert len(votes.usage) == len(votes.records) == 4
-    assert [u.input_tokens if u else None for u in votes.usage] == [30, 31, 32, 34]
+    assert [u.input_tokens if u is not None else None for u in votes.usage] == [
+        30,
+        31,
+        32,
+        34,
+    ]
 
 
 def test_totals_report_how_many_votes_each_sum_covers() -> None:

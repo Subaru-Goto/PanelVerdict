@@ -287,11 +287,11 @@ def make_persona(
 ) -> Persona:
     return Persona(
         id=id_,
-        country=country,
+        country=Locale(country),
         age=age,
         gender=gender,
         income_quintile=income_quintile,
-        education=education,
+        education=EducationLevel(education),
         big_five=big_five
         or BigFive(
             openness=0.1,

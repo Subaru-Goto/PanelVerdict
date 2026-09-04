@@ -1,7 +1,8 @@
 """The type checker catches the two silent failures 103/#221 was written for.
 
 Each test hands mypy a small module, using the repo's own config, and expects a
-report. Each turns red if the config line it depends on is removed.
+report. The first shows the ticket's headline hazard is caught at all; the
+second turns red if `check_untyped_defs` is removed.
 """
 
 import subprocess

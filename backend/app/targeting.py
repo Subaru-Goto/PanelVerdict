@@ -482,7 +482,7 @@ def settled_query(edit: PanelEdit) -> TargetQuery:
     """
     return TargetQuery(
         **edit.model_dump() | {"countries": edit.countries or list(Locale)},
-        traits=[],
+        traits=(),
         coverage="requested",
-        notices=[],
+        notices=(),
     )

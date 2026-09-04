@@ -4,6 +4,7 @@ from app.schemas import (
     COUNTRY_NAME,
     EducationLevel,
     INCOME_BAND_QUINTILES,
+    Locale,
     PanelVote,
     Persona,
     TraitLevel,
@@ -133,11 +134,11 @@ def persona_summary(persona: Persona) -> str:
 FIXED_PANEL: list[Persona] = [
     Persona(
         id="p1",
-        country="US",
+        country=Locale.US,
         age=34,
         gender="female",
         income_quintile=3,
-        education="tertiary",
+        education=EducationLevel.TERTIARY,
         big_five=bigfive_from_levels(
             openness=TraitLevel.HIGH,
             conscientiousness=TraitLevel.HIGH,
@@ -152,11 +153,11 @@ FIXED_PANEL: list[Persona] = [
     # midlifer, a driven woman with mainstream tastes.
     Persona(
         id="p2",
-        country="US",
+        country=Locale.US,
         age=24,
         gender="male",
         income_quintile=2,
-        education="secondary",
+        education=EducationLevel.SECONDARY,
         big_five=bigfive_from_levels(
             openness=TraitLevel.VERY_LOW,
             conscientiousness=TraitLevel.HIGH,
@@ -167,11 +168,11 @@ FIXED_PANEL: list[Persona] = [
     ),
     Persona(
         id="p3",
-        country="US",
+        country=Locale.US,
         age=61,
         gender="female",
         income_quintile=4,
-        education="tertiary",
+        education=EducationLevel.TERTIARY,
         big_five=bigfive_from_levels(
             openness=TraitLevel.VERY_HIGH,
             conscientiousness=TraitLevel.MEDIUM,
@@ -182,11 +183,11 @@ FIXED_PANEL: list[Persona] = [
     ),
     Persona(
         id="p4",
-        country="US",
+        country=Locale.US,
         age=47,
         gender="male",
         income_quintile=3,
-        education="secondary",
+        education=EducationLevel.SECONDARY,
         big_five=bigfive_from_levels(
             openness=TraitLevel.MEDIUM,
             conscientiousness=TraitLevel.VERY_LOW,
@@ -197,11 +198,11 @@ FIXED_PANEL: list[Persona] = [
     ),
     Persona(
         id="p5",
-        country="US",
+        country=Locale.US,
         age=29,
         gender="female",
         income_quintile=4,
-        education="tertiary",
+        education=EducationLevel.TERTIARY,
         big_five=bigfive_from_levels(
             openness=TraitLevel.MEDIUM,
             conscientiousness=TraitLevel.HIGH,
@@ -226,7 +227,7 @@ def voter_summary(persona: Persona) -> VoterSummary:
         gender=persona.gender,
         education=persona.education,
         income_band=_BAND_OF_QUINTILE[persona.income_quintile],
-        traits={trait: bucketize(score) for trait, score in persona.big_five},
+        traits={trait: bucketize(score) for trait, score in persona.big_five.traits()},
     )
 
 

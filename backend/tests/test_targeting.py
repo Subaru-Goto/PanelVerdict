@@ -112,7 +112,7 @@ def test_a_trait_name_outside_the_vocabulary_is_rejected() -> None:
     validation for speed, would open it silently; this fails first."""
     with pytest.raises(ValidationError):
         TraitRequest(
-            trait="openness; DROP TABLE personas--",
+            trait="openness; DROP TABLE personas--",  # type: ignore[arg-type]  # the rejection is the test
             level=TraitLevel.HIGH,
             source_phrase="curious",
         )

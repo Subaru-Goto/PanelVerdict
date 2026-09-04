@@ -7,8 +7,8 @@ here is the mechanism rather than a detail.
 """
 
 import os
-
 from typing import Any
+
 import pytest
 
 from app.config import Settings

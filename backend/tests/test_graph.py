@@ -14,7 +14,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.types import Command
 
 from app.graph import GateDecision, build_evaluate_graph
-from app.schemas import TargetQuery
+from app.schemas import Locale, TargetQuery
 from app.roleplay import RolePlayRefused
 from app.pipeline import EmptyPanel
 from app.screening import ScreeningVerdict, UnsafeInput
@@ -62,15 +62,15 @@ def _japan_query() -> TargetQuery:
     """The settled reading the endpoint would seed for a JP-only run — the
     graph reads a done deal now, never a description (094)."""
     return TargetQuery(
-        countries=["JP"],
+        countries=(Locale.JP,),
         coverage="requested",
         min_age=18,
         max_age=100,
         gender=None,
-        income_quintiles=[],
-        education=[],
-        traits=[],
-        notices=[],
+        income_quintiles=(),
+        education=(),
+        traits=(),
+        notices=(),
     )
 
 

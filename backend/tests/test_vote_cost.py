@@ -23,7 +23,10 @@ def test_each_row_carries_the_usage_of_the_panelist_it_names() -> None:
     the wrong persona id would produce a plausible mean over a mislabelled panel."""
     rows = _rows("low", 0, ["p1", "p2", "p3"], (_usage(301), _usage(302), _usage(303)))
 
-    assert [(row.persona_id, row.usage and row.usage.input_tokens) for row in rows] == [
+    assert [
+        (row.persona_id, row.usage.input_tokens if row.usage is not None else None)
+        for row in rows
+    ] == [
         ("p1", 301),
         ("p2", 302),
         ("p3", 303),

@@ -4,7 +4,7 @@ from app.plausibility import (
     evaluate_sample,
     score_persona,
 )
-from app.schemas import Persona, PlausibilityScore, TraitLevel
+from app.schemas import EducationLevel, Locale, Persona, PlausibilityScore, TraitLevel
 
 
 class StubJudge:
@@ -23,11 +23,11 @@ class StubJudge:
 def _persona(persona_id: str) -> Persona:
     return Persona(
         id=persona_id,
-        country="US",
+        country=Locale.US,
         age=34,
         gender="female",
         income_quintile=3,
-        education="tertiary",
+        education=EducationLevel.TERTIARY,
         big_five=bigfive_from_levels(
             openness=TraitLevel.HIGH,
             conscientiousness=TraitLevel.HIGH,
