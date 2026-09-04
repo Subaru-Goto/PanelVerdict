@@ -1513,10 +1513,10 @@ async def evaluate(
     arrives approved and there is no gate to stop at — and always after its
     sentence is judged, so a refusal never costs a run on either door.
     """
-    # The skip path's two money moves straddle the check, and each side of it
-    # keeps one rule: the cap is probed above, so a caller with no runs left
-    # pays nothing to be told so; the panel is bought below, so a sentence that
-    # will never run costs no run. The check itself is charged either way.
+    # The skip path refuses in cost order, free reasons first: no runs left,
+    # then nobody to ask (108/#231), then the sentence — which is a paid check,
+    # so both refusals above it cost nothing. The panel is bought last, below
+    # the check, so a sentence that will never run costs no run.
     # A brought id is honoured only if nothing lives under it: reusing a live
     # thread would run a new panel over its checkpoints. Refused above every
     # charge, so the mistake costs nothing — and ids are unguessable, so the
@@ -1533,16 +1533,15 @@ async def evaluate(
     query = settled_query(request.target)
     if request.reading_accepted:
         await _refuse_if_run_capped(conn, caller)
-    instruction = await _approved_on_entry(conn, request, generator, caller)
-    if request.reading_accepted:
-        # The gate's own door knows the seat count before it charges; this one
-        # has drawn nothing, so it asks the draw's predicate whether anybody is
-        # there (108/#231). Above the charge, so a reading that can never vote
-        # costs nothing — the same rule, now on both doors. `EmptyPanel` still
-        # raises inside the graph and still spends: the pool can empty between
-        # this question and the draw, and an adjust at the gate re-seats.
+        # The gate's door knows the seat count before it charges; this one has
+        # drawn nothing, so it asks the draw's own predicate whether anybody is
+        # there (108/#231). First of the three, because it is the only free one:
+        # judging the sentence below is a paid check, and a reading that can
+        # never vote should not pay for one.
         if not await anyone_matches(conn, query):
             raise HTTPException(status_code=422, detail=NOBODY_MATCHES)
+    instruction = await _approved_on_entry(conn, request, generator, caller)
+    if request.reading_accepted:
         await _buy_panel(conn, caller)
     variants = {"a": request.headline_a, "b": request.headline_b}
     thread_id = request.thread_id or str(uuid4())

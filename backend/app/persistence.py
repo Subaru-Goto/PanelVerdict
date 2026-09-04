@@ -674,12 +674,11 @@ def load_persona_sample(conn: psycopg.Connection, *, limit: int) -> list[Persona
 
 
 def _panel_predicate(query: TargetQuery) -> tuple[list[str], list[SqlParam]]:
-    """The WHERE clause a target reads as, built once for everyone who asks.
+    """The WHERE clause a target reads as, built once for both its callers.
 
-    Two callers, and they must never disagree: `retrieve_panel` draws the panel,
-    and `anyone_matches` decides whether a run is worth charging for (108/#231).
-    A second hand-written copy of these conditions could drift, and the drift
-    would be a caller charged for a panel the draw then cannot seat.
+    `retrieve_panel` draws the panel and `anyone_matches` asks whether there is
+    one to draw; a second hand-written copy could drift, and drift here means a
+    caller charged for a panel the draw cannot seat (108/#231).
 
     Every fragment below is a literal; only values reach the database as
     parameters, and `%s` placeholders stay positional with `params`.
@@ -712,10 +711,8 @@ def _panel_predicate(query: TargetQuery) -> tuple[list[str], list[SqlParam]]:
 async def anyone_matches(conn: psycopg.AsyncConnection, query: TargetQuery) -> bool:
     """Whether the pool holds a single person this target would seat.
 
-    Asked before the money moves on the door that skips the gate, where nothing
-    has drawn a panel yet (108/#231). Deliberately not a count: how many match
-    is the draw's business — a thin panel is a shortfall the report explains,
-    and only an empty one is a run worth refusing.
+    Not a count, deliberately: how many match is the draw's business, and only
+    an empty panel is a run worth refusing.
     """
     conditions, params = _panel_predicate(query)
     async with conn.cursor() as cur:
@@ -723,7 +720,12 @@ async def anyone_matches(conn: psycopg.AsyncConnection, query: TargetQuery) -> b
             f"SELECT 1 FROM personas WHERE {' AND '.join(conditions)} LIMIT 1",
             params,
         )
-        return await cur.fetchone() is not None
+        seated = await cur.fetchone() is not None
+    # Nothing was written, and a model call follows on the caller's path: the
+    # same rule `_refuse_if_run_capped` states, since a read left open would
+    # hold a pooled connection idle in transaction across it.
+    await conn.rollback()
+    return seated
 
 
 async def retrieve_panel(
@@ -754,7 +756,7 @@ async def retrieve_panel(
         raise ValueError(f"a panel needs at least one persona, got {size}")
 
     conditions, params = _panel_predicate(query)
-    params += [str(seed), size]
+    params = [*params, str(seed), size]
 
     # Ties break on id, so the panel cannot vary run to run for a reason the customer
     # could not see. Only an md5 collision could reach it, but the ordering has to be
