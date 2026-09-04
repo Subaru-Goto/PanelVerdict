@@ -9,6 +9,7 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import EvaluateForm from "../app/components/evaluate-form";
+import { RunTimedOut } from "../app/lib/run-budget";
 import Shell from "../app/components/shell";
 import { AI_SYSTEM_DISCLOSURE } from "../app/lib/disclosure";
 import { makeResponse } from "./fixtures";
@@ -358,6 +359,21 @@ describe("request lifecycle", () => {
     expect(button.hasAttribute("disabled")).toBe(true);
   });
 
+  it("names the deadline when the page stops waiting, in minutes", async () => {
+    // 032/#133: a run that outlives the budget is a stated failure, not a
+    // status code — and it says where the report goes and that the run counted.
+    evaluateMock.mockRejectedValue(new RunTimedOut());
+    render(<EvaluateForm />);
+
+    await fillAndSubmit();
+
+    expect(
+      await screen.findByText(/stopped waiting after 5 minutes/),
+    ).toBeTruthy();
+    expect(screen.getByText(/appears under your past tests/)).toBeTruthy();
+    expect(screen.getByText(/run count already includes it/)).toBeTruthy();
+  });
+
   it("shows the backend's refusal sentence when the run fails", async () => {
     evaluateMock.mockRejectedValue(
       new Error("OpenRouter credit is exhausted and no vote was cast."),
@@ -508,6 +524,22 @@ describe("the audience through the interface", () => {
       fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
     });
     expect(screen.getByRole("complementary")).toBeDefined();
+  });
+
+  it("leaves the gate when the accepted run times out: re-accepting would buy again", async () => {
+    evaluateMock.mockResolvedValue(PAUSED);
+    resumeMock.mockRejectedValue(new RunTimedOut());
+    render(<EvaluateForm />);
+    await act(() => fillAndSubmit());
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /run the panel/i }));
+    });
+
+    expect(
+      await screen.findByText(/stopped waiting after 5 minutes/),
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /run the panel/i })).toBeNull();
   });
 
   it("keeps the gate on a refused edit, shows the remedy, and keeps the edit", async () => {
