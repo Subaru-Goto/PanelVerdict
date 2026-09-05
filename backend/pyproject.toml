@@ -67,11 +67,8 @@ follow_imports = "silent"
 
 [dependency-groups]
 dev = [
-    "deepeval>=4.2.1",
-    "langchain-community<0.4",
     "mypy>=2.3.1",
     "pytest>=9.1.1",
-    "ragas>=0.4.3",
     "ruff>=0.15.22",
     "testcontainers[postgres]>=4.14.2",
 ]

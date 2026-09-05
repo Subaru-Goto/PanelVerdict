@@ -31,8 +31,9 @@ _CAPTURES = sorted(Path("app/data/demo").glob("*.json"))
 class FirstPositionRate(BaseMetric):
     """The share of votes that went to whichever option was shown first.
 
-    Reported, not bounded: `threshold` is None until a capture carrying the
-    order exists to set it against (see the module docstring)."""
+    Reported, not bounded: the threshold is floored at 0.0 so the case cannot
+    fail on the number, until a capture carrying the order exists to set a band
+    against (see the module docstring)."""
 
     def __init__(self) -> None:
         self.threshold = 0.0
@@ -60,14 +61,23 @@ class FirstPositionRate(BaseMetric):
 
 
 @pytest.mark.parametrize("path", _CAPTURES, ids=lambda p: p.stem)
+@pytest.mark.xfail(
+    strict=True,
+    reason="no committed capture records presentation_order yet; the first that "
+    "does will XPASS here, which is the signal to set the band (110/#238)",
+)
 def test_the_first_position_rate_of_a_capture_that_recorded_its_order(
     path: Path,
 ) -> None:
+    """Strict xfail rather than a skip, on purpose: a skip that quietly turned
+    into a pass the day a capture carried the order would leave the band unset
+    forever. This fails *loudly* on that day — an unexpected pass — and the fix
+    is to read the rate off that capture, set the band against it and the
+    measurements in the module docstring, and drop the marker."""
     fixture = DemoFixture.model_validate_json(path.read_text())
-    if any(vote.presentation_order is None for vote in fixture.votes):
-        pytest.skip(
-            f"{path.name} predates presentation_order; the next capture carries it"
-        )
+    assert all(vote.presentation_order is not None for vote in fixture.votes), (
+        f"{path.name} predates presentation_order"
+    )
     votes = [
         {"chosen": vote.variant, "presentation_order": vote.presentation_order}
         for vote in fixture.votes

@@ -15,12 +15,6 @@ for _switch in (
 ):
     os.environ[_switch] = "false"
 
-# DeepEval phones home with anonymous usage telemetry unless told not to; the
-# free evaluation cases in tests/evals import it, and a test run reports nothing
-# to anyone (110/#238). Set, not forced: a developer who opted in elsewhere keeps
-# their choice.
-os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "YES")
-
 from typing import Literal  # noqa: E402
 
 import psycopg  # noqa: E402

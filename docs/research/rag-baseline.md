@@ -4,7 +4,9 @@
 `backend/experiments/rag_cases.json` (110/#238) · **Settings:** analyst and judge both
 `openai/gpt-5.6-luna` (`settings.analyst_model`, `settings.judge_model`), analyst at
 `reasoning_effort="low"` as shipped; Ragas 0.4.3 `Faithfulness`, `ContextPrecision`
-(with reference), `ContextRecall`, judge through `llm_factory` on an OpenRouter client;
+(with reference), `ContextRecall`, judge through `llm_factory` on an OpenRouter client,
+layered on with `uv run --with-requirements evals/requirements.txt` — never in the lock,
+whose production resolution it would downgrade;
 fixture report `experiments.corpus_check.sample_result()` (an undecided 22–28 of 50);
 the local database seeded with the 15-chunk corpus · **Runs:**
 `backend/experiments/out/rag-eval-sample-10.{jsonl,usage.json}` and
@@ -65,10 +67,10 @@ sample, which is what the sample was for.
 | **context recall** | **0.879** |
 | reference passage retrieved | **24 / 29** |
 | analyst: 60 calls, 88% of input cached | $0.0113 |
-| judge: 150 calls, ~1,385 in / ~257 out a call | $0.0880 |
+| judge: 150 calls, ~1,385 in / ~258 out a call | $0.0880 |
 | **total** | **$0.0993 — $0.0033 a case** |
 
-Below 1.0 on any metric: 15 of 29 cases on faithfulness, 5 on precision, 4 on recall.
+Below 1.0 on any metric (counting a score under 0.999 — Ragas returns 0.9999… for a perfect precision): 15 of 29 cases on faithfulness, 5 on precision, 4 on recall.
 Three cases score zero on both retrieval metrics (`p-title-1`, `p-title-2`, `p-limit-1`).
 
 ## Hand review of every imperfect case

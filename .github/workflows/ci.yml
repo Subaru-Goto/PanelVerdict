@@ -35,6 +35,17 @@ jobs:
           uv run ruff check .
           uv run ruff format --check .
           uv run mypy
+      # The free half of evaluation (110/#238): deterministic DeepEval cases over
+      # the committed demo captures, no model call possible. Its own step because
+      # DeepEval cannot join the lock — its caps would downgrade the production
+      # image — so it is layered on for this run only (evals/requirements.txt),
+      # and type-checked under the same overlay, since mypy needs its types.
+      - name: evaluation, the free half
+        env:
+          DEEPEVAL_TELEMETRY_OPT_OUT: "YES"
+        run: |
+          uv run --frozen --with-requirements evals/requirements.txt python -m pytest evals -q
+          uv run --frozen --with-requirements evals/requirements.txt mypy evals
 
   frontend:
     runs-on: ubuntu-latest

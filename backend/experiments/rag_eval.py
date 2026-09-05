@@ -13,8 +13,12 @@ the analyst's own `analyst usage` log line is summed, and every judge call's
 usage is read off the HTTP response. Results are rows plus a `.usage.json`,
 and the record is `docs/research/rag-baseline.md`.
 
-    uv run python -m experiments.rag_eval --limit 10 --out out/rag-eval/sample.jsonl
-    uv run python -m experiments.rag_eval --out out/rag-eval/baseline.jsonl
+    uv run --with-requirements evals/requirements.txt \\
+        python -m experiments.rag_eval --limit 10 --out experiments/out/rag-eval-sample.jsonl
+    uv run --with-requirements evals/requirements.txt \\
+        python -m experiments.rag_eval --out experiments/out/rag-eval-baseline.jsonl
+
+Ragas is an overlay, not a dependency — see evals/requirements.txt for why.
 
 `--dry-run` prices the run and exits before any client exists.
 """
@@ -33,10 +37,11 @@ from app.corpus import Chunk, _all_chunks
 
 CASES_PATH = Path(__file__).with_name("rag_cases.json")
 
-# Three metrics, and Ragas makes roughly this many judge calls per case for
+# Three metrics, and Ragas makes at most this many judge calls per case for
 # them: faithfulness extracts statements then verdicts them (2), precision
 # judges each retrieved passage (up to 4), recall judges the reference (1).
-# A ceiling for the dry-run price line, not a measurement; the run measures.
+# A ceiling for the dry-run price line; the runs measured ~5 a case (150 calls
+# over 30, 43 over 10 — docs/research/rag-baseline.md), so the line reads high.
 _JUDGE_CALLS_PER_CASE = 7
 
 
@@ -143,7 +148,7 @@ def main() -> None:
     from app.analyst import ToolDeps, stream_analyst
     from app.llm import OpenRouterEmbedder, analyst_chat_model
     from experiments.corpus_check import sample_result
-    from experiments.topic_boundary import AnalystUsageTap
+    from experiments.topic_boundary import AnalystUsageTap, write_run
 
     key = settings.openrouter_api_key.get_secret_value()
     chat = analyst_chat_model(
@@ -253,40 +258,20 @@ def main() -> None:
                 row["context_recall"] = (
                     await metrics["context_recall"].ascore(
                         user_input=case.question,
-                        retrieved_contexts=retrieved,
                         reference=reference,
+                        retrieved_contexts=retrieved,
                     )
                 ).value
                 row["reference_retrieved"] = any(
                     p.startswith(f"{case.source} — {case.section}") for p in retrieved
                 )
                 rows.append(row)
-                print(
-                    f"{case.id}: {row.get('routing') or {k: round(row[k], 2) for k in metrics}}"
-                )
+                print(f"{case.id}: { {k: round(row[k], 2) for k in metrics} }")
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
     try:
         asyncio.run(live())
     finally:
-        # Paid calls that do not reproduce: a failure on the last case must
-        # not also cost the rows before it.
         if rows:
-            args.out.write_text(
-                "\n".join(json.dumps(row, ensure_ascii=False) for row in rows)
-            )
-            usage = {
-                "cases": len(rows),
-                "analyst": {
-                    "model": args.model,
-                    "calls": tap.calls,
-                    "input_tokens": tap.input,
-                    "cached_tokens": tap.cached,
-                    "output_tokens": tap.output,
-                },
-                "judge": {"model": args.judge_model, **judge_usage},
-            }
-            args.out.with_suffix(".usage.json").write_text(json.dumps(usage, indent=2))
             scored = [r for r in rows if "faithfulness" in r]
             if scored:
                 for name in ("faithfulness", "context_precision", "context_recall"):
@@ -301,7 +286,14 @@ def main() -> None:
             unrouted = sum(1 for r in rows if r.get("routing"))
             if unrouted:
                 print(f"{unrouted} case(s) never reached the corpus tool")
-            print(f"wrote {args.out} and {args.out.with_suffix('.usage.json')}")
+            write_run(
+                args.out,
+                rows,
+                analyst_model=args.model,
+                tap=tap,
+                judge_model=args.judge_model,
+                judge_usage=judge_usage,
+            )
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 {
-  "_about": "Hand-written questions for the analyst's RAG (110/#238, decision Q2, 2026-09-05). Two per corpus chunk: one in the reader's own jargon, one in their own words. `section` is the heading of the passage the answer should draw on — the reference context; `reference` is a person's reading of that passage, never a model's. Held-out/tune split deliberately absent: nothing is tuned against these, they are a baseline and a regression set. Reworded after the 10-case sample of 2026-09-05 (six questions): phrasings a reader could mean about *this* report route to the report's tools by design (025's two-kinds rule), so they measured routing, not grounding. Each now asks about the method in general. An instrument correction, recorded in docs/research/rag-baseline.md; no wording of the analyst's was changed.",
+  "_about": "Hand-written questions for the analyst's RAG (110/#238): two per corpus chunk, `section` naming the passage each should draw on, `reference` a person's reading of it. Method, provenance and the 2026-09-05 rewording are in docs/research/rag-baseline.md.",
   "cases": [
     {
       "id": "v-title-1",
