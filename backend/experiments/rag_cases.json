@@ -200,14 +200,14 @@
     {
       "id": "p-limit-1",
       "source": "Who the panel is",
-      "section": "What this panel cannot tell you",
+      "section": "What this panel has been validated on, and what it cannot tell you",
       "question": "What has the panel actually been validated on?",
       "reference": "Written headlines that say genuinely different things — it separates those. It has not been shown to track human preference between two headlines that say the same thing in different words."
     },
     {
       "id": "p-limit-2",
       "source": "Who the panel is",
-      "section": "What this panel cannot tell you",
+      "section": "What this panel has been validated on, and what it cannot tell you",
       "question": "If two headlines are rephrasings of one idea, can the verdict between them be trusted?",
       "reference": "That case is unvalidated: the panel has only been measured on headlines that say different things, and a verdict on two rephrasings of one idea is something the report cannot flag for you."
     }

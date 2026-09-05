@@ -157,6 +157,25 @@ class TestHybridRetrieval:
 
         assert any("interval" in p.passage.casefold() for p in found)
 
+    @pytest.mark.anyio
+    async def test_the_readers_word_for_the_honesty_passage_finds_it(
+        self, conn, aconn
+    ) -> None:
+        """129/#313: the first Ragas baseline asked what the panel has been
+        validated on and got the measuring passage. The limit passage said
+        "unvalidated", which stems to a different lexeme, and the gate wants a
+        majority of the question's words. The heading is the line written to be
+        searched for, so the reader's word belongs in it."""
+        seed_corpus(conn, FakeEmbedder())
+
+        found = await search_corpus(
+            aconn, "What has the panel actually been validated on?", FakeEmbedder()
+        )
+
+        assert any("written headlines" in p.passage for p in found), [
+            p.section for p in found
+        ]
+
     # Questions that share *some* words with the corpus but are not about it.
     # "how do I bake sourdough" alone was a useless guard: it shares nothing, so it
     # was the one case that could not fail, and it passed while 12 of 15 real

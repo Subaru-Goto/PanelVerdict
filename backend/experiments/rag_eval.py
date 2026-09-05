@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
 from app.corpus import Chunk, _all_chunks
 
@@ -80,6 +80,21 @@ def _chunk_for(case: Case) -> Chunk:
 def reference_context(case: Case) -> str:
     """The passage the answer should have drawn on, as the corpus stores it."""
     return _chunk_for(case).passage
+
+
+def searched_for(messages: Sequence[BaseMessage]) -> list[str]:
+    """The strings the analyst searched the corpus with during one turn, in order.
+
+    The analyst rewrites the reader's question before it searches, so a miss can
+    only be diagnosed against what it actually asked the retriever (129/#313).
+    """
+    return [
+        str(call["args"].get("question", ""))
+        for message in messages
+        if isinstance(message, AIMessage)
+        for call in message.tool_calls
+        if call["name"] == "explain_the_report"
+    ]
 
 
 def retrieved_passages(messages: Sequence[BaseMessage]) -> list[str]:
@@ -231,6 +246,7 @@ def main() -> None:
                     "id": case.id,
                     "question": case.question,
                     "reply": reply,
+                    "searched": searched_for(messages),
                     "retrieved": retrieved,
                     "reference_section": case.section,
                 }
