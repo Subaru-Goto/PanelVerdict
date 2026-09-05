@@ -187,14 +187,20 @@ def seed_corpus(conn: psycopg.Connection, embedder: Embedder) -> int:
 # is far too small for tuning it to mean anything.
 _RRF_K = 60
 
-_SEARCH = """
-WITH asked AS (
-    -- The question's distinct content words, stopwords already dropped by the
-    -- stemmer. Kept as an array rather than a tsquery because the gate below
-    -- counts them, and a tsquery cannot be counted.
-    SELECT array_agg(DISTINCT lexeme) AS lexemes
-    FROM unnest(tsvector_to_array(to_tsvector('english', %(query)s))) AS lexeme
-),
+# The question's distinct content words, stopwords already dropped by the
+# stemmer. An array rather than a tsquery because the gate counts them, and a
+# tsquery cannot be counted. Shared with experiments/gate_probe.py so the probe
+# measures the gate the search actually applies.
+LEXEMES_SQL = """
+SELECT array_agg(DISTINCT lexeme) AS lexemes
+FROM unnest(tsvector_to_array(to_tsvector('english', %(query)s))) AS lexeme
+"""
+
+_SEARCH = (
+    """
+WITH asked AS ("""
+    + LEXEMES_SQL
+    + """),
 dense AS (
     SELECT id, row_number() OVER (ORDER BY embedding <=> %(vector)s) AS rank
     FROM corpus_chunks
@@ -244,6 +250,7 @@ JOIN (
 ORDER BY f.fused DESC
 LIMIT %(limit)s
 """
+)
 
 
 async def search_corpus(
@@ -279,6 +286,11 @@ async def search_corpus(
     recall on a question sharing *some* words, which is why the lexemes are ORed:
     requiring all of them is the same gate with the meaning inverted, and it
     measured 5 of 14 questions returning nothing.
+
+    Measured cost (129/#313): 7 of the 30 RAG baseline questions, as the reader
+    wrote them, could not reach their passage through this gate; 6 after the
+    limit passage's heading gained the reader's word. The mechanisms and the
+    fix are 130/#315; `experiments/gate_probe.py` reproduces the figure for free.
     """
     if not query.strip():
         return []

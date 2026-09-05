@@ -98,14 +98,14 @@ people rather than five unrelated dice rolls.
 
 <!-- Grounded in: `app/bigfive.py` — *"country does not condition the Big Five μ"*; Donnellan & Lucas, cited in `docs/research/persona-seed-data.md`. -->
 
-## What this panel cannot tell you
+## What this panel has been validated on, and what it cannot tell you
 
 The honest limit, stated because it bounds every verdict on the report.
 
 Deliberately specific about what was tested, because the limit is about the
 evidence and not about the arithmetic.
 
-The panel has been tested on **written headlines** that say genuinely different
+The panel has been validated on **written headlines** that say genuinely different
 things, and it separates them. It has **not** been shown to track human preference
 between two headlines that say the *same* thing in different words — and that
 second case is what a lot of real copy testing is.

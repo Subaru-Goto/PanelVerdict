@@ -95,7 +95,10 @@ PAIRS: tuple[Pair, ...] = (
         "does openness depend on which country they are from",
         "What the traits are conditioned on, and what that rules out",
     ),
-    Pair("what can this test not tell me", "What this panel cannot tell you"),
+    Pair(
+        "what can this test not tell me",
+        "What this panel has been validated on, and what it cannot tell you",
+    ),
     # Declared with no expected section, on the assumption that a question outside
     # the product's scope retrieves nothing. **The first run showed the assumption
     # wrong, not the retrieval** — both are questions the corpus deliberately
@@ -105,7 +108,10 @@ PAIRS: tuple[Pair, ...] = (
         "what is the click-through rate for this headline",
         "What the panel is actually measuring",
     ),
-    Pair("how do I write a better headline", "What this panel cannot tell you"),
+    Pair(
+        "how do I write a better headline",
+        "What this panel has been validated on, and what it cannot tell you",
+    ),
 )
 
 

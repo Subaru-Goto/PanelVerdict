@@ -120,6 +120,61 @@ judge's variance, and the reason the bar is a baseline rather than a threshold.
   replies finds one honest decline and no invented number.
 - **106's tripwire owes a rerun** when `analyst_model` or `judge_model` moves; this record
   is the one it names for the RAG.
-- **Not done:** a tolerance for run-to-run noise (needs a second run at the same wording);
+- **Not done:** a tolerance for run-to-run noise (one pair below, not yet a tolerance);
   DeepEval's own RAG metrics as a cross-check on the judge; a case set for the report's
   *figures* questions (those go to `analyze_results`, not the corpus, by design).
+
+## Second and third rows: 129/#313, 2026-09-05
+
+Two reruns at the same 30 questions, same models and settings, after the fixes for the
+named miss. Runs: `rag-eval-129-30.{jsonl,usage.json}` and `rag-eval-129b-30.*`.
+Each row now also records `searched` — the strings the analyst actually sent the
+retriever — and an unscored turn says whether it "never searched" or searched and
+"nothing passed the gate"; the baseline's single "no retrieval" label covered both.
+
+| | baseline | rerun 1 | rerun 2 |
+|---|---|---|---|
+| change | — | limit passage's heading carries "validated" | + tool description asks for the reader's words |
+| cases scored | 29 | 29 | 30 |
+| faithfulness | 0.835 | 0.868 | **0.816** |
+| context precision | 0.862 | 0.876 | 0.886 |
+| context recall | 0.879 | 0.931 | 0.933 |
+| reference passage retrieved | 24 / 29 | 26 / 29 | **27 / 30** |
+| first search sent verbatim | not recorded | 15 / 30 | 20 / 30 |
+| cost (same prices as above) | $0.099 | $0.104 | $0.110 |
+
+**Rerun 1 — the gate, seen through the analyst's rewrite.** The heading change let the
+reader's own wording through the lexical gate (`experiments/gate_probe.py`: 7 of 30
+targets failed the gate before, 6 after). But the analyst had rewritten *"What has the
+panel actually been validated on?"* into two sentences of eight content words; the gate
+wants a majority, the limit passage led every passage with three hits, nothing reached
+five, and the tool returned an empty list. The analyst told the reader the report does not
+say — an honest decline in place of a passage that answers. Rewrite length as a gate
+mechanism is recorded on [130/#315](https://github.com/Subaru-Goto/PanelVerdict/issues/315)
+with the gate's other three (negation prefixes, hyphen double-counts, undropped fillers).
+
+**Rerun 2 — the named case is fixed.** One line in the tool's description: search with the
+reader's question or a shorter phrase from it, because a longer rewrite matches less. The
+analyst sent the question verbatim, the limit passage came back first, and the reply is the
+passage's own claim (faithfulness 0.90, precision and recall 1.0). *"What is openness?"*
+retrieves the trait definitions. Every turn searched and every search returned something —
+the first run with all 30 scored. **The ticket's third case still misses:** *"What does the
+'who the panel is' guide cover?"* (`p-title-1`) fails the gate on `cover` and `guid` and is
+deferred to 130 with the other two misses (`p-title-2`, `v-measure-2`), all three among the
+probe's reproducers.
+
+**Faithfulness is below the bar, and the hand review says why.** Eight cases fell from 1.0
+in rerun 1 to between 0.33 and 0.90 in rerun 2. Read one by one, each has the same passages retrieved
+in both runs and a reply that is correct against them — the three probabilities compared to
+a stated bar (`v-ahead-2`, 0.33), five levels against three (`p-level-2`, 0.55), joint
+demographics from national statistics (`p-demo-1`, 0.50). Same passages, same facts,
+different score. Between the two reruns only the tool's description changed, so this pair
+is the closest thing this record has to a repeat run: **the faithfulness mean moved 0.052
+on unchanged retrieval**, with both retrieval metrics steady. One pair is a first noise
+estimate, not a tolerance; a third run at identical wording would make it one.
+
+**Standing after these rows.** Retrieval's bar is 27 / 30 with precision 0.886 and recall
+0.933. Faithfulness's bar stays the baseline's 0.835, with the 0.052 swing beside it: a run
+under 0.835 is still a finding to hand-review, and a run within the swing is not yet a
+regression. The tool-description line is a request to the model, not a guarantee, which is
+why the rewrite mechanism lives on 130 and not only here.

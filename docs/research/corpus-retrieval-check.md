@@ -111,3 +111,7 @@ gate cannot tell a question about price from a passage that uses the word.
   headlines rather than implying coverage it does not have.
 - **Routing was measured on seven questions and one report.** A different verdict
   shape, or a longer conversation, is untested.
+
+> Note (2026-09-05, 129/#313): the passage titled "What this panel cannot tell you" above is now
+> "What this panel has been validated on, and what it cannot tell you"; `corpus_check.py`'s pairs
+> were renamed with it. The rows above are the record of the run as it was.

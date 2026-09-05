@@ -557,8 +557,11 @@ def build_tools(result: EvaluateResponse, deps: ToolDeps) -> list[BaseTool]:
         is it done that way" question, instead of answering from memory: your
         own most likely answer about a credible interval or a trait level is a
         textbook one, and this product's is different. For this test's own
-        numbers call analyze_results — this holds no figures at all. An empty
-        result means the corpus does not cover it; say so."""
+        numbers call analyze_results — this holds no figures at all. Search
+        with the reader's question as they asked it, or a shorter phrase from
+        it: a longer rewrite matches less, not more, because a passage must
+        contain most of the words you send. An empty result means the corpus
+        does not cover it; say so."""
         found = await search_corpus(deps.conn, question, deps.embedder)
         return json.dumps(
             [
