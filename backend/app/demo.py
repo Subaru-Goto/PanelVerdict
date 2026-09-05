@@ -24,7 +24,6 @@ from typing import Literal
 
 import psycopg
 from langgraph.checkpoint.memory import InMemorySaver
-from pgvector.psycopg import register_vector_async
 from pydantic import BaseModel, model_validator
 
 from app.config import PROFILES, settings
@@ -205,7 +204,6 @@ async def _capture(case: str, out_dir: Path) -> str | None:
         model=settings.screening_model,
     )
     async with await psycopg.AsyncConnection.connect(settings.database_url) as conn:
-        await register_vector_async(conn)
         graph = build_evaluate_graph(
             conn=conn,
             llm=llm,

@@ -28,7 +28,6 @@ from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
 from app.analyst import ToolDeps, stream_analyst
-from app.assembly import Embedder
 from app.auth import (
     AccountDeleter,
     DeletionFailed,
@@ -56,6 +55,7 @@ from app.chat_guard import (
     guard_chat_message,
     probe_chat_guard,
 )
+from app.corpus import Embedder
 from app.llm import (
     OpenRouterEmbedder,
     OpenRouterPanelLLM,

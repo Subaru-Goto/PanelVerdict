@@ -1,7 +1,7 @@
 """The DB-backed half of plausibility QC: read a sample back, judge it, format it."""
 
 import psycopg
-from tests.factories import make_assembled, make_persona
+from tests.factories import make_persona
 
 from app.persistence import load_persona_sample, persist_persona
 from app.plausibility import (
@@ -19,11 +19,11 @@ class StubJudge:
 
 def _seed(conn: psycopg.Connection, count: int) -> None:
     for i in range(count):
-        persist_persona(conn, make_assembled(make_persona(id_=f"US-{i:05d}")))
+        persist_persona(conn, make_persona(id_=f"US-{i:05d}"))
 
 
 def test_load_persona_sample_rebuilds_personas_from_their_columns(conn):
-    persist_persona(conn, make_assembled(make_persona()))
+    persist_persona(conn, make_persona())
 
     sample = load_persona_sample(conn, limit=10)
 

@@ -8,7 +8,6 @@ never seen.
 
 import psycopg
 import pytest
-from pgvector.psycopg import register_vector_async
 from psycopg.rows import dict_row
 
 from app.corpus import DOCUMENTS, load_corpus, search_corpus, seed_corpus
@@ -141,7 +140,6 @@ class TestHybridRetrieval:
         async with await psycopg.AsyncConnection.connect(
             pg_url, row_factory=dict_row
         ) as dict_conn:
-            await register_vector_async(dict_conn)
             found = await search_corpus(
                 dict_conn, "practical tie", FakeEmbedder(), limit=3
             )

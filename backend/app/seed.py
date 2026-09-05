@@ -3,7 +3,9 @@
 Run: python -m app.seed --size dev|full --seed N [--countries US,JP,DE]
 
 Resumable — already-persisted personas are skipped before assembly, so a re-run
-never re-pays the LLM/embedding cost for what it already has.
+never redoes what it already has. The pool itself is model-free (084/#175); the
+paid steps are the corpus embeddings and the plausibility judge, both gated on
+the API key after the pool is seeded.
 """
 
 import argparse
@@ -11,7 +13,7 @@ from dataclasses import dataclass
 
 import psycopg
 
-from app.assembly import Embedder, assemble_pool
+from app.assembly import assemble_pool
 from app.config import settings
 from app.db import CONNECT_TIMEOUT_SECONDS
 from app.llm import OpenRouterEmbedder, OpenRouterJudge
@@ -57,21 +59,18 @@ def seed_pool(
     quotas: dict[Locale, int],
     *,
     master_seed: int,
-    embedder: Embedder,
 ) -> SeedResult:
     """Assemble and persist the pool, skipping personas already present.
 
-    Existing ids are read once and handed to `assemble_pool` as a skip set, so a
-    resumed run never assembles (or embeds) what it already has.
+    Model-free since 084/#175: every field is sampled, and the summary is no
+    longer embedded. Existing ids are read once and handed to `assemble_pool` as
+    a skip set, so a resumed run never re-assembles what it already has.
     """
     requested = sum(quotas.values())
     written = sum(
-        persist_persona(conn, assembled)
-        for assembled in assemble_pool(
-            quotas,
-            master_seed=master_seed,
-            embedder=embedder,
-            skip=_existing_ids(conn),
+        persist_persona(conn, persona)
+        for persona in assemble_pool(
+            quotas, master_seed=master_seed, skip=_existing_ids(conn)
         )
     )
     return SeedResult(requested=requested, written=written, skipped=requested - written)
@@ -252,13 +251,29 @@ def main() -> None:
         )
         if args.dry_run:
             print(
-                f"Dry run: nothing written. A full run would generate and embed "
-                f"{outstanding} persona(s), then judge a sample of {args.qc_sample}."
+                f"Dry run: nothing written. A full run would generate "
+                f"{outstanding} persona(s), then embed the corpus and judge a "
+                f"sample of {args.qc_sample}."
             )
             return
 
+        # The pool first and unconditionally: it is model-free (084/#175), so no
+        # key is needed to seed it and nothing is spent doing so.
+        prepare_connection(conn)
+        result = seed_pool(conn, quotas, master_seed=args.seed)
+        print(f"Done: {result.written} written, {result.skipped} already present.")
+
+        # The key gates only the two steps that spend. Refused *after* the pool
+        # and loudly — a non-zero exit, not a printed line — because a corpus
+        # that quietly never got seeded is a deploy where every "what does this
+        # mean" question ends the turn (docs/deploy.md), and a green exit is how
+        # that goes unnoticed. The pool work is kept: seeding resumes.
         if settings.openrouter_api_key is None:
-            raise SystemExit("openrouter_api_key is not set; cannot generate the pool.")
+            raise SystemExit(
+                "openrouter_api_key is not set. The pool is seeded; the corpus and "
+                "the plausibility judge were not, since both are paid calls. Set "
+                "the key and run `--corpus-only` for the corpus."
+            )
         api_key = settings.openrouter_api_key.get_secret_value()
         embedder = OpenRouterEmbedder(
             api_key=api_key,
@@ -270,10 +285,6 @@ def main() -> None:
             base_url=settings.openrouter_base_url,
             model=settings.judge_model,
         )
-
-        prepare_connection(conn)
-        result = seed_pool(conn, quotas, master_seed=args.seed, embedder=embedder)
-        print(f"Done: {result.written} written, {result.skipped} already present.")
         # After the pool, because both need the schema and this is the cheap
         # half: the corpus is a handful of chunks, so it is always rebuilt rather
         # than resumed. Documents live in git, so the table can only be stale.

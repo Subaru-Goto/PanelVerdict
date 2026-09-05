@@ -44,11 +44,12 @@ the ~1-minute wake and nothing else — conversations resume where they left off
    the IPv4 door. Note the pooler host (`aws-…pooler.supabase.com`), port `5432`, and
    the username (`postgres.<project-ref>` — the ref suffix matters). **Never the
    transaction pooler** (port 6543): psycopg3 uses prepared statements.
-3. Apply the schema and seed from your machine (paid embedding calls happen here, once):
+3. Apply the schema and seed from your machine (the pool is model-free; the corpus
+   embeddings and the plausibility judge are the paid calls, once):
    run `uv run python -m app.seed --size full` from `backend/` with the pooler values
    as environment overrides (the wizard does this for you).
 
-**Re-run the schema step on any deploy that adds a table.** `apply_schema` is
+**Re-run the schema step on any deploy that adds a table or a column, or drops one.** `apply_schema` is
 idempotent and the seed resumes, so re-running costs nothing when the pool is already
 there — but nothing re-runs it for you, and a table the code expects and the database
 lacks is a 500 on every request that touches it. `request_ledger` (045/#143) is the
@@ -75,9 +76,12 @@ form — never by editing the `CREATE TABLE` above it, which `IF NOT EXISTS` wil
 re-apply. The form is enforced, not suggested: `app.persistence` refuses a bare `ADD
 COLUMN`, because the file runs on every seed and every `--schema-only` apply, and
 a statement that fails mid-file takes the row-level-security sweep after it down
-too. Additive only — no
-`DROP COLUMN`, no rename, no type change: during a rollout an older instance is still
-serving, and `votes` is paid model output that cannot be regenerated. Applying is
+too. No rename and no type change, ever. A `DROP COLUMN` is allowed under one rule,
+stated with the reasons in `schema.sql` beside the form: the column's last reader
+was deployed in an earlier PR, and its contents are regenerable — `votes` never
+qualifies. `personas.summary_embedding` (084/#175) is the first case: run
+`--schema-only` on the deploy once the PR that retired the persona search is live,
+and the column and its index go. Applying is
 manual until launch; automating it is 083/#173's deferred half.
 
 **You do not have to remember any of this.** On every merge to `main`, CI's
