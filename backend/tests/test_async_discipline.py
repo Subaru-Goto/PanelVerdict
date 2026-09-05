@@ -76,7 +76,10 @@ BLOCKING = {
     "load_pool",
     "load_persona_sample",
     "seed_corpus",
-    "register_vector",  # the sync twin of register_vector_async
+    # The sync twin of register_vector_async. Nothing calls either since
+    # 084/#175 dropped the persona vector; kept so a reintroduction on the
+    # request path is caught as a blocking call rather than found in production.
+    "register_vector",
 }
 
 # Where a blocking call is allowed to appear inside an async function.

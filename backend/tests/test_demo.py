@@ -262,7 +262,6 @@ class TestTheCapture:
 
         async def connect(cls, url):
             return Conn()
-            return None
 
         clocked = {"roleplay": 0.0, "select": 0.4, "confirm": 0.0, "vote": 9.2}
         result = SimpleNamespace(

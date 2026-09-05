@@ -252,8 +252,8 @@ def main() -> None:
         if args.dry_run:
             print(
                 f"Dry run: nothing written. A full run would generate "
-                f"{outstanding} persona(s), then embed the corpus and judge a "
-                f"sample of {args.qc_sample}."
+                f"{outstanding} persona(s) with no model call, then — with a key — "
+                f"embed the corpus and judge a sample of {args.qc_sample}."
             )
             return
 
@@ -272,7 +272,8 @@ def main() -> None:
             raise SystemExit(
                 "openrouter_api_key is not set. The pool is seeded; the corpus and "
                 "the plausibility judge were not, since both are paid calls. Set "
-                "the key and run `--corpus-only` for the corpus."
+                "the key and re-run this command — the pool resumes for free and "
+                "the other two follow — or run `--corpus-only` for the corpus alone."
             )
         api_key = settings.openrouter_api_key.get_secret_value()
         embedder = OpenRouterEmbedder(

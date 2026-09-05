@@ -88,6 +88,15 @@ def schema_columns(sql: str | None = None) -> dict[str, tuple[str, ...]]:
         if verb == "add":
             tables[table] += (column,)
         else:
+            if table not in _REGENERABLE:
+                raise ValueError(
+                    f"schema.sql drops {table}.{column}, and {table} is not in "
+                    "_REGENERABLE: a column may be dropped only from a table the "
+                    "seed can rebuild from git. votes is paid model output and the "
+                    "ledgers are spend nobody has been charged for yet — neither "
+                    "can be regenerated, so neither can lose a column (084/#175, "
+                    "the rule schema.sql states beside the form)."
+                )
             # A dropped column leaves the probe list: asking for it would
             # report a database that applied this file as stale. It is normal
             # for it to be absent from the CREATE TABLE above — that is what
@@ -136,7 +145,7 @@ def _declared_columns(body: str) -> Iterator[str]:
         yield name
 
 
-def _column_alterations(sql: str) -> Iterator[tuple[str, str, str]]:
+def _column_alterations(sql: str) -> Iterator[tuple[Literal["add", "drop"], str, str]]:
     """Every `ALTER TABLE` in the file, as `(verb, table, column)` — verb is
     `"add"` or `"drop"`.
 
@@ -155,9 +164,9 @@ def _column_alterations(sql: str) -> Iterator[tuple[str, str, str]]:
     either.
 
     The drop form arrived with 084/#175, under the rule `schema.sql` states
-    beside it: a column may go only once its last reader is deployed and its
-    contents are regenerable. Renames and type changes stay refused — neither
-    can be made idempotent, and neither is covered by that rule.
+    beside the form — read it there; `schema_columns` enforces the half of it
+    that is mechanical. Renames and type changes stay refused: neither can be
+    made idempotent, and neither is covered by that rule.
     """
     added = re.compile(
         r"^ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)\s+\S", re.IGNORECASE

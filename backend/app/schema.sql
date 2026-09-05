@@ -148,17 +148,23 @@ CREATE INDEX IF NOT EXISTS tests_owner_created_idx
 -- Additive by default. No type change and no rename, ever: neither can be made
 -- idempotent, and a reader of an older deploy is still serving requests during
 -- a rollout. A column may be DROPPED only when both of the reasons behind that
--- rule are satisfied in the negative (084/#175): (1) its last reader shipped
--- and was *deployed* in an earlier PR, so no instance in a rollout still reads
--- it; and (2) its contents are regenerable from git or cheap to recompute —
--- never paid model output, which is why `votes` can never qualify. A drop is
--- written at the bottom of this file as
+-- rule are satisfied in the negative (084/#175): (1) its last reader *and*
+-- writer shipped and were *deployed* in an earlier PR, so no instance in a
+-- rollout still touches it (a writer counts: the seed kept writing this
+-- column for a deploy after nothing read it); and (2) its contents are
+-- regenerable from git or cheap to recompute — never paid model output, which
+-- is why `votes` can never qualify. (2) is enforced: _column_alterations
+-- refuses a drop on any table outside `_REGENERABLE`. (1) is review's, and this
+-- paragraph is what review checks against. A drop is written at the bottom of
+-- this file as
 --
 --     DROP INDEX IF EXISTS <index>;
 --     ALTER TABLE <table> DROP COLUMN IF EXISTS <column>;
 --
--- so every apply converges, and _column_alterations reads exactly that form
--- and takes the column off the completeness probe. A change that meets
+-- so every apply converges. _column_alterations reads the ALTER exactly and
+-- takes the column off the completeness probe; the DROP INDEX is not parsed —
+-- a dropped column takes its indexes with it, so the line is legibility, not
+-- correctness. A change that meets
 -- neither test is a new column plus a backfill, and the old one left alone.
 --
 -- 086/#177 — the ledger is owner-scoped: a row is its buyer's, and the read
@@ -189,11 +195,15 @@ CREATE INDEX IF NOT EXISTS tests_unkept_created_idx
 
 -- The persona vector (084/#175). `summary_embedding` served one analyst tool,
 -- `search_personas`, retired and deployed in PR 1; the request path has read no
--- vector since (probed on a bare connection, 2026-09-04). Regenerable: it was
+-- vector since (probed on a bare connection, 2026-09-04 — see `get_conn` in
+-- app/main.py and its test). Regenerable: it was
 -- the embedding of `persona_summary`'s rendered text, a cheap call over data the
 -- seed still holds. Both tests of the rule above hold, so the column goes and
 -- the pool seed makes no embedding call at all. The index first, by name — a
 -- dropped column takes its indexes with it, but naming it keeps the intent
--- legible and the statement harmless on a database that never had it.
+-- legible and the statement harmless on a database that never had it. Both
+-- take ACCESS EXCLUSIVE on `personas` for the instant a catalogue change takes
+-- (~200 rows, no rewrite), so a request reading the pool at that moment waits,
+-- and nothing more.
 DROP INDEX IF EXISTS personas_summary_embedding_idx;
 ALTER TABLE personas DROP COLUMN IF EXISTS summary_embedding;

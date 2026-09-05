@@ -8,7 +8,9 @@ validate quality before committing to a full run. Design: `docs/decisions/006f-p
 A repo-root `.env` with:
 
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
-- `OPENROUTER_API_KEY` (the seed makes real model calls)
+- `OPENROUTER_API_KEY` — for the corpus embeddings and the plausibility judge; the
+  pool itself needs no key (084/#175), and without one the command seeds it and
+  then exits non-zero naming the two steps it skipped
 - `POSTGRES_HOST` should be `localhost` (or unset — that's the default) when
   running from your terminal. If it is set to `db` (the compose service name) it
   only resolves inside the compose network, and a host-run seed can't connect.

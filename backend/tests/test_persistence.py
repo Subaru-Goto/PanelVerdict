@@ -176,6 +176,22 @@ def test_a_documented_drop_is_read_and_the_column_leaves_the_probe() -> None:
     assert parsed == {"personas": ("id", "age")}
 
 
+@pytest.mark.parametrize("table", ["votes", "tests", "request_ledger"])
+def test_a_drop_on_a_table_that_cannot_be_rebuilt_is_refused(table) -> None:
+    """Half of the drop rule in code rather than prose (084/#175, security
+    review): a column may go only if its contents are regenerable, and
+    `_REGENERABLE` already names the tables that are — `personas` and the
+    corpus. `votes` is paid model output; the ledgers hold spend nobody has been
+    charged for yet. A drop on any of them is refused before it lands, however
+    well-formed the statement."""
+    with pytest.raises(ValueError, match="_REGENERABLE"):
+        schema_columns(
+            f"CREATE TABLE IF NOT EXISTS {table} (\n    id text PRIMARY KEY,\n"
+            f"    reason text\n);\n"
+            f"ALTER TABLE {table} DROP COLUMN IF EXISTS reason;"
+        )
+
+
 def test_a_drop_wins_over_a_create_that_still_lists_the_column() -> None:
     """The transitional mistake: the DROP is added below but the column is left
     in the CREATE TABLE above. `apply_schema` would drop it and then probe for
