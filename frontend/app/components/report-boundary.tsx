@@ -44,3 +44,16 @@ export const ReportBoundary = unstable_catchError(
 export const AnalystBoundary = unstable_catchError(
   cardFor("The analyst is unavailable right now. Refresh to try again."),
 );
+
+/** The feedback box's own boundary (053/#150): a sibling of the analyst, so a
+ *  bug in it cannot blank the verdict. One sentence, no action — there is
+ *  nothing to refresh, and the report is not what broke. */
+export const FeedbackBoundary = unstable_catchError(
+  function FeedbackFallback() {
+    return (
+      <p role="alert" className="text-sm text-ink-2">
+        The feedback box is unavailable right now. The report is unaffected.
+      </p>
+    );
+  },
+);

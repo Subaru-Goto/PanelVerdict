@@ -523,6 +523,21 @@ export async function runDemo(demoCase: string): Promise<DemoResult> {
  *
  * A 404 is not raised: the row is already gone, which is what the caller
  * wanted, and a second click on the × should not put an error on the page. */
+/** What the reader says about one of their own reports (053/#150). The
+ *  server joins the test; nothing of the report travels. Throws on any
+ *  refusal, and the form keeps the text — a failed send must not lose it. */
+export async function sendFeedback(
+  testId: string,
+  body: string,
+): Promise<void> {
+  const res = await fetch("/api/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+    body: JSON.stringify({ test_id: testId, body }),
+  });
+  if (!res.ok) throw new Error(`API responded ${res.status}`);
+}
+
 export async function forgetTest(testId: string): Promise<void> {
   const res = await fetch(`/api/tests/${encodeURIComponent(testId)}`, {
     method: "DELETE",
