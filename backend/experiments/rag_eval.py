@@ -97,12 +97,24 @@ def searched_for(messages: Sequence[BaseMessage]) -> list[str]:
     ]
 
 
+def why_unscored(*, searched: Sequence[str], retrieved: Sequence[str]) -> str | None:
+    """Why a turn has no grounding to judge, or None when it has some.
+
+    "never searched" is routing: the analyst answered from the report's tools.
+    "nothing passed the gate" is retrieval: it searched, and the corpus's
+    lexical gate returned no passage (129/#313 — the two were one label before).
+    """
+    if retrieved:
+        return None
+    return "nothing passed the gate" if searched else "never searched"
+
+
 def retrieved_passages(messages: Sequence[BaseMessage]) -> list[str]:
     """The passages the corpus tool handed the model during one turn, in order.
 
     Read off the transcript rather than re-run: what Ragas judges must be what
     the analyst actually saw. A turn that never called the tool retrieved
-    nothing, and that is a finding of its own (routing), not an error here.
+    nothing, and that is a finding of its own (see why_unscored), not an error here.
     """
     passages: list[str] = []
     for message in messages:
@@ -242,18 +254,18 @@ def main() -> None:
                     else []
                 )
                 retrieved = retrieved_passages(messages)
+                searched = searched_for(messages)
                 row: dict[str, Any] = {
                     "id": case.id,
                     "question": case.question,
                     "reply": reply,
-                    "searched": searched_for(messages),
+                    "searched": searched,
                     "retrieved": retrieved,
                     "reference_section": case.section,
                 }
-                if not retrieved:
-                    # Nothing to judge grounding against: the turn never
-                    # reached the corpus, which is a routing finding.
-                    row["routing"] = "no retrieval"
+                unscored = why_unscored(searched=searched, retrieved=retrieved)
+                if unscored:
+                    row["unscored"] = unscored
                     rows.append(row)
                     continue
                 reference = case.reference
@@ -299,9 +311,10 @@ def main() -> None:
                 print(
                     f"reference passage retrieved in {hits}/{len(scored)} scored cases"
                 )
-            unrouted = sum(1 for r in rows if r.get("routing"))
-            if unrouted:
-                print(f"{unrouted} case(s) never reached the corpus tool")
+            for reason in ("never searched", "nothing passed the gate"):
+                count = sum(1 for r in rows if r.get("unscored") == reason)
+                if count:
+                    print(f"{count} case(s) unscored: {reason}")
             write_run(
                 args.out,
                 rows,

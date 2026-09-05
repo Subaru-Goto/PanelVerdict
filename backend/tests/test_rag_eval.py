@@ -14,6 +14,7 @@ from experiments.rag_eval import (
     retrieved_passages,
     searched_for,
     select,
+    why_unscored,
 )
 
 
@@ -135,6 +136,20 @@ def test_the_analyst_s_own_search_strings_are_read_off_the_turn() -> None:
         "panel limits headlines",
     ]
     assert searched_for([HumanMessage(content="hi"), AIMessage(content="hello")]) == []
+
+
+def test_an_unscored_turn_says_whether_it_searched_at_all() -> None:
+    """129/#313's rerun: the named case searched and the gate let nothing
+    through, and the run filed it under the label for a turn that never called
+    the corpus. Those are two findings — routing, and the gate — not one."""
+    assert why_unscored(searched=[], retrieved=[]) == "never searched"
+    assert (
+        why_unscored(searched=["panel validated on"], retrieved=[])
+        == "nothing passed the gate"
+    )
+    assert (
+        why_unscored(searched=["tie zone"], retrieved=["A band around even."]) is None
+    )
 
 
 def test_a_limit_spreads_across_both_documents() -> None:
