@@ -73,6 +73,10 @@ class DemoVote(BaseModel):
     persona_id: str
     variant: Literal["a", "b"]
     reason: str
+    # The order the two options were shown in, as the ledger keeps it (110/#238):
+    # what the free evaluation's position-bias check reads. Optional because the
+    # three committed captures predate it; the next capture fills it.
+    presentation_order: list[str] | None = None
 
 
 class DemoFixture(BaseModel):
@@ -261,6 +265,7 @@ async def _capture(case: str, out_dir: Path) -> str | None:
                     persona_id=record.persona_id,
                     variant=record.chosen_variant_id,
                     reason=record.reason,
+                    presentation_order=list(record.presentation_order),
                 )
                 for record in result.votes.records
             ),

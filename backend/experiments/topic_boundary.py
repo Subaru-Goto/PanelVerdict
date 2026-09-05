@@ -11,7 +11,7 @@ wording may be adjusted against; the `holdout` half is scored once the wording
 is fixed and is the number that goes in the research note. Tuning against the
 half you report on measures the fit to those questions, not the boundary.
 
-    uv run --with deepeval==4.2.0 python -m experiments.topic_boundary \\
+    uv run python -m experiments.topic_boundary \\
         --split holdout --out experiments/out/topic-boundary-holdout.jsonl
 
 DeepEval is layered onto the run, never added to the project: it pins `click`
@@ -22,6 +22,7 @@ split before the full set is spent; `--dry-run` spends nothing.
 """
 
 import json
+import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -313,6 +314,32 @@ def select(
     return tuple(chosen[round(i * step)] for i in range(limit))
 
 
+class AnalystUsageTap(logging.Handler):
+    """Sums the analyst's own usage line (070's instrument) over the run.
+
+    Read off the record by field name (047/#145 made them fields): a
+    renamed field must fail here loudly, not record zeros.
+    """
+
+    _FIELDS = ("calls", "input_tokens", "cached_tokens", "output_tokens")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = self.input = self.cached = self.output = 0
+        self.unparsed: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.getMessage() != "analyst usage":
+            return
+        if not all(hasattr(record, field) for field in self._FIELDS):
+            self.unparsed.append(repr(record.__dict__))
+            return
+        self.calls += record.calls
+        self.input += record.input_tokens
+        self.cached += record.cached_tokens
+        self.output += record.output_tokens
+
+
 def main() -> None:
     import argparse
     import asyncio
@@ -380,32 +407,7 @@ def main() -> None:
     payload = sample_result()
     saver = InMemorySaver()
 
-    class _UsageTap(logging.Handler):
-        """Sums the analyst's own usage line (070's instrument) over the run.
-
-        Read off the record by field name (047/#145 made them fields): a
-        renamed field must fail here loudly, not record zeros.
-        """
-
-        _FIELDS = ("calls", "input_tokens", "cached_tokens", "output_tokens")
-
-        def __init__(self) -> None:
-            super().__init__()
-            self.calls = self.input = self.cached = self.output = 0
-            self.unparsed: list[str] = []
-
-        def emit(self, record: logging.LogRecord) -> None:
-            if record.getMessage() != "analyst usage":
-                return
-            if not all(hasattr(record, field) for field in self._FIELDS):
-                self.unparsed.append(repr(record.__dict__))
-                return
-            self.calls += record.calls
-            self.input += record.input_tokens
-            self.cached += record.cached_tokens
-            self.output += record.output_tokens
-
-    tap = _UsageTap()
+    tap = AnalystUsageTap()
     analyst_log = logging.getLogger("app.analyst")
     analyst_log.addHandler(tap)
     analyst_log.setLevel(logging.INFO)
