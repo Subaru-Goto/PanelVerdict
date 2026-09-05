@@ -125,11 +125,10 @@ CREATE INDEX IF NOT EXISTS tests_owner_created_idx
     ON tests (owner, created_at DESC);
 
 -- What a reader said about a report (053/#150). References the stored test and
--- cascades with it, so a delete — by test or by account — is a real delete and
--- no copy of the report's context survives in this table. The body's length is
--- bounded at the endpoint (schemas.FeedbackRequest, the chat message's bound),
--- not here, so the number lives in one place. Untrusted text: nothing reads it
--- into a prompt (docs/least-privilege.md).
+-- cascades with it: deleting a test or an account deletes its feedback, and no
+-- copy of the report survives here. The body's bound lives at the endpoint
+-- (schemas.FeedbackRequest), in one place. Untrusted text — nothing reads it
+-- (docs/least-privilege.md).
 CREATE TABLE IF NOT EXISTS feedback (
     feedback_id uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     owner       text        NOT NULL,             -- the verified subject id

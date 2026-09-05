@@ -1226,10 +1226,11 @@ async def send_feedback(
 ) -> Response:
     """Store what a signed-in reader says about one of their own tests (053/#150).
 
-    Off the paid path: nothing here calls a model. The per-caller daily bound is
-    the chat's (decision Q4), through the same ledger, charged before the write
-    so a refused message leaves no row. A test the caller does not own gets the
-    404 the report itself would give, and the same one a missing test gets.
+    Off the paid path: nothing here calls a model. The per-caller daily bound
+    is the chat's *figure* (decision Q4) in a bucket of its own — feedback does
+    not spend chat turns, or the reverse — charged before the write so a refused
+    message leaves no row. A test the caller does not own gets the 404 the
+    report itself gives, the same one a missing test gets.
     """
     await _charge_ledger(
         conn,

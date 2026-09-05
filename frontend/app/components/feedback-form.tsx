@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { sendFeedback } from "../lib/api";
+import { PRIMARY_BUTTON } from "./notice-style";
 
 /** One box at the foot of a live report (053/#150, decisions Q2 and Q5):
  *  the reader says what was unclear or wrong, in their own words. Feedback is
@@ -43,7 +44,6 @@ export default function FeedbackForm({ testId }: { testId: string }) {
         onChange={(event) => setDraft(event.target.value)}
         disabled={state === "sending"}
         rows={3}
-        maxLength={2000}
         className="rounded border border-line px-3 py-2 text-sm"
       />
       {state === "failed" && (
@@ -54,7 +54,7 @@ export default function FeedbackForm({ testId }: { testId: string }) {
       <button
         type="submit"
         disabled={state === "sending" || draft.trim() === ""}
-        className="self-start rounded bg-ink px-3 py-2 text-sm font-medium text-surface disabled:bg-surface-2 disabled:text-ink-3"
+        className={`self-start ${PRIMARY_BUTTON}`}
       >
         Send feedback
       </button>

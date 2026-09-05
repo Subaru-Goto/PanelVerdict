@@ -1289,3 +1289,10 @@ async def test_deleting_the_test_deletes_its_feedback(conn, aconn):
 
     rows = await (await aconn.execute(FEEDBACK_QUERY)).fetchall()
     assert [r[1] for r in rows] == ["t-2"]
+
+
+def test_the_operators_documented_query_is_the_tested_one():
+    """docs/deploy.md carries FEEDBACK_QUERY for the operator to paste; a column
+    added to one and not the other would drift silently, so the copy is pinned."""
+    doc = (Path(__file__).parents[2] / "docs" / "deploy.md").read_text()
+    assert " ".join(FEEDBACK_QUERY.split()) in " ".join(doc.replace(";", "").split())

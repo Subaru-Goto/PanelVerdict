@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState } from "react";
 
 import { ANALYST_DISCLOSURE } from "../lib/disclosure";
+import { PRIMARY_BUTTON } from "./notice-style";
 import {
   readerTurns,
   type Analyst,
@@ -228,7 +229,7 @@ export default function AnalystDock({ analyst }: { analyst: Analyst }) {
             <button
               type="submit"
               disabled={busy || draft.trim() === ""}
-              className="rounded bg-ink px-3 py-2 text-sm font-medium text-surface disabled:bg-surface-2 disabled:text-ink-3"
+              className={PRIMARY_BUTTON}
             >
               Send
             </button>
