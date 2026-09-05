@@ -176,6 +176,21 @@ def test_a_documented_drop_is_read_and_the_column_leaves_the_probe() -> None:
     assert parsed == {"personas": ("id", "age")}
 
 
+def test_a_drop_wins_over_a_create_that_still_lists_the_column() -> None:
+    """The transitional mistake: the DROP is added below but the column is left
+    in the CREATE TABLE above. `apply_schema` would drop it and then probe for
+    it, reporting a database that applied this very file as stale. The drop has
+    to take the column off the probe whatever the CREATE says — found by a
+    mutation check that replaced the removal with `pass` and turned nothing red."""
+    parsed = schema_columns(
+        "CREATE TABLE IF NOT EXISTS personas (\n    id text PRIMARY KEY,\n"
+        "    summary_embedding vector(1536) NOT NULL\n);\n"
+        "ALTER TABLE personas DROP COLUMN IF EXISTS summary_embedding;"
+    )
+
+    assert parsed == {"personas": ("id",)}
+
+
 @pytest.mark.parametrize(
     "statement",
     [
