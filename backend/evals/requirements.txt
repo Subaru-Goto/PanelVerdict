@@ -1,0 +1,12 @@
+# The evaluation overlay (110/#238): layered onto the locked project environment
+# with `uv run --with-requirements evals/requirements.txt …`, never added to
+# pyproject.toml or uv.lock. DeepEval caps click below 8.4 and rich below 15,
+# Ragas's instructor caps jiter; one shared lock would carry those downgrades
+# into the production image (measured 2026-09-05: click 8.4.2 → 8.3.3, jiter
+# 0.16.0 → 0.14.0, rich 15.0.0 → 14.3.4). The overlay shadows them for a run
+# and leaves the image's resolution untouched.
+deepeval==4.2.1
+ragas==0.4.3
+# Only ragas needs it: 0.4.3 imports a langchain_community module that 0.4 no
+# longer ships. The app never imported langchain-community.
+langchain-community<0.4

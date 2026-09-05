@@ -284,7 +284,10 @@ class TestTheCapture:
             votes=SimpleNamespace(
                 records=[
                     SimpleNamespace(
-                        persona_id="JP-00001", chosen_variant_id="a", reason="r"
+                        persona_id="JP-00001",
+                        chosen_variant_id="a",
+                        reason="r",
+                        presentation_order=["a", "b"],
                     )
                 ]
             ),
@@ -304,6 +307,9 @@ class TestTheCapture:
             (tmp_path / "free-delivery.json").read_text()
         )
         assert written.step_seconds == clocked
+        # 110/#238: the capture keeps the order each panelist saw the options
+        # in, so the free position-bias evaluation can read it off the fixture.
+        assert written.votes[0].presentation_order == ["a", "b"]
 
 
 def test_a_committed_capture_names_the_model_that_wrote_it() -> None:

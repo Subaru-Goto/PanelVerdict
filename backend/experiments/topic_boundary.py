@@ -11,17 +11,20 @@ wording may be adjusted against; the `holdout` half is scored once the wording
 is fixed and is the number that goes in the research note. Tuning against the
 half you report on measures the fit to those questions, not the boundary.
 
-    uv run --with deepeval==4.2.0 python -m experiments.topic_boundary \\
+    uv run --with-requirements evals/requirements.txt \\
+        python -m experiments.topic_boundary \\
         --split holdout --out experiments/out/topic-boundary-holdout.jsonl
 
-DeepEval is layered onto the run, never added to the project: it pins `click`
-and `rich` below what the production image resolves, and a single lock would
-have carried that downgrade into the image. This module and its tests import
+DeepEval is layered onto the run, never added to the project: it caps `click` and
+`rich` below what the production image resolves, and a single lock would carry
+that downgrade into the image — measured when 110/#238 tried exactly that, and
+the pins live in `evals/requirements.txt` for that reason. This module imports
 it only when a run is paid for. `--limit 10` prices a sample spread across the
 split before the full set is spent; `--dry-run` spends nothing.
 """
 
 import json
+import logging
 import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -313,6 +316,70 @@ def select(
     return tuple(chosen[round(i * step)] for i in range(limit))
 
 
+class AnalystUsageTap(logging.Handler):
+    """Sums the analyst's own usage line (070's instrument) over the run.
+
+    Read off the record by field name (047/#145 made them fields): a
+    renamed field must fail here loudly, not record zeros.
+    """
+
+    _FIELDS = ("calls", "input_tokens", "cached_tokens", "output_tokens")
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = self.input = self.cached = self.output = 0
+        self.unparsed: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if record.getMessage() != "analyst usage":
+            return
+        if not all(hasattr(record, field) for field in self._FIELDS):
+            self.unparsed.append(repr(record.__dict__))
+            return
+        self.calls += record.calls
+        self.input += record.input_tokens
+        self.cached += record.cached_tokens
+        self.output += record.output_tokens
+
+
+def write_run(
+    out: Path,
+    rows: list[dict],
+    *,
+    analyst_model: str,
+    tap: "AnalystUsageTap",
+    judge_model: str,
+    judge_usage: dict,
+) -> None:
+    """Write a judged run's rows and its measured usage, the same way for every
+    harness (110/#238 lifted this out of two identical `finally` blocks).
+
+    Rows always land: paid calls do not reproduce, so a failure on the last case
+    must not also cost the ones before it. Usage lands only if every analyst
+    usage line parsed — a renamed field must fail loudly here, not record
+    zeros as a measurement.
+    """
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows))
+    if tap.unparsed:
+        print(f"usage NOT written: {len(tap.unparsed)} usage line(s) changed shape")
+        print(tap.unparsed[0])
+        return
+    usage = {
+        "cases": len(rows),
+        "analyst": {
+            "model": analyst_model,
+            "calls": tap.calls,
+            "input_tokens": tap.input,
+            "cached_tokens": tap.cached,
+            "output_tokens": tap.output,
+        },
+        "judge": {"model": judge_model, **judge_usage},
+    }
+    out.with_suffix(".usage.json").write_text(json.dumps(usage, indent=1))
+    print(f"usage: {json.dumps(usage)}")
+
+
 def main() -> None:
     import argparse
     import asyncio
@@ -380,32 +447,7 @@ def main() -> None:
     payload = sample_result()
     saver = InMemorySaver()
 
-    class _UsageTap(logging.Handler):
-        """Sums the analyst's own usage line (070's instrument) over the run.
-
-        Read off the record by field name (047/#145 made them fields): a
-        renamed field must fail here loudly, not record zeros.
-        """
-
-        _FIELDS = ("calls", "input_tokens", "cached_tokens", "output_tokens")
-
-        def __init__(self) -> None:
-            super().__init__()
-            self.calls = self.input = self.cached = self.output = 0
-            self.unparsed: list[str] = []
-
-        def emit(self, record: logging.LogRecord) -> None:
-            if record.getMessage() != "analyst usage":
-                return
-            if not all(hasattr(record, field) for field in self._FIELDS):
-                self.unparsed.append(repr(record.__dict__))
-                return
-            self.calls += record.calls
-            self.input += record.input_tokens
-            self.cached += record.cached_tokens
-            self.output += record.output_tokens
-
-    tap = _UsageTap()
+    tap = AnalystUsageTap()
     analyst_log = logging.getLogger("app.analyst")
     analyst_log.addHandler(tap)
     analyst_log.setLevel(logging.INFO)
@@ -447,38 +489,19 @@ def main() -> None:
     try:
         asyncio.run(live())
     finally:
-        # Paid calls that do not reproduce: a failure on the last case must
-        # not also cost the rows before it.
         if rows:
-            args.out.write_text(
-                "\n".join(json.dumps(row, ensure_ascii=False) for row in rows)
-            )
-            usage = {
-                "cases": len(rows),
-                "analyst": {
-                    "model": args.model,
-                    "calls": tap.calls,
-                    "input_tokens": tap.input,
-                    "cached_tokens": tap.cached,
-                    "output_tokens": tap.output,
-                },
-                "judge": {
-                    "model": args.judge_model,
+            print(format_summary(rows))
+            write_run(
+                args.out,
+                rows,
+                analyst_model=args.model,
+                tap=tap,
+                judge_model=args.judge_model,
+                judge_usage={
                     "input_tokens": judge.input_tokens,
                     "output_tokens": judge.output_tokens,
                 },
-            }
-            print(format_summary(rows))
-            if tap.unparsed:
-                print(
-                    f"usage NOT written: {len(tap.unparsed)} usage line(s) changed shape"
-                )
-                print(tap.unparsed[0])
-            else:
-                args.out.with_suffix(".usage.json").write_text(
-                    json.dumps(usage, indent=1)
-                )
-                print(f"usage: {json.dumps(usage)}")
+            )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,215 @@
+{
+  "_about": "Hand-written questions for the analyst's RAG (110/#238): two per corpus chunk, `section` naming the passage each should draw on, `reference` a person's reading of it. Method, provenance and the 2026-09-05 rewording are in docs/research/rag-baseline.md.",
+  "cases": [
+    {
+      "id": "v-title-1",
+      "source": "How the verdict is decided",
+      "section": "How the verdict is decided",
+      "question": "Does the 'how the verdict is decided' guide contain a report's numbers, or only explain them?",
+      "reference": "No — every number is on the report itself; this page explains what those numbers are for and how the answer was reached."
+    },
+    {
+      "id": "v-title-2",
+      "source": "How the verdict is decided",
+      "section": "How the verdict is decided",
+      "question": "What is the 'how the verdict is decided' guide about?",
+      "reference": "It explains what the report's answer means and how it was reached, not the figures themselves, which are on the report."
+    },
+    {
+      "id": "v-measure-1",
+      "source": "How the verdict is decided",
+      "section": "What the panel is actually measuring",
+      "question": "What exactly is the panel measuring?",
+      "reference": "A share: out of everyone who voted, how many chose B. Each panelist sees both options and says which they prefer; half see the first option first so a habit of picking what comes first cannot pass as a choice."
+    },
+    {
+      "id": "v-measure-2",
+      "source": "How the verdict is decided",
+      "section": "What the panel is actually measuring",
+      "question": "Is the headline number a click-through rate?",
+      "reference": "No. It is not a score, a rating or a prediction of clicks — it is the fraction of a synthetic panel that went one way when asked which option they prefer."
+    },
+    {
+      "id": "v-range-1",
+      "source": "How the verdict is decided",
+      "section": "Why the answer is a range and not one number",
+      "question": "What does the credible interval mean?",
+      "reference": "A range with a stated probability that the true share for a panel like this one falls inside it — read literally as 'there is that much probability the real share is in here', which is plainer than a classical confidence interval."
+    },
+    {
+      "id": "v-range-2",
+      "source": "How the verdict is decided",
+      "section": "Why the answer is a range and not one number",
+      "question": "Why doesn't the report just give me one number?",
+      "reference": "Because a different panel of the same size would give a slightly different share, the way two polls disagree; the width comes from how many voted, and it narrows slowly — twice the confidence costs far more than twice the panel."
+    },
+    {
+      "id": "v-tie-1",
+      "source": "How the verdict is decided",
+      "section": "The tie zone, and why there is one",
+      "question": "What is the tie zone?",
+      "reference": "A band around dead even: differences small enough to be called equivalent in practice. Its width was chosen as a judgement about what difference is worth acting on, not derived by arithmetic; it is shown on the report."
+    },
+    {
+      "id": "v-tie-2",
+      "source": "How the verdict is decided",
+      "section": "The tie zone, and why there is one",
+      "question": "Why is a small real difference treated as a tie?",
+      "reference": "Because a difference that small is a fact about the world and still not worth acting on; the band was pinned so that a practical tie could actually be reached by an affordable panel, and it sits inside the panel's own run-to-run wobble, so calling it a tie is honesty, not laxity."
+    },
+    {
+      "id": "v-ahead-1",
+      "source": "How the verdict is decided",
+      "section": "Why being ahead is not the same as a clear lead",
+      "question": "Why isn't the option with more votes the winner?",
+      "reference": "Being ahead is where the count landed; a clear lead is a claim the lead would survive another panel, and only the probability supports that. The report asks how much probability sits beyond the tie zone and compares it to a stated bar."
+    },
+    {
+      "id": "v-ahead-2",
+      "source": "How the verdict is decided",
+      "section": "Why being ahead is not the same as a clear lead",
+      "question": "What are the three probabilities on the report?",
+      "reference": "How likely it is that A is meaningfully ahead, how likely that B is, and how likely that the two are practically tied — between them they cover everything that could be true."
+    },
+    {
+      "id": "v-answers-1",
+      "source": "How the verdict is decided",
+      "section": "What the report can answer, and what each answer means",
+      "question": "What does 'practical tie' mean?",
+      "reference": "That it is at least that likely the two options sit inside the tie zone — a positive finding that whatever difference exists is credibly too small to matter, which 'not statistically significant' can never say. Pick either on other grounds."
+    },
+    {
+      "id": "v-answers-2",
+      "source": "How the verdict is decided",
+      "section": "What the report can answer, and what each answer means",
+      "question": "When a report says 'no call at this credibility', does that mean the headlines failed?",
+      "reference": "No. It is a statement about the data, not the options: not enough was bought to separate the possibilities. The probabilities stay on the page so you can read them against your own bar."
+    },
+    {
+      "id": "v-nocall-1",
+      "source": "How the verdict is decided",
+      "section": "What a no-call still tells you",
+      "question": "What is the smallest detectable gap for?",
+      "reference": "It turns a no-call into a bound: a panel this size could have detected any gap that wide and found none, which limits how large the real difference plausibly is. Small means the panel looked hard and saw little; large means it was too small to say anything."
+    },
+    {
+      "id": "v-nocall-2",
+      "source": "How the verdict is decided",
+      "section": "What a no-call still tells you",
+      "question": "If there's no call, is the honest next step a bigger panel?",
+      "reference": "Only if the smallest detectable gap is large — then the panel was simply too small. If that figure is small, the panel looked hard and saw little, which is a bound on the difference rather than proof of equivalence."
+    },
+    {
+      "id": "v-stop-1",
+      "source": "How the verdict is decided",
+      "section": "Why a run can stop before everyone has voted",
+      "question": "In general, why can a run stop before every panelist has voted?",
+      "reference": "Because the answer was already in — more votes could not have changed which of the three answers you get. Votes are paid one at a time, and buying certainty you already have is waste. The report says when it stopped early, and why."
+    },
+    {
+      "id": "v-stop-2",
+      "source": "How the verdict is decided",
+      "section": "Why a run can stop before everyone has voted",
+      "question": "Couldn't stopping early just be a lucky look?",
+      "reference": "No: the stopping bar is the same threshold the report's recommendation uses, and it must be met more than once in a row, so a boundary crossed by chance on one batch does not end the run."
+    },
+    {
+      "id": "p-title-1",
+      "source": "Who the panel is",
+      "section": "Who the panel is",
+      "question": "What does the 'who the panel is' guide cover?",
+      "reference": "What the people who voted are, where they came from, and what they can and cannot tell you — their ages, where they live, what they earn, and five personality traits each."
+    },
+    {
+      "id": "p-title-2",
+      "source": "Who the panel is",
+      "section": "Who the panel is",
+      "question": "What information about each panelist does the report show?",
+      "reference": "Their age, where they live, what they earn, and five personality traits."
+    },
+    {
+      "id": "p-invented-1",
+      "source": "Who the panel is",
+      "section": "Every panelist is invented",
+      "question": "Were these real people?",
+      "reference": "No human being answered anything. Every panelist is a synthetic persona — characteristics drawn from population statistics, handed to a language model, and asked to choose."
+    },
+    {
+      "id": "p-invented-2",
+      "source": "Who the panel is",
+      "section": "Every panelist is invented",
+      "question": "Can a panel's verdict be used as evidence of what real readers would do?",
+      "reference": "No. The panel is not a survey of real readers; it is a fast, cheap, repeatable reading of how two options land on a described audience — for comparing them against each other, not for estimating a click-through rate. Nobody's data was collected, and the same panel gives the same answer tomorrow."
+    },
+    {
+      "id": "p-demo-1",
+      "source": "Who the panel is",
+      "section": "Where the demographics come from",
+      "question": "Where do the panelists' demographics come from?",
+      "reference": "Age, gender, education and income are drawn together from published national statistics, so the combinations that appear actually occur in that country's population."
+    },
+    {
+      "id": "p-demo-2",
+      "source": "Who the panel is",
+      "section": "Where the demographics come from",
+      "question": "In what sense can a panel be called representative, and do the personality traits share that?",
+      "reference": "Its demographics can be called representative of a population because they are drawn jointly from national statistics; the personality traits cannot be described that way."
+    },
+    {
+      "id": "p-traits-1",
+      "source": "Who the panel is",
+      "section": "What the five traits describe",
+      "question": "What is openness?",
+      "reference": "Appetite for the new and unconventional, against a preference for the familiar and tried. It is a disposition, not a verdict — a low score is not a deficiency."
+    },
+    {
+      "id": "p-traits-2",
+      "source": "Who the panel is",
+      "section": "What the five traits describe",
+      "question": "Does a low personality score mean something is wrong with that panelist?",
+      "reference": "No. The five traits are dispositions, not verdicts; a low score describes a different way of reading the same thing."
+    },
+    {
+      "id": "p-level-1",
+      "source": "Who the panel is",
+      "section": "What a trait level says about one panelist",
+      "question": "What does 'high openness' mean for one panelist?",
+      "reference": "A level says where this panelist sits relative to the population: high in openness means more drawn to novelty than most people are. It is not an absolute quantity and not a score on any questionnaire."
+    },
+    {
+      "id": "p-level-2",
+      "source": "Who the panel is",
+      "section": "What a trait level says about one panelist",
+      "question": "Why five levels instead of a score, and why not three?",
+      "reference": "The number alone says nothing a reader can use. Five rather than three because three cannot express the range the panel draws from — two people some distance apart would render as the same word. The level is turned into the phrase the panelist votes from, so it is part of what they were told they are."
+    },
+    {
+      "id": "p-cond-1",
+      "source": "Who the panel is",
+      "section": "What the traits are conditioned on, and what that rules out",
+      "question": "Does a panel from one country having higher openness say something about that nation?",
+      "reference": "No. Traits are drawn around an average that depends on age and gender only, so a difference between countries' panels is the ages and genders that happened to be sampled, and nothing about the two nations."
+    },
+    {
+      "id": "p-cond-2",
+      "source": "Who the panel is",
+      "section": "What the traits are conditioned on, and what that rules out",
+      "question": "Are the five traits independent of each other?",
+      "reference": "No — they vary together the way they do in the published data, so a panelist's five traits form a combination that occurs in people rather than five unrelated dice rolls."
+    },
+    {
+      "id": "p-limit-1",
+      "source": "Who the panel is",
+      "section": "What this panel cannot tell you",
+      "question": "What has the panel actually been validated on?",
+      "reference": "Written headlines that say genuinely different things — it separates those. It has not been shown to track human preference between two headlines that say the same thing in different words."
+    },
+    {
+      "id": "p-limit-2",
+      "source": "Who the panel is",
+      "section": "What this panel cannot tell you",
+      "question": "If two headlines are rephrasings of one idea, can the verdict between them be trusted?",
+      "reference": "That case is unvalidated: the panel has only been measured on headlines that say different things, and a verdict on two rephrasings of one idea is something the report cannot flag for you."
+    }
+  ]
+}
