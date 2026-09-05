@@ -123,6 +123,12 @@ and the four-passage result was serialised exactly as `explain_the_report` does.
 | one tool-calling `AIMessage` as OpenAI JSON | ~65 | *computed*, representative call |
 | a question ("what does credible mass mean") | 5–8 | *computed* |
 
+> **Correction (2026-09-05, [075/#165](https://github.com/Subaru-Goto/PanelVerdict/issues/165)):**
+> `_SYSTEM_PROMPT` has grown across tickets to **1,271 tokens / 5,794 chars**
+> (`tiktoken` o200k_base, same tokenizer), so the 697-token row and the 1,247
+> cacheable-prefix sum are stale by that much. The turn costs derived below were
+> measured against the prompt of their day and stand as recorded.
+
 So the ticket's "~950 tokens" for four passages is 869 on the mean and 1,224 at
 worst; a thread that asked only corpus questions would carry the whole 2,624-token
 corpus in its history after three turns and more than the corpus contains after

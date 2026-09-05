@@ -1,4 +1,5 @@
 import unicodedata
+from datetime import datetime
 from enum import Enum
 from collections.abc import Iterator
 from typing import Literal, get_args
@@ -732,6 +733,24 @@ class RunTimings(BaseModel):
     step_seconds: dict[str, float]
 
 
+class Provenance(BaseModel):
+    """What is true of a stored report as a container (075/#165).
+
+    The Code of Practice on Transparency of AI-generated Content asks that text
+    "generated, manipulated or exported in a data format that supports attaching
+    metadata" record whether it is AI-generated (Sub-measure 1.1.1); a kept
+    report is that container. The block also says what the prose inside it does
+    not carry: this product cannot watermark text, so `text_marking` is "none"
+    rather than a claim. The signing and timestamping 1.1.1 also asks for is
+    not done — docs/research/eu-ai-act-applicability.md §2b records the gap.
+    """
+
+    ai_generated: Literal[True]
+    generated_by: str
+    text_marking: Literal["none"]
+    recorded_at: datetime
+
+
 class EvaluateResponse(BaseModel):
     """One panel test as the report renders it.
 
@@ -764,6 +783,8 @@ class EvaluateResponse(BaseModel):
     usage: RunUsage | None = None
     # None on reports kept before 033 shipped — absent, not zero.
     timings: RunTimings | None = None
+    # None on reports kept before 075 shipped — absent, not a denial.
+    provenance: Provenance | None = None
 
 
 class ChatRequest(BaseModel):

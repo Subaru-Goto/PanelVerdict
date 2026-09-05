@@ -7,6 +7,9 @@ sample away — and every number it shows is derived from the replayed votes by
 the same assembly a paid run uses.
 """
 
+from datetime import datetime
+from pathlib import Path
+
 import pytest
 
 import app.main as main
@@ -68,6 +71,15 @@ class TestTheDemoEndpoint:
             "assemble": 0.1,
         }
         assert "step_seconds" not in body
+        # 075/#165: a replayed run's provenance is the capture's, not today's —
+        # the model that wrote these reasons and the day it did, both read off
+        # the fixture served above, never off the live profile or the clock.
+        provenance = body["provenance"]
+        assert provenance["generated_by"] == "captured-model"
+        assert datetime.fromisoformat(provenance["recorded_at"]) == datetime(
+            2026, 8, 31
+        )
+        assert provenance["text_marking"] == "none"
         # The honesty line names the day the run was bought.
         assert body["captured_at"] == "2026-08-31"
         # The report's numbers come from the replayed votes, not a literal.
@@ -292,3 +304,17 @@ class TestTheCapture:
             (tmp_path / "free-delivery.json").read_text()
         )
         assert written.step_seconds == clocked
+
+
+def test_a_committed_capture_names_the_model_that_wrote_it() -> None:
+    """`_capture` writes `configuration` as the run's JSON; the demo's provenance
+    reads the model out of it (075/#165). Pinned on the committed capture rather
+    than a stub, so a capture written in some other shape is caught here and not
+    as a wrong name on the public demo."""
+    fixture = DemoFixture.model_validate_json(
+        Path("app/data/demo/free-delivery.json").read_text()
+    )
+
+    assert fixture.model == "openai/gpt-5.6-luna"
+    # And the tests' hand-built shape reads as the model outright.
+    assert _fixture().model == "captured-model"

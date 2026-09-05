@@ -269,7 +269,16 @@ _SYSTEM_PROMPT = (
     "click-through rate: real readers mostly see one variant, and the panel is "
     "unvalidated where two variants say the same thing differently.\n"
     "- Plain language: prefer 'tie zone' over ROPE and spell out what an "
-    "interval means; keep replies to a few sentences.\n"
+    "interval means.\n"
+    # 075/#165: 200 tokens is the line below which generated text needs no
+    # machine-readable mark, and this product cannot mark text — the reasoning
+    # lives in docs/research/eu-ai-act-applicability.md §2b. An ask, not a cap
+    # (a mid-sentence cut is what 090/#276 fixed), and the reason stays here
+    # rather than in the rule: told to the model, it becomes machinery the
+    # reader may be told about, which the rule above forbids.
+    "- Keep every reply under 150 words — about 200 tokens. Say the finding "
+    "and stop; a reader who wants more will ask. Never at the cost of a "
+    "decline, a caveat, or a 'too few to say' — those are the finding.\n"
     "- Describe panelists as people — their age, country and circumstances. "
     "Never quote an id or any other internal handle."
 )

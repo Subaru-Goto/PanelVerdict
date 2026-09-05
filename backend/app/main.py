@@ -87,6 +87,7 @@ from app.schemas import (
     PanelEdit,
     PanelVerdict,
     ResumeRequest,
+    Provenance,
     RunTimings,
     RunUsage,
     TargetQuery,
@@ -1269,6 +1270,14 @@ def _outcome(
         thread_id=thread_id,
         usage=RunUsage(**asdict(total_usage(result.votes.usage))),
         timings=RunTimings(step_seconds=state["step_seconds"]),
+        # Server-written, like timings: the container says its prose was
+        # generated and by what, and that the text carries no mark (075/#165).
+        provenance=Provenance(
+            ai_generated=True,
+            generated_by=settings.panel.model,
+            text_marking="none",
+            recorded_at=datetime.now(UTC),
+        ),
         verdict=result.verdict,
         tally=result.tally,
         counts=result.counts,
@@ -1486,10 +1495,19 @@ async def demo(
             # reading_accepted means no gate; a pause here is a broken premise.
             raise HTTPException(status_code=500, detail="the demo run did not finish")
         return DemoRun(
-            **outcome.model_dump(exclude={"timings"}),
+            **outcome.model_dump(exclude={"timings", "provenance"}),
             # The replay's own clock ran in milliseconds; the reader is shown
             # the bought run's seconds, never the replay's.
             timings=RunTimings(step_seconds=fixture.step_seconds),
+            # Same honesty for provenance (075/#165): the reasons were written
+            # by the capture's model on the capture's day, not by today's
+            # profile just now.
+            provenance=Provenance(
+                ai_generated=True,
+                generated_by=fixture.model,
+                text_marking="none",
+                recorded_at=datetime.fromisoformat(fixture.captured_at),
+            ),
             captured_at=fixture.captured_at,
         )
 

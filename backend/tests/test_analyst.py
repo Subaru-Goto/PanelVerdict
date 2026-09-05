@@ -768,3 +768,16 @@ def test_a_concept_question_no_longer_routes_to_the_model_s_own_memory() -> None
 
     assert "do not reach for a tool at all" not in _SYSTEM_PROMPT
     assert "explain_the_report" in _SYSTEM_PROMPT
+
+
+def test_the_analyst_is_asked_to_stay_under_the_code_s_very_short_text_line() -> None:
+    """075/#165 — see docs/research/eu-ai-act-applicability.md §2b for why 200
+    tokens. Obedience is unassertable (025 routes doubles through the tools);
+    this pins that the ask is made, with its precedence, so a prompt edit cannot
+    drop either unnoticed."""
+    from app.analyst import _SYSTEM_PROMPT
+
+    assert "150 words" in _SYSTEM_PROMPT
+    assert "200 tokens" in _SYSTEM_PROMPT
+    # Without precedence, brevity is a licence to drop what other rules require.
+    assert "Never at the cost of a decline, a caveat" in _SYSTEM_PROMPT

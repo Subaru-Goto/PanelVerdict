@@ -93,6 +93,23 @@ class DemoFixture(BaseModel):
     step_seconds: dict[str, float]
     votes: list[DemoVote]
 
+    @property
+    def model(self) -> str:
+        """The model that wrote the captured reasons (075/#165).
+
+        `_capture` writes `configuration` as the run's JSON — model, effort, the
+        ask — and the demo's provenance names the model from there, never from
+        today's profile. A fixture whose configuration is not that JSON (the
+        tests hand-build them) is read as naming the model outright.
+        """
+        try:
+            recorded = json.loads(self.configuration)
+        except ValueError:
+            return self.configuration
+        if isinstance(recorded, dict) and isinstance(recorded.get("model"), str):
+            return recorded["model"]
+        return self.configuration
+
     @model_validator(mode="after")
     def _canonical(self) -> "DemoFixture":
         if self.case not in DEMO_CASES:
