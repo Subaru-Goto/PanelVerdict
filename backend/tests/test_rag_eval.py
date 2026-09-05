@@ -98,10 +98,8 @@ def test_retrieved_passages_are_read_off_the_turn_s_tool_messages() -> None:
 
 
 def test_the_analyst_s_own_search_strings_are_read_off_the_turn() -> None:
-    """The analyst rewrites the reader's question before it searches (129/#313:
-    the baseline's misses could not be diagnosed because only the reader's
-    wording was recorded). The strings it searched with, in order; a turn that
-    never searched has none."""
+    """The strings the analyst searched with, in order — it rewrites the
+    reader's question, and a miss is diagnosed against what it sent (129/#313)."""
     messages = [
         HumanMessage(content="What has the panel actually been validated on?"),
         AIMessage(
@@ -139,9 +137,7 @@ def test_the_analyst_s_own_search_strings_are_read_off_the_turn() -> None:
 
 
 def test_an_unscored_turn_says_whether_it_searched_at_all() -> None:
-    """129/#313's rerun: the named case searched and the gate let nothing
-    through, and the run filed it under the label for a turn that never called
-    the corpus. Those are two findings — routing, and the gate — not one."""
+    """Searched-and-empty is a gate finding; never-searched is routing (129/#313)."""
     assert why_unscored(searched=[], retrieved=[]) == "never searched"
     assert (
         why_unscored(searched=["panel validated on"], retrieved=[])

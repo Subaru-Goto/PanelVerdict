@@ -161,11 +161,8 @@ class TestHybridRetrieval:
     async def test_the_readers_word_for_the_honesty_passage_finds_it(
         self, conn, aconn
     ) -> None:
-        """129/#313: the first Ragas baseline asked what the panel has been
-        validated on and got the measuring passage. The limit passage said
-        "unvalidated", which stems to a different lexeme, and the gate wants a
-        majority of the question's words. The heading is the line written to be
-        searched for, so the reader's word belongs in it."""
+        """The reader's word for the limit passage is in its heading (129/#313):
+        "unvalidated" in the body stems to a different lexeme."""
         seed_corpus(conn, FakeEmbedder())
 
         found = await search_corpus(

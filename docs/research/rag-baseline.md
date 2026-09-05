@@ -141,7 +141,7 @@ retriever — and an unscored turn says whether it "never searched" or searched 
 | context recall | 0.879 | 0.931 | 0.933 |
 | reference passage retrieved | 24 / 29 | 26 / 29 | **27 / 30** |
 | first search sent verbatim | not recorded | 15 / 30 | 20 / 30 |
-| cost (same prices as above) | $0.099 | $0.104 | $0.111 |
+| cost (same prices as above) | $0.099 | $0.104 | $0.110 |
 
 **Rerun 1 — the gate, seen through the analyst's rewrite.** The heading change let the
 reader's own wording through the lexical gate (`experiments/gate_probe.py`: 7 of 30
@@ -158,10 +158,13 @@ reader's question or a shorter phrase from it, because a longer rewrite matches 
 analyst sent the question verbatim, the limit passage came back first, and the reply is the
 passage's own claim (faithfulness 0.90, precision and recall 1.0). *"What is openness?"*
 retrieves the trait definitions. Every turn searched and every search returned something —
-the first run with all 30 scored. The three misses left are the three gate cases on 130.
+the first run with all 30 scored. **The ticket's third case still misses:** *"What does the
+'who the panel is' guide cover?"* (`p-title-1`) fails the gate on `cover` and `guid` and is
+deferred to 130 with the other two misses (`p-title-2`, `v-measure-2`), all three among the
+probe's reproducers.
 
-**Faithfulness is below the bar, and the hand review says why.** Seven cases fell from 1.0
-in rerun 1 to 0.33–0.86 in rerun 2. Read one by one, each has the same passages retrieved
+**Faithfulness is below the bar, and the hand review says why.** Eight cases fell from 1.0
+in rerun 1 to between 0.33 and 0.90 in rerun 2. Read one by one, each has the same passages retrieved
 in both runs and a reply that is correct against them — the three probabilities compared to
 a stated bar (`v-ahead-2`, 0.33), five levels against three (`p-level-2`, 0.55), joint
 demographics from national statistics (`p-demo-1`, 0.50). Same passages, same facts,

@@ -23,17 +23,13 @@ from pathlib import Path
 import psycopg
 
 from app.config import settings
+from app.corpus import LEXEMES_SQL
 
 CASES = Path(__file__).with_name("rag_cases.json")
 
-# The question's distinct lexemes, exactly as `_SEARCH`'s `asked` CTE derives them.
-_LEXEMES = """
-SELECT array_agg(DISTINCT lexeme)
-FROM unnest(tsvector_to_array(to_tsvector('english', %s))) AS lexeme
-"""
-
 # Per passage: how many of the question's lexemes it contains, and the keyword
-# rank the sparse half would give it.
+# rank the sparse half would give it. The gate itself — strict majority — is the
+# `* 2 >` test in `_SEARCH`'s sparse CTE, restated in Python below.
 _HITS = """
 SELECT
     section,
@@ -48,18 +44,23 @@ ORDER BY rank DESC
 
 def main() -> None:
     wanted = set(sys.argv[1:])
-    cases = json.loads(CASES.read_text())["cases"]
+    cases = [
+        c
+        for c in json.loads(CASES.read_text())["cases"]
+        if not wanted or c["id"] in wanted
+    ]
     failing = 0
     with psycopg.connect(settings.database_url) as conn:
         for case in cases:
-            if wanted and case["id"] not in wanted:
-                continue
-            row = conn.execute(_LEXEMES, (case["question"],)).fetchone()
+            row = conn.execute(LEXEMES_SQL, {"query": case["question"]}).fetchone()
             assert row is not None
             (lexemes,) = row
             rows = conn.execute(_HITS, {"lexemes": lexemes}).fetchall()
+            hits = {s: h for s, h, _ in rows}
+            if case["section"] not in hits:
+                sys.exit(f"{case['id']}: no seeded passage titled {case['section']!r}")
             passing = [(s, h) for s, h, _ in rows if h * 2 > len(lexemes)]
-            target_hits = next(h for s, h, _ in rows if s == case["section"])
+            target_hits = hits[case["section"]]
             ok = target_hits * 2 > len(lexemes)
             failing += not ok
             print(
@@ -67,9 +68,7 @@ def main() -> None:
                 f"  lexemes={lexemes}  target hits={target_hits}"
                 f"  passing={[s for s, _ in passing]}"
             )
-    print(
-        f"\n{failing} of {len(cases) if not wanted else len(wanted)} targets fail the gate"
-    )
+    print(f"\n{failing} of {len(cases)} targets fail the gate")
 
 
 if __name__ == "__main__":

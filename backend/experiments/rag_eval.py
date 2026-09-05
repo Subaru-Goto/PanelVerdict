@@ -82,6 +82,9 @@ def reference_context(case: Case) -> str:
     return _chunk_for(case).passage
 
 
+_CORPUS_TOOL = "explain_the_report"
+
+
 def searched_for(messages: Sequence[BaseMessage]) -> list[str]:
     """The strings the analyst searched the corpus with during one turn, in order.
 
@@ -93,7 +96,7 @@ def searched_for(messages: Sequence[BaseMessage]) -> list[str]:
         for message in messages
         if isinstance(message, AIMessage)
         for call in message.tool_calls
-        if call["name"] == "explain_the_report"
+        if call["name"] == _CORPUS_TOOL
     ]
 
 
@@ -118,7 +121,7 @@ def retrieved_passages(messages: Sequence[BaseMessage]) -> list[str]:
     """
     passages: list[str] = []
     for message in messages:
-        if isinstance(message, ToolMessage) and message.name == "explain_the_report":
+        if isinstance(message, ToolMessage) and message.name == _CORPUS_TOOL:
             for item in json.loads(str(message.content)):
                 passages.append(item["passage"])
     return passages
