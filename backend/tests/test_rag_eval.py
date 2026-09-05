@@ -77,6 +77,14 @@ def test_retrieved_passages_are_read_off_the_turn_s_tool_messages() -> None:
         ToolMessage(
             content=json.dumps(found), name="explain_the_report", tool_call_id="c1"
         ),
+        # Another tool's result on the same turn: not a passage, not retrieval.
+        # A reader of every ToolMessage either crashes on its shape or counts
+        # the report's figures as corpus text.
+        ToolMessage(
+            content=json.dumps({"tally": {"a": 22, "b": 28}, "polling": "ran out"}),
+            name="analyze_results",
+            tool_call_id="c2",
+        ),
         AIMessage(content="A band around even, so small differences count as ties."),
     ]
 
