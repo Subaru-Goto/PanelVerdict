@@ -51,7 +51,6 @@ export const readerTurns = (turns: AnalystTurn[]): AnalystTurn[] => {
  *  An unknown name (a tool added later) degrades to the generic sentence. */
 const TOOL_STATUS: Record<string, string> = {
   analyze_results: "Checking the numbers…",
-  search_personas: "Looking through the panel…",
   read_reasons: "Reading what the panel said…",
   explain_the_report: "Looking it up in the guide…",
 };

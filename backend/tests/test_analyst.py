@@ -282,16 +282,19 @@ class TestToolSurface:
     /evaluate where the screening and the caps already live.
     """
 
-    def test_every_tool_reads_and_none_of_them_spends(self, conn) -> None:
+    def test_every_tool_reads_and_none_of_them_buys_a_panel(self, conn) -> None:
         names = {tool.name for tool in build_tools(_result(), _deps(conn))}
 
         assert names == {
             "analyze_results",
-            "search_personas",
             "read_reasons",
             "explain_the_report",
         }
         assert "run_panel_test" not in names
+        # 084/#175: top-n by cosine over five profiles said nothing about the
+        # panel and could return an A-voter when asked who preferred B. "Who
+        # preferred which" is analyze_results' split now (041/#139).
+        assert "search_personas" not in names
 
     def test_analyze_results_hands_over_the_split_and_its_confounds(self, conn) -> None:
         """The JSON the model actually receives, not the model that built it —
@@ -407,77 +410,6 @@ class TestAnalystAgent:
         panel = json.loads(str(fed_back[0].content))["panel"]
         assert (panel["age_min"], panel["age_max"]) == (23, 91)
         assert panel["countries"] == {"JP": 2, "US": 1}
-
-    @pytest.mark.anyio
-    async def test_the_agent_searches_only_this_tests_panel(self, conn, aconn) -> None:
-        """search_personas end to end: the query text is embedded, the panel
-        scope comes from result.votes, and the ToolMessage lists panelists
-        nearest first. The outsider matches the query PERFECTLY and still may
-        not appear — scope beats similarity."""
-        persist_pool(
-            conn,
-            [
-                # Distinct ages so the rendered summaries differ — the panel
-                # is described by who these people are, never by their ids.
-                make_assembled(
-                    make_persona(id_="US-00000", age=61), embedding=pointing(1)
-                ),
-                make_assembled(
-                    make_persona(id_="US-00001", age=27), embedding=pointing(0)
-                ),
-                make_assembled(
-                    make_persona(id_="US-00002", age=44), embedding=pointing(0)
-                ),
-            ],
-        )
-        model = ScriptedChatModel(
-            responses=[
-                tool_call_message(name="search_personas", args={"query": "thrifty"}),
-                AIMessage(content="Two panelists match."),
-            ]
-        )
-        result = _result().model_copy(
-            update={"votes": [make_panel_vote("US-00000"), make_panel_vote("US-00001")]}
-        )
-
-        reply = await _run(
-            model,
-            conn=aconn,
-            result=result,
-            deps=_deps(aconn, embedder=FixedEmbedder(pointing(0))),
-        )
-
-        assert reply == "Two panelists match."
-        fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
-        found = json.loads(str(fed_back[0].content))
-        # Length is half the assertion: the off-panel persona is a perfect
-        # query match, so it would arrive as a third result if scope failed.
-        assert len(found) == 2
-        assert found[0].startswith("A 27-year-old")
-        assert found[1].startswith("A 61-year-old")
-
-    @pytest.mark.anyio
-    async def test_a_search_never_hands_the_model_a_persona_id(
-        self, conn, aconn
-    ) -> None:
-        """The lesson the analyst was breaking in live use: an id
-        identifies a row, not a reader. Enforced by absence — the model
-        cannot quote a handle it was never given."""
-        persist_pool(
-            conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
-        )
-        model = ScriptedChatModel(
-            responses=[
-                tool_call_message(name="search_personas", args={"query": "thrifty"}),
-                AIMessage(content="One panelist matches."),
-            ]
-        )
-        result = _result().model_copy(update={"votes": [make_panel_vote("US-00000")]})
-
-        await _run(model, conn=aconn, result=result)
-
-        fed_back = [m for m in model.seen[1] if isinstance(m, ToolMessage)]
-        assert "US-00000" not in str(fed_back[0].content)
 
     @pytest.mark.anyio
     async def test_a_question_needing_no_tool_is_answered_without_one(
@@ -795,8 +727,16 @@ class TestToolsGatheredOnOneConnection:
         }
 
         async def doomed_search() -> str:
+            # 084/#175 retired the tool this used to be; the wreck is the same
+            # shape on the one embedding tool left, asked twice at once. The
+            # question has to match a passage lexically: membership is decided
+            # by the lexical gate and the vector only orders what passed it, so
+            # an unmatched question came back [] unharmed (observed re-aiming
+            # this test), and the wreck never happened.
             try:
-                return await tools["search_personas"].ainvoke({"query": "thrifty"})
+                return await tools["explain_the_report"].ainvoke(
+                    {"question": "is a practical tie thrifty"}
+                )
             finally:
                 a_failed.set()
 

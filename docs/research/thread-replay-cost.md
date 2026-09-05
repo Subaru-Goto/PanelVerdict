@@ -129,9 +129,14 @@ corpus in its history after three turns and more than the corpus contains after
 four — the ticket's "more corpus text in its history than the corpus contains" is
 right, and it happens early.
 
-**Not measured, and why.** `search_personas` needs the database (`persistence.nearest_panelists`); its
-result is bounded by `_SEARCH_LIMIT = 5` summaries (`analyst.py:410-413`, "near 200
-tokens" by the sign-off there). Whether reasoning content is replayed into later
+> **Correction (2026-09-04, [084/#175](https://github.com/Subaru-Goto/PanelVerdict/issues/175)):**
+> `search_personas` is retired, so the tool-schema row above now describes three
+> tools and its total is 550 − 104 = **446** on the same tokenizer. The measured
+> figures are left as recorded; the paragraph below's first sentence is moot.
+
+**Not measured, and why.** `search_personas` needed the database (`persistence.nearest_panelists`,
+both since removed); its result was bounded by `_SEARCH_LIMIT = 5` summaries
+("near 200 tokens" by the sign-off there). Whether reasoning content is replayed into later
 calls was not measured; at `reasoning_effort="low"` (`llm.py:537`) the measured
 reasoning was 0–19 tokens a turn, so it cannot move the totals. `tiktoken` counts
 of JSON are an approximation of the provider's rendering; the calibration in §4

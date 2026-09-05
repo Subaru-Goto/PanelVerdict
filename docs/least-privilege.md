@@ -261,7 +261,7 @@ questions all day. The walls are sign-in at the edge (063/#158), the per-caller
 daily allowance and the global cap — the real backstop — charged *before* the
 paid call, and the analyst's declared per-turn call budget (`CALLS_PER_TURN`,
 052/#149). The budget counts model calls and nothing else: one call may fan
-out several tool executions (each a database query, `search_personas` also a
+out several tool executions (each a database query, `explain_the_report` also a
 paid embedding), and the input side — the replayed transcript plus the
 client-supplied report, which nothing sizes today — has no wall of its own;
 both residuals are recorded on the tech-debt backlog. The known gap is topic:
@@ -337,22 +337,26 @@ gone is what makes them unreadable. The sweep rule lives with the column in
 
 **Data access is defended by scoping, never by a classifier.** A classifier is a
 model guessing whether text looks like an attack, and its blind spots are ours; a
-`WHERE` clause has none. The pattern is already here — `search_personas` scopes
-by construction:
+`WHERE` clause has none. The clause is the one that loads the report the analyst
+reads (`persistence.load_report`, from `main.load_chat_report`):
 
-```python
-panel_ids=[vote.persona_id for vote in result.votes]   # from code, not the model
-```
 ```sql
-WHERE id = ANY(%s)
+WHERE test_id = %s AND owner = %s
 ```
 
-The model supplies a search phrase; it does not supply the id list. No sentence
-it can emit widens that clause. Since
+with `owner` the signed-in subject, from code. Every tool is then closed over that
+one `EvaluateResponse` — `analyze_results` and `read_reasons` take no arguments and
+serialise what it carries; the only tool with a model-supplied argument,
+`explain_the_report`, queries the methodology corpus, which has no per-reader rows
+and so nothing to scope. The model supplies a question; it does not supply which
+test, whose votes, or any id, and no sentence it can emit widens that clause. (The
+retired `search_personas` scoped the same way, `WHERE id = ANY(%s)` over the
+panel's ids — 084/#175 removed it for being the weakest tool, not for being
+unscoped.) Since
 [035/#136](https://github.com/Subaru-Goto/PanelVerdict/issues/136) (2026-09-03)
 the caller does not supply it either: `ChatRequest` names a test by id, the
-server loads the stored report `WHERE test_id = %s AND owner = %s` under the
-signed-in subject, and `result.votes` is what the run wrote. A missing or
+server loads the stored report under that clause, and `result.votes` is what the
+run wrote. A missing or
 foreign test is the tests endpoint's own 404, above the pre-flight and the
 charge. The one other caller-supplied input to the analyst's context is the
 chat `thread_id`, and the checkpointer's key is the owner and that id together,
