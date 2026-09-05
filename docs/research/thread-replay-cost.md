@@ -111,6 +111,7 @@ and the four-passage result was serialised exactly as `explain_the_report` does.
 | payload | tokens | source |
 |---|---|---|
 | system prompt `_SYSTEM_PROMPT` | **697** (3,189 chars) | `analyst.py:147-223` |
+| *(re-measured 2026-09-05, 075/#165: the prompt has grown across tickets to **1,271** tokens / 5,794 chars, so the cacheable-prefix row below is stale by that much; the measured turn costs stand as recorded)* | | |
 | tool schemas: `analyze_results` 160, `search_personas` 104, `read_reasons` 100, `explain_the_report` 186 | **550** | `analyst.py:450-517` |
 | **cacheable prefix** (prompt + schemas) | **1,247** | *computed*, sum |
 | corpus: 15 chunks, per-chunk passage 49 … 298 (median 191) | **2,623** total | `app/data/corpus/*.md` via `corpus.DOCUMENTS` |

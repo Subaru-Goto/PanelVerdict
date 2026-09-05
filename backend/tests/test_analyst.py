@@ -768,3 +768,18 @@ def test_a_concept_question_no_longer_routes_to_the_model_s_own_memory() -> None
 
     assert "do not reach for a tool at all" not in _SYSTEM_PROMPT
     assert "explain_the_report" in _SYSTEM_PROMPT
+
+
+def test_the_analyst_is_asked_to_stay_under_the_code_s_very_short_text_line() -> None:
+    """075/#165. The Code of Practice on Transparency of AI-generated Content
+    exempts "very short text" — under 200 tokens — from machine-readable marking,
+    and marking is not feasible for this product (the model provider ships no
+    text watermark). Replies under that line are outside the obligation; the
+    prompt asks for them. Best effort by construction: 025 routes doubles through
+    the tools, so obedience is unassertable here — this pins that the ask is
+    made and names the reason, so a prompt edit cannot drop it unnoticed.
+    """
+    from app.analyst import _SYSTEM_PROMPT
+
+    assert "150 words" in _SYSTEM_PROMPT
+    assert "200 tokens" in _SYSTEM_PROMPT

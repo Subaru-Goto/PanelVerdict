@@ -269,7 +269,17 @@ _SYSTEM_PROMPT = (
     "click-through rate: real readers mostly see one variant, and the panel is "
     "unvalidated where two variants say the same thing differently.\n"
     "- Plain language: prefer 'tie zone' over ROPE and spell out what an "
-    "interval means; keep replies to a few sentences.\n"
+    "interval means.\n"
+    # 075/#165. The Code of Practice under Article 50(2) AI Act exempts "very
+    # short text" — under 200 tokens — from machine-readable marking, and this
+    # product cannot mark text (its model provider ships no text watermark).
+    # So a reply under that line is outside the obligation, and the prompt asks
+    # for one. Best effort: nothing here can enforce a length, and a cut-off
+    # mid-sentence is the failure 090/#276 fixed, so this is an ask, not a cap.
+    "- Keep every reply under 150 words — about 200 tokens. That is the line "
+    "below which generated text needs no machine-readable mark, and this "
+    "product cannot mark text. Say the finding and stop; a reader who wants "
+    "more will ask.\n"
     "- Describe panelists as people — their age, country and circumstances. "
     "Never quote an id or any other internal handle."
 )
