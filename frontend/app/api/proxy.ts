@@ -64,6 +64,7 @@ export async function proxyToBackend(
     | "/evaluate"
     | "/evaluate/resume"
     | "/chat"
+    | "/feedback"
     | "/me"
     | "/tests"
     | `/tests?${string}`

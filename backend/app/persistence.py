@@ -567,6 +567,39 @@ async def delete_reports_of(conn: psycopg.AsyncConnection, *, owner: str) -> int
     return result.rowcount
 
 
+# --- Feedback (053/#150) ------------------------------------------------------
+
+# The operator reads feedback with this, by hand, against the deployment; there
+# is no endpoint for it (decision Q3). Documented in docs/deploy.md.
+FEEDBACK_QUERY = """
+SELECT f.owner, f.test_id, f.body, f.created_at, t.report
+FROM feedback f
+JOIN tests t ON t.test_id = f.test_id
+ORDER BY f.created_at DESC
+"""
+
+
+async def store_feedback(
+    conn: psycopg.AsyncConnection, *, owner: str, test_id: str, body: str
+) -> bool:
+    """Store what a reader said about one of their own tests; return whether it
+    was written.
+
+    The insert selects from `tests` under the caller's own id, the same scoping
+    every read of that table has: a test the caller does not own yields no row
+    and no error, and the endpoint turns False into the same 404 the report
+    itself would give.
+    """
+    async with conn.transaction():
+        result = await conn.execute(
+            "INSERT INTO feedback (owner, test_id, body)"
+            " SELECT owner, test_id, %s FROM tests"
+            " WHERE test_id = %s AND owner = %s",
+            (body, test_id, owner),
+        )
+    return result.rowcount == 1
+
+
 def persist_persona(conn: psycopg.Connection, persona: Persona) -> bool:
     """Write one persona; return whether it was newly written.
 

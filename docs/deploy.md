@@ -70,7 +70,23 @@ stops there — no personas, no corpus, no embeddings, and no API key. That is t
 command to run on a deploy that adds a table or a column, or drops one. `tests.kept`
 (035/#136)
 is the first column case: without it no finished run is stored, and every new
-test's analyst answers 404 while the run itself returns 200.
+test's analyst answers 404 while the run itself returns 200. The `feedback` table
+(053/#150) is a table case: until `--schema-only` has run on the deploy, "Send
+feedback" fails and the reader keeps their text.
+
+**Reading feedback.** There is no endpoint and no notification (053, decided
+2026-09-05): the operator runs one query by hand, over the same connection the
+schema apply uses. It is `persistence.FEEDBACK_QUERY`, tested, and reads:
+
+```sql
+SELECT f.owner, f.test_id, f.body, f.created_at, t.report
+FROM feedback f
+JOIN tests t ON t.test_id = f.test_id
+ORDER BY f.created_at DESC;
+```
+
+`t.report` is the report the reader was looking at, so "this was confusing" arrives
+with its context. Rows go when their test goes.
 
 **Adding a column to a table that already exists** goes at the bottom of
 `backend/app/schema.sql`, in the documented `ALTER TABLE … ADD COLUMN IF NOT EXISTS`

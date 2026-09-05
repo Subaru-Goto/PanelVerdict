@@ -6,3 +6,8 @@ export function noticeClass(severity: "warning" | "info"): string {
     ? "rounded border-l-4 border-dotted border-red bg-red/5 p-2 text-sm"
     : "rounded border-l-4 border-line bg-surface-2 p-2 text-sm text-ink-2";
 }
+
+/** The primary action button (the dock's Send, the feedback box's): one place,
+ *  same reason. */
+export const PRIMARY_BUTTON =
+  "rounded bg-ink px-3 py-2 text-sm font-medium text-surface disabled:bg-surface-2 disabled:text-ink-3";

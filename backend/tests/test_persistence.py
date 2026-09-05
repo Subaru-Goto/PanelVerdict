@@ -14,6 +14,8 @@ from tests.factories import (
 import app.persistence
 from app.persistence import (
     _PERSONA_COLUMNS,
+    FEEDBACK_QUERY,
+    store_feedback,
     anyone_matches,
     REPORT_SCHEMA_VERSION,
     apply_schema,
@@ -1233,3 +1235,64 @@ async def test_the_answer_agrees_with_what_the_draw_seats(conn, aconn):
     for query in (_EVERYONE, _NOBODY):
         drawn = await retrieve_panel(aconn, query, size=10, seed=0)
         assert await anyone_matches(aconn, query) is bool(drawn)
+
+
+# --- The feedback table (053/#150) --------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_feedback_lands_against_the_readers_own_test(conn, aconn):
+    """A row is the reader, the test they were looking at, and what they said;
+    the operator's query joins it to the report."""
+    await store_report(aconn, test_id="t-1", owner="person-1", report=make_report())
+
+    stored = await store_feedback(
+        aconn, owner="person-1", test_id="t-1", body="I could not tell what to ship."
+    )
+
+    assert stored is True
+    rows = await (await aconn.execute(FEEDBACK_QUERY)).fetchall()
+    assert [(r[0], r[1], r[2]) for r in rows] == [
+        ("person-1", "t-1", "I could not tell what to ship.")
+    ]
+
+
+@pytest.mark.anyio
+async def test_feedback_on_someone_elses_test_is_refused(conn, aconn):
+    """The reference is scoped like every read of `tests`: a test id the caller
+    does not own is not theirs to comment on, and the row is not written."""
+    await store_report(aconn, test_id="t-1", owner="person-1", report=make_report())
+
+    stored = await store_feedback(
+        aconn, owner="person-2", test_id="t-1", body="looks wrong"
+    )
+
+    assert stored is False
+    assert (await (await aconn.execute(FEEDBACK_QUERY)).fetchall()) == []
+
+
+@pytest.mark.anyio
+async def test_deleting_the_test_deletes_its_feedback(conn, aconn):
+    """Decision Q1: feedback lives exactly as long as the test it is about, so
+    the customer's delete is a real delete and no copy of their report's
+    context survives it — by account or by test."""
+    for owner, test_id in (
+        ("person-1", "t-1"),
+        ("person-1", "t-2"),
+        ("person-2", "t-3"),
+    ):
+        await store_report(aconn, test_id=test_id, owner=owner, report=make_report())
+        await store_feedback(aconn, owner=owner, test_id=test_id, body="noted")
+
+    await delete_report(aconn, test_id="t-1", owner="person-1")
+    await delete_reports_of(aconn, owner="person-2")
+
+    rows = await (await aconn.execute(FEEDBACK_QUERY)).fetchall()
+    assert [r[1] for r in rows] == ["t-2"]
+
+
+def test_the_operators_documented_query_is_the_tested_one():
+    """docs/deploy.md carries FEEDBACK_QUERY for the operator to paste; a column
+    added to one and not the other would drift silently, so the copy is pinned."""
+    doc = (Path(__file__).parents[2] / "docs" / "deploy.md").read_text()
+    assert " ".join(FEEDBACK_QUERY.split()) in " ".join(doc.replace(";", "").split())

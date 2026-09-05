@@ -64,6 +64,7 @@ from app.persistence import REPORT_SCHEMA_VERSION, persist_pool
 from app.roleplay import GeneratorFault
 from app.schemas import (
     MAX_AUDIENCE_CHARS,
+    MAX_CHAT_MESSAGE_CHARS,
     MAX_HEADLINE_CHARS,
     EvaluateRequest,
     EvaluateResponse,
@@ -4656,3 +4657,95 @@ def test_history_full_stores_the_report_unkept_and_names_it(
     reopened = signed_in.get(f"/tests/{body['thread_id']}", headers=_as("owner"))
     assert reopened.status_code == 200
     assert reopened.json()["variants"]["a"] == "Half price"
+
+
+# --- POST /feedback (053/#150) ------------------------------------------------
+
+
+def _feedback(conn) -> list[tuple]:
+    return conn.execute(
+        "SELECT owner, test_id, body FROM feedback ORDER BY created_at"
+    ).fetchall()
+
+
+def test_feedback_lands_against_the_readers_own_test(signed_in, conn) -> None:
+    test_id = _stored_test(conn, owner="owner")
+
+    sent = signed_in.post(
+        "/feedback",
+        json={"test_id": test_id, "body": "I could not tell what to ship."},
+        headers=_as("owner"),
+    )
+
+    assert sent.status_code == 204, sent.text
+    assert _feedback(conn) == [("owner", test_id, "I could not tell what to ship.")]
+
+
+def test_feedback_on_a_test_the_caller_does_not_own_is_a_404(signed_in, conn) -> None:
+    """The same answer the report itself gives a stranger: not found, not
+    forbidden, so the id's existence is not confirmed either way."""
+    test_id = _stored_test(conn, owner="owner")
+
+    sent = signed_in.post(
+        "/feedback", json={"test_id": test_id, "body": "wrong"}, headers=_as("other")
+    )
+
+    assert sent.status_code == 404
+    assert _feedback(conn) == []
+
+
+def test_feedback_sits_behind_sign_in(signed_in, conn) -> None:
+    test_id = _stored_test(conn, owner="owner")
+
+    assert (
+        signed_in.post("/feedback", json={"test_id": test_id, "body": "x"}).status_code
+        == 401
+    )
+
+
+def test_feedback_is_bounded_like_a_chat_message(signed_in, conn) -> None:
+    """Decision Q4: the text bound is the chat message's, so the worst a caller
+    can write here in a day is the worst they can already write to the analyst."""
+    test_id = _stored_test(conn, owner="owner")
+
+    too_long = signed_in.post(
+        "/feedback",
+        json={"test_id": test_id, "body": "x" * (MAX_CHAT_MESSAGE_CHARS + 1)},
+        headers=_as("owner"),
+    )
+    empty = signed_in.post(
+        "/feedback", json={"test_id": test_id, "body": ""}, headers=_as("owner")
+    )
+    extra = signed_in.post(
+        "/feedback",
+        json={"test_id": test_id, "body": "x", "email": "a@b"},
+        headers=_as("owner"),
+    )
+
+    assert (too_long.status_code, empty.status_code, extra.status_code) == (
+        422,
+        422,
+        422,
+    )
+    assert _feedback(conn) == []
+
+
+def test_feedback_is_capped_per_caller_per_day(signed_in, conn, monkeypatch) -> None:
+    """The daily bound is the chat's per-caller turns (Q4) — the same ledger,
+    the same figure, no new constant. A refused write leaves no row."""
+    monkeypatch.setattr(settings, "chat_turns_per_caller_per_day", 2)
+    test_id = _stored_test(conn, owner="owner")
+    body = {"test_id": test_id, "body": "again"}
+
+    first = signed_in.post("/feedback", json=body, headers=_as("owner"))
+    second = signed_in.post("/feedback", json=body, headers=_as("owner"))
+    third = signed_in.post("/feedback", json=body, headers=_as("owner"))
+    someone_else = signed_in.post(
+        "/feedback",
+        json={"test_id": _stored_test(conn, owner="other"), "body": "fine"},
+        headers=_as("other"),
+    )
+
+    assert (first.status_code, second.status_code, third.status_code) == (204, 204, 429)
+    assert someone_else.status_code == 204
+    assert len(_feedback(conn)) == 3

@@ -124,6 +124,22 @@ CREATE TABLE IF NOT EXISTS tests (
 CREATE INDEX IF NOT EXISTS tests_owner_created_idx
     ON tests (owner, created_at DESC);
 
+-- What a reader said about a report (053/#150). References the stored test and
+-- cascades with it: deleting a test or an account deletes its feedback, and no
+-- copy of the report survives here. The body's bound lives at the endpoint
+-- (schemas.FeedbackRequest), in one place. Untrusted text — nothing reads it
+-- (docs/least-privilege.md).
+CREATE TABLE IF NOT EXISTS feedback (
+    feedback_id uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner       text        NOT NULL,             -- the verified subject id
+    test_id     text        NOT NULL REFERENCES tests (test_id) ON DELETE CASCADE,
+    body        text        NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- The operator's only query: newest first (persistence.FEEDBACK_QUERY).
+CREATE INDEX IF NOT EXISTS feedback_created_idx ON feedback (created_at DESC);
+
 
 -- ---------------------------------------------------------------------------
 -- Additive changes to tables that already exist (083/#173, 115/#248)

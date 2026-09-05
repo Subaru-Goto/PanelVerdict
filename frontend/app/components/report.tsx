@@ -16,8 +16,9 @@ import type {
 } from "../lib/api";
 import { formatPercent, formatPoints } from "../lib/format";
 import AnalystDock from "./analyst-dock";
+import FeedbackForm from "./feedback-form";
 import { noticeClass } from "./notice-style";
-import { AnalystBoundary } from "./report-boundary";
+import { AnalystBoundary, FeedbackBoundary } from "./report-boundary";
 import { useAnalyst, OPENING_REQUEST, type Analyst } from "../lib/use-analyst";
 import PosteriorChart from "./posterior-chart";
 import { isPracticalTie, leadingSide } from "../lib/verdict";
@@ -306,9 +307,14 @@ export default function Report({
       {/* `onRefresh` travels with the live arm, so it is also the live/locked
           switch here. */}
       {onRefresh !== undefined ? (
-        <AnalystBoundary onRefresh={onRefresh}>
-          <AnalystDock analyst={analyst} />
-        </AnalystBoundary>
+        <>
+          <AnalystBoundary onRefresh={onRefresh}>
+            <AnalystDock analyst={analyst} />
+          </AnalystBoundary>
+          <FeedbackBoundary>
+            <FeedbackForm testId={testId} />
+          </FeedbackBoundary>
+        </>
       ) : (
         <p className="text-sm text-ink-2">
           The analyst answers questions about your own tests, spending from a

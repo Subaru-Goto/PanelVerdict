@@ -51,7 +51,7 @@ detection quality rather than outage policy.
 
 ## Where untrusted text enters — and the two kinds it comes in
 
-Five entry points. All of them the customer's own data, and that is the whole
+Seven entry points. All of them the customer's own data, and that is the whole
 attack surface a stranger controls:
 
 1. **Two headlines.** The thing being judged. Nonce-fenced in the vote task's
@@ -95,6 +95,16 @@ attack surface a stranger controls:
    call sits behind sign-in and above the turn caps: an unsigned request is a
    401 before any classifier call, a signed-in caller past their cap is scored
    and then refused — the price of refusing above the charge.
+7. **The feedback message** ([053 · #150](https://github.com/Subaru-Goto/PanelVerdict/issues/150),
+   decided 2026-09-05). The reader's own words about one of their reports — the
+   first user-supplied prose this system *stores*. Size-capped like the chat
+   message, behind sign-in, per-caller daily bound through the same ledger. Its
+   trust status is settled while the answer is still simple: **nothing reads it**.
+   It is not corpus, not prompt, not tool result; if a later ticket ever retrieves
+   it into a prompt ("what are readers saying?"), that is untrusted text under
+   this document's rules, not a trusted source under 018's chosen-and-committed
+   reasoning. An operator reads it by a documented query (`docs/deploy.md`), by
+   hand.
 
 These divide into **two kinds with different trust levels**, and the division is
 the load-bearing distinction in this document:
@@ -334,6 +344,12 @@ again; and `DELETE /me` deliberately keeps the rows — clearing them at
 deletion would sell a still-valid token a fresh budget, and the account being
 gone is what makes them unreadable. The sweep rule lives with the column in
 `schema.sql`; sweeping itself is a later ticket.
+
+The `feedback` table (053/#150) holds the reader's words *about* a report, never a
+copy of it: a row references its stored test and cascades with it, so deleting a
+test — or the account — deletes the feedback too, and retention is the test's own
+(`kept`, and the unkept sweep). No email or other contact field: the request
+model refuses extras, so one cannot arrive without a decision to store it.
 
 **Data access is defended by scoping, never by a classifier.** A classifier is a
 model guessing whether text looks like an attack, and its blind spots are ours; a

@@ -74,6 +74,7 @@ from app.persistence import (
     list_reports,
     load_personas_by_id,
     load_report,
+    store_feedback,
     store_report,
     sweep_unkept_reports,
 )
@@ -81,6 +82,7 @@ from app.pipeline import EmptyPanel, NoVotes
 from app.roleplay import GeneratorFault, RolePlayGenerator, RolePlayRefused
 from app.schemas import (
     ChatRequest,
+    FeedbackRequest,
     EvaluateRequest,
     EvaluateResponse,
     Notice,
@@ -291,7 +293,7 @@ app = FastAPI(title="PanelVerdict API", lifespan=lifespan)
 # /demo is deliberately absent (061/#156): it spends nothing, serves the same
 # replayed reports to everyone, and the states screen promises it stays
 # readable when budgets are spent — a guard here would break that promise.
-_GUARDED_PATHS = ("/evaluate", "/chat", "/me", "/tests")
+_GUARDED_PATHS = ("/evaluate", "/chat", "/me", "/tests", "/feedback")
 
 
 def _is_guarded(path: str) -> bool:
@@ -561,6 +563,7 @@ _EVALUATE = "/evaluate"
 # Previewing a panel and buying one are different purchases, counted separately:
 # this key bounds previews, `_EVALUATE` bounds panels.
 _PREVIEW = "/evaluate-preview"
+_FEEDBACK = "/feedback"
 # One more separate count: how often a caller may make the classifier read a
 # sentence of their choosing. Previews do not bound this — the gate lets a
 # reader edit as often as they like on one thread — and runs do not either,
@@ -1211,6 +1214,31 @@ async def forget_test(
     which is also what a second click gets.
     """
     if not await delete_report(conn, test_id=test_id, owner=caller):
+        raise HTTPException(status_code=404, detail="no such test")
+    return Response(status_code=204)
+
+
+@app.post("/feedback", status_code=204)
+async def send_feedback(
+    request: FeedbackRequest,
+    caller: str = Depends(caller_id),
+    conn: psycopg.AsyncConnection = Depends(get_conn),
+) -> Response:
+    """Store what a signed-in reader says about one of their own tests (053/#150).
+
+    Off the paid path: nothing here calls a model. The per-caller daily bound
+    is the chat's *figure* (decision Q4) in a bucket of its own — feedback does
+    not spend chat turns, or the reverse — charged before the write so a refused
+    message leaves no row. A test the caller does not own gets the 404 the
+    report itself gives, the same one a missing test gets.
+    """
+    await _charge_ledger(
+        conn,
+        _Charge(_FEEDBACK, caller, settings.chat_turns_per_caller_per_day, "messages"),
+    )
+    if not await store_feedback(
+        conn, owner=caller, test_id=request.test_id, body=request.body
+    ):
         raise HTTPException(status_code=404, detail="no such test")
     return Response(status_code=204)
 
