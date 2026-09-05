@@ -751,6 +751,22 @@ class Provenance(BaseModel):
     recorded_at: datetime
 
 
+class FeedbackRequest(BaseModel):
+    """What a reader says about one of their own reports (053/#150).
+
+    `test_id` names the stored test the reader was looking at; the server joins
+    it, so nothing of the report travels. `body` takes the chat message's bound
+    (decision Q4): the worst a caller can write here in a day is the worst they
+    can already write to the analyst. Extras refused, so a field like an email
+    address cannot arrive without a decision to store one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    test_id: str = Field(min_length=1, max_length=36)
+    body: str = Field(min_length=1, max_length=MAX_CHAT_MESSAGE_CHARS)
+
+
 class EvaluateResponse(BaseModel):
     """One panel test as the report renders it.
 
