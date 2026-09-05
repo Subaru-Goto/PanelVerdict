@@ -93,3 +93,27 @@ def test_every_captured_vote_is_the_struct_the_prompt_asked_for(path: Path) -> N
 
     metrics: list[BaseMetric] = [EveryVoteIsATypedChoice()]
     assert_test(case, metrics, run_async=False)
+
+
+def test_the_metric_itself_fails_a_vote_that_is_not_a_typed_choice() -> None:
+    """The captures are valid, so the parametrised cases can only ever pass —
+    which means a broken metric would pass too. This is the metric's own red:
+    a vote whose choice is neither option, and one with an empty reason, must
+    each bring the score below one and the case down with it."""
+    metric = EveryVoteIsATypedChoice()
+    case = LLMTestCase(
+        input="two bad votes among three",
+        actual_output=json.dumps(
+            [
+                {"persona_id": "ok", "chosen": "option_1", "reason": "it read better"},
+                {"persona_id": "off-menu", "chosen": "option_3", "reason": "neither"},
+                {"persona_id": "silent", "chosen": "option_2", "reason": "   "},
+            ]
+        ),
+    )
+
+    score = metric.measure(case)
+
+    assert score == pytest.approx(1 / 3)
+    assert metric.is_successful() is False
+    assert "off-menu" in (metric.reason or "")
