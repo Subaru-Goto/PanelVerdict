@@ -143,9 +143,18 @@ export type EvaluateResponse = {
    *  replays its captured run's figures. Absent on reports kept before it
    *  shipped. */
   timings?: RunTimings | null;
+  /** Server-written (075/#165): that the prose was AI-generated, by what, and
+   *  that the text itself carries no mark. Null on reports kept before it. */
+  provenance?: Provenance | null;
 };
 
 export type RunTimings = { step_seconds: Record<string, number> };
+export type Provenance = {
+  ai_generated: true;
+  generated_by: string;
+  text_marking: "none";
+  recorded_at: string;
+};
 
 /** An object rather than three same-typed positional strings — a swap would
  *  type-check. Named once here; the hook reuses it. */

@@ -235,18 +235,27 @@ AI Board; ~190 signatories including OpenAI, Google, Anthropic, Mistral and Micr
 ([Commission news, 31 July 2026](https://digital-strategy.ec.europa.eu/en/news/strong-backing-code-practice-transparency-ai-generated-content)).
 Voluntary: signatories "rely on its measures to demonstrate compliance"; a
 non-signatory shows adequacy on its own. The Guidelines cited throughout this record
-were adopted in final form on 20 July 2026 (C(2026) 131215).
+are the final version, C(2026) 5054 final, adopted 20 July 2026 (see §1; the
+Commission library lists it as document 131215).
 
 What Section 1 (providers, Article 50(2)) requires for **text**, quoted:
 
-- **One layer suffices for text, and it is a watermark.** "Given that free-form text
-  cannot transport metadata, a single-layer of marking as described in Sub-measure
-  1.1.2 is considered sufficient to comply with the requirements of Article 50(2) AI
-  Act for this specific type of content" (Measure 1.1). Sub-measure 1.1.2: "Signatories
-  will ensure that AI-generated or manipulated content is marked with an imperceptible
-  watermark, **with the exception of very short text**. For free-form text longer than
-  200 tokens, watermarking still needs to be applied, even though it may have lower
-  reliability."
+- **Two kinds of text, two rules.** For *free-form* text one layer suffices, and it is a
+  watermark: "Given that free-form text cannot transport metadata, a single-layer of
+  marking as described in Sub-measure 1.1.2 is considered sufficient to comply with the
+  requirements of Article 50(2) AI Act for this specific type of content" (Measure 1.1).
+  Sub-measure 1.1.2: "Signatories will ensure that AI-generated or manipulated content
+  is marked with an imperceptible watermark, **with the exception of very short text**.
+  For free-form text longer than 200 tokens, watermarking still needs to be applied,
+  even though it may have lower reliability." It names "post-hoc watermarking" and
+  "model watermarking" as the two strategies; model providers are *encouraged* to do
+  the latter. For *containerised* text — glossary: "text inside PDFs, Word documents, or
+  HTML files" — Measure 1.1 asks two layers, and Sub-measure 1.1.1 is the first: "If
+  content is generated, manipulated **or exported** in a data format that supports
+  attaching metadata (e.g., an audio, image, video, or containerised text),
+  Signatories will record information in the metadata on whether the content is
+  AI-generated or manipulated. All recorded information will be digitally signed and
+  time-stamped … in a secure and tamper-evident manner."
 - **"Very short text" is defined, in tokens.** Glossary: "Text that is so short that in
   many cases it cannot be watermarked, even with a basic level of reliability. At the
   time of publication of the code, state-of-the-art techniques enable watermarking …
@@ -268,34 +277,46 @@ What Section 1 (providers, Article 50(2)) requires for **text**, quoted:
   performed by an upstream model provider" (Measure 4.2). Nothing in the Code makes a
   downstream provider able to watermark text its upstream does not.
 
-**Transitional note — corrected.** The operative provision is now verified: Regulation
-(EU) 2026/1744 (Digital Omnibus on AI, OJ 24.7.2026, in force 27.7.2026) adds
-Article 111(4) to the AI Act: "Providers of AI systems … generating synthetic audio,
-image, video or text content, **that have been placed on the market before 2 August
-2026** shall take the necessary steps in order to comply with Article 50(2) by
-2 December 2026" (recital 38 states the intent; text via
+**Transitional note — corrected.** Regulation (EU) 2026/1744 of 8 July 2026 (Digital
+Omnibus on AI; OJ L, 24.7.2026; in force the third day after publication, Article 46
+— [EUR-Lex ELI](https://eur-lex.europa.eu/eli/reg/2026/1744/oj), read 2026-09-05)
+states the intent in recital 38: "a transitional period of four months for providers
+who have already placed their systems on the market before the 2 August 2026". The
+operative text is a new Article 111(4) AI Act: "Providers of AI systems … generating
+synthetic audio, image, video or text content, **that have been placed on the market
+before 2 August 2026** shall take the necessary steps in order to comply with
+Article 50(2) by 2 December 2026" (*secondary*: quoted from
 [AI Act Explorer, Art. 111](https://artificialintelligenceact.eu/article/111/), read
-2026-09-05 — EUR-Lex's page truncates before the operative articles). PanelVerdict's
-deploy artefacts (`backend/Dockerfile`, `docs/deploy.md`) first landed **2026-08-23**,
-so it was placed on the market *after* the cut-off: **Article 50(2) has applied since
-the day it went live, and the four-month transition does not apply.** The 2026-08-21
-reading of "plausible breathing room" was wrong for this product.
+2026-09-05 — EUR-Lex's HTML truncates before the operative articles, so the article
+text is not verified against the OJ; the recital is).
+
+*Inferred:* PanelVerdict was placed on the market (Article 3(9): first made available
+on the Union market) no earlier than **2026-08-23**, the date its deploy artefacts
+(`backend/Dockerfile`, `docs/deploy.md`) first landed in git — a lower bound, since
+nothing could have been served before they existed, and there is no record of a
+public URL before that. That is after the 2 August 2026 cut-off, so **the four-month
+transition does not apply, and Article 50(2) has bound this product from the day it
+went live.** The 2026-08-21 reading of "plausible breathing room" was wrong for this
+product.
 
 #### What this product emits, measured (2026-09-05)
 
 Every reader-facing token is generated by `openai/gpt-5.6-luna` (panel votes, the
 analyst, the audience rewrite). OpenAI signed the Code but ships **no text watermark**
-in any GPT model or API as of August 2026 (secondary:
-[layer3labs guide](https://www.layer3labs.io/guides/does-chatgpt-watermark-text);
-OpenAI's own [provenance page](https://openai.com/index/advancing-content-provenance/)
-lists C2PA and SynthID for images and audio only). So there is no upstream mark to
-rely on, and model-level watermarking is not available to a downstream provider.
+in any GPT model or API as of August 2026 (*secondary source*:
+[layer3labs guide, 22 Aug 2026](https://www.layer3labs.io/guides/does-chatgpt-watermark-text),
+which reads OpenAI's [provenance page](https://openai.com/index/advancing-content-provenance/)
+as covering images and audio only; that page was not readable from here and is not
+quoted directly). So there is no upstream mark to rely on. Post-hoc text
+watermarking, which the Code names as a strategy, was not evaluated for this product
+— recorded as untested, not as impossible.
 
 | output | measured | under the Code |
 |---|---|---|
 | a panelist's vote reason | 300 reasons across the three demo captures: median ~20 tokens, max 31 (`tiktoken` o200k_base) | very short text — **exempt** |
 | the audience instruction shown in the panel gate | bounded at `MAX_INSTRUCTION_CHARS` = 400 chars | very short text — **exempt** |
-| an analyst reply | 57–212 *visible* tokens across the six measured turns (output minus reasoning, [analyst-turn-cost.md](analyst-turn-cost.md)); completion cap 2,048 | **some cross 200 tokens → in scope, and not markable** |
+| an analyst reply | 49–231 *visible* tokens across the six measured turns (output minus reasoning, [analyst-turn-cost.md](analyst-turn-cost.md); 212, 174, 57 at default effort, 231, 117, 49 at low); completion cap 2,048 | **some cross 200 tokens → in scope, and not marked** |
+| the stored report (`tests.report`, JSON) | one row per kept run, reopenable by its owner; no export surface exists | a *container* — Sub-measure 1.1.1's metadata layer applies to it, whatever is displayed |
 
 #### Decision (author, 2026-09-05)
 
@@ -308,18 +329,39 @@ rely on, and model-level watermarking is not available to a downstream provider.
   Signing the Code would commit to Sub-measure 1.1.2, which this product cannot
   perform — a promise it cannot keep is worse than a stated gap.
 - **Ask for brevity, by construction.** The analyst's system prompt now asks for every
-  reply to stay under 150 words (about 200 tokens) and says why. This is an *ask*: a
-  prompt rule is unassertable by the suite (025 routes doubles through the tools), and
-  a hard cut-off mid-sentence is the failure 090/#276 fixed, so no cap enforces it. A
-  test pins that the ask is made.
+  reply to stay under 150 words — about 200 tokens at the ratio measured on the prompt
+  itself, 5,794 chars / 1,271 tokens ≈ 4.6 chars a token. This is an *ask*: a prompt
+  rule is unassertable by the suite (025 routes doubles through the tools), and a hard
+  cut-off mid-sentence is the failure 090/#276 fixed, so no cap enforces it. The
+  reason is kept in a code comment, not in the rule the model reads — told to the
+  model, it becomes machinery the reader may be told about. A test pins that the ask
+  is made and that it yields to a decline, a caveat or a "too few to say".
+- **Mark the stored report.** The ticket's *Done when* names *persisted* artefacts, and a
+  stored report is containerised text under Sub-measure 1.1.1, displayed or not. Every
+  report now carries a server-written `provenance` block — `ai_generated: true`, the
+  generating model, `text_marking: "none"`, and when it was recorded — optional on
+  read so rows kept before it load unchanged (the move `timings` made in 033). The
+  block says what is true: the container is marked, the prose inside it is not. **Not
+  done:** the digital signing and timestamping 1.1.1 also asks for, which is a key
+  infrastructure this product does not have — recorded as the remaining gap for this
+  layer.
+- **The 50(4) argument does not reach 50(2).** The ticket's scope note excluded in-app
+  text on the strength of the Guidelines' 50(4) examples ("only available to the user
+  that prompted"). That exclusion is about *labelling published text*; the 50(2)
+  marking duty attaches to the generated text itself, displayed or stored. The
+  exemptions that actually apply here are the Code's own: very short text, and
+  internals.
 - **What is deliberately NOT marked, with its source:** vote reasons and the audience
   instruction, because both are "very short text" under the Code's 200-token definition
-  above; and the pipeline's internals, because the Guidelines put "intermediate
-  processing steps" out of scope (para. 63). Nothing exportable exists to metadata-mark.
+  above; the pipeline's internals, because the Guidelines put "intermediate processing
+  steps" out of scope (para. 63); and the prose of analyst replies over 200 tokens,
+  because no marking is available to this product (above).
 - **Reopen when** OpenAI (or whichever provider the analyst runs on — the tripwire in
   `tests/test_config.py` names the setting) ships text watermarking with a detection
-  API; or the Code's 200-token threshold moves at a review ("at least every 2 years",
-  Commission FAQ); or an export surface is built.
+  API; or the Code's 200-token threshold moves at a review (the Code is updated "at
+  least every 2 years" —
+  [Commission FAQ](https://digital-strategy.ec.europa.eu/en/faqs/code-practice-transparency-ai-generated-content),
+  read 2026-09-05); or an export surface is built, which would owe the signing.
 
 ## 3. Article 12 record-keeping: high-risk only — and not per-step tracing even then
 
