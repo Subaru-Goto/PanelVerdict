@@ -8,7 +8,9 @@ validate quality before committing to a full run. Design: `docs/decisions/006f-p
 A repo-root `.env` with:
 
 - `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`
-- `OPENROUTER_API_KEY` (the seed makes real model calls)
+- `OPENROUTER_API_KEY` — for the corpus embeddings and the plausibility judge; the
+  pool itself needs no key (084/#175), and without one the command seeds it and
+  then exits non-zero naming the two steps it skipped
 - `POSTGRES_HOST` should be `localhost` (or unset — that's the default) when
   running from your terminal. If it is set to `db` (the compose service name) it
   only resolves inside the compose network, and a host-run seed can't connect.
@@ -47,15 +49,17 @@ cd backend
 uv run python -m app.seed --size dev --seed 0
 ```
 
-Applies the schema, samples ~200 personas, embeds each one's summary, persists
-them, then judges a sample and prints the QC report.
+Applies the schema, samples ~200 personas, persists them, embeds the explanation
+corpus, then judges a sample and prints the QC report.
 
-No persona field is LLM-generated, so the personas themselves are identical on
-every run with the same seed. Two model calls remain and are worth knowing about:
-one embedding per persona (cheap, and not bit-reproducible — a remote model, so
-`summary_embedding` can differ slightly between runs even though the sampled
-columns cannot), and the plausibility judge over `--qc-sample` personas, which is
-a chat model and is most of the cost. `--qc-sample 0` skips it.
+No persona field is LLM-generated and nothing about a persona is embedded any
+more (084/#175 retired the analyst's persona search and its vector), so the pool
+is identical on every run with the same seed and costs nothing to seed — no API
+key is needed for that step. Two model calls remain and are worth knowing about:
+the corpus embeddings (a handful of passages, cheap) and the plausibility judge
+over `--qc-sample` personas, which is a chat model and is most of the cost.
+`--qc-sample 0` skips the judge. Without a key the command seeds the pool and
+then exits non-zero naming the two steps it could not do.
 
 ### 3. Eyeball the personas
 
@@ -70,8 +74,7 @@ docker compose exec db bash -c \
 - **The 15 rows:** do the age/education/income combinations look like real people,
   and do the trait scores spread rather than clustering at zero?
 
-To read a persona the way retrieval sees it, render the summary that gets
-embedded:
+To read a persona the way the report describes one, render its summary:
 
 ```bash
 uv run python -c "from app.panel import persona_summary, FIXED_PANEL; print(persona_summary(FIXED_PANEL[0]))"

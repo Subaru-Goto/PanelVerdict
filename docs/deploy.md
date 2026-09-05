@@ -44,12 +44,14 @@ the ~1-minute wake and nothing else — conversations resume where they left off
    the IPv4 door. Note the pooler host (`aws-…pooler.supabase.com`), port `5432`, and
    the username (`postgres.<project-ref>` — the ref suffix matters). **Never the
    transaction pooler** (port 6543): psycopg3 uses prepared statements.
-3. Apply the schema and seed from your machine (paid embedding calls happen here, once):
+3. Apply the schema and seed from your machine (the pool is model-free; the corpus
+   embeddings and the plausibility judge are the paid calls, once):
    run `uv run python -m app.seed --size full` from `backend/` with the pooler values
    as environment overrides (the wizard does this for you).
 
-**Re-run the schema step on any deploy that adds a table.** `apply_schema` is
-idempotent and the seed resumes, so re-running costs nothing when the pool is already
+**Re-run the schema step on any deploy that adds a table or a column, or drops
+one.** `apply_schema` is idempotent and the seed resumes, so re-running costs nothing
+when the pool is already
 there — but nothing re-runs it for you, and a table the code expects and the database
 lacks is a 500 on every request that touches it. `request_ledger` (045/#143) is the
 first case: without it both paid endpoints fail. `spend_ledger` (064/#192, the global
@@ -65,7 +67,8 @@ Re-running the same seed command creates all three.
 Cheaper still, and the right tool when nothing needs *seeding*: `uv run python -m
 app.seed --schema-only` applies `schema.sql` and the row-level-security sweep and
 stops there — no personas, no corpus, no embeddings, and no API key. That is the
-command to run on a deploy that adds a table or a column. `tests.kept` (035/#136)
+command to run on a deploy that adds a table or a column, or drops one. `tests.kept`
+(035/#136)
 is the first column case: without it no finished run is stored, and every new
 test's analyst answers 404 while the run itself returns 200.
 
@@ -75,14 +78,22 @@ form — never by editing the `CREATE TABLE` above it, which `IF NOT EXISTS` wil
 re-apply. The form is enforced, not suggested: `app.persistence` refuses a bare `ADD
 COLUMN`, because the file runs on every seed and every `--schema-only` apply, and
 a statement that fails mid-file takes the row-level-security sweep after it down
-too. Additive only — no
-`DROP COLUMN`, no rename, no type change: during a rollout an older instance is still
-serving, and `votes` is paid model output that cannot be regenerated. Applying is
+too. No rename and no type change, ever. A `DROP COLUMN` is allowed under one rule,
+stated with the reasons in `schema.sql` beside the form: the column's last reader
+and writer were deployed in an earlier PR, and its contents are regenerable —
+`votes` never qualifies, and the parser refuses a drop on any table it could not
+rebuild. `personas.summary_embedding` (084/#175) is the first case: run
+`--schema-only` on the deploy once the PR that retired the persona search is live,
+and the column and its index go. Applying is
 manual until launch; automating it is 083/#173's deferred half.
 
-**You do not have to remember any of this.** On every merge to `main`, CI's
+**You do not have to remember the additions.** On every merge to `main`, CI's
 `schema-drift` job runs `--check-schema` against the project and fails red if the
-deployed database is missing anything this build writes. It reads and never applies.
+deployed database is *missing* anything this build writes. It reads and never
+applies. A drop is the one thing it cannot see: it looks for missing columns only,
+so a column this file drops that the deploy still has is invisible to it. Harmless
+— nothing reads or writes such a column, that being the rule for dropping it — but
+it stays until the schema step is re-run.
 
 Give it a role of its own — **not** the pooler owner the seed step uses. That owner
 can read every table and drop any of them, including `votes`, which is paid model

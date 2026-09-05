@@ -3,11 +3,11 @@ import sys
 
 import psycopg
 import pytest
-from tests.factories import DIM
 
 from app.config import settings
 from app.persistence import apply_schema, missing_columns, schema_columns
 from app.schemas import Locale
+import app.seed as seed_module
 from app.seed import (
     SeedResult,
     _parse_countries,
@@ -16,17 +16,6 @@ from app.seed import (
     main,
     seed_pool,
 )
-
-
-class CountingEmbedder:
-    """Counts embed() calls, so a test can prove resume does NOT re-assemble."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        self.calls += len(texts)
-        return [[float(len(text))] * DIM for text in texts]
 
 
 def _persona_count(conn: psycopg.Connection) -> int:
@@ -40,28 +29,33 @@ def _count(conn: psycopg.Connection, table: str) -> int:
 
 
 def test_seed_pool_persists_all_when_empty(conn):
-    embedder = CountingEmbedder()
-
-    result = seed_pool(conn, {Locale.US: 3}, master_seed=1, embedder=embedder)
+    result = seed_pool(conn, {Locale.US: 3}, master_seed=1)
 
     assert result == SeedResult(requested=3, written=3, skipped=0)
     assert _persona_count(conn) == 3
-    assert embedder.calls == 3
 
 
-def test_seed_pool_resume_skips_without_reassembling(conn):
-    embedder = CountingEmbedder()
+def test_seed_pool_resume_skips_without_reassembling(conn, monkeypatch):
     quotas = {Locale.US: 3}
+    seed_pool(conn, quotas, master_seed=1)
 
-    seed_pool(conn, quotas, master_seed=1, embedder=embedder)
-    assert embedder.calls == 3
+    # re-run: every persona already present, so nothing is assembled. Pinned by
+    # counting what `assemble_pool` yields rather than by an embedder — the pool
+    # makes no model call at all since 084/#175, so there is no paid call left
+    # to count.
+    assembled: list[str] = []
+    real = seed_module.assemble_pool
 
-    # re-run: every persona already present, so nothing is assembled — and nothing
-    # is embedded, which is now the only paid call in the pool build
-    result = seed_pool(conn, quotas, master_seed=1, embedder=embedder)
+    def counting(*args, **kwargs):
+        for persona in real(*args, **kwargs):
+            assembled.append(persona.id)
+            yield persona
+
+    monkeypatch.setattr(seed_module, "assemble_pool", counting)
+    result = seed_pool(conn, quotas, master_seed=1)
 
     assert result == SeedResult(requested=3, written=0, skipped=3)
-    assert embedder.calls == 3
+    assert assembled == []
     assert _persona_count(conn) == 3
 
 
@@ -268,9 +262,39 @@ class TestDryRun:
     ):
         """Seeding resumes, so the spend is the shortfall rather than the quota —
         a count that ignored the existing pool would overstate every resume."""
-        seed_pool(conn, {Locale.US: 3}, master_seed=1, embedder=CountingEmbedder())
+        seed_pool(conn, {Locale.US: 3}, master_seed=1)
         conn.commit()  # main() opens its own connection and cannot see an open txn
 
         self._prepare(monkeypatch, pg_url, "--dry-run")
         main()
         assert "197 personas to generate" in capsys.readouterr().out
+
+
+class TestAFullRunWithoutAKey:
+    """084/#175: the pool is model-free, so it seeds without a key; the corpus and
+    the judge are paid, so their absence is a non-zero exit that says what was
+    and was not done — a green exit that skipped the corpus is the deploy
+    failure docs/deploy.md already records."""
+
+    def test_it_seeds_the_pool_then_refuses_the_paid_steps_loudly(
+        self, conn, pg_url, monkeypatch
+    ):
+        monkeypatch.setattr(sys, "argv", ["seed", "--size", "dev", "--seed", "0"])
+        monkeypatch.setattr(type(settings), "database_url", property(lambda _: pg_url))
+        monkeypatch.setattr(settings, "openrouter_api_key", None)
+
+        def fail(*args, **kwargs):
+            raise AssertionError("no key: no paid client may be constructed")
+
+        monkeypatch.setattr("app.seed.OpenRouterEmbedder", fail)
+        monkeypatch.setattr("app.seed.OpenRouterJudge", fail)
+
+        with pytest.raises(SystemExit) as stop:
+            main()
+
+        assert stop.value.code not in (0, None)
+        assert _persona_count(conn) > 0, "the free step was not done"
+        message = str(stop.value.code)
+        assert "pool is seeded" in message
+        assert "corpus" in message and "judge" in message
+        assert "--corpus-only" in message

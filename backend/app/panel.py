@@ -115,12 +115,13 @@ def render_persona_prompt(persona: Persona) -> str:
 
 
 def persona_summary(persona: Persona) -> str:
-    """Render a persona as third-person prose, and embed that text so the
-    analyst's panelist search can match a description against it.
+    """Render a persona as third-person prose — the way a reader is shown who
+    was on the panel.
 
-    Shares the vote prompt's phrasing on purpose: a target description is matched
-    against this text, so anything it claims that the prompt does not say would
-    promise a panel the panel cannot deliver.
+    Shares the vote prompt's phrasing on purpose, so what is said about a
+    panelist never claims more than the panelist was asked to enact. It used to
+    be embedded for the analyst's panelist search as well; 084/#175 retired that
+    search and the vector with it.
     """
     return (
         f"A {persona.age}-year-old {persona.gender} living in "

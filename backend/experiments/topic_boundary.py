@@ -321,7 +321,6 @@ def main() -> None:
 
     import psycopg
     from langgraph.checkpoint.memory import InMemorySaver
-    from pgvector.psycopg import register_vector_async
 
     from app.analyst import ToolDeps, stream_analyst
     from app.config import settings
@@ -415,7 +414,6 @@ def main() -> None:
         async with await psycopg.AsyncConnection.connect(
             settings.database_url, autocommit=True
         ) as conn:
-            await register_vector_async(conn)
             deps = ToolDeps(conn=conn, embedder=embedder)
 
             async def ask(question: str) -> str:

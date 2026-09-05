@@ -3,9 +3,9 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- One row per persona. Big Five are the continuous sampled scores; levels are
--- derived at render, never stored. summary_embedding is the vector the analyst's
--- panelist search matches against: one per persona, of the templated summary in
--- app/panel.py.
+-- derived at render, never stored. Nothing here is a vector: the persona
+-- embedding went with the search that read it (084/#175, dropped at the bottom
+-- of this file), and the extension above now serves corpus_chunks alone.
 --
 -- IF NOT EXISTS cannot migrate an out-of-date table; app.persistence.apply_schema
 -- detects that case and says what to do.
@@ -20,17 +20,8 @@ CREATE TABLE IF NOT EXISTS personas (
     conscientiousness double precision NOT NULL,
     extraversion      double precision NOT NULL,
     agreeableness     double precision NOT NULL,
-    neuroticism       double precision NOT NULL,
-    summary_embedding vector(1536) NOT NULL       -- text-embedding-3-small dims
+    neuroticism       double precision NOT NULL
 );
-
--- Similarity index for the analyst's persona search. HNSW rather than IVFFlat:
--- IVFFlat trains its cluster centers from rows already present, and this file
--- runs before every seed — on an empty table it would build degenerate. The
--- opclass must match the search's `<=>` operator (cosine), or the planner
--- quietly ignores the index.
-CREATE INDEX IF NOT EXISTS personas_summary_embedding_idx
-    ON personas USING hnsw (summary_embedding vector_cosine_ops);
 
 -- One row per vote ever paid for, keyed on the fingerprint of the exact question
 -- asked (app/vote.py: vote_fingerprint), so a changed prompt, headline, question,
@@ -145,7 +136,7 @@ CREATE INDEX IF NOT EXISTS tests_owner_created_idx
 -- and apply_schema reads its completeness probe out of these statements, so a
 -- column added anywhere else is a column nothing checks for.
 --
--- The form is required, and enforced by app.persistence._added_columns:
+-- The form is required, and enforced by app.persistence._column_alterations:
 --
 --     ALTER TABLE votes ADD COLUMN IF NOT EXISTS scored_at timestamptz;
 --
@@ -154,10 +145,27 @@ CREATE INDEX IF NOT EXISTS tests_owner_created_idx
 -- the RLS sweep prepare_connection runs after it does not run either. (Not at
 -- boot: the request path deliberately does not apply DDL — app/main.py.)
 --
--- Additive only. No DROP COLUMN, no type change, no rename — a reader of an
--- older deploy is still serving requests during a rollout, and votes is paid
--- model output that cannot be regenerated. A change that cannot be expressed
--- additively is a new column plus a backfill, and the old one left alone.
+-- Additive by default. No type change and no rename, ever: neither can be made
+-- idempotent, and a reader of an older deploy is still serving requests during
+-- a rollout. A column may be DROPPED only when both of the reasons behind that
+-- rule are satisfied in the negative (084/#175): (1) its last reader *and*
+-- writer shipped and were *deployed* in an earlier PR, so no instance in a
+-- rollout still touches it (a writer counts: the seed kept writing this
+-- column for a deploy after nothing read it); and (2) its contents are
+-- regenerable from git or cheap to recompute — never paid model output, which
+-- is why `votes` can never qualify. (2) is enforced: _column_alterations
+-- refuses a drop on any table outside `_REGENERABLE`. (1) is review's, and this
+-- paragraph is what review checks against. A drop is written at the bottom of
+-- this file as
+--
+--     DROP INDEX IF EXISTS <index>;
+--     ALTER TABLE <table> DROP COLUMN IF EXISTS <column>;
+--
+-- so every apply converges. _column_alterations reads the ALTER exactly and
+-- takes the column off the completeness probe; the DROP INDEX is not parsed —
+-- a dropped column takes its indexes with it, so the line is legibility, not
+-- correctness. A change that meets
+-- neither test is a new column plus a backfill, and the old one left alone.
 --
 -- 086/#177 — the ledger is owner-scoped: a row is its buyer's, and the read
 -- path matches within one owner or not at all. NOT NULL, because every paid
@@ -184,3 +192,18 @@ ALTER TABLE tests ADD COLUMN IF NOT EXISTS kept boolean NOT NULL DEFAULT true;
 -- the rail's index (owner, created_at) does not serve a scan for unkept rows.
 CREATE INDEX IF NOT EXISTS tests_unkept_created_idx
     ON tests (created_at) WHERE NOT kept;
+
+-- The persona vector (084/#175). `summary_embedding` served one analyst tool,
+-- `search_personas`, retired and deployed in PR 1; the request path has read no
+-- vector since (probed on a bare connection, 2026-09-04 — see `get_conn` in
+-- app/main.py and its test). Regenerable: it was
+-- the embedding of `persona_summary`'s rendered text, a cheap call over data the
+-- seed still holds. Both tests of the rule above hold, so the column goes and
+-- the pool seed makes no embedding call at all. The index first, by name — a
+-- dropped column takes its indexes with it, but naming it keeps the intent
+-- legible and the statement harmless on a database that never had it. Both
+-- take ACCESS EXCLUSIVE on `personas` for the instant a catalogue change takes
+-- (~200 rows, no rewrite), so a request reading the pool at that moment waits,
+-- and nothing more.
+DROP INDEX IF EXISTS personas_summary_embedding_idx;
+ALTER TABLE personas DROP COLUMN IF EXISTS summary_embedding;

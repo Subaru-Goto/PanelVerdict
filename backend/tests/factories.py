@@ -15,7 +15,6 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.tools import BaseTool
 from openai import APIStatusError
 
-from app.assembly import AssembledPersona
 from app.config import settings
 from app.persistence import persist_pool
 from app.roleplay import RefusalClass, RolePlayOutcome, checked_instruction
@@ -303,13 +302,6 @@ def make_persona(
     )
 
 
-def make_assembled(
-    persona: Persona | None = None, *, embedding: list[float] | None = None
-) -> AssembledPersona:
-    persona = persona or make_persona()
-    return AssembledPersona(persona=persona, summary_embedding=embedding or [0.5] * DIM)
-
-
 JAPAN_REQUEST = TargetRequest(
     regions=[RequestedRegion(label="Japan", country_code="JP")]
 )
@@ -333,9 +325,7 @@ def seed_japanese(conn: psycopg.Connection, count: int) -> None:
     persist_pool(
         conn,
         [
-            make_assembled(
-                make_persona(id_=f"JP-{i:05d}", country="JP", age=30 + i % 60)
-            )
+            make_persona(id_=f"JP-{i:05d}", country="JP", age=30 + i % 60)
             for i in range(count)
         ],
     )

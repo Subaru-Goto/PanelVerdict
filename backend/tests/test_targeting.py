@@ -4,7 +4,7 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import ValidationError
 
-from tests.factories import big_five, make_assembled, make_persona
+from tests.factories import big_five, make_persona
 
 from app.llm import build_target_messages
 from app.persistence import persist_pool
@@ -711,8 +711,8 @@ async def test_select_panel_retrieves_only_matching_personas(conn, aconn) -> Non
     persist_pool(
         conn,
         [
-            make_assembled(make_persona(id_="JP-00000", country="JP")),
-            make_assembled(make_persona(id_="US-00000", country="US")),
+            make_persona(id_="JP-00000", country="JP"),
+            make_persona(id_="US-00000", country="US"),
         ],
     )
 
@@ -735,10 +735,8 @@ async def test_a_temperament_target_reaches_the_pool_as_a_trait_filter(
     persist_pool(
         conn,
         [
-            make_assembled(
-                make_persona(id_="JP-00000", country="JP", big_five=_anxious)
-            ),
-            make_assembled(make_persona(id_="JP-00001", country="JP", big_five=_calm)),
+            make_persona(id_="JP-00000", country="JP", big_five=_anxious),
+            make_persona(id_="JP-00001", country="JP", big_five=_calm),
         ],
     )
     request = TargetRequest(
@@ -768,7 +766,7 @@ async def test_an_unservable_region_still_draws_a_panel_from_the_whole_pool(
     the fallback has a real panel to filter rather than an empty one."""
     persist_pool(
         conn,
-        [make_assembled(make_persona(id_="JP-00000", country="JP", big_five=_anxious))],
+        [make_persona(id_="JP-00000", country="JP", big_five=_anxious)],
     )
     request = TargetRequest(
         regions=[RequestedRegion(label="Nigeria", country_code="NG")],
@@ -794,7 +792,7 @@ async def test_an_unservable_region_still_draws_a_panel_from_the_whole_pool(
 async def test_the_selection_carries_the_query_s_own_notices(conn, aconn) -> None:
     """One place to read notices from, so a caller cannot show the retrieval's and
     forget the translation's."""
-    persist_pool(conn, [make_assembled(make_persona(id_="JP-00000", country="JP"))])
+    persist_pool(conn, [make_persona(id_="JP-00000", country="JP")])
     request = TargetRequest(
         regions=[RequestedRegion(label="Japan", country_code="JP")],
         unmapped=["gamers"],
@@ -816,10 +814,7 @@ async def test_a_thin_panel_is_reported_as_a_shortfall(conn, aconn) -> None:
     """At n=200 this changes what the verdict can say, so it cannot be silent."""
     persist_pool(
         conn,
-        [
-            make_assembled(make_persona(id_=f"JP-{i:05d}", country="JP"))
-            for i in range(3)
-        ],
+        [make_persona(id_=f"JP-{i:05d}", country="JP") for i in range(3)],
     )
 
     selection = await select_panel(
@@ -838,10 +833,7 @@ async def test_a_thin_panel_is_reported_as_a_shortfall(conn, aconn) -> None:
 async def test_a_full_panel_reports_no_shortfall(conn, aconn) -> None:
     persist_pool(
         conn,
-        [
-            make_assembled(make_persona(id_=f"JP-{i:05d}", country="JP"))
-            for i in range(3)
-        ],
+        [make_persona(id_=f"JP-{i:05d}", country="JP") for i in range(3)],
     )
 
     selection = await select_panel(
@@ -859,10 +851,7 @@ async def test_the_same_target_draws_the_same_panel_twice(conn, aconn) -> None:
     """Reproducibility at the level a customer sees it: one target, one panel."""
     persist_pool(
         conn,
-        [
-            make_assembled(make_persona(id_=f"JP-{i:05d}", country="JP"))
-            for i in range(20)
-        ],
+        [make_persona(id_=f"JP-{i:05d}", country="JP") for i in range(20)],
     )
 
     async def draw() -> list[str]:

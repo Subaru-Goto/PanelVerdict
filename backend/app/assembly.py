@@ -4,39 +4,22 @@ Pure and side-effect-free (no DB): given a country, a slot index, and the master
 seed, produce a deterministic, per-slot-independent persona.
 
 Every persona field is sampled — from a committed table or the published Big Five
-norms — so a slot is reproducible from the seed alone. The one model call is
-embedding the summary for retrieval, and it feeds no persona field.
+norms — so a slot is reproducible from the seed alone, and no model is called:
+the one call this module used to make, embedding the summary for the analyst's
+panelist search, went with that search (084/#175).
 """
 
 from collections.abc import Container, Iterator
-from dataclasses import dataclass
-from typing import Protocol
 
 import numpy as np
 
 from app.bigfive import sample_big_five
-from app.panel import persona_summary
 from app.sampler import JointCell, load_joint, sample_one
 from app.schemas import Locale, Persona
 
 # Zero-pad the ordinal: a 5k pool needs 4 digits; 5 leaves headroom and keeps ids
 # lexically sortable within a country.
 _ID_WIDTH = 5
-
-
-class Embedder(Protocol):
-    """Embeds each text into its own vector."""
-
-    def embed(self, texts: list[str]) -> list[list[float]]: ...
-
-
-@dataclass(frozen=True)
-class AssembledPersona:
-    """A persona plus the embedding of its rendered summary — what the
-    analyst's panelist search matches a description against."""
-
-    persona: Persona
-    summary_embedding: list[float]
 
 
 def persona_id(country: Locale, index: int) -> str:
@@ -74,8 +57,7 @@ def assemble_persona(
     cells: list[JointCell],
     *,
     master_seed: int,
-    embedder: Embedder,
-) -> AssembledPersona:
+) -> Persona:
     """Build one persona deterministically from its slot.
 
     `cells` are passed in so the caller loads a country's joint table once rather
@@ -83,14 +65,10 @@ def assemble_persona(
     """
     demo_rng, big_five_rng = _slot_rngs(master_seed, country, index)
     demographics = sample_one(country, cells, demo_rng)
-    persona = Persona(
+    return Persona(
         id=persona_id(country, index),
         **demographics.model_dump(),
         big_five=sample_big_five(demographics.age, demographics.gender, big_five_rng),
-    )
-    return AssembledPersona(
-        persona=persona,
-        summary_embedding=embedder.embed([persona_summary(persona)])[0],
     )
 
 
@@ -98,14 +76,13 @@ def assemble_pool(
     quotas: dict[Locale, int],
     *,
     master_seed: int,
-    embedder: Embedder,
     skip: Container[str] = frozenset(),
-) -> Iterator[AssembledPersona]:
+) -> Iterator[Persona]:
     """Yield the pool one persona at a time (sequential, lazy).
 
     `quotas` is the per-country count — the one hand-managed cross-country knob.
-    `skip` holds persona ids to leave un-generated, so a resumed seed never pays
-    to assemble (or embed) personas it already persisted.
+    `skip` holds persona ids to leave un-generated, so a resumed seed never
+    re-assembles personas it already persisted.
     """
     for country, n in quotas.items():
         cells = load_joint(country)
@@ -113,10 +90,4 @@ def assemble_pool(
             pid = persona_id(country, index)
             if pid in skip:
                 continue
-            yield assemble_persona(
-                country,
-                index,
-                cells,
-                master_seed=master_seed,
-                embedder=embedder,
-            )
+            yield assemble_persona(country, index, cells, master_seed=master_seed)

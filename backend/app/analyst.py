@@ -33,8 +33,7 @@ from langgraph.errors import GraphRecursionError
 from openai import APIStatusError
 from pydantic import BaseModel
 
-from app.assembly import Embedder
-from app.corpus import search_corpus
+from app.corpus import Embedder, search_corpus
 from app.panel import voter_summary
 from app.schemas import (
     ChatStreamEvent,

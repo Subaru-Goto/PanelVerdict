@@ -17,7 +17,6 @@ from app.vote import VOTE_CONCURRENCY, OutOfCredit, VoteResponse
 from tests.factories import (
     JAPAN_REQUEST,
     StubTranslator,
-    make_assembled,
     make_persona,
     seed_japanese,
     voted,
@@ -159,7 +158,7 @@ async def test_the_verdict_rests_on_the_votes_that_arrived(conn, aconn) -> None:
 @pytest.mark.anyio
 async def test_a_thin_match_reports_all_three_counts_distinctly(conn, aconn) -> None:
     seed_japanese(conn, 2)
-    persist_pool(conn, [make_assembled(make_persona(id_="US-00000", country="US"))])
+    persist_pool(conn, [make_persona(id_="US-00000", country="US")])
 
     result = await _run(aconn, size=5)
 
@@ -377,7 +376,7 @@ async def test_coverage_travels_as_data(conn, aconn) -> None:
 async def test_an_empty_panel_is_refused_before_any_vote_is_paid_for(
     conn, aconn
 ) -> None:
-    persist_pool(conn, [make_assembled(make_persona(id_="US-00000", country="US"))])
+    persist_pool(conn, [make_persona(id_="US-00000", country="US")])
     llm = SpyLLM()
 
     with pytest.raises(EmptyPanel):
@@ -702,9 +701,7 @@ class TestOutOfCredit:
         persist_pool(
             conn,
             [
-                make_assembled(
-                    make_persona(id_=f"JP-{i:05d}", country="JP", age=20 + i)
-                )
+                make_persona(id_=f"JP-{i:05d}", country="JP", age=20 + i)
                 for i in range(75)
             ],
         )
@@ -751,9 +748,7 @@ class TestOutOfCredit:
         persist_pool(
             conn,
             [
-                make_assembled(
-                    make_persona(id_=f"JP-{i:05d}", country="JP", age=20 + i)
-                )
+                make_persona(id_=f"JP-{i:05d}", country="JP", age=20 + i)
                 for i in range(75)
             ],
         )

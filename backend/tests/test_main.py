@@ -18,7 +18,6 @@ from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, Huma
 from langchain_core.outputs import ChatGenerationChunk, ChatResult
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from openai import APIStatusError
-from pgvector.psycopg import register_vector_async
 from psycopg.pq import TransactionStatus
 from psycopg.types.json import Jsonb
 from pydantic import SecretStr
@@ -76,7 +75,6 @@ from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
     StubGenerator,
-    make_assembled,
     make_panel_vote,
     make_persona,
     make_report,
@@ -429,7 +427,6 @@ def test_concurrent_runs_cannot_outrun_the_ledger(
 
     async def own_connection():
         async with await psycopg.AsyncConnection.connect(pg_url) as connection:
-            await register_vector_async(connection)
             yield connection
 
     app.dependency_overrides[get_conn] = own_connection
@@ -634,7 +631,6 @@ def test_concurrent_runs_cannot_outspend_the_pool(
 
     async def own_connection():
         async with await psycopg.AsyncConnection.connect(pg_url) as connection:
-            await register_vector_async(connection)
             yield connection
 
     app.dependency_overrides[get_conn] = own_connection
@@ -775,7 +771,7 @@ def test_a_target_nobody_matches_is_the_requests_fault(client, conn) -> None:
     Since 108/#231 this is answered above the charge, in the handler's own
     sentence, rather than by `EmptyPanel` from inside a run already paid for.
     """
-    persist_pool(conn, [make_assembled(make_persona(id_="US-00000", country="US"))])
+    persist_pool(conn, [make_persona(id_="US-00000", country="US")])
 
     response = client.post("/evaluate", json=_REQUEST_BODY)
 
@@ -1533,9 +1529,7 @@ def test_chat_embedding_tool_runs_on_the_streams_own_schedule(client, conn) -> N
     the vector."""
     from tests.test_corpus_retrieval import FakeEmbedder
 
-    persist_pool(
-        conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
-    )
+    persist_pool(conn, [make_persona(id_="US-00000")])
     seed_corpus(conn, FakeEmbedder())
     app.dependency_overrides[get_analyst] = lambda: ScriptedChatModel(
         responses=[
@@ -1573,16 +1567,13 @@ def test_no_transaction_outlives_a_chat_tools_read(client, conn, pg_url) -> None
     """
     from tests.test_corpus_retrieval import FakeEmbedder
 
-    persist_pool(
-        conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
-    )
+    persist_pool(conn, [make_persona(id_="US-00000")])
     seed_corpus(conn, FakeEmbedder())
 
     captured: list[psycopg.AsyncConnection] = []
 
     async def capturing_connection():
         async with await psycopg.AsyncConnection.connect(pg_url) as connection:
-            await register_vector_async(connection)
             captured.append(connection)
             yield connection
 
@@ -1644,9 +1635,7 @@ def test_a_tools_failure_ends_the_turn_with_the_error_in_band(client, conn) -> N
     """
     from tests.test_corpus_retrieval import FakeEmbedder
 
-    persist_pool(
-        conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
-    )
+    persist_pool(conn, [make_persona(id_="US-00000")])
     seed_corpus(conn, FakeEmbedder())
 
     class WrongDimensionEmbedder:
@@ -2561,7 +2550,6 @@ def test_two_accepts_at_once_buy_one_panel(client, conn, pg_url) -> None:
 
     async def own_connection():
         async with await psycopg.AsyncConnection.connect(pg_url) as fresh:
-            await register_vector_async(fresh)
             yield fresh
 
     app.dependency_overrides[get_conn] = own_connection

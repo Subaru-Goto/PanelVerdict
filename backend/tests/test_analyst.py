@@ -20,7 +20,7 @@ from app.analyst import (
     stream_analyst,
     vote_reasons,
 )
-from app.assembly import Embedder
+from app.corpus import Embedder
 from app.persistence import persist_pool
 from app.schemas import (
     CoverageRung,
@@ -37,7 +37,6 @@ from app.verdict import panel_verdict
 from tests.factories import (
     FixedEmbedder,
     ScriptedChatModel,
-    make_assembled,
     make_panel_vote,
     make_persona,
     ndjson_events,
@@ -702,9 +701,7 @@ class TestToolsGatheredOnOneConnection:
         from app.corpus import seed_corpus
         from tests.test_corpus_retrieval import FakeEmbedder
 
-        persist_pool(
-            conn, [make_assembled(make_persona(id_="US-00000"), embedding=pointing(0))]
-        )
+        persist_pool(conn, [make_persona(id_="US-00000")])
         seed_corpus(conn, FakeEmbedder())
         await aconn.set_autocommit(True)
 

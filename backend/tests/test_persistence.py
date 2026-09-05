@@ -2,20 +2,16 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from typing import get_args
 
-import numpy as np
 import psycopg
 import pytest
 from psycopg.pq import TransactionStatus
 from tests.factories import (
-    DIM,
     big_five,
-    make_assembled,
     make_persona,
     make_report,
 )
 
 import app.persistence
-from app.assembly import AssembledPersona
 from app.persistence import (
     _PERSONA_COLUMNS,
     anyone_matches,
@@ -40,6 +36,7 @@ from app.persistence import (
     store_votes,
 )
 from app.schemas import (
+    Persona,
     EducationLevel,
     EvaluateResponse,
     Locale,
@@ -60,29 +57,16 @@ def _count(conn: psycopg.Connection, table: str) -> int:
 
 
 def test_persist_writes_one_row_per_persona(conn):
-    persist_persona(conn, make_assembled())
+    persist_persona(conn, make_persona())
 
     assert _count(conn, "personas") == 1
 
 
 def test_persist_is_idempotent_on_rerun(conn):
-    assert persist_persona(conn, make_assembled()) is True
-    assert persist_persona(conn, make_assembled()) is False
+    assert persist_persona(conn, make_persona()) is True
+    assert persist_persona(conn, make_persona()) is False
 
     assert _count(conn, "personas") == 1
-
-
-def test_summary_embedding_round_trips_through_pgvector(conn):
-    persona = make_persona()
-    vector = [0.5] * DIM
-    persist_persona(conn, AssembledPersona(persona=persona, summary_embedding=vector))
-
-    stored = conn.execute(
-        "SELECT summary_embedding FROM personas WHERE id = %s", (persona.id,)
-    ).fetchone()[0]
-    restored = stored.to_numpy()
-    assert restored.shape == (DIM,)
-    assert np.allclose(restored, vector)
 
 
 def test_apply_schema_is_idempotent(conn):
@@ -177,6 +161,111 @@ def test_an_addition_the_parser_does_not_understand_is_refused(statement) -> Non
         schema_columns(
             "CREATE TABLE IF NOT EXISTS votes (id text PRIMARY KEY\n);\n" + statement
         )
+
+
+def test_a_documented_drop_is_read_and_the_column_leaves_the_probe() -> None:
+    """084/#175 widened the parser by one exact spelling. The dropped column must
+    not be probed for — probing would report a current database as stale — and
+    nothing else about the table changes."""
+    parsed = schema_columns(
+        "CREATE TABLE IF NOT EXISTS personas (\n    id text PRIMARY KEY,\n"
+        "    age integer NOT NULL\n);\n"
+        "ALTER TABLE personas DROP COLUMN IF EXISTS summary_embedding;"
+    )
+
+    assert parsed == {"personas": ("id", "age")}
+
+
+@pytest.mark.parametrize("table", ["votes", "tests", "request_ledger"])
+def test_a_drop_on_a_table_that_cannot_be_rebuilt_is_refused(table) -> None:
+    """Half of the drop rule in code rather than prose (084/#175, security
+    review): a column may go only if its contents are regenerable, and
+    `_REGENERABLE` already names the tables that are — `personas` and the
+    corpus. `votes` is paid model output; the ledgers hold spend nobody has been
+    charged for yet. A drop on any of them is refused before it lands, however
+    well-formed the statement."""
+    with pytest.raises(ValueError, match="_REGENERABLE"):
+        schema_columns(
+            f"CREATE TABLE IF NOT EXISTS {table} (\n    id text PRIMARY KEY,\n"
+            f"    reason text\n);\n"
+            f"ALTER TABLE {table} DROP COLUMN IF EXISTS reason;"
+        )
+
+
+def test_a_drop_wins_over_a_create_that_still_lists_the_column() -> None:
+    """The transitional mistake: the DROP is added below but the column is left
+    in the CREATE TABLE above. `apply_schema` would drop it and then probe for
+    it, reporting a database that applied this very file as stale. The drop has
+    to take the column off the probe whatever the CREATE says — found by a
+    mutation check that replaced the removal with `pass` and turned nothing red."""
+    parsed = schema_columns(
+        "CREATE TABLE IF NOT EXISTS personas (\n    id text PRIMARY KEY,\n"
+        "    summary_embedding vector(1536) NOT NULL\n);\n"
+        "ALTER TABLE personas DROP COLUMN IF EXISTS summary_embedding;"
+    )
+
+    assert parsed == {"personas": ("id",)}
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # A drop without the guard fails forever after the first apply, the
+        # same mid-file failure the ADD form's IF NOT EXISTS exists to prevent.
+        "ALTER TABLE personas DROP COLUMN summary_embedding;",
+        # The two changes the policy still forbids outright.
+        "ALTER TABLE personas RENAME COLUMN age TO years;",
+        "ALTER TABLE personas ALTER COLUMN age TYPE bigint;",
+        # Legal Postgres, undocumented spelling — refused like the ADD variants.
+        "ALTER TABLE personas DROP summary_embedding;",
+    ],
+)
+def test_a_change_the_policy_forbids_or_the_parser_cannot_read_is_refused(
+    statement,
+) -> None:
+    """Widening by one spelling is not loosening: everything that is not the
+    ADD form or the DROP form is still refused before it lands."""
+    with pytest.raises(ValueError, match="ALTER TABLE"):
+        schema_columns(
+            "CREATE TABLE IF NOT EXISTS personas (\n    id text PRIMARY KEY\n);\n"
+            + statement
+        )
+
+
+def _persona_vector_state(conn) -> tuple[bool, bool]:
+    column = conn.execute(
+        "SELECT 1 FROM information_schema.columns WHERE table_name = 'personas'"
+        " AND column_name = 'summary_embedding'"
+    ).fetchone()
+    index = conn.execute(
+        "SELECT 1 FROM pg_indexes WHERE indexname = 'personas_summary_embedding_idx'"
+    ).fetchone()
+    return column is not None, index is not None
+
+
+def test_applying_the_schema_to_a_database_that_still_has_the_persona_vector_drops_it(
+    conn,
+):
+    """The deploy's own path (084/#175): the live database was seeded when
+    `personas.summary_embedding` and its HNSW index existed. Running
+    `--schema-only` there must remove both, converge on a second run, and never
+    create them on a fresh database — `IF EXISTS` on both statements is what
+    makes one file serve all three cases."""
+    conn.execute(
+        "ALTER TABLE personas ADD COLUMN IF NOT EXISTS summary_embedding vector(1536)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS personas_summary_embedding_idx"
+        " ON personas USING hnsw (summary_embedding vector_cosine_ops)"
+    )
+    conn.commit()
+    assert _persona_vector_state(conn) == (True, True), "legacy state not set up"
+
+    apply_schema(conn)
+    assert _persona_vector_state(conn) == (False, False)
+
+    apply_schema(conn)  # idempotent: nothing to drop is not an error
+    assert _persona_vector_state(conn) == (False, False)
 
 
 def test_a_column_spelling_the_parser_cannot_read_is_refused() -> None:
@@ -390,16 +479,6 @@ def test_apply_schema_refuses_a_stale_table_that_is_not_personas(conn, table, co
         apply_schema(conn)
 
 
-def test_a_wrong_dimension_vector_writes_nothing(conn):
-    # the vector is now a column on the persona row rather than a child table, so
-    # a bad dimension must fail the whole insert instead of half-writing it
-    bad = AssembledPersona(persona=make_persona(), summary_embedding=[0.1] * (DIM + 1))
-
-    with pytest.raises(psycopg.Error):
-        persist_persona(conn, bad)
-    assert _count(conn, "personas") == 0
-
-
 def test_persist_commits_per_persona_on_an_autocommit_connection(pg_url):
     # the seed CLI's connection mode: each persisted persona must be durable
     # (visible to another connection) immediately, so an interrupted run keeps
@@ -408,15 +487,15 @@ def test_persist_commits_per_persona_on_an_autocommit_connection(pg_url):
     with psycopg.connect(pg_url, autocommit=True) as writer:
         prepare_connection(writer)
         writer.execute("TRUNCATE personas CASCADE")
-        persist_persona(writer, make_assembled())
+        persist_persona(writer, make_persona())
         with psycopg.connect(pg_url) as reader:
             assert _count(reader, "personas") == 1
 
 
 def test_persist_pool_writes_all_and_returns_count(conn):
     pool = [
-        make_assembled(make_persona(id_="US-00000")),
-        make_assembled(make_persona(id_="US-00001")),
+        make_persona(id_="US-00000"),
+        make_persona(id_="US-00001"),
     ]
 
     assert persist_pool(conn, iter(pool)) == 2
@@ -425,8 +504,8 @@ def test_persist_pool_writes_all_and_returns_count(conn):
 
 def test_persist_pool_counts_only_new_writes_on_rerun(conn):
     pool = [
-        make_assembled(make_persona(id_="US-00000")),
-        make_assembled(make_persona(id_="US-00001")),
+        make_persona(id_="US-00000"),
+        make_persona(id_="US-00001"),
     ]
 
     assert persist_pool(conn, pool) == 2
@@ -447,8 +526,8 @@ async def test_retrieval_filters_on_country(conn, aconn):
     persist_pool(
         conn,
         [
-            make_assembled(make_persona(id_="US-00000", country="US")),
-            make_assembled(make_persona(id_="JP-00000", country="JP")),
+            make_persona(id_="US-00000", country="US"),
+            make_persona(id_="JP-00000", country="JP"),
         ],
     )
 
@@ -464,7 +543,7 @@ async def test_no_coverage_retrieves_nobody(conn, aconn):
     """An empty `countries` is the ladder's bottom rung, not a missing filter. The
     dangerous failure would be reading it as "no country constraint" and returning a
     random panel that looks like a matched one."""
-    persist_pool(conn, [make_assembled(make_persona(id_="US-00000"))])
+    persist_pool(conn, [make_persona(id_="US-00000")])
 
     assert (
         await retrieve_panel(
@@ -479,10 +558,10 @@ async def test_retrieval_filters_on_the_age_span(conn, aconn):
     persist_pool(
         conn,
         [
-            make_assembled(make_persona(id_="US-00000", age=29)),
-            make_assembled(make_persona(id_="US-00001", age=30)),
-            make_assembled(make_persona(id_="US-00002", age=39)),
-            make_assembled(make_persona(id_="US-00003", age=40)),
+            make_persona(id_="US-00000", age=29),
+            make_persona(id_="US-00001", age=30),
+            make_persona(id_="US-00002", age=39),
+            make_persona(id_="US-00003", age=40),
         ],
     )
 
@@ -499,7 +578,7 @@ async def test_retrieval_filters_on_the_age_span(conn, aconn):
 @pytest.mark.anyio
 async def test_an_inverted_age_span_retrieves_nobody(conn, aconn):
     """What "under 18" clamps to. It has to match nobody rather than everybody."""
-    persist_pool(conn, [make_assembled(make_persona(id_="US-00000", age=34))])
+    persist_pool(conn, [make_persona(id_="US-00000", age=34)])
 
     panel = await retrieve_panel(
         aconn,
@@ -519,18 +598,14 @@ async def test_retrieval_filters_on_gender_income_and_education(conn, aconn):
     persist_pool(
         conn,
         [
-            make_assembled(wanted),
-            make_assembled(make_persona(id_="US-00001", gender="female")),
-            make_assembled(
-                make_persona(id_="US-00002", gender="male", income_quintile=1)
-            ),
-            make_assembled(
-                make_persona(
-                    id_="US-00003",
-                    gender="male",
-                    income_quintile=5,
-                    education="tertiary",
-                )
+            wanted,
+            make_persona(id_="US-00001", gender="female"),
+            make_persona(id_="US-00002", gender="male", income_quintile=1),
+            make_persona(
+                id_="US-00003",
+                gender="male",
+                income_quintile=5,
+                education="tertiary",
             ),
         ],
     )
@@ -551,8 +626,8 @@ async def test_retrieval_filters_on_gender_income_and_education(conn, aconn):
     assert [p.id for p in panel] == ["US-00000"]
 
 
-def _with_trait(trait: TraitName, score: float, id_: str) -> AssembledPersona:
-    return make_assembled(make_persona(id_=id_, big_five=big_five(**{trait: score})))
+def _with_trait(trait: TraitName, score: float, id_: str) -> Persona:
+    return make_persona(id_=id_, big_five=big_five(**{trait: score}))
 
 
 def _requesting(trait: TraitName, level: TraitLevel) -> TargetQuery:
@@ -657,11 +732,9 @@ async def test_two_requested_traits_both_have_to_match(conn, aconn):
     persist_pool(
         conn,
         [
-            make_assembled(
-                make_persona(
-                    id_="US-00000",
-                    big_five=big_five(openness=1.0, neuroticism=-1.0),
-                )
+            make_persona(
+                id_="US-00000",
+                big_five=big_five(openness=1.0, neuroticism=-1.0),
             ),
             _with_trait("openness", 1.0, "US-00001"),
         ],
@@ -707,7 +780,7 @@ async def test_a_trait_filter_still_draws_a_sample_rather_than_a_ranking(conn, a
 def _numbered_pool(conn: psycopg.Connection, count: int) -> None:
     persist_pool(
         conn,
-        list(make_assembled(make_persona(id_=f"US-{i:05d}")) for i in range(count)),
+        list(make_persona(id_=f"US-{i:05d}") for i in range(count)),
     )
 
 
@@ -932,7 +1005,7 @@ def test_the_owner_can_still_read_what_it_protected(conn) -> None:
     apply_schema(conn)
     deny_data_api(conn)
 
-    persist_pool(conn, [make_assembled()])
+    persist_pool(conn, [make_persona()])
 
     assert len(load_pool(conn)) == 1
 

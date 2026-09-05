@@ -151,7 +151,7 @@ class Grade(BaseModel):
 
 
 async def _with_live(part, *args) -> None:
-    """Run one part against an async connection with the pgvector adapter.
+    """Run one part against a bare async connection, as the request path does.
 
     Async, because `search_corpus` followed the request path (111/#240) and a
     script has no loop of its own. A bare connection, like the request path's:

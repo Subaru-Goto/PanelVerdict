@@ -28,7 +28,6 @@ from pydantic import BaseModel
 from starlette.types import Receive, Scope, Send
 
 from app.analyst import ToolDeps, stream_analyst
-from app.assembly import Embedder
 from app.auth import (
     AccountDeleter,
     DeletionFailed,
@@ -56,6 +55,7 @@ from app.chat_guard import (
     guard_chat_message,
     probe_chat_guard,
 )
+from app.corpus import Embedder
 from app.llm import (
     OpenRouterEmbedder,
     OpenRouterPanelLLM,
@@ -499,9 +499,9 @@ async def get_conn() -> AsyncGenerator[psycopg.AsyncConnection, None]:
     search bound a numpy query vector; 084/#175 retired that search, and the one
     vector query left on the request path — the corpus search — binds its vector
     as text and selects none back (probed 2026-09-04: it runs on a bare
-    connection). The seed's `prepare_connection` still registers it for its own
-    numpy writes, and also runs schema DDL, which is why a request never calls
-    that either.
+    connection). Nothing on the seed path needs it either since the vector's
+    drop; `prepare_connection` still runs schema DDL, which is why a request
+    never calls that.
 
     **Not pooled, and that is a decision rather than an omission.** A pool was
     tried here (111/#240) to restore a ceiling the async conversion was thought

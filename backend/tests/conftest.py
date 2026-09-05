@@ -24,7 +24,6 @@ from testcontainers.postgres import PostgresContainer  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from langchain_core.messages import AIMessage  # noqa: E402
 from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
-from pgvector.psycopg import register_vector_async  # noqa: E402
 
 from app.config import Settings, settings  # noqa: E402
 from app.main import (  # noqa: E402
@@ -139,7 +138,6 @@ async def aconn(pg_url, conn):
     async with await psycopg.AsyncConnection.connect(
         pg_url, options=_LOCK_TIMEOUT_OPTION
     ) as connection:
-        await register_vector_async(connection)
         yield connection
 
 
@@ -212,7 +210,6 @@ def client(conn, pg_url, stub_llm, monkeypatch):
     # writes is visible to the connection the route gets.
     async def request_connection():
         async with await psycopg.AsyncConnection.connect(pg_url) as connection:
-            await register_vector_async(connection)
             yield connection
 
     app.dependency_overrides[get_conn] = request_connection

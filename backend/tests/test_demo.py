@@ -263,9 +263,6 @@ class TestTheCapture:
         async def connect(cls, url):
             return Conn()
 
-        async def no_vector(conn):
-            return None
-
         clocked = {"roleplay": 0.0, "select": 0.4, "confirm": 0.0, "vote": 9.2}
         result = SimpleNamespace(
             stop_reason="decisive",
@@ -286,7 +283,6 @@ class TestTheCapture:
                 return {"result": result, "step_seconds": clocked}
 
         monkeypatch.setattr(psycopg.AsyncConnection, "connect", classmethod(connect))
-        monkeypatch.setattr(demo, "register_vector_async", no_vector)
         monkeypatch.setattr(demo.settings, "openrouter_api_key", SecretStr("stub"))
         monkeypatch.setattr(demo, "build_evaluate_graph", lambda **deps: Graph())
 

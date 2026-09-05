@@ -1,4 +1,4 @@
-"""Persist assembled personas to Postgres + pgvector.
+"""Persist personas, votes and reports to Postgres.
 
 The connection is injected (not built from settings) so this is testable against
 a throwaway container without live credentials. Idempotent: re-running the seed
@@ -11,13 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, TypedDict, cast
 
-import numpy as np
 import psycopg
-from pgvector.psycopg import register_vector
 from psycopg.types.json import Jsonb
 from psycopg.rows import DictRow, dict_row
 
-from app.assembly import AssembledPersona
 from app.bigfive import LEVEL_BOUNDS
 from app.schemas import BigFive, Persona, TargetQuery, VoteRecord
 
@@ -63,8 +60,8 @@ def schema_columns(sql: str | None = None) -> dict[str, tuple[str, ...]]:
     asked the next person to extend it, which nothing enforced (115/#248). A
     list parsed from the source cannot drift from the source.
 
-    Additive `ALTER TABLE … ADD COLUMN` statements are read too, and their form
-    is enforced rather than requested — see `_added_columns`.
+    `ALTER TABLE … ADD COLUMN` and `… DROP COLUMN` statements are read too, and
+    their form is enforced rather than requested — see `_column_alterations`.
     """
     # Comment lines go first, and the whole file is stripped rather than each
     # statement: schema.sql documents the additive form by *showing* an ALTER,
@@ -80,15 +77,31 @@ def schema_columns(sql: str | None = None) -> dict[str, tuple[str, ...]]:
         r"CREATE TABLE IF NOT EXISTS\s+(\w+)\s*\((.*?)\n\);", sql, re.DOTALL
     ):
         tables[table] = tuple(_declared_columns(body))
-    for table, column in _added_columns(sql):
+    for verb, table, column in _column_alterations(sql):
         if table not in tables:
             raise ValueError(
-                f"schema.sql adds {column} to {table}, which no CREATE TABLE in "
-                "it declares — a typo here makes the probe SELECT from a table "
-                "that does not exist and report a stale schema on a current "
+                f"schema.sql alters {table} ({verb} {column}), which no CREATE "
+                "TABLE in it declares — a typo here makes the probe SELECT from a "
+                "table that does not exist and report a stale schema on a current "
                 "database."
             )
-        tables[table] += (column,)
+        if verb == "add":
+            tables[table] += (column,)
+        else:
+            if table not in _REGENERABLE:
+                raise ValueError(
+                    f"schema.sql drops {table}.{column}, and {table} is not in "
+                    "_REGENERABLE: a column may be dropped only from a table the "
+                    "seed can rebuild from git. votes is paid model output and the "
+                    "ledgers are spend nobody has been charged for yet — neither "
+                    "can be regenerated, so neither can lose a column (084/#175, "
+                    "the rule schema.sql states beside the form)."
+                )
+            # A dropped column leaves the probe list: asking for it would
+            # report a database that applied this file as stale. It is normal
+            # for it to be absent from the CREATE TABLE above — that is what
+            # dropping it means — so only the table has to exist.
+            tables[table] = tuple(c for c in tables[table] if c != column)
     return tables
 
 
@@ -132,35 +145,50 @@ def _declared_columns(body: str) -> Iterator[str]:
         yield name
 
 
-def _added_columns(sql: str) -> Iterator[tuple[str, str]]:
-    """Every `(table, column)` an additive `ALTER TABLE` statement adds.
+def _column_alterations(sql: str) -> Iterator[tuple[Literal["add", "drop"], str, str]]:
+    """Every `ALTER TABLE` in the file, as `(verb, table, column)` — verb is
+    `"add"` or `"drop"`.
 
-    Only the documented form is recognised, and every other `ALTER TABLE` is
-    refused rather than ignored. Recognising one spelling is not enforcing a
-    form: `ADD scored_at timestamptz` (Postgres makes `COLUMN` optional) and
-    `ALTER TABLE IF EXISTS … ADD COLUMN …` are both legal additions that used
-    to parse to nothing — no complaint, and the new column never reached the
-    probe either (115/#248, review).
+    Two forms are recognised and every other `ALTER TABLE` is refused rather
+    than ignored. Recognising one spelling is not enforcing a form: `ADD
+    scored_at timestamptz` (Postgres makes `COLUMN` optional) and `ALTER TABLE
+    IF EXISTS … ADD COLUMN …` are both legal additions that used to parse to
+    nothing — no complaint, and the new column never reached the probe either
+    (115/#248, review). The same holds for a drop: `DROP summary_embedding`
+    without `COLUMN` is legal and unread, so it is refused too.
 
-    `IF NOT EXISTS` is required because `schema.sql` runs on every seed and
-    every schema-only apply: a bare `ADD COLUMN` succeeds once and fails forever
-    after, and the failure lands mid-file, so the row-level-security sweep
-    `prepare_connection` runs after it never runs either.
+    `IF NOT EXISTS` / `IF EXISTS` are required because `schema.sql` runs on
+    every seed and every schema-only apply: a bare `ADD COLUMN` or `DROP COLUMN`
+    succeeds once and fails forever after, and the failure lands mid-file, so
+    the row-level-security sweep `prepare_connection` runs after it never runs
+    either.
+
+    The drop form arrived with 084/#175, under the rule `schema.sql` states
+    beside the form — read it there; `schema_columns` enforces the half of it
+    that is mechanical. Renames and type changes stay refused: neither can be
+    made idempotent, and neither is covered by that rule.
     """
-    documented = re.compile(
+    added = re.compile(
         r"^ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)\s+\S", re.IGNORECASE
+    )
+    dropped = re.compile(
+        r"^ALTER TABLE\s+(\w+)\s+DROP COLUMN IF EXISTS\s+(\w+)\s*$", re.IGNORECASE
     )
     for statement in re.findall(r"^\s*(ALTER TABLE\b[^;]*)", sql, re.MULTILINE):
         collapsed = " ".join(statement.split())
-        if match := documented.match(collapsed):
-            yield match.group(1), match.group(2)
+        if match := added.match(collapsed):
+            yield "add", match.group(1), match.group(2)
+            continue
+        if match := dropped.match(collapsed):
+            yield "drop", match.group(1), match.group(2)
             continue
         raise ValueError(
             f"schema.sql contains an ALTER this build cannot read: {collapsed!r}. "
-            "The one supported form is `ALTER TABLE <table> ADD COLUMN IF NOT "
-            "EXISTS <column> <type>;` — anything else is refused, because a "
-            "statement the parser skips is a column the completeness probe never "
-            "asks for."
+            "The two supported forms are `ALTER TABLE <table> ADD COLUMN IF NOT "
+            "EXISTS <column> <type>;` and `ALTER TABLE <table> DROP COLUMN IF "
+            "EXISTS <column>;` — anything else is refused, because a statement the "
+            "parser skips is a column the completeness probe never asks for, or "
+            "one it asks for after it has gone."
         )
 
 
@@ -168,11 +196,11 @@ def apply_schema(conn: psycopg.Connection) -> None:
     """Create the schema if absent (idempotent), then refuse a stale one.
 
     `CREATE … IF NOT EXISTS` silently accepts an out-of-date table, and the
-    resulting failure is invisible rather than loud: a pool seeded before the
-    embedding column existed makes every id a resume-skip, so no insert ever
-    names the missing column and the run reports "0 written, 200 already
-    present" over a pool with no embeddings. On a ledger it is worse — the seed
-    never touches those, so the first notice is a 500 on a paying request.
+    resulting failure is invisible rather than loud: a pool table missing a
+    column the seed writes makes every existing id a resume-skip, so no insert
+    ever names the missing column and the run reports "0 written, 200 already
+    present" over a stale table. On a ledger it is worse — the seed never
+    touches those, so the first notice is a 500 on a paying request.
 
     Every table is probed, because every table can go stale the same way.
     """
@@ -349,16 +377,19 @@ async def adeny_data_api(conn: psycopg.AsyncConnection[DictRow]) -> None:
 
 
 def prepare_connection(conn: psycopg.Connection) -> None:
-    """Ready a connection for the pool: ensure the schema, then register the
-    pgvector adapter so vector columns round-trip as numpy arrays. `register_vector`
-    needs the extension to exist, so it must follow `apply_schema`.
+    """Ready a connection for the pool: ensure the schema, then close the tables
+    to the Data API.
+
+    Nothing is registered on the connection. It used to register the pgvector
+    adapter for the persona vector's numpy writes; that column went with the
+    analyst's persona search (084/#175), and the corpus seed binds its vectors
+    as text.
     """
     apply_schema(conn)
     # Every path that creates these tables also closes them to the Data API —
     # the seed runs from a developer machine against the real project, so a
     # table can exist there long before the app's own startup sweep runs.
     deny_data_api(conn)
-    register_vector(conn)
 
 
 # The version stamped on a report as it is written. Bumped when a change to
@@ -536,13 +567,12 @@ async def delete_reports_of(conn: psycopg.AsyncConnection, *, owner: str) -> int
     return result.rowcount
 
 
-def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bool:
-    """Write one persona and its summary vector; return whether it was newly written.
+def persist_persona(conn: psycopg.Connection, persona: Persona) -> bool:
+    """Write one persona; return whether it was newly written.
 
     `ON CONFLICT (id) DO NOTHING` makes a re-run a no-op for personas already
     present (returns False).
     """
-    persona = assembled.persona
     big_five = persona.big_five
     with conn.transaction():
         result = conn.execute(
@@ -550,8 +580,8 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bo
             INSERT INTO personas (
                 id, country, age, gender, income_quintile, education,
                 openness, conscientiousness, extraversion, agreeableness,
-                neuroticism, summary_embedding
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                neuroticism
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (id) DO NOTHING
             """,
             (
@@ -566,21 +596,19 @@ def persist_persona(conn: psycopg.Connection, assembled: AssembledPersona) -> bo
                 big_five.extraversion,
                 big_five.agreeableness,
                 big_five.neuroticism,
-                np.array(assembled.summary_embedding),
             ),
         )
     return result.rowcount == 1
 
 
-def persist_pool(conn: psycopg.Connection, pool: Iterable[AssembledPersona]) -> int:
-    """Persist every assembled persona (one transaction each); return the number
-    newly written — personas already present are skipped and not counted."""
-    return sum(persist_persona(conn, assembled) for assembled in pool)
+def persist_pool(conn: psycopg.Connection, pool: Iterable[Persona]) -> int:
+    """Persist every persona (one transaction each); return the number newly
+    written — personas already present are skipped and not counted."""
+    return sum(persist_persona(conn, persona) for persona in pool)
 
 
 def _persona_from_row(row: PersonaRow) -> Persona:
-    """Rebuild a Persona from its columns. The summary embedding is deliberately
-    not read back — it is derived from these fields, and no reader needs both."""
+    """Rebuild a Persona from its columns."""
     return Persona.model_validate(
         {
             "id": row["id"],
