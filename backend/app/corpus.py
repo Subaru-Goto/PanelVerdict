@@ -279,6 +279,15 @@ async def search_corpus(
     recall on a question sharing *some* words, which is why the lexemes are ORed:
     requiring all of them is the same gate with the meaning inverted, and it
     measured 5 of 14 questions returning nothing.
+
+    The cost as measured (129/#313): 7 of the 30 RAG baseline questions, in the
+    reader's wording, could not reach their passage through this gate (6 once
+    the limit passage's heading carried the reader's word) — a negation
+    prefix is its own lexeme ("unvalidated" is not "validated"), a hyphenated
+    word counts twice, and fillers like "actually" are not stopwords. The
+    analyst's own rewording rescues some. `experiments/gate_probe.py` reproduces
+    it for free; the fix is 130/#315, and the heading of a passage is the line
+    to put the reader's word in until then.
     """
     if not query.strip():
         return []
